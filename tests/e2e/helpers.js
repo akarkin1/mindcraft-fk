@@ -95,10 +95,10 @@ export const failedChecks = () => results.filter((r) => !r.pass);
 // ---------------------------------------------------------------- fake server
 
 export async function startServer({ seedHigh = 0, seedLow = 0, motd = 'e2e fake server', age = 1000,
-    hardcore = false, dimension = 'overworld', pos = '0.5,64,0.5' } = {}) {
+    hardcore = false, dimension = 'overworld', pos = '0.5,64,0.5', commands = false } = {}) {
     const args = [path.join(E2E_DIR, 'fake_server.js'),
         `--seed-high=${seedHigh}`, `--seed-low=${seedLow}`, `--motd=${motd}`, `--age=${age}`,
-        `--hardcore=${hardcore}`, `--dimension=${dimension}`, `--pos=${pos}`];
+        `--hardcore=${hardcore}`, `--dimension=${dimension}`, `--pos=${pos}`, `--commands=${commands}`];
     const child = spawn(process.execPath, args, {
         cwd: process.cwd(), stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true,
     });
@@ -323,3 +323,147 @@ export function expectedSeedKey(high, low) {
     const value = (BigInt.asUintN(32, BigInt(high)) << 32n) | BigInt.asUintN(32, BigInt(low));
     return 'seed-' + value.toString(16).padStart(16, '0');
 }
+
+// ---------------------------------------------------------------- real agent (v0.1.4.4)
+
+// All modes of the profile off: the bot does nothing by itself, only the tested code acts.
+export const MODES_OFF = {
+    self_preservation: false, unstuck: false, cowardice: false, self_defense: false, hunting: false,
+    item_collecting: false, torch_placing: false, elbow_room: false, idle_staring: false, cheat: false,
+};
+
+// The Prompter reads ./profiles/defaults/*.json from the working directory (the temp dir).
+export function copyProfiles() {
+    const from = path.join(ROOT, 'profiles', 'defaults');
+    const to = path.join(process.cwd(), 'profiles', 'defaults');
+    fs.mkdirSync(to, { recursive: true });
+    for (const f of fs.readdirSync(from)) {
+        if (f.endsWith('.json')) fs.copyFileSync(path.join(from, f), path.join(to, f));
+    }
+}
+
+// Stand-in for a language model: records every request and answers from two queues. Nothing
+// leaves the process. `replies` answers coding prompts (code model) or conversation prompts
+// (chat model); `reviews` answers skill review prompts, recognised by the first words of the
+// skill_review template. An answer that is a function is called with the request (it may throw).
+export function fakeModel(label) {
+    const model = {
+        label,
+        requests: [],
+        replies: [],
+        reviews: [],
+        async sendRequest(turns, systemMessage) {
+            const prompt = String(systemMessage ?? '');
+            const kind = prompt.startsWith('You are reviewing code that the Minecraft bot') ? 'review' : label;
+            const request = { kind, prompt, turns: JSON.parse(JSON.stringify(turns ?? [])) };
+            model.requests.push(request);
+            const next = (kind === 'review' ? model.reviews : model.replies).shift();
+            if (typeof next === 'function') return next(request);
+            if (next !== undefined) return next;
+            return label === 'chat' ? '' : 'e2e stub: no more canned replies';
+        },
+        async sendVisionRequest() { throw new Error('e2e: no vision model'); },
+        async embed() { throw new Error('e2e: no embedding model'); },
+        of(kind) { return model.requests.filter((r) => r.kind === kind); },
+        reset() { model.requests.length = 0; model.replies.length = 0; model.reviews.length = 0; },
+    };
+    return model;
+}
+
+// Every model class of src/models gets request methods that throw, so nothing can leave the
+// process. Chat and vision requests that bypass the fake models are recorded in the returned
+// array; embed is expected (the Prompter embeds its examples, and falls back to word overlap).
+export async function blockRealModels() {
+    const attempts = [];
+    const dir = path.join(ROOT, 'src', 'models');
+    for (const f of fs.readdirSync(dir)) {
+        if (!f.endsWith('.js') || f === 'prompter.js' || f === '_model_map.js') continue;
+        let mod;
+        try { mod = await importProject(`src/models/${f}`); } catch { continue; }
+        for (const cls of Object.values(mod)) {
+            if (typeof cls !== 'function' || !cls.prototype || !Object.prototype.hasOwnProperty.call(cls, 'prefix')) continue;
+            for (const method of ['sendRequest', 'sendVisionRequest', 'embed']) {
+                cls.prototype[method] = async function blocked() {
+                    if (method !== 'embed') attempts.push(`${cls.name}.${method}`);
+                    throw new Error(`e2e: real model call blocked (${cls.name}.${method})`);
+                };
+            }
+        }
+    }
+    return attempts;
+}
+
+// Runs the real Agent.start (with its lockdown, Prompter, Coder, SkillManager, command blacklist,
+// initBot and spawn handler) against the fake server. Replaced are only the language model (two
+// fakeModel objects, installed before the first request can be sent) and the MindServer
+// connection (a socket stub). Returns when the spawn handler has set up the event handlers.
+export async function startRealAgent(name, port, overrides = {}) {
+    copyProfiles();
+    const settings = await setupSettings(name, port, {
+        world_memory: false, speak: false, render_bot_view: false, log_all_prompts: false,
+        allow_vision: false, only_chat_with: [], code_timeout_mins: -1,
+        ...overrides,
+        profile: { name, model: MODEL, modes: { ...MODES_OFF }, cooldown: 0, ...(overrides.profile || {}) },
+    });
+    const realCalls = await blockRealModels();
+    const { Agent } = await importProject('src/agent/agent.js');
+    const { serverProxy } = await importProject('src/agent/mindserver_proxy.js');
+    serverProxy.socket = { emit() {}, on() {} };
+    const agent = new Agent();
+    serverProxy.setAgent(agent);
+    const chat = fakeModel('chat');
+    const code = fakeModel('coding');
+    const started = agent.start(false, null, 0, false);
+    // start() ran synchronously up to its first await: the Prompter exists, no request was sent
+    if (agent.prompter) {
+        agent.prompter.chat_model = chat;
+        agent.prompter.code_model = code;
+        agent.prompter.vision_model = chat;
+    }
+    await withTimeout(started, 30000, 'Agent.start');
+    await withTimeout(new Promise((r) => agent.bot.once('spawn', r)), 20000, 'agent spawn');
+    const t0 = Date.now();
+    while (typeof agent.respondFunc !== 'function') {
+        if (Date.now() - t0 > 10000) throw new Error('spawn handler did not set up the event handlers within 10 s');
+        await sleep(50);
+    }
+    return { agent, settings, chat, code, realCalls };
+}
+
+// Leaves the server without the process exit that the disconnect handlers of Agent.start do.
+export async function stopRealAgent(agent) {
+    if (!agent?.bot) return;
+    agent._disconnectHandled = true;
+    await quitBot(agent.bot);
+}
+
+// A started Agent keeps its update loop running; the process ends shortly after scenarioMain.
+export function exitSoon(ms = 300) {
+    setTimeout(() => process.exit(process.exitCode ?? 0), ms).unref();
+}
+
+// Contents of all files below dir, keyed by path relative to dir ({} when dir is missing).
+export function snapshotDir(dir) {
+    const snap = {};
+    for (const f of listFiles(dir)) snap[f] = fs.readFileSync(path.join(dir, f), 'utf8');
+    return snap;
+}
+
+export const sameSnapshot = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+
+// Records the text of every console.<method> call from now on; the output is still printed.
+// Install it before startRealAgent: the lockdown then wraps this function like the original.
+export function recordConsole(method) {
+    const lines = [];
+    const original = console[method];
+    console[method] = function recorded(...args) {
+        try {
+            lines.push(args.map((a) => (a && typeof a.stack === 'string' ? a.stack : String(a))).join(' '));
+        } catch { /* unprintable argument */ }
+        return original.apply(this, args);
+    };
+    return lines;
+}
+
+// A model reply with one code block.
+export const codeReply = (code) => 'Here is the code.\n' + '`'.repeat(3) + 'javascript\n' + code + '\n' + '`'.repeat(3);

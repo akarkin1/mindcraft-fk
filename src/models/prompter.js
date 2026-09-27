@@ -9,6 +9,8 @@ import { promises as fs } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { selectAPI, createModel } from './_model_map.js';
+import { insertSection } from '../agent/skills/skill_prompt.js';
+import { extractTask } from '../agent/skills/skill_review.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -194,8 +196,8 @@ export class Prompter {
             }
         }
 
-        // check if there are any remaining placeholders with syntax $<word>
-        let remaining = prompt.match(/\$[A-Z_]+/g);
+        // check if there are any remaining placeholders with syntax $<word>, except $CUSTOM_SKILLS which the caller fills
+        let remaining = prompt.match(/\$(?!CUSTOM_SKILLS(?![A-Z_]))[A-Z_]+/g);
         if (remaining !== null) {
             console.warn('Unknown prompt placeholders:', remaining.join(', '));
         }
@@ -222,6 +224,16 @@ export class Prompter {
 
             let prompt = this.profile.conversing;
             prompt = await this.replaceStrings(prompt, messages, this.convo_examples);
+            if (this.agent?.skill_manager) {
+                try {
+                    prompt = insertSection(prompt, this.agent.skill_manager.conversingSection());
+                } catch (error) {
+                    console.warn('Could not add the saved skills to the conversation prompt:', error);
+                    prompt = insertSection(prompt, '');
+                }
+            } else if (typeof prompt === 'string' && prompt.includes('$CUSTOM_SKILLS')) {
+                prompt = insertSection(prompt, ''); // no manager: only the placeholder is removed
+            }
             let generation;
 
             try {
@@ -270,6 +282,16 @@ export class Prompter {
             await this.checkCooldown();
             let prompt = this.profile.coding;
             prompt = await this.replaceStrings(prompt, messages, this.coding_examples);
+            if (this.agent?.skill_manager) {
+                try {
+                    prompt = insertSection(prompt, this.agent.skill_manager.codingSection(extractTask(messages)));
+                } catch (error) {
+                    console.warn('Could not add the saved skills to the coding prompt:', error);
+                    prompt = insertSection(prompt, '');
+                }
+            } else if (typeof prompt === 'string' && prompt.includes('$CUSTOM_SKILLS')) {
+                prompt = insertSection(prompt, ''); // no manager: only the placeholder is removed
+            }
 
             let resp = await this.code_model.sendRequest(messages, prompt);
             await this._saveLog(prompt, messages, resp, 'coding');
@@ -287,6 +309,17 @@ export class Prompter {
         await this._saveLog(prompt, to_summarize, resp, 'memSaving');
         if (resp?.includes('</think>')) {
             const [_, afterThink] = resp.split('</think>')
+            resp = afterThink;
+        }
+        return resp;
+    }
+
+    async promptSkillReview(text) {
+        await this.checkCooldown();
+        let resp = await this.code_model.sendRequest([], text);
+        await this._saveLog(text, [], resp, 'skillReview');
+        if (resp?.includes('</think>')) {
+            const [_, afterThink] = resp.split('</think>');
             resp = afterThink;
         }
         return resp;

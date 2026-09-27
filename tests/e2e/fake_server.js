@@ -9,6 +9,9 @@
 //   --hardcore=<bool>     [E2E_HARDCORE]   isHardcore of the login packet
 //   --dimension=<name>    [E2E_DIMENSION]  overworld, the_nether, the_end
 //   --pos=<x,y,z>         [E2E_POS]        spawn position of the player
+//   --commands=<bool>     [E2E_COMMANDS]   answer the chat commands "/give <who> <item> [count]"
+//                                          (set_slot into the next hotbar slot) and "/tp [who] <x> <y> <z>"
+//                                          (position packet) as a vanilla server would; off by default
 //
 // stdin commands: "chat" prints the chat messages received so far on one line
 // "CHAT <json array>"; "quit" (or closing stdin) stops the server.
@@ -34,6 +37,7 @@ const age = Number(param('age', 'E2E_AGE', '1000'));
 const hardcore = String(param('hardcore', 'E2E_HARDCORE', 'false')) === 'true';
 const dimension = String(param('dimension', 'E2E_DIMENSION', 'overworld')).replace(/^minecraft:/, '');
 const [posX, posY, posZ] = String(param('pos', 'E2E_POS', '0.5,64,0.5')).split(',').map(Number);
+const answerCommands = String(param('commands', 'E2E_COMMANDS', 'false')) === 'true';
 
 const out = (line) => process.stdout.write(line + '\n');
 const log = (...parts) => out('[srv] ' + parts.join(' '));
@@ -55,6 +59,43 @@ function toWords(value) {
 }
 
 const chats = [];
+
+// With --commands=true: /give puts the items into the next hotbar slot, /tp moves the player.
+function answerCommand(client, command) {
+    const words = command.trim().split(/\s+/);
+    if (words[0] === 'give' && words.length >= 3) {
+        const item = mcData.itemsByName[words[2].replace(/^minecraft:/, '')];
+        const count = words.length >= 4 ? Number(words[3]) : 1;
+        if (!item || !(count > 0)) {
+            log('give: unknown item or count:', command);
+            return;
+        }
+        client.e2eSlot = (client.e2eSlot ?? 35) + 1;
+        client.write('set_slot', {
+            windowId: 0,
+            stateId: client.e2eSlot,
+            slot: client.e2eSlot,
+            item: { itemCount: count, itemId: item.id, addedComponentCount: 0, removedComponentCount: 0, components: [], removeComponents: [] },
+        });
+        log(`give: ${count} ${item.name} into slot ${client.e2eSlot}`);
+    } else if (words[0] === 'tp' && words.length >= 4) {
+        const coords = words.slice(-3).map(Number);
+        if (coords.some((n) => !Number.isFinite(n))) {
+            log('tp: bad coordinates:', command);
+            return;
+        }
+        client.e2eTeleport = (client.e2eTeleport ?? 1) + 1;
+        client.write('position', {
+            teleportId: client.e2eTeleport,
+            x: coords[0], y: coords[1], z: coords[2],
+            dx: 0, dy: 0, dz: 0,
+            yaw: 0, pitch: 0,
+            flags: { _value: 0 },
+        });
+        log(`tp: ${coords.join(' ')}`);
+    }
+}
+
 const server = mc.createServer({
     host: '127.0.0.1',
     port: 0,
@@ -73,6 +114,9 @@ server.on('playerJoin', (client) => {
         if (meta.name === 'chat_message') chats.push(String(data.message));
         if (meta.name === 'chat_command') chats.push('/' + String(data.command));
         if (meta.name === 'chat_command_signed') chats.push('/' + String(data.command));
+        if (answerCommands && (meta.name === 'chat_command' || meta.name === 'chat_command_signed')) {
+            try { answerCommand(client, String(data.command)); } catch (err) { log('command error:', err && err.message); }
+        }
     });
     client.on('error', (err) => log('client error:', err && err.message));
     client.on('end', (reason) => log('client end', JSON.stringify(reason)));

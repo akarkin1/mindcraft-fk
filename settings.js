@@ -46,6 +46,10 @@ const settings = {
 
     "allow_insecure_coding": true, // allows newAction command and model can write/run code on your computer. enable at own risk
     "sandbox_lockdown": true, // runs the SES lockdown that isolates code written by the model. set false only if a library breaks
+    "skill_learning": false, // save code that worked as named skills in bots/<name>/skills, so later code can reuse it. needs allow_insecure_coding
+    "skill_capture": true, // with skill_learning: review code that worked and save it as a skill when it is general
+    "skill_reuse": true, // with skill_learning: show the saved skills to the model and let its code call them as customSkills.<name>
+    "skill_command": false, // with skill_learning and skill_reuse: also offer !useSkill to run a saved skill directly
     "allow_vision": false, // allows vision model to interpret screenshots as inputs
     "blocked_actions" : ["!checkBlueprint", "!checkBlueprintLevel", "!getBlueprint", "!getBlueprintLevel"] , // commands to disable and remove from docs. Ex: ["!setMode"]
     "code_timeout_mins": -1, // minutes code is allowed to run. -1 for no timeout

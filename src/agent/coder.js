@@ -5,6 +5,7 @@ import * as world from './library/world.js';
 import { Vec3 } from 'vec3';
 import {ESLint} from "eslint";
 import settings from './settings.js';
+import { extractTask } from './skills/skill_review.js';
 
 export class Coder {
     constructor(agent) {
@@ -13,6 +14,7 @@ export class Coder {
         this.fp = '/bots/'+agent.name+'/action-code/';
         this.code_template = '';
         this.code_lint_template = '';
+        this.last_run = null; // the last successful run of generated code, for skill learning
 
         readFile('./bots/execTemplate.js', 'utf8', (err, data) => {
             if (err) throw err;
@@ -26,6 +28,8 @@ export class Coder {
     }
 
     async generateCode(agent_history) {
+        this.last_run = null;
+        const manager = this.agent.skill_manager;
         this.agent.bot.modes.pause('unstuck');
         initSandbox(settings);
         // this message history is transient and only maintained in this function
@@ -67,7 +71,15 @@ export class Coder {
                 continue;
             }
             code = res.substring(res.indexOf('```')+3, res.lastIndexOf('```'));
-            const result = await this._stageCode(code);
+            let result;
+            try {
+                result = await this._stageCode(code);
+            } catch (error) {
+                // e.g. a syntax error or eval( refused by the sandbox: tell the model, like a lint error
+                console.warn('Staging error:\n' + String(error) + '\n');
+                messages.push({ role: 'system', content: 'Error: Code could not be prepared for execution:\n' + String(error) + '\nPlease try again.' });
+                continue;
+            }
             const executionModule = result.func;
             const lintResult = await this._lintCode(result.src_lint_copy);
             if (lintResult) {
@@ -83,10 +95,26 @@ export class Coder {
 
             try {
                 console.log('Executing code...');
+                const before = manager ? manager.snapshot(this.agent.bot) : null;
                 await executionModule.main(this.agent.bot);
 
                 const code_output = this.agent.actions.getBotOutputSummary();
                 const summary = "Agent wrote this code: \n```" + this._sanitizeCode(code) + "```\nCode Output:\n" + code_output;
+                if (manager) {
+                    try {
+                        this.last_run = {
+                            code: this._sanitizeCode(code),
+                            output: code_output,
+                            task: extractTask(messages),
+                            before,
+                            after: manager.snapshot(this.agent.bot),
+                            interrupted: Boolean(this.agent.bot.interrupt_code),
+                            threw: false,
+                        };
+                    } catch (error) {
+                        console.warn('Could not record the run for skill learning:', error);
+                    }
+                }
                 return summary;
             } catch (e) {
                 if (this.agent.bot.interrupt_code)
@@ -113,7 +141,9 @@ export class Coder {
     async  _lintCode(code) {
         let result = '#### CODE ERROR INFO ###\n';
         const codeNoComments = code.replace(/\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '');
-        const skillRegex = /((?:skills|world)\.(.*?))\(/g;
+        const manager = this.agent.skill_manager;
+        const reuse = Boolean(manager && manager.flags.reuse);
+        const skillRegex = reuse ? /\b((?:skills|world|customSkills)\.(\w+))\s*\(/g : /((?:skills|world)\.(.*?))\(/g;
         const skills = [];
         let match;
         while ((match = skillRegex.exec(codeNoComments)) !== null) {
@@ -121,6 +151,10 @@ export class Coder {
         }
         const allDocs = await this.agent.prompter.skill_libary.getAllSkillDocs();
         const knownSkills = new Set(allDocs.map(doc => doc.split('\n')[0]));
+        if (reuse) {
+            for (const name of manager.knownNames())
+                knownSkills.add(name);
+        }
         const missingSkills = skills.filter(skill => !knownSkills.has(skill));
         if (missingSkills.length > 0) {
             result += 'These functions do not exist:\n';
@@ -166,8 +200,12 @@ export class Coder {
         for (let line of code.split('\n')) {
             src += `    ${line}\n`;
         }
-        let src_lint_copy = this.code_lint_template.replace('/* CODE HERE */', src);
-        src = this.code_template.replace('/* CODE HERE */', src);
+        let src_lint_copy = this.code_lint_template.replace('/* CODE HERE */', () => src);
+        src = this.code_template.replace('/* CODE HERE */', () => src);
+        const manager = this.agent.skill_manager;
+        const reuse = Boolean(manager && manager.flags.reuse);
+        if (reuse)
+            src_lint_copy = '/* global customSkills */\n' + src_lint_copy;
 
         let filename = this.file_counter + '.js';
         // if (this.file_counter > 0) {
@@ -188,6 +226,7 @@ export class Coder {
             log: skills.log,
             world,
             Vec3,
+            ...(reuse ? { customSkills: manager.customSkills } : {}),
         });
         const mainFn = compartment.evaluate(src);
         

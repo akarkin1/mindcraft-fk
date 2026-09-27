@@ -25,6 +25,24 @@ function runAsAction (actionFn, resume = false, timeout = -1) {
     return wrappedAction;
 }
 
+// The arguments of !useSkill: a JSON array as text, single quotes are accepted in place of
+// double quotes, an empty text means no arguments. Returns null when the text is not an array.
+function parseSkillArgs(text) {
+    const trimmed = typeof text === 'string' ? text.trim() : '';
+    if (trimmed === '')
+        return [];
+    for (const candidate of [trimmed, trimmed.replaceAll("'", '"')]) {
+        try {
+            const value = JSON.parse(candidate);
+            if (Array.isArray(value))
+                return value;
+        } catch (error) {
+            // not JSON in this form
+        }
+    }
+    return null;
+}
+
 export const actionsList = [
     {
         name: '!newAction',
@@ -47,6 +65,15 @@ export const actionsList = [
                 }
             };
             await agent.actions.runAction('action:newAction', actionFn, {timeout: settings.code_timeout_mins});
+            if (agent.skill_manager && agent.coder.last_run != null) {
+                try {
+                    const capture = await agent.skill_manager.captureFromRun(agent.coder.last_run);
+                    if (capture.saved)
+                        result += '\n' + capture.message;
+                } catch (error) {
+                    console.warn('Could not save the code as a skill:', error);
+                }
+            }
             return result;
         }
     },
@@ -532,5 +559,92 @@ export const actionsList = [
         perform: runAsAction(async (agent, tool_name, target) => {
             await skills.useToolOn(agent.bot, tool_name, target);
         })
+    },
+    {
+        name: '!forgetSkill',
+        description: 'Delete a saved skill.',
+        params: {'name': { type: 'string', description: 'The name of the skill to forget.' }},
+        perform: function (agent, name) {
+            if (!agent.skill_manager)
+                return 'Skill learning is off.';
+            try {
+                if (agent.skill_manager.forget(name))
+                    return `Forgot the skill "${name}".`;
+            } catch (error) {
+                console.warn('Could not forget the skill:', error);
+            }
+            return `No skill named "${name}" is saved.`;
+        }
+    },
+    {
+        name: '!disableSkill',
+        description: 'Stop offering a saved skill without deleting it.',
+        params: {'name': { type: 'string', description: 'The name of the skill to disable.' }},
+        perform: function (agent, name) {
+            if (!agent.skill_manager)
+                return 'Skill learning is off.';
+            try {
+                if (agent.skill_manager.setStatus(name, 'disabled'))
+                    return `Disabled the skill "${name}".`;
+            } catch (error) {
+                console.warn('Could not disable the skill:', error);
+            }
+            return `No skill named "${name}" is saved.`;
+        }
+    },
+    {
+        name: '!enableSkill',
+        description: 'Offer a disabled skill again.',
+        params: {'name': { type: 'string', description: 'The name of the skill to enable.' }},
+        perform: function (agent, name) {
+            if (!agent.skill_manager)
+                return 'Skill learning is off.';
+            try {
+                if (agent.skill_manager.setStatus(name, 'active'))
+                    return `Enabled the skill "${name}".`;
+            } catch (error) {
+                console.warn('Could not enable the skill:', error);
+            }
+            return `No skill named "${name}" is saved.`;
+        }
+    },
+    {
+        name: '!useSkill',
+        description: 'Run a saved skill with the given values.',
+        params: {
+            'name': { type: 'string', description: 'The name of the saved skill.' },
+            'args': { type: 'string', description: 'The values after bot as a list, for example "[3, \'oak_log\']". Empty for no values.' }
+        },
+        perform: async function (agent, name, args) {
+            if (!agent.skill_manager)
+                return 'Skill learning is off.';
+            // checked before runAction, so an unknown name does not stop the running action
+            let known = false;
+            try {
+                known = agent.skill_manager.has(name);
+            } catch (error) {
+                console.warn('Could not look up the skill:', error);
+            }
+            if (!known)
+                return `No skill named "${name}" is saved.`;
+            const values = parseSkillArgs(args);
+            if (values === null)
+                return `Could not read the arguments. Write them as a list, for example "[3, 'oak_log']".`;
+            let run = null;
+            const actionFn = async () => {
+                run = await agent.skill_manager.run(name, values, agent.bot);
+            };
+            const code_return = await agent.actions.runAction('action:useSkill', actionFn, {timeout: settings.code_timeout_mins});
+            if (run?.error === 'unknown_skill')
+                return `No skill named "${name}" is saved.`;
+            if (code_return.interrupted && !code_return.timedout)
+                return;
+            if (run && !run.ok && run.error)
+                return `The skill "${name}" failed: ${run.error}`;
+            const output = code_return.message;
+            if (!output || output.trim() === 'Action output:')
+                return `The skill "${name}" finished.`;
+            return output;
+        }
     },
 ];

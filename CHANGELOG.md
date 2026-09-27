@@ -6,6 +6,48 @@ This fork is based on [Mindcraft](https://github.com/mindcraft-bots/mindcraft) `
 
 Each release lists new settings and feature flags with their default value.
 
+## [0.1.4.4] - 2026-09-28
+
+Skills release. The bot can save code that worked as a named skill and call it again later. Skills belong to the bot and are shared by all its worlds. The feature is behind a feature flag and is off by default.
+
+### Added
+
+- **Skill learning**, setting `skill_learning`, default `false`. It needs `allow_insecure_coding`. While it is off, the bot behaves as in `0.1.4.3`.
+- **Saving skills**, setting `skill_capture`, default `true`:
+  - The coding prompt asks the model to write a task that could be needed again as one function with parameters.
+  - After `!newAction` ran such code without an error and without being interrupted, a second call to the model decides whether the task was done and whether the function is general. It sees the code, the output and what changed in the inventory and the position.
+  - If both answers are yes, the function is saved in `bots/<name>/skills/` and the bot is told the name of the new skill.
+  - A skill is refused if it contains coordinates of the current world, if it uses a constant or a helper from the code around it, if its name clashes with a built-in function, if it has no description, if it is longer than 8,000 characters, or if it contains code that the sandbox does not allow.
+  - Writing a function under an existing name replaces the skill. The earlier version is kept in `bots/<name>/skills/.history/`.
+- **Using skills**, setting `skill_reuse`, default `true`:
+  - New code can call a saved skill as `customSkills.<name>(bot, ...)`. Skills can call each other.
+  - The coding prompt lists the saved skills. The ones that fit the task best come with their full description.
+  - The conversation prompt lists the saved skills by name, so the bot decides by itself when to use one.
+  - Saved skills run in the same sandbox as new code.
+  - Every skill counts how often it ran and how often it failed.
+  - A skill file that cannot be loaded is skipped. The bot starts without it.
+- Commands `!skills`, `!forgetSkill`, `!disableSkill` and `!enableSkill`. They are hidden while skill learning is off. `!forgetSkill` moves the skill to the history folder. It does not delete it.
+- Command `!useSkill`, setting `skill_command`, default `false`. It runs a saved skill directly, without writing new code.
+- Prompt `skill_review` in `profiles/defaults/_default.json`. A profile can replace it.
+- Placeholder `$CUSTOM_SKILLS` for the `coding` and `conversing` prompts of a profile. It sets the place of the skill list. Without it the list is put before the conversation.
+
+### Fixed
+
+- Code written by the model was changed before it ran if it contained a dollar sign followed by `&`, a quote or a backtick, for example `'Price: $'`. The code is now used as written. The bug came from upstream.
+- `!newAction` gave up after one attempt when the code could not be prepared for the sandbox, for example because of a syntax error. The error now goes back to the model like any other code error, and the model tries again, up to five times. The bug came from upstream.
+
+### Changed
+
+- With skill saving on, every `!newAction` that ran a new function costs one more call to the model. The call goes to the coding model.
+- `bots/<name>/last_profile.json` contains the new prompt `skill_review`, also while skill learning is off.
+
+### Known limitations
+
+- Skills are found by keywords. A skill with a poor description may not be listed with its full description.
+- A skill that keeps failing is not switched off automatically yet. Use `!disableSkill`.
+- The review relies on the model's judgement. It can save a skill that is less general than it looks.
+- Two skill names that differ only in upper and lower case are refused, because they would be the same file on Windows.
+
 ## [0.1.4.3] - 2026-09-27
 
 Persistence release. The bot can keep memory and places per Minecraft world, and it no longer restarts an old goal without being asked. World memory is behind a feature flag and is off by default.
