@@ -177,6 +177,14 @@ export function getNearestBlock(bot, block_type, distance=16) {
 
 
 export function getNearbyEntities(bot, maxDistance=16) {
+    /**
+     * Get a list of all entities within the given distance, sorted from nearest to farthest. The list includes the bot's own entity.
+     * @param {Bot} bot - The bot to get nearby entities for.
+     * @param {number} maxDistance - The maximum distance to search, default 16.
+     * @returns {Entity[]} - The nearby entities, nearest first.
+     * @example
+     * let cows = world.getNearbyEntities(bot, 16).filter(entity => entity.name === 'cow');
+     **/
     let entities = [];
     for (const entity of Object.values(bot.entities)) {
         const distance = entity.position.distanceTo(bot.entity.position);
@@ -192,11 +200,28 @@ export function getNearbyEntities(bot, maxDistance=16) {
 }
 
 export function getNearestEntityWhere(bot, predicate, maxDistance=16) {
+    /**
+     * Get the nearest entity that satisfies the given predicate. The bot itself is never returned.
+     * @param {Bot} bot - The bot to search around.
+     * @param {function} predicate - A function that takes an entity and returns true if it matches.
+     * @param {number} maxDistance - The maximum distance to search, default 16.
+     * @returns {Entity} - The nearest matching entity, or null if there is none.
+     * @example
+     * let zombie = world.getNearestEntityWhere(bot, entity => entity.name === 'zombie', 16);
+     **/
     return bot.nearestEntity(entity => predicate(entity) && bot.entity.position.distanceTo(entity.position) < maxDistance);
 }
 
 
 export function getNearbyPlayers(bot, maxDistance) {
+    /**
+     * Get a list of the other players within the given distance, sorted from nearest to farthest. The bot itself is not included.
+     * @param {Bot} bot - The bot to get nearby players for.
+     * @param {number} maxDistance - The maximum distance to search, default 16.
+     * @returns {Entity[]} - The player entities, nearest first.
+     * @example
+     * let players = world.getNearbyPlayers(bot, 32);
+     **/
     if (maxDistance == null) maxDistance = 16;
     let players = [];
     for (const entity of Object.values(bot.entities)) {
@@ -216,6 +241,14 @@ export function getNearbyPlayers(bot, maxDistance) {
 
 // Helper function to get villager profession from metadata
 export function getVillagerProfession(entity) {
+    /**
+     * Get the profession of a villager entity from its metadata.
+     * @param {Entity} entity - The villager entity.
+     * @returns {string} - The profession, usually with its level, for example 'Farmer L2'. 'Adult' or 'Unknown' if the profession cannot be determined.
+     * @example
+     * let villager = world.getNearestEntityWhere(bot, entity => entity.name === 'villager', 16);
+     * if (villager) skills.log(bot, world.getVillagerProfession(villager));
+     **/
     // Villager profession mapping based on metadata
     const professions = {
         0: 'Unemployed',
@@ -404,6 +437,16 @@ export async function isClearPath(bot, target) {
 }
 
 export function shouldPlaceTorch(bot) {
+    /**
+     * Check if the bot should place a torch where it stands: torch_placing mode is on, the bot is not interrupted, there is no torch or wall torch within 6 blocks, the bot has a torch, and the block at the bot's position is air.
+     * @param {Bot} bot - The bot to check for.
+     * @returns {boolean} - True if a torch should be placed, otherwise a falsy value (false or null).
+     * @example
+     * if (world.shouldPlaceTorch(bot)) {
+     *     let pos = world.getPosition(bot);
+     *     await skills.placeBlock(bot, 'torch', pos.x, pos.y, pos.z);
+     * }
+     **/
     if (!bot.modes.isOn('torch_placing') || bot.interrupt_code) return false;
     const pos = getPosition(bot);
     // TODO: check light level instead of nearby torches, block.light is broken

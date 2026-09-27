@@ -8,6 +8,14 @@ const blockPlaceDelay = settings.block_place_delay == null ? 0 : settings.block_
 const useDelay = blockPlaceDelay > 0;
 
 export function log(bot, message) {
+    /**
+     * Add a message to the bot's action output, which is reported back when the action finishes. Very long output is shortened.
+     * @param {MinecraftBot} bot, reference to the minecraft bot.
+     * @param {string} message, the message to log.
+     * @returns {void}
+     * @example
+     * skills.log(bot, "Collected 10 oak logs.");
+     **/
     bot.output += message + '\n';
 }
 
@@ -1737,15 +1745,15 @@ async function findAndGoToVillager(bot, id) {
     return entity;
 }
 
-/**
- * Show available trades for a specified villager
- * @param {MinecraftBot} bot - reference to the minecraft bot
- * @param {number} id - the entity id of the villager to show trades for
- * @returns {Promise<boolean>} true if trades were shown successfully, false otherwise
- * @example
- * await skills.showVillagerTrades(bot, "123");
- */
 export async function showVillagerTrades(bot, id) {
+    /**
+     * Go to the villager with the given entity id and log its available trades, numbered from 1. If there is no entity with that id, the ids of nearby villagers are logged instead.
+     * @param {MinecraftBot} bot, reference to the minecraft bot.
+     * @param {number} id, the entity id of the villager.
+     * @returns {Promise<boolean>} true if the trades were shown, false otherwise.
+     * @example
+     * await skills.showVillagerTrades(bot, 123);
+     **/
     const villagerEntity = await findAndGoToVillager(bot, id);
     if (!villagerEntity) {
         return false;
@@ -1776,17 +1784,17 @@ export async function showVillagerTrades(bot, id) {
     }
 }
 
-/**
- * Trade with a specified villager
- * @param {MinecraftBot} bot - reference to the minecraft bot
- * @param {number} id - the entity id of the villager to trade with
- * @param {number} index - the index (1-based) of the trade to execute
- * @param {number} count - how many times to execute the trade (optional)
- * @returns {Promise<boolean>} true if trade was successful, false otherwise
- * @example
- * await skills.tradeWithVillager(bot, "123", "1", "2");
- */
 export async function tradeWithVillager(bot, id, index, count) {
+    /**
+     * Go to the villager with the given entity id and execute one of its trades. Use skills.showVillagerTrades first to see the trade numbers.
+     * @param {MinecraftBot} bot, reference to the minecraft bot.
+     * @param {number} id, the entity id of the villager.
+     * @param {number} index, the number of the trade to execute, starting at 1.
+     * @param {number} count, how many times to execute the trade. It is reduced to the uses the trade has left, and the bot must have the items for all of them.
+     * @returns {Promise<boolean>} true if the trade was executed, false otherwise.
+     * @example
+     * await skills.tradeWithVillager(bot, 123, 1, 2);
+     **/
     const villagerEntity = await findAndGoToVillager(bot, id);
     if (!villagerEntity) {
         return false;
