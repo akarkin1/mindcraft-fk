@@ -6,6 +6,43 @@ This fork is based on [Mindcraft](https://github.com/mindcraft-bots/mindcraft) `
 
 Each release lists new settings and feature flags with their default value.
 
+## [0.1.4.3] - 2026-09-27
+
+Persistence release. The bot can keep memory and places per Minecraft world, and it no longer restarts an old goal without being asked. World memory is behind a feature flag and is off by default.
+
+### Added
+
+- **World memory**, setting `world_memory`, default `false`. When it is on:
+  - The bot recognises the world it joins by the hashed seed that the server sends at login. No configuration is needed.
+  - Conversation memory, the current goal and saved places are kept per world in `bots/<name>/worlds/<world key>/`.
+  - Places are written to disk on every change. They survive a restart.
+  - Every place is stored with its dimension. `!goToRememberedPlace` refuses a place in another dimension and says why.
+  - The bot's stats show the world and the dimension. When the bot enters another world it gets a note with the world's name, its last visit and its saved places.
+  - On the first start with the flag on, the existing `bots/<name>/memory.json` is copied into the first world the bot joins. The original file is not changed.
+- Setting `world_id`, default empty. A name set here replaces the automatic world key. Use it for two worlds that were created from the same seed.
+- Commands `!forgetPlace` and `!nameWorld`. They are hidden while `world_memory` is off.
+- Setting `resume_goal` with the values `always`, `after_crash` and `never`. The default in code is `always`, which is the behaviour of earlier releases. The fork's `settings.js` sets `after_crash`: a goal continues after a crash, but not when you start the bot yourself.
+- Setting `goal_resume_limit`, default `0`, which means no limit. The fork's `settings.js` sets `3`: a goal that was resumed three times within 15 minutes is stopped and the bot says so in chat.
+- Reset tool: `npm run bot:reset -- <name>` with `--memory`, `--places`, `--skills`, `--all`, `--world <key or label>` and `--dry-run`. It moves the selected data to `bots/_archive/`. It never deletes anything.
+- End-to-end tests against a simulated Minecraft 1.21.8 server: `npm run test:e2e`.
+
+### Changed
+
+- Starting the bot with `load_memory: false` no longer overwrites the old `memory.json`. The file is moved to `bots/_archive/` first.
+- The bot's folder is created only after its name has been checked. An invalid name no longer leaves an empty folder behind.
+- Automatic restarts pass a new argument to the agent process, so the agent can tell a crash restart from a normal start.
+
+### Fixed
+
+- Temporary files that were left behind when the process was killed while writing `memory.json` are removed at the next start.
+- The place of death is stored with its dimension.
+
+### Known limitations
+
+- Two worlds created from the same seed get the same key and share their memory. The bot warns when it notices a different world name or a lower world age. Set `world_id` to separate them.
+- The bot cannot travel between dimensions by itself.
+- A server that hides the seed gets a key derived from the server description, with a warning.
+
 ## [0.1.4.2] - 2026-09-27
 
 Foundation release. It fixes problems that were found while preparing persistent memory and the skill library. It adds no learning feature yet.
