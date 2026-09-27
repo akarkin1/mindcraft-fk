@@ -20,11 +20,20 @@ Environment variable the bot reads the key from. Default: ANTHROPIC_API_KEY.
 .PARAMETER NodeVersion
 Node version to select when fnm is installed. Default: 20.
 
+.PARAMETER Log
+Also write everything the bot prints to a log file.
+
+.PARAMETER LogDir
+Folder for the log files. Default: Mindcraft\logs in the local application data folder.
+
 .EXAMPLE
 .\scripts\start-bot.ps1 -SecretName MyAnthropicKey
 
 .EXAMPLE
 .\scripts\start-bot.ps1 -SecretName MyAnthropicKey -Vault MyVault --profiles ./profiles/claude.json
+
+.EXAMPLE
+.\scripts\start-bot.ps1 -SecretName MyAnthropicKey -Log
 #>
 
 #Requires -Modules Microsoft.PowerShell.SecretManagement
@@ -34,6 +43,8 @@ param(
     [string] $Vault,
     [string] $KeyName = 'ANTHROPIC_API_KEY',
     [string] $NodeVersion = '20',
+    [switch] $Log,
+    [string] $LogDir = (Join-Path $env:LOCALAPPDATA 'Mindcraft\logs'),
     [Parameter(ValueFromRemainingArguments)] [string[]] $BotArgs = @()
 )
 $ErrorActionPreference = 'Stop'
@@ -49,7 +60,15 @@ if (Get-Command fnm -ErrorAction SilentlyContinue) {
 Push-Location (Split-Path $PSScriptRoot -Parent)
 try {
     Set-Item "Env:$KeyName" (Get-Secret @query)
-    node main.js @BotArgs
+    if ($Log) {
+        New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
+        $logFile = Join-Path $LogDir ("mindcraft-{0:yyyyMMdd-HHmmss}.log" -f (Get-Date))
+        Write-Host "Session log: $logFile"
+        node main.js @BotArgs 2>&1 | ForEach-Object { "$_" } | Tee-Object -FilePath $logFile
+    }
+    else {
+        node main.js @BotArgs
+    }
 }
 finally {
     Remove-Item "Env:$KeyName" -ErrorAction SilentlyContinue
