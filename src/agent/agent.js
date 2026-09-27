@@ -17,9 +17,13 @@ import settings from './settings.js';
 import { Task } from './tasks/tasks.js';
 import { speak } from './speak.js';
 import { log, validateNameFormat, handleDisconnection } from './connection_handler.js';
-import { initSandbox } from './library/lockdown.js';
+import { initSandbox, makeCompartment } from './library/lockdown.js';
 import { WorldMemory } from './world/world_memory.js';
 import { shouldResumeGoal, ResumeGuard } from './world/resume_policy.js';
+import { SkillManager, skillFlags } from './skills/skill_manager.js';
+import * as skills from './library/skills.js';
+import * as world from './library/world.js';
+import { Vec3 } from 'vec3';
 
 export class Agent {
     async start(load_mem=false, init_message=null, count_id=0, is_restart=false) {
@@ -58,6 +62,26 @@ export class Agent {
         else
             this.history = new History(this);
         this.coder = new Coder(this);
+        const skill_flags = skillFlags(settings);
+        if (skill_flags.capture || skill_flags.reuse || skill_flags.command) {
+            try {
+                initSandbox(settings); // saved skills are compiled in the sandbox
+                this.skill_manager = new SkillManager({
+                    name: this.name,
+                    settings,
+                    prompter: this.prompter,
+                    makeCompartment,
+                    endowments: { skills, world, Vec3, log: skills.log },
+                    getInventoryCounts: world.getInventoryCounts,
+                    builtinNames: Object.keys(skills).concat(Object.keys(world)),
+                    reviewTemplate: this.prompter.profile.skill_review,
+                });
+                await this.skill_manager.init();
+            } catch (error) {
+                this.skill_manager = undefined;
+                console.warn('Could not start skill learning:', error);
+            }
+        }
         this.npc = new NPCContoller(this);
         this.memory_bank = new MemoryBank();
         this.self_prompter = new SelfPrompter(this);
@@ -84,6 +108,12 @@ export class Agent {
         this.blocked_actions = settings.blocked_actions.concat(this.task.blocked_actions || []);
         if (!settings.world_memory)
             this.blocked_actions.push('!forgetPlace', '!nameWorld');
+        // the skill commands need a running skill manager
+        const skill_commands = this.skill_manager ? this.skill_manager.flags : {};
+        if (!skill_commands.capture && !skill_commands.reuse)
+            this.blocked_actions.push('!skills', '!forgetSkill', '!disableSkill', '!enableSkill');
+        if (!skill_commands.command)
+            this.blocked_actions.push('!useSkill');
         blacklistCommands(this.blocked_actions);
 
         console.log(this.name, 'logging into minecraft...');

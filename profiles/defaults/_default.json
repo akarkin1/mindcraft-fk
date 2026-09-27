@@ -11,6 +11,8 @@
 
     "image_analysis": "You are a Minecraft bot named $NAME that has been given a screenshot of your current view. Analyze and summarize the view; describe terrain, blocks, entities, structures, and notable features. Focus on details relevant to the conversation. Note: the sky is always blue regardless of weather or time, dropped items are small pink cubes, and blocks below y=0 do not render. Be extremely concise and correct, respond only with your analysis, not conversationally. $STATS",
 
+    "skill_review": "You are reviewing code that the Minecraft bot $NAME wrote and ran. Decide whether it should be saved as a reusable skill.\nTASK: $TASK\nCODE:\n$CODE\nOUTPUT OF THE RUN:\n$OUTPUT\nCHANGE OF THE BOT: $STATE_CHANGE\nSKILLS SAVED SO FAR: $SKILL_LIST\nAnswer with one JSON object and nothing else. Keys: \"achieved\": true only if the output and the change show that the task was done. \"reusable\": true only if the function is general, which means it has parameters for what varies, does not depend on coordinates of this world, and is more than a call of one existing function. \"description\": one sentence that says what the function does, written for someone who decides later whether to call it. \"reason\": one short sentence.",
+
     "speak_model": "openai/tts-1/echo",
     
     "modes": {

@@ -960,3 +960,199 @@ describe('call sites (source inspection)', () => {
         assert.doesNotMatch(body, /(^|[^\w.$])lockdown\s*\(/, 'no direct lockdown() call left');
     });
 });
+
+// v0.1.4.4, Amendment 1, A7: Coder._stageCode put the generated code into the two templates with
+// a replacement STRING, so $&, $', $` and $$ in generated code became other text. The fix uses a
+// replacer function. Active with the skill flags off too.
+//
+// Coder.prototype._stageCode runs with a fake `this` (templates from bots/, a recording
+// _writeFilePromise), the real makeCompartment WITHOUT lockdown and the real skills.log. coder.js
+// is imported with the working directory set to an empty temp directory, like prompter.js in
+// prompter_coding.test.js, so no file of the repository root is read at import.
+let coderPromise = null;
+const loadCoder = () => {
+    coderPromise ??= (async () => {
+        const originalCwd = process.cwd();
+        const emptyDir = makeTmpDir();
+        const cap = captureConsole();
+        process.chdir(emptyDir);
+        try {
+            return await loadSrc('src/agent/coder.js');
+        } finally {
+            process.chdir(originalCwd);
+            cap.restore();
+            removeTmpDir(emptyDir);
+        }
+    })();
+    return coderPromise;
+};
+const EXEC_TEMPLATE = fs.readFileSync(repoPath('bots/execTemplate.js'), 'utf8');
+const LINT_TEMPLATE = fs.readFileSync(repoPath('bots/lintTemplate.js'), 'utf8');
+
+describe('v0.1.4.4 A7: Coder._stageCode inserts generated code literally', () => {
+    const DOLLARS = "$& $' $` $$ $1 $<x>";
+    const CODE = `const price = 5;\nlog(bot, 'Price: $' + price + " ${DOLLARS}");`;
+    // What _stageCode makes of CODE: interrupt check after ';\n', every line indented by 4 spaces.
+    const BODY = '    const price = 5; if(bot.interrupt_code) {log(bot, "Code interrupted.");return;}\n'
+        + `    log(bot, 'Price: $' + price + " ${DOLLARS}");\n`;
+    const fill = (template) => {
+        const [head, tail] = template.split('/* CODE HERE */');
+        return head + BODY + tail;
+    };
+
+    async function stage(code, skill_manager) {
+        const { Coder } = await loadCoder();
+        const written = [];
+        const fake = {
+            agent: { skill_manager },
+            code_template: EXEC_TEMPLATE,
+            code_lint_template: LINT_TEMPLATE,
+            file_counter: 0,
+            fp: '/bots/andy/action-code/',
+            _sanitizeCode: Coder.prototype._sanitizeCode,
+            async _writeFilePromise(filename, src) {
+                written.push({ filename, src });
+            },
+        };
+        const cap = captureConsole();
+        try {
+            const staged = await Coder.prototype._stageCode.call(fake, code);
+            return { staged, written };
+        } finally {
+            cap.restore();
+        }
+    }
+
+    test('precondition: both templates have the marker once', () => {
+        for (const template of [EXEC_TEMPLATE, LINT_TEMPLATE]) assert.equal(template.split('/* CODE HERE */').length, 2);
+    });
+
+    test("$&, $', $`, $$, $1 and $<x> arrive unchanged in the staged file and in the lint copy", async () => {
+        const { staged, written } = await stage(CODE, undefined);
+        assert.ok(staged, 'staged');
+        assert.equal(written.length, 1);
+        assert.equal(written[0].src, fill(EXEC_TEMPLATE));
+        assert.equal(staged.src_lint_copy, fill(LINT_TEMPLATE));
+    });
+
+    test('the staged function runs and logs the text with the $ sequences', async () => {
+        const { staged } = await stage(CODE, undefined);
+        const bot = { output: '', interrupt_code: false };
+        await staged.func.main(bot);
+        assert.equal(bot.output, `Price: $5 ${DOLLARS}\nCode finished.\n`);
+    });
+
+    test('also with a skill manager and reuse: the lint copy starts with /* global customSkills */', async () => {
+        const manager = { flags: { capture: true, reuse: true, command: false }, customSkills: Object.freeze({}) };
+        const { staged, written } = await stage(CODE, manager);
+        assert.equal(written[0].src, fill(EXEC_TEMPLATE));
+        assert.equal(staged.src_lint_copy, '/* global customSkills */\n' + fill(LINT_TEMPLATE));
+    });
+
+    test('source: both templates are filled with a replacer function', () => {
+        const src = fs.readFileSync(repoPath('src/agent/coder.js'), 'utf8');
+        assert.equal((src.match(/\.replace\('\/\* CODE HERE \*\/', \(\) => src\)/g) ?? []).length, 2);
+        assert.doesNotMatch(src, /\.replace\('\/\* CODE HERE \*\/', src\)/);
+    });
+});
+
+// v0.1.4.4, Amendment 2, B4: when generated code cannot be prepared for the sandbox (_stageCode
+// throws), generateCode tells the model and tries again, like after a lint error, instead of
+// rejecting after one attempt. Active with the skill flags off (no manager here).
+//
+// Coder.prototype.generateCode runs with a fake `this`: a fake prompter with canned replies, the
+// real _stageCode and _sanitizeCode (the real makeCompartment WITHOUT lockdown), _lintCode that
+// finds nothing, and a recording _writeFilePromise. The agent settings of this process are empty,
+// so initSandbox(settings) inside generateCode does not lock the process down.
+describe('v0.1.4.4 B4: generateCode gives staging errors back to the model', () => {
+    const GOOD = '```js\nlog(bot, "done");\n```';
+    const FEEDBACK_START = 'Error: Code could not be prepared for execution:\n';
+    const FEEDBACK_END = '\nPlease try again.';
+    const isFeedback = (m) => m.role === 'system' && m.content.startsWith(FEEDBACK_START) && m.content.endsWith(FEEDBACK_END);
+
+    async function generate(replies) {
+        const { Coder } = await loadCoder();
+        const agentSettings = (await loadSrc('src/agent/settings.js')).default;
+        assert.ok(!agentSettings.allow_insecure_coding, 'precondition: initSandbox will not lock down this process');
+        const prompts = [];
+        const bot = { output: '', interrupt_code: false, modes: { pause() {} } };
+        const fake = {
+            agent: {
+                bot,
+                skill_manager: undefined,
+                prompter: {
+                    async promptCoding(messages) {
+                        prompts.push(messages);
+                        return replies[Math.min(prompts.length - 1, replies.length - 1)];
+                    },
+                },
+                actions: { getBotOutputSummary: () => bot.output },
+            },
+            code_template: EXEC_TEMPLATE,
+            code_lint_template: LINT_TEMPLATE,
+            file_counter: 0,
+            fp: '/bots/andy/action-code/',
+            last_run: null,
+            _sanitizeCode: Coder.prototype._sanitizeCode,
+            _stageCode: Coder.prototype._stageCode,
+            async _lintCode() {
+                return null;
+            },
+            async _writeFilePromise() {},
+        };
+        const history = { getHistory: () => [{ role: 'user', content: 'steve: say done' }] };
+        const cap = captureConsole();
+        try {
+            const result = await Coder.prototype.generateCode.call(fake, history);
+            return { result, prompts, warnings: cap.of('warn').map((r) => r.text), bot };
+        } finally {
+            cap.restore();
+        }
+    }
+
+    const BAD = [
+        ['a syntax error', '```js\nconst x = (;\n```', /SyntaxError/],
+        ['a direct eval', '```js\neval("1");\n```', /eval/i],
+        ['an import expression', '```js\nconst m = await import("fs");\n```', /import/i],
+        ['an HTML comment', '```js\nlog(bot, "x"); <!-- hidden\n```', /comment/i],
+    ];
+    for (const [label, reply, errorText] of BAD) {
+        test(`${label}, then good code: success after two model calls; the second call has the feedback`, async () => {
+            let run;
+            await assert.doesNotReject(async () => {
+                run = await generate([reply, GOOD]);
+            });
+            assert.equal(run.prompts.length, 2);
+            assert.ok(run.result.startsWith('Agent wrote this code: \n```'), run.result);
+            assert.ok(run.result.includes('done'), run.result);
+            assert.ok(!run.prompts[0].some(isFeedback), 'no feedback before the first attempt');
+            const feedback = run.prompts[1].filter(isFeedback);
+            assert.equal(feedback.length, 1, JSON.stringify(run.prompts[1]));
+            assert.equal(run.prompts[1][run.prompts[1].length - 1], feedback[0], 'the feedback is the last message');
+            assert.match(feedback[0].content, errorText);
+            assert.ok(run.warnings.length >= 1, 'a warning is logged');
+        });
+    }
+
+    test('five bad attempts: the text for a failed generation after five model calls, no rejection', async () => {
+        let run;
+        await assert.doesNotReject(async () => {
+            run = await generate([BAD[0][1]]);
+        });
+        assert.equal(run.result, 'Code generation failed after 5 attempts.');
+        assert.equal(run.prompts.length, 5);
+        assert.deepEqual(run.prompts.map((messages) => messages.filter(isFeedback).length), [0, 1, 2, 3, 4]);
+    });
+
+    test('good code at once: one model call, no feedback (unchanged behaviour)', async () => {
+        const run = await generate([GOOD]);
+        assert.equal(run.prompts.length, 1);
+        assert.equal(run.result, 'Agent wrote this code: \n```\nlog(bot, "done");```\nCode Output:\ndone\nCode finished.\n');
+    });
+
+    test('source: the try/catch goes around the call of _stageCode only', () => {
+        const src = fs.readFileSync(repoPath('src/agent/coder.js'), 'utf8');
+        const body = src.slice(src.search(/async generateCode\s*\(/), src.search(/async\s+_lintCode\s*\(/));
+        assert.match(body, /try \{\s*\r?\n\s*result = await this\._stageCode\(code\);\s*\r?\n\s*\} catch/);
+    });
+});

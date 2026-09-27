@@ -107,3 +107,31 @@ describe('settings_spec.json: persistence settings of v0.1.4.3', () => {
         for (const [key] of NEW_ENTRIES) assert.equal(KNOWN_SPEC_GAPS.includes(key), false, key);
     });
 });
+
+// Spec v0.1.4.4, section "Settings": the four skill settings get an entry with type,
+// description and the default in code (not the fork's value).
+describe('settings_spec.json: skill settings of v0.1.4.4', () => {
+    const SKILL_ENTRIES = [
+        ['skill_learning', 'boolean', false],
+        ['skill_capture', 'boolean', true],
+        ['skill_reuse', 'boolean', true],
+        ['skill_command', 'boolean', false],
+    ];
+    for (const [key, type, codeDefault] of SKILL_ENTRIES) {
+        test(`${key}: type "${type}", default ${JSON.stringify(codeDefault)}, a non-empty description`, () => {
+            const entry = spec[key];
+            assert.ok(entry, `entry ${key} exists`);
+            assert.equal(entry.type, type);
+            assert.strictEqual(entry.default, codeDefault);
+            assert.equal(typeof entry.description, 'string');
+            assert.ok(entry.description.trim().length > 0);
+        });
+    }
+
+    test('none of the four keys is in the list of known gaps, and settings.js has all four', () => {
+        for (const [key] of SKILL_ENTRIES) {
+            assert.equal(KNOWN_SPEC_GAPS.includes(key), false, key);
+            assert.ok(key in settings, `settings.js has ${key}`);
+        }
+    });
+});

@@ -233,6 +233,20 @@ export const queryList = [
         }
     }, 
     {
+        name: '!skills',
+        description: 'List your saved skills.',
+        perform: function (agent) {
+            if (!agent.skill_manager)
+                return 'Skill learning is off.';
+            try {
+                return agent.skill_manager.listText();
+            } catch (error) {
+                console.warn('Could not list the saved skills:', error);
+                return 'Could not list the saved skills.';
+            }
+        }
+    },
+    {
         name: '!checkBlueprintLevel',
         description: 'Check if the level is complete and what blocks still need to be placed for the blueprint',
         params: {

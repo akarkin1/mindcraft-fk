@@ -147,6 +147,26 @@
         "description": "Whether to run the SES lockdown that isolates code written by the LLM from the host process when allow_insecure_coding is on. Set false only if a library breaks.",
         "default": true
     },
+    "skill_learning": {
+        "type": "boolean",
+        "description": "Whether to save code that worked as named skills in bots/<name>/skills, so later code can call them as customSkills.<name>. Needs allow_insecure_coding. Off keeps the behaviour without skills",
+        "default": false
+    },
+    "skill_capture": {
+        "type": "boolean",
+        "description": "With skill_learning on: whether to review code that worked and save it as a skill when it is general",
+        "default": true
+    },
+    "skill_reuse": {
+        "type": "boolean",
+        "description": "With skill_learning on: whether to show the saved skills to the model and let its code call them",
+        "default": true
+    },
+    "skill_command": {
+        "type": "boolean",
+        "description": "With skill_learning and skill_reuse on: whether to offer the !useSkill command that runs a saved skill directly",
+        "default": false
+    },
     "code_timeout_mins": {
         "type": "number",
         "description": "Number of minutes to allow code execution. -1 for no timeout",
