@@ -1,16 +1,19 @@
-import { writeFileSync, readFileSync, mkdirSync, existsSync } from 'fs';
+import { writeFileSync, readFileSync, mkdirSync } from 'fs';
 import { NPCData } from './npc/data.js';
 import settings from './settings.js';
+import { writeJsonAtomic, readJsonSafe } from '../utils/safe_json.js';
+import { isModelErrorResponse } from '../utils/model_errors.js';
 
 
 export class History {
-    constructor(agent) {
+    constructor(agent, options = {}) {
         this.agent = agent;
         this.name = agent.name;
-        this.memory_fp = `./bots/${this.name}/memory.json`;
+        this.bots_dir = options?.bots_dir ?? './bots';
+        this.memory_fp = `${this.bots_dir}/${this.name}/memory.json`;
         this.full_history_fp = undefined;
 
-        mkdirSync(`./bots/${this.name}/histories`, { recursive: true });
+        mkdirSync(`${this.bots_dir}/${this.name}/histories`, { recursive: true });
 
         this.turns = [];
 
@@ -32,7 +35,18 @@ export class History {
 
     async summarizeMemories(turns) {
         console.log("Storing memories...");
-        this.memory = await this.agent.prompter.promptMemSaving(turns);
+        let summary;
+        try {
+            summary = await this.agent.prompter.promptMemSaving(turns);
+        } catch (error) {
+            console.warn('Memory summary failed, keeping the previous memory:', error);
+            return false;
+        }
+        if (isModelErrorResponse(summary)) {
+            console.warn('Memory summary failed, keeping the previous memory. Model returned:', summary);
+            return false;
+        }
+        this.memory = summary;
 
         if (this.memory.length > 500) {
             this.memory = this.memory.slice(0, 500);
@@ -40,12 +54,13 @@ export class History {
         }
 
         console.log("Memory updated to: ", this.memory);
+        return true;
     }
 
     async appendFullHistory(to_store) {
         if (this.full_history_fp === undefined) {
             const string_timestamp = new Date().toLocaleString().replace(/[/:]/g, '-').replace(/ /g, '').replace(/,/g, '_');
-            this.full_history_fp = `./bots/${this.name}/histories/${string_timestamp}.json`;
+            this.full_history_fp = `${this.bots_dir}/${this.name}/histories/${string_timestamp}.json`;
             writeFileSync(this.full_history_fp, '[]', 'utf8');
         }
         try {
@@ -74,8 +89,19 @@ export class History {
             while (this.turns.length > 0 && this.turns[0].role === 'assistant')
                 chunk.push(this.turns.shift()); // remove until turns starts with system/user message
 
-            await this.summarizeMemories(chunk);
-            await this.appendFullHistory(chunk);
+            const summarized = await this.summarizeMemories(chunk);
+            if (summarized) {
+                await this.appendFullHistory(chunk);
+            }
+            else if (this.turns.length + chunk.length < 2 * this.max_messages) {
+                // summary failed: put the chunk back in front, the next add tries again
+                this.turns.unshift(...chunk);
+            }
+            else {
+                // summary keeps failing: drop the chunk from context to bound the growth
+                console.warn(`Memory summary failed and history reached ${2 * this.max_messages} turns, dropping ${chunk.length} turns from context without a summary.`);
+                await this.appendFullHistory(chunk);
+            }
         }
     }
 
@@ -89,28 +115,41 @@ export class History {
                 taskStart: this.agent.task.taskStartTime,
                 last_sender: this.agent.last_sender
             };
-            writeFileSync(this.memory_fp, JSON.stringify(data, null, 2));
+            writeJsonAtomic(this.memory_fp, data, { indent: 2 });
             console.log('Saved memory to:', this.memory_fp);
+            return true;
         } catch (error) {
             console.error('Failed to save history:', error);
-            throw error;
+            return false;
         }
     }
 
     load() {
         try {
-            if (!existsSync(this.memory_fp)) {
+            const result = readJsonSafe(this.memory_fp, { expect: 'object' });
+            if (result.status === 'missing') {
                 console.log('No memory file found.');
                 return null;
             }
-            const data = JSON.parse(readFileSync(this.memory_fp, 'utf8'));
-            this.memory = data.memory || '';
-            this.turns = data.turns || [];
+            if (result.status !== 'ok') {
+                let warning = `Failed to load history from ${this.memory_fp} (${result.status}: ${result.error?.message}).`;
+                if (result.quarantinedTo)
+                    warning += ` Corrupt file moved to ${result.quarantinedTo}.`;
+                console.warn(warning + ' Starting with empty memory.');
+                this.memory = '';
+                this.turns = [];
+                return null;
+            }
+            const data = result.data;
+            this.memory = typeof data.memory === 'string' ? data.memory : '';
+            this.turns = Array.isArray(data.turns) ? data.turns : [];
             console.log('Loaded memory:', this.memory);
             return data;
         } catch (error) {
             console.error('Failed to load history:', error);
-            throw error;
+            this.memory = '';
+            this.turns = [];
+            return null;
         }
     }
 
