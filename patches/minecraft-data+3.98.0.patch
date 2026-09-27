@@ -1,0 +1,44 @@
+diff --git a/node_modules/minecraft-data/minecraft-data/data/pc/1.21.6/protocol.json b/node_modules/minecraft-data/minecraft-data/data/pc/1.21.6/protocol.json
+index f80b696..c6d4101 100644
+--- a/node_modules/minecraft-data/minecraft-data/data/pc/1.21.6/protocol.json
++++ b/node_modules/minecraft-data/minecraft-data/data/pc/1.21.6/protocol.json
+@@ -8987,7 +8987,7 @@
+             },
+             {
+               "name": "checksum",
+-              "type": "i8"
++              "type": "u8"
+             }
+           ]
+         ],
+@@ -9033,7 +9033,7 @@
+             },
+             {
+               "name": "checksum",
+-              "type": "i8"
++              "type": "u8"
+             }
+           ]
+         ],
+diff --git a/node_modules/minecraft-data/minecraft-data/data/pc/1.21.8/protocol.json b/node_modules/minecraft-data/minecraft-data/data/pc/1.21.8/protocol.json
+index f80b696..c6d4101 100644
+--- a/node_modules/minecraft-data/minecraft-data/data/pc/1.21.8/protocol.json
++++ b/node_modules/minecraft-data/minecraft-data/data/pc/1.21.8/protocol.json
+@@ -8987,7 +8987,7 @@
+             },
+             {
+               "name": "checksum",
+-              "type": "i8"
++              "type": "u8"
+             }
+           ]
+         ],
+@@ -9033,7 +9033,7 @@
+             },
+             {
+               "name": "checksum",
+-              "type": "i8"
++              "type": "u8"
+             }
+           ]
+         ],
