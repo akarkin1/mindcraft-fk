@@ -1,6 +1,19 @@
 import { cosineSimilarity } from '../../utils/math.js';
 import { getSkillDocs } from './index.js';
-import { wordOverlapScore } from '../../utils/text.js';
+import { rankByKeywords } from '../../utils/keyword_rank.js';
+
+// Text used to rank a doc by keywords: the lines of the doc up to the first @param, @returns or @example line.
+export function docSearchText(doc) {
+    if (typeof doc !== 'string')
+        return '';
+    const lines = [];
+    for (const line of doc.split(/\r?\n/)) {
+        if (line.includes('@param') || line.includes('@returns') || line.includes('@return') || line.includes('@example'))
+            break;
+        lines.push(line);
+    }
+    return lines.join(' ');
+}
 
 export class SkillLibrary {
     constructor(agent,embedding_model) {
@@ -10,26 +23,29 @@ export class SkillLibrary {
         this.skill_docs = null;
         this.always_show_skills = ['skills.placeBlock', 'skills.wait', 'skills.breakBlockAt']
     }
-    async initSkillLibrary() {
-        const skillDocs = getSkillDocs();
-        this.skill_docs = skillDocs;
+    async initSkillLibrary(docs = getSkillDocs()) {
+        this.skill_docs = docs;
         if (this.embedding_model) {
             try {
-                const embeddingPromises = skillDocs.map((doc) => {
-                    return (async () => {
-                        let func_name_desc = doc.split('\n').slice(0, 2).join('');
-                        this.skill_docs_embeddings[doc] = await this.embedding_model.embed(func_name_desc);
-                    })();
+                // collect all embeddings first, so a failure cannot leave a partial set behind
+                const embeddings = await Promise.all(docs.map((doc) => {
+                    let func_name_desc = doc.split('\n').slice(0, 2).join('');
+                    return this.embedding_model.embed(func_name_desc);
+                }));
+                docs.forEach((doc, i) => {
+                    this.skill_docs_embeddings[doc] = embeddings[i];
                 });
-                await Promise.all(embeddingPromises);
             } catch (error) {
                 console.warn('Error with embedding model, using word-overlap instead.');
                 this.embedding_model = null;
+                this.skill_docs_embeddings = {};
             }
         }
         this.always_show_skills_docs = {};
         for (const skillName of this.always_show_skills) {
-            this.always_show_skills_docs[skillName] = this.skill_docs.find(doc => doc.includes(skillName));
+            this.always_show_skills_docs[skillName] =
+                this.skill_docs.find(doc => doc.split('\n')[0] === skillName) ||
+                this.skill_docs.find(doc => doc.includes(skillName));
         }
     }
 
@@ -40,42 +56,40 @@ export class SkillLibrary {
     async getRelevantSkillDocs(message, select_num) {
         if(!message) // use filler message if none is provided
             message = '(no message)';
-        let skill_doc_similarities = [];
+        const docs = this.skill_docs || [];
+        const hasEmbedding = (doc) =>
+            Object.prototype.hasOwnProperty.call(this.skill_docs_embeddings, doc) && this.skill_docs_embeddings[doc] != null;
+        let ranked_docs = [];
 
         if (select_num === -1) {
-            skill_doc_similarities = Object.keys(this.skill_docs_embeddings)
-            .map(doc_key => ({
-                doc_key,
-                similarity_score: 0
-            }));
+            ranked_docs = docs.slice();
         }
-        else if (!this.embedding_model) {
-            skill_doc_similarities = Object.keys(this.skill_docs_embeddings)
-                .map(doc_key => ({
-                    doc_key,
-                    similarity_score: wordOverlapScore(message, this.skill_docs_embeddings[doc_key])
-                }))
-                .sort((a, b) => b.similarity_score - a.similarity_score);
+        else if (select_num === 0) {
+            ranked_docs = [];
+        }
+        else if (!this.embedding_model || !docs.every(hasEmbedding)) {
+            ranked_docs = rankByKeywords(message, docs, docSearchText).map(result => result.item);
         }
         else {
             let latest_message_embedding = await this.embedding_model.embed(message);
-            skill_doc_similarities = Object.keys(this.skill_docs_embeddings)
-            .map(doc_key => ({
-                doc_key,
-                similarity_score: cosineSimilarity(latest_message_embedding, this.skill_docs_embeddings[doc_key])
-            }))
-            .sort((a, b) => b.similarity_score - a.similarity_score);
+            ranked_docs = docs
+                .map(doc => ({
+                    doc,
+                    similarity_score: cosineSimilarity(latest_message_embedding, this.skill_docs_embeddings[doc])
+                }))
+                .sort((a, b) => b.similarity_score - a.similarity_score)
+                .map(result => result.doc);
         }
 
-        let length = skill_doc_similarities.length;
+        let length = ranked_docs.length;
         if (select_num === -1 || select_num > length) {
             select_num = length;
         }
-        // Get initial docs from similarity scores
-        let selected_docs = new Set(skill_doc_similarities.slice(0, select_num).map(doc => doc.doc_key));
+        // Get initial docs from the ranking
+        let selected_docs = new Set(ranked_docs.slice(0, select_num));
         
         // Add always show docs
-        Object.values(this.always_show_skills_docs).forEach(doc => {
+        Object.values(this.always_show_skills_docs || {}).forEach(doc => {
             if (doc) {
                 selected_docs.add(doc);
             }

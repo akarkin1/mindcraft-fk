@@ -55,7 +55,9 @@
         "postinstall": "patch-package",
         "start": "node main.js",
         "reinstall": "npm run clean:modules && npm install",
-        "clean:modules": "node -e \"const fs=require('fs');const p=require('path');['node_modules','package-lock.json'].forEach(f=>{if(fs.existsSync(f)){if(fs.lstatSync(f).isDirectory()){fs.rmSync(f,{recursive:true,force:true});}else{fs.unlinkSync(f);}}});\""
+        "clean:modules": "node -e \"const fs=require('fs');const p=require('path');['node_modules','package-lock.json'].forEach(f=>{if(fs.existsSync(f)){if(fs.lstatSync(f).isDirectory()){fs.rmSync(f,{recursive:true,force:true});}else{fs.unlinkSync(f);}}});\"",
+        "test": "node tests/run.js",
+        "test:coverage": "node tests/run.js --coverage"
     },
     "devDependencies": {
         "@eslint/js": "^9.13.0",
