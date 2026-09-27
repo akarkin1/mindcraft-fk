@@ -82,3 +82,28 @@ describe('.gitattributes (S8)', () => {
         assert.deepEqual(rules, ['*.patch text eol=lf']);
     });
 });
+
+// Spec v0.1.4.3, section "Settings": the four persistence settings get an entry with type,
+// description and default, the default being the default in code (not the fork's value).
+describe('settings_spec.json: persistence settings of v0.1.4.3', () => {
+    const NEW_ENTRIES = [
+        ['world_memory', 'boolean', false],
+        ['world_id', 'string', ''],
+        ['resume_goal', 'string', 'always'],
+        ['goal_resume_limit', 'number', 0],
+    ];
+    for (const [key, type, codeDefault] of NEW_ENTRIES) {
+        test(`${key}: type "${type}", default ${JSON.stringify(codeDefault)}, a non-empty description`, () => {
+            const entry = spec[key];
+            assert.ok(entry, `entry ${key} exists`);
+            assert.equal(entry.type, type);
+            assert.strictEqual(entry.default, codeDefault);
+            assert.equal(typeof entry.description, 'string');
+            assert.ok(entry.description.trim().length > 0);
+        });
+    }
+
+    test('none of the four keys is in the list of known gaps', () => {
+        for (const [key] of NEW_ENTRIES) assert.equal(KNOWN_SPEC_GAPS.includes(key), false, key);
+    });
+});
