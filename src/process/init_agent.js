@@ -35,6 +35,12 @@ const argv = yargs(args)
         type: 'number',
         description: 'port of mindserver'
     })
+    .option('restart', {
+        alias: 'r',
+        type: 'boolean',
+        default: false,
+        description: 'the process was restarted automatically'
+    })
     .argv;
 
 (async () => {
@@ -44,7 +50,7 @@ const argv = yargs(args)
         console.log('Starting agent');
         const agent = new Agent();
         serverProxy.setAgent(agent);
-        await agent.start(argv.load_memory, argv.init_message, argv.count_id);
+        await agent.start(argv.load_memory, argv.init_message, argv.count_id, argv.restart);
     } catch (error) {
         console.error('Failed to start agent process:');
         console.error(error.message);
