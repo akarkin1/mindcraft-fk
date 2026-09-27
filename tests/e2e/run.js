@@ -30,6 +30,14 @@ const SCENARIOS = [
     ['legacy_adoption', 's6_legacy_adoption.js'],
     ['resume_policy', 's7_resume_policy.js'],
     ['reset_tool', 's8_reset_tool.js'],
+    // v0.1.4.4 skills
+    ['skill_capture', 's9_skill_capture.js'],
+    ['skill_reuse', 's10_skill_reuse.js'],
+    ['skill_sandbox', 's11_skill_sandbox.js'],
+    ['skill_prompts_commands', 's12_skill_prompts_commands.js'],
+    ['skill_flags_off', 's13_skill_flags_off.js'],
+    ['skill_agent_start', 's14_skill_agent_start.js'],
+    ['skill_partial_flags', 's15_skill_partial_flags.js'],
 ];
 
 const args = process.argv.slice(2);
