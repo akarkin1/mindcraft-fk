@@ -25,6 +25,7 @@ Persistence release. The bot can keep memory and places per Minecraft world, and
 - Setting `goal_resume_limit`, default `0`, which means no limit. The fork's `settings.js` sets `3`: a goal that was resumed three times within 15 minutes is stopped and the bot says so in chat.
 - Reset tool: `npm run bot:reset -- <name>` with `--memory`, `--places`, `--skills`, `--all`, `--world <key or label>` and `--dry-run`. It moves the selected data to `bots/_archive/`. It never deletes anything.
 - End-to-end tests against a simulated Minecraft 1.21.8 server: `npm run test:e2e`.
+- Launch script `start-claude.ps1` for PowerShell 7. Run it without parameters to start the bot with the claude profile. It reads the API key from the PowerShell secret vault with `Get-Secret`, hands it to the bot as an environment variable and removes it when the bot stops. The key is not written to a file. With `-Log` it also writes everything the bot prints to a log file under `Mindcraft\logs` in the local application data folder. A value for the same key in `keys.json` wins over the environment variable.
 
 ### Changed
 
