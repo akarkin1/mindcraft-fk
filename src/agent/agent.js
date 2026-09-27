@@ -18,17 +18,28 @@ import { Task } from './tasks/tasks.js';
 import { speak } from './speak.js';
 import { log, validateNameFormat, handleDisconnection } from './connection_handler.js';
 import { initSandbox } from './library/lockdown.js';
+import { WorldMemory } from './world/world_memory.js';
+import { shouldResumeGoal, ResumeGuard } from './world/resume_policy.js';
 
 export class Agent {
-    async start(load_mem=false, init_message=null, count_id=0) {
+    async start(load_mem=false, init_message=null, count_id=0, is_restart=false) {
         // lock down the realm before any component or the bot is created
         initSandbox(settings);
         this.last_sender = null;
         this.count_id = count_id;
+        this.is_restart = is_restart;
         this._disconnectHandled = false;
 
         // Initialize components
         this.actions = new ActionManager(this);
+        // check the name before the prompter creates the bot folder
+        const profile_name = typeof settings.profile?.name === 'string' ? settings.profile.name.trim() : '';
+        const profileNameCheck = validateNameFormat(profile_name);
+        if (!profileNameCheck.success) {
+            log(profile_name, profileNameCheck.msg);
+            process.exit(1);
+            return;
+        }
         this.prompter = new Prompter(this, settings.profile);
         this.name = (this.prompter.getName() || '').trim();
         console.log(`Initializing agent ${this.name}...`);
@@ -42,7 +53,10 @@ export class Agent {
             return;
         }
         
-        this.history = new History(this);
+        if (settings.world_memory)
+            this.history = new History(this, { defer_storage: true }); // storage is set when the world is known
+        else
+            this.history = new History(this);
         this.coder = new Coder(this);
         this.npc = new NPCContoller(this);
         this.memory_bank = new MemoryBank();
@@ -51,9 +65,14 @@ export class Agent {
         await this.prompter.initExamples();
 
         // load mem first before doing task
+        // (with world memory it is loaded after the spawn, when the world is known)
         let save_data = null;
-        if (load_mem) {
+        if (load_mem && !settings.world_memory) {
             save_data = this.history.load();
+        }
+        else if (!settings.world_memory) {
+            // keep the previous memory in the archive instead of overwriting it
+            this._archiveMemory();
         }
         let taskStart = null;
         if (save_data) {
@@ -63,10 +82,20 @@ export class Agent {
         }
         this.task = new Task(this, settings.task, taskStart);
         this.blocked_actions = settings.blocked_actions.concat(this.task.blocked_actions || []);
+        if (!settings.world_memory)
+            this.blocked_actions.push('!forgetPlace', '!nameWorld');
         blacklistCommands(this.blocked_actions);
 
         console.log(this.name, 'logging into minecraft...');
         this.bot = initBot(this.name);
+        if (settings.world_memory) {
+            try {
+                this.world_memory = new WorldMemory({ name: this.name, settings, history: this.history, memoryBank: this.memory_bank });
+                this.world_memory.attach(this.bot);
+            } catch (error) {
+                console.warn('Could not start world memory:', error);
+            }
+        }
         
         // Connection Handler
         const onDisconnect = (event, reason) => {
@@ -121,6 +150,9 @@ export class Agent {
                 
                 console.log(`${this.name} spawned.`);
                 this.clearBotLogs();
+                if (settings.world_memory) {
+                    save_data = await this._resolveWorld(load_mem);
+                }
               
                 this._setupEventHandlers(save_data, init_message);
                 this.startEvents();
@@ -145,6 +177,86 @@ export class Agent {
                 process.exit(0);
             }
         });
+    }
+
+    _archiveMemory() {
+        // never throws: on failure the memory file is overwritten as before
+        try {
+            const stamp = new Date().toISOString().replace(/[-:]/g, '').replace('T', '-').slice(0, 15);
+            const archived = this.history.archiveExisting(`./bots/_archive/${this.name}-${stamp}`);
+            if (archived)
+                console.log('Previous memory archived to', archived);
+        } catch (error) {
+            console.warn('Could not archive the previous memory:', error);
+        }
+    }
+
+    async _resolveWorld(load_mem) {
+        // world memory: find out which world this is and load its memory. Never throws.
+        let save_data = null;
+        try {
+            const result = await this.world_memory.resolve({ loadMemory: load_mem, getDimension: () => this.bot.game.dimension });
+            save_data = result.saveData ?? null;
+            if (result.note !== null && result.note !== undefined)
+                await this.history.add('system', result.note);
+        } catch (error) {
+            console.warn('World memory failed:', error);
+            try {
+                if (!this.history.storage_ready) {
+                    // fall back to the memory file of the bot folder, as without world memory
+                    this.history.setStorageDir(`./bots/${this.name}`);
+                    if (load_mem)
+                        save_data = this.history.load();
+                    else
+                        this._archiveMemory();
+                }
+            } catch (fallback_error) {
+                console.warn('Could not use the memory of the bot folder:', fallback_error);
+            }
+        }
+        if (typeof save_data?.taskStart === 'number')
+            this.task.taskStartTime = save_data.taskStart;
+        return save_data;
+    }
+
+    async _resumeGoal(save_data) {
+        // resume policy and restart guard for a goal loaded from memory
+        const goal = save_data.self_prompt;
+        let history_message = null;
+        let chat_message = null;
+        try {
+            if (!shouldResumeGoal(settings.resume_goal, this.is_restart)) {
+                history_message = `Your previous goal was not resumed: "${goal}". Start it again with !goal only if a player asks for it.`;
+            }
+            else {
+                const guard = new ResumeGuard(`./bots/${this.name}/resume_guard.json`, { limit: settings.goal_resume_limit ?? 0 });
+                guard.load();
+                const { allowed, count } = guard.check(goal);
+                if (allowed) {
+                    guard.record(goal);
+                }
+                else {
+                    history_message = `Your goal "${goal}" was stopped because you restarted ${count} times while working on it. Do not start it again by yourself.`;
+                    chat_message = `I stopped my goal "${goal}" because I restarted ${count} times while working on it.`;
+                }
+            }
+        } catch (error) {
+            console.warn('Could not apply the goal resume policy, resuming the goal:', error);
+            history_message = null;
+            chat_message = null;
+        }
+        if (history_message === null) {
+            await this.self_prompter.handleLoad(save_data.self_prompt, save_data.self_prompting_state);
+            return;
+        }
+        console.log(history_message);
+        try {
+            await this.history.add('system', history_message);
+            if (chat_message)
+                await this.openChat(chat_message);
+        } catch (error) {
+            console.warn('Could not report the goal that was not resumed:', error);
+        }
     }
 
     async _setupEventHandlers(save_data, init_message) {
@@ -201,7 +313,7 @@ export class Agent {
             if (init_message) {
                 this.history.add('system', init_message);
             }
-            await this.self_prompter.handleLoad(save_data.self_prompt, save_data.self_prompting_state);
+            await this._resumeGoal(save_data);
         }
         if (save_data?.last_sender) {
             this.last_sender = save_data.last_sender;
@@ -479,7 +591,7 @@ export class Agent {
             if (jsonMsg.translate && jsonMsg.translate.startsWith('death') && message.startsWith(this.name)) {
                 console.log('Agent died: ', message);
                 let death_pos = this.bot.entity.position;
-                this.memory_bank.rememberPlace('last_death_position', death_pos.x, death_pos.y, death_pos.z);
+                this.memory_bank.rememberPlace('last_death_position', death_pos.x, death_pos.y, death_pos.z, this.bot.game.dimension);
                 let death_pos_text = null;
                 if (death_pos) {
                     death_pos_text = `x: ${death_pos.x.toFixed(2)}, y: ${death_pos.y.toFixed(2)}, z: ${death_pos.z.toFixed(2)}`;

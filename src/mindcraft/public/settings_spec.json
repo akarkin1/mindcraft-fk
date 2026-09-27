@@ -36,6 +36,26 @@
         "description": "Whether to load bot's previous memory",
         "default": false
     },
+    "world_memory": {
+        "type": "boolean",
+        "description": "Whether to keep memory and saved places separately for each world the bot joins. Worlds are recognized by their seed. Off keeps one memory per bot",
+        "default": false
+    },
+    "world_id": {
+        "type": "string",
+        "description": "Fixed name for the current world that overrides the automatic world detection when world_memory is on. Empty to detect the world automatically",
+        "default": ""
+    },
+    "resume_goal": {
+        "type": "string",
+        "description": "When to resume a goal loaded from memory: \"always\", \"after_crash\" (only after an automatic restart), or \"never\"",
+        "default": "always"
+    },
+    "goal_resume_limit": {
+        "type": "number",
+        "description": "Stop a loaded goal instead of resuming it when it was already resumed this many times within 15 minutes. 0 for no limit",
+        "default": 0
+    },
     "init_message": {
         "type": "string",
         "description": "The initial message to send to the bot",

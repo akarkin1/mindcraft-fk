@@ -1,8 +1,44 @@
-import { writeFileSync, readFileSync, mkdirSync } from 'fs';
+import { writeFileSync, readFileSync, mkdirSync, readdirSync, statSync, lstatSync, renameSync, unlinkSync } from 'fs';
 import { NPCData } from './npc/data.js';
 import settings from './settings.js';
 import { writeJsonAtomic, readJsonSafe } from '../utils/safe_json.js';
 import { isModelErrorResponse } from '../utils/model_errors.js';
+
+const STALE_TEMP_PATTERN = /^memory\.json\..*\.tmp$/;
+const STALE_TEMP_AGE_MS = 60 * 1000;
+const MAX_ARCHIVE_SUFFIX = 10000;
+
+function pathTaken(candidate) {
+    try {
+        lstatSync(candidate);
+        return true;
+    } catch (err) {
+        return err?.code !== 'ENOENT';
+    }
+}
+
+// Best effort: temp files left behind by an interrupted writeJsonAtomic of memory.json.
+function removeStaleTempFiles(dir) {
+    let names;
+    try {
+        names = readdirSync(dir);
+    } catch {
+        return;
+    }
+    const cutoff = Date.now() - STALE_TEMP_AGE_MS;
+    for (const file of names) {
+        if (!STALE_TEMP_PATTERN.test(file))
+            continue;
+        try {
+            const fp = `${dir}/${file}`;
+            const stat = lstatSync(fp);
+            if (stat.isFile() && stat.mtimeMs < cutoff)
+                unlinkSync(fp);
+        } catch {
+            // best effort
+        }
+    }
+}
 
 
 export class History {
@@ -10,10 +46,16 @@ export class History {
         this.agent = agent;
         this.name = agent.name;
         this.bots_dir = options?.bots_dir ?? './bots';
-        this.memory_fp = `${this.bots_dir}/${this.name}/memory.json`;
+        const defer_storage = Boolean(options?.defer_storage);
+        this.memory_fp = defer_storage ? null : `${this.bots_dir}/${this.name}/memory.json`;
+        this.histories_dir = defer_storage ? null : `${this.bots_dir}/${this.name}/histories`;
         this.full_history_fp = undefined;
+        this.storage_ready = false;
 
-        mkdirSync(`${this.bots_dir}/${this.name}/histories`, { recursive: true });
+        if (!defer_storage) {
+            mkdirSync(this.histories_dir, { recursive: true });
+            this.storage_ready = true;
+        }
 
         this.turns = [];
 
@@ -58,9 +100,11 @@ export class History {
     }
 
     async appendFullHistory(to_store) {
+        if (!this.storage_ready)
+            return;
         if (this.full_history_fp === undefined) {
             const string_timestamp = new Date().toLocaleString().replace(/[/:]/g, '-').replace(/ /g, '').replace(/,/g, '_');
-            this.full_history_fp = `${this.bots_dir}/${this.name}/histories/${string_timestamp}.json`;
+            this.full_history_fp = `${this.histories_dir}/${string_timestamp}.json`;
             writeFileSync(this.full_history_fp, '[]', 'utf8');
         }
         try {
@@ -106,6 +150,8 @@ export class History {
     }
 
     async save() {
+        if (!this.storage_ready)
+            return false;
         try {
             const data = {
                 memory: this.memory,
@@ -125,6 +171,8 @@ export class History {
     }
 
     load() {
+        if (!this.storage_ready)
+            return null;
         try {
             const result = readJsonSafe(this.memory_fp, { expect: 'object' });
             if (result.status === 'missing') {
@@ -149,6 +197,52 @@ export class History {
             console.error('Failed to load history:', error);
             this.memory = '';
             this.turns = [];
+            return null;
+        }
+    }
+
+    setStorageDir(dir) {
+        try {
+            if (typeof dir !== 'string' || dir.trim() === '')
+                throw new TypeError(`invalid storage directory: ${String(dir)}`);
+            const histories_dir = `${dir}/histories`;
+            mkdirSync(histories_dir, { recursive: true });
+            this.memory_fp = `${dir}/memory.json`;
+            this.histories_dir = histories_dir;
+            this.full_history_fp = undefined; // the next chunk starts a new file in the new directory
+            this.storage_ready = true;
+        } catch (error) {
+            console.warn(`Failed to set the memory directory of ${this.name} to ${dir}:`, error?.message ?? error);
+            return false;
+        }
+        removeStaleTempFiles(dir);
+        return true;
+    }
+
+    archiveExisting(archiveDir) {
+        try {
+            if (typeof this.memory_fp !== 'string' || typeof archiveDir !== 'string' || archiveDir === '')
+                return null;
+            let stat;
+            try {
+                stat = statSync(this.memory_fp);
+            } catch {
+                return null;
+            }
+            if (!stat.isFile())
+                return null;
+            mkdirSync(archiveDir, { recursive: true });
+            let target = `${archiveDir}/memory.json`;
+            for (let i = 1; pathTaken(target); i++) {
+                if (i > MAX_ARCHIVE_SUFFIX)
+                    throw new Error(`no free archive name in ${archiveDir}`);
+                target = `${archiveDir}/memory-${i}.json`;
+            }
+            renameSync(this.memory_fp, target);
+            console.log(`Archived previous memory to: ${target}`);
+            return target;
+        } catch (error) {
+            console.warn(`Failed to archive ${this.memory_fp}:`, error?.message ?? error);
             return null;
         }
     }

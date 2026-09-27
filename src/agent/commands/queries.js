@@ -20,6 +20,10 @@ export const queryList = [
             let pos = bot.entity.position;
             // display position to 2 decimal places
             res += `\n- Position: x: ${pos.x.toFixed(2)}, y: ${pos.y.toFixed(2)}, z: ${pos.z.toFixed(2)}`;
+            if (agent.world_memory?.world) {
+                res += `\n- World: ${agent.world_memory.world.label}`;
+                res += `\n- Dimension: ${bot.game.dimension}`;
+            }
             // Gameplay
             res += `\n- Gamemode: ${bot.game.gameMode}`;
             res += `\n- Health: ${Math.round(bot.health)} / 20`;
@@ -223,6 +227,8 @@ export const queryList = [
         name: '!savedPlaces',
         description: 'List all saved locations.',
         perform: async function (agent) {
+            if (agent.memory_bank.hasStore)
+                return "Saved places: " + agent.memory_bank.describePlaces();
             return "Saved place names: " + agent.memory_bank.getKeys();
         }
     }, 
