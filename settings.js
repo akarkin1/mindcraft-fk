@@ -27,7 +27,7 @@ const settings = {
     ],
 
     "load_memory": true, // load memory from previous session
-    "world_memory": false, // keep memory and saved places separately for each world the bot joins
+    "world_memory": true, // keep memory and saved places separately for each world the bot joins
     "world_id": "", // fixed name for the current world, overrides the automatic world detection. empty to detect automatically
     "resume_goal": "after_crash", // when to resume a goal loaded from memory: "always", "after_crash" or "never"
     "goal_resume_limit": 3, // stop a goal that was resumed this many times within 15 minutes. 0 for no limit
