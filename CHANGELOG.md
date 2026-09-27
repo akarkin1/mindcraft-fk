@@ -10,7 +10,7 @@ Each release lists new settings and feature flags with their default value.
 
 ### Added
 
-- Launch script `scripts/start-bot.ps1` for PowerShell 7. It reads the API key from a PowerShell SecretManagement vault with `Get-Secret`, hands it to the bot as an environment variable and removes it when the bot stops. The key is not written to a file. The name of the secret and the vault are parameters. With `-Log` it also writes everything the bot prints to a log file under `Mindcraft\logs` in the local application data folder. A value for the same key in `keys.json` wins over the environment variable.
+- Launch script `start-claude.ps1` for PowerShell 7. Run it without parameters to start the bot with the claude profile. It reads the API key from the PowerShell secret vault with `Get-Secret`, hands it to the bot as an environment variable and removes it when the bot stops. The key is not written to a file. With `-Log` it also writes everything the bot prints to a log file under `Mindcraft\logs` in the local application data folder. A value for the same key in `keys.json` wins over the environment variable.
 
 ## [0.1.4.3] - 2026-09-27
 
