@@ -6,6 +6,12 @@ This fork is based on [Mindcraft](https://github.com/mindcraft-bots/mindcraft) `
 
 Each release lists new settings and feature flags with their default value.
 
+## [Unreleased]
+
+### Added
+
+- Launch script `scripts/start-bot.ps1` for PowerShell 7. It reads the API key from a PowerShell SecretManagement vault with `Get-Secret`, hands it to the bot as an environment variable and removes it when the bot stops. The key is not written to a file. The name of the secret and the vault are parameters. A value for the same key in `keys.json` wins over the environment variable.
+
 ## [0.1.4.3] - 2026-09-27
 
 Persistence release. The bot can keep memory and places per Minecraft world, and it no longer restarts an old goal without being asked. World memory is behind a feature flag and is off by default.
