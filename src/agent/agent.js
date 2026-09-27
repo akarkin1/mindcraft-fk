@@ -17,9 +17,12 @@ import settings from './settings.js';
 import { Task } from './tasks/tasks.js';
 import { speak } from './speak.js';
 import { log, validateNameFormat, handleDisconnection } from './connection_handler.js';
+import { initSandbox } from './library/lockdown.js';
 
 export class Agent {
     async start(load_mem=false, init_message=null, count_id=0) {
+        // lock down the realm before any component or the bot is created
+        initSandbox(settings);
         this.last_sender = null;
         this.count_id = count_id;
         this._disconnectHandled = false;
