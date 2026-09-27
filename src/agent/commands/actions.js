@@ -163,7 +163,9 @@ export const actionsList = [
         params: {'name': { type: 'string', description: 'The name to remember the location as.' }},
         perform: async function (agent, name) {
             const pos = agent.bot.entity.position;
-            agent.memory_bank.rememberPlace(name, pos.x, pos.y, pos.z);
+            const saved = agent.memory_bank.rememberPlace(name, pos.x, pos.y, pos.z, agent.bot.game?.dimension);
+            if (saved === false)
+                return `Could not save the location "${name}".`;
             return `Location saved as "${name}".`;
         }
     },
@@ -177,8 +179,40 @@ export const actionsList = [
             skills.log(agent.bot, `No location named "${name}" saved.`);
             return;
             }
+            const place_dimension = agent.memory_bank.recallPlaceInfo?.(name)?.dimension;
+            const current_dimension = agent.bot.game?.dimension;
+            if (place_dimension && typeof current_dimension === 'string' && current_dimension !== '' && place_dimension !== current_dimension) {
+                skills.log(agent.bot, `"${name}" is in the dimension ${place_dimension}, but you are in ${current_dimension}. You cannot travel between dimensions by yourself.`);
+                return;
+            }
             await skills.goToPosition(agent.bot, pos[0], pos[1], pos[2], 1);
         })
+    },
+    {
+        name: '!forgetPlace',
+        description: 'Delete a saved location.',
+        params: {'name': { type: 'string', description: 'The name of the location to forget.' }},
+        perform: async function (agent, name) {
+            if (agent.memory_bank.forgetPlace(name))
+                return `Forgot the place "${name}".`;
+            return `No location named "${name}" saved.`;
+        }
+    },
+    {
+        name: '!nameWorld',
+        description: 'Give the current world a name, so you recognize it when you come back.',
+        params: {'name': { type: 'string', description: 'The name to give the world.' }},
+        perform: async function (agent, name) {
+            if (!agent.world_memory)
+                return 'World memory is off.';
+            try {
+                if (agent.world_memory.setLabel(name))
+                    return `This world is now called "${name}".`;
+            } catch (error) {
+                console.warn('Could not name the world:', error);
+            }
+            return 'Could not name the world.';
+        }
     },
     {
         name: '!givePlayer',
