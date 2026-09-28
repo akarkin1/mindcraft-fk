@@ -471,14 +471,16 @@ export async function collectBlock(bot, blockType, num=1, exclude=null) {
         let allowed = true;
         try {
             allowed = !guard || guard.canBreak(block) !== false;
-            // Nor is a block with a protected block above it, such as the ground under the floor of a
-            // house: the way to it leads through the floor (v0.1.4.6, Amendment 2 F4).
-            if (allowed && guard) {
+            // Nor is a block with a block of a building above it, such as the ground under the floor of
+            // a house: the way to it leads through the floor (v0.1.4.6, Amendment 2 F4). Only blocks that
+            // are not air and lie in an area of type building count (v0.1.4.7, Amendment 2 I5): the air
+            // above a crop in a farm does not.
+            if (allowed && guard && typeof guard.inBuilding === 'function') {
                 for (let dy = 1; dy <= 8; dy++) {
                     const above = bot.blockAt(block.position.offset(0, dy, 0));
                     if (!above)
                         break;
-                    if (guard.canBreak(above) === false) {
+                    if (!['air', 'cave_air', 'void_air'].includes(above.name) && guard.inBuilding(above.position)) {
                         allowed = false;
                         break;
                     }

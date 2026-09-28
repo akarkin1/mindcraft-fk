@@ -50,6 +50,55 @@ export async function findFreePort(start = DEFAULT_PORT, tries = 20) {
     throw new Error(`no free port from ${start} to ${start + tries - 1}`);
 }
 
+// The world types of the test server (release v0.1.4.7, spec section 8).
+//   flat  the default flat world of the server: bedrock at y -64, dirt at -63 and -62, grass at -61.
+//         The scenarios of v0.1.4.6 and the work scenarios above ground run here.
+//   deep  a flat world with depth for the mining scenarios: bedrock at y -64, 120 layers of stone
+//         (y -63 to 56), 3 of dirt (57 to 59) and grass at y 60; no lakes, no features (so no ore,
+//         no trees), no structures. Ore, lava and caves are put into the stone by the scenarios.
+// The 1.21.8 server reads the layers of a flat world from the property `generator-settings`, a JSON
+// text in the format of the flat generator: { layers: [{ block, height }], biome, lakes, features },
+// layers from the bottom up. A text it cannot read gives the default flat world WITHOUT an error in
+// the log, so the runner proves the layers after the start (see `worldProbes`).
+export const DEEP_LAYERS = Object.freeze([
+    { block: 'minecraft:bedrock', height: 1 },
+    { block: 'minecraft:stone', height: 120 },
+    { block: 'minecraft:dirt', height: 3 },
+    { block: 'minecraft:grass_block', height: 1 },
+]);
+export const WORLD_TYPES = Object.freeze(['flat', 'deep']);
+export const MIN_Y = -64;
+
+// The extra server properties of a world type.
+export function worldProperties(type = 'flat') {
+    if (type === 'flat') return {};
+    if (type === 'deep') {
+        return {
+            'generator-settings': JSON.stringify({ layers: DEEP_LAYERS, biome: 'minecraft:plains', lakes: false, features: false }),
+        };
+    }
+    throw new Error(`unknown world type ${type}`);
+}
+
+// What the layers of a world type put at a column: a list of { y, block } for the lowest and the
+// highest block of every layer, and y 0 (deep in the stone of the deep world). The runner tests
+// each with `execute if block`.
+export function worldProbes(type = 'flat') {
+    const layers = type === 'deep' ? DEEP_LAYERS : [
+        { block: 'minecraft:bedrock', height: 1 }, { block: 'minecraft:dirt', height: 2 }, { block: 'minecraft:grass_block', height: 1 },
+    ];
+    const probes = [];
+    let y = MIN_Y;
+    for (const l of layers) {
+        probes.push({ y, block: l.block });
+        if (l.height > 1) probes.push({ y: y + l.height - 1, block: l.block });
+        if (y < 0 && y + l.height - 1 > 0) probes.push({ y: 0, block: l.block });
+        y += l.height;
+    }
+    probes.push({ y, block: 'minecraft:air' });
+    return { probes, ground: y - 1 };
+}
+
 export function serverProperties(port, extra = {}) {
     const props = {
         'server-ip': '127.0.0.1',

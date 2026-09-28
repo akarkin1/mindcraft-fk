@@ -169,15 +169,23 @@ describe('Claude adapter and the cost meter', () => {
     });
 
     test('two requests at the same time report their own purposes', async () => {
-        const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+        // No timers (Amendment 2, I2): the slow request waits for a gate that opens only after the
+        // fast one has ended, so the order does not depend on the load of the machine.
+        let open;
+        const gate = new Promise((resolve) => { open = resolve; });
+        let slowStarted = false;
         const { adapter } = fakeClaude(async (request) => {
-            await sleep(request.system === 'slow' ? 15 : 1);
+            if (request.system === 'slow') {
+                slowStarted = true;
+                await gate;
+            }
             return textResponse({ input_tokens: request.system === 'slow' ? 1 : 2, output_tokens: 0 });
         });
-        await Promise.all([
-            U.withPurpose('coding', () => adapter.sendRequest(TURNS, 'slow')),
-            U.withPurpose('memory', () => adapter.sendRequest(TURNS, 'fast')),
-        ]);
+        const slow = U.withPurpose('coding', () => adapter.sendRequest(TURNS, 'slow'));
+        await U.withPurpose('memory', () => adapter.sendRequest(TURNS, 'fast'));
+        assert.equal(slowStarted, true, 'the slow request was in flight while the fast one ended');
+        open();
+        await slow;
         assert.deepEqual(reports.map((r) => [r.input_tokens, r.purpose]), [[2, 'memory'], [1, 'coding']]);
     });
 });

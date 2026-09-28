@@ -9,7 +9,7 @@ fake with canned replies; nothing leaves 127.0.0.1.
 ## Running
 
 ```
-npm run test:world                       all scenarios (about 10 to 15 minutes)
+npm run test:world                       all scenarios (about 30 minutes)
 node tests/world/run.js doors shelter    only scenarios whose name contains one of the words
 node tests/world/run.js --verbose        the whole output of every scenario while it runs
 node tests/world/run.js --server-log     also the server lines of every scenario
@@ -29,19 +29,43 @@ passed and nothing was left behind (see "Hygiene").
 Without the jar, an accepted `eula.txt` or Java the runner prints
 `World tests skipped: no test server found.` and exits with 0.
 
+## World types
+
+Every scenario names the world it needs (the fifth field of its entry in `SCENARIOS`, `flat` when
+not given). The runner starts one server per world type that the selected scenarios need, one after
+the other, the flat one first; each in its own folder of the run directory.
+
+| Type | Layers from y -64 up | Ground (top block) | Used by |
+|---|---|---|---|
+| `flat` | bedrock, 2 dirt, grass (the default flat world) | y -61 | the scenarios of v0.1.4.6 and the work above ground of v0.1.4.7 |
+| `deep` | bedrock, 120 stone, 3 dirt, grass | y 60 | the mining scenarios of v0.1.4.7 |
+
+The deep world comes from the server property `generator-settings` with the JSON of the flat
+generator: `{"layers":[{"block":"minecraft:bedrock","height":1},{"block":"minecraft:stone","height":120},{"block":"minecraft:dirt","height":3},{"block":"minecraft:grass_block","height":1}],"biome":"minecraft:plains","lakes":false,"features":false}`
+(`mc_server.js`, `worldProperties`). The 1.21.8 server falls back to the default flat world without
+an error when it cannot read that text, so after the start the runner tests the lowest and the
+highest block of every layer and y 0 at 0,0 (`layers at 0,0: ok y -64 bedrock, ok y -63 stone, ok y
+56 stone, ok y 0 stone, ...`) and stops the scenarios of that world if one is wrong. The deep world
+has no ore, no caves and no lakes: a scenario puts them into the stone with console commands.
+Why two servers and not one deep world for all: the scenarios of v0.1.4.6 were written for the
+ground at y -61 with bedrock 4 blocks under the bot (the sleep scenario checks that bedrock is no
+bed; the creeper scenario digs the bot in), and they must keep proving the same. The second server
+costs about 12 s. A scenario reads the type as `env.world` (`control.js`).
+
 ## How a run works
 
 1. `run.js` creates a temp directory `%TEMP%\mc-world-run-*`, writes `server.properties`
-   (127.0.0.1, port 25599 or the next free one but never 55916, offline mode, flat world, no
-   structures, peaceful) and copies `eula.txt` there. It starts
+   (127.0.0.1, port 25599 or the next free one but never 55916, offline mode, a flat world of the
+   type the scenarios need, no structures, peaceful) and copies `eula.txt` there. It starts
    `java -Xms512M -Xmx1G -jar <MC_TEST_SERVER_DIR>\server-1.21.8.jar nogui` with the temp directory as
    working directory, so the world, the libraries the jar unpacks and the logs all land there. The
    server folder itself is only read. The server is ready when it prints `Done (...)! For help`
    (about 12 s, most of it unpacking the libraries).
 2. The runner sets the world defaults: no daylight cycle, time 6000, no weather, no natural mob
-   spawning, random tick speed 0 (crops do not grow, leaves do not decay), peaceful. It finds the
-   ground: the flat world has grass at y -61, so a bot stands at y -60 (read from the server, not
-   assumed; given to the scenarios as `MCW_GROUND_Y`).
+   spawning, random tick speed 0 (crops do not grow, farmland does not dry, leaves do not decay),
+   peaceful. It finds the ground: the flat world has grass at y -61, so a bot stands at y -60, the
+   deep world at y 60 and 61 (read from the server, not assumed; given to the scenarios as
+   `MCW_GROUND_Y`).
 3. Every scenario runs in its own node process, with its own temp directory
    `%TEMP%\mc-world-scn-*` as working directory (the bot's `bots/` folder lands there), and in its
    own region of the world: x = 400 + 200 * n, z = 0, 200 blocks from the others. A scenario that
@@ -123,6 +147,32 @@ exitSoon();
   again with `--phase=second` (see `w12_rules.js`).
 - A scenario cleans up what it made: its agent, its player, its mobs (`kill`), difficulty and time.
 
+### Helpers of v0.1.4.7
+
+Building (`world.js`, console commands): `buildChest(p, items)` (items in its first slots),
+`buildFullChest(p, name, { free })`, `buildComposter(p, level)`, `fieldPlan(x, z, g, cell)` and
+`buildField(f, { fence })` (a fenced field of 9 x 9 with a gate and water, every cell farmland, grass
+or dirt with a crop of a chosen age), `buildTree(t, { natural })` (leaves that a tree grows),
+`logHousePlan` and `buildLogHouse` (walls of logs, leaves on the roof), and underground `digShaft`
+(with ladders on one wall), `carve` (a room, a cave), `caveBox`, `placeVein` and `veinBeside`,
+`lavaPocket`. Directions as in the mine store: `DIRS`, `rightOf`, `leftOf`, `add`.
+
+Reading (from the server): `chestItems(p)` and `chestFreeSlots(p)`, `inventoryOf(name)` (with armour
+and the off hand, which 1.21.5 moved out of `Inventory`), `stableInventory(name)` (the inventory once
+it did not change for 500 ms: right after crafting the counts can be wrong), `cropAge` and `cropAges`,
+`composterLevel`, `blockNames(list, names)` and `findBlocks(box, names)` (many blocks in one batch),
+`itemsOnGround(box)` (drops that nobody picked up), `snapshotBox(box, { y })` for a second snapshot
+over the same columns.
+
+Driving (`helpers.js`): `giveItems(name, items, bot)` waits until the bot sees the items (a command
+that starts at once would not); `runSkill(agent, label, fn)` runs a function of a pack with
+`agent.packContext()` as an action, for the functions of the spec that have no command
+(`descendToLevel`, `setupMineBase`, `digTunnel`, `climbToSurface`); `historyTurn(agent, part)` finds
+the result of a command that the fake model gave; `watchHealth(bot)` sees every change of health (in
+peaceful the health comes back within seconds, a sample can miss a hit); `largestDrop(rows)` finds a
+fall in a trace. `NEW_FLAGS_OFF` has the four switches of v0.1.4.7 off, `WORK_COMMANDS` their
+commands, `MINING_SETTINGS` and `MINING_KIT` what the mining scenarios start from.
+
 ## Reading a failing scenario
 
 The runner prints every `CHECK` and `NOTE` line. For a failed run it also prints the last 40
@@ -150,6 +200,21 @@ health of the bot. Set `MCW_LOG_DIR` to keep the full output of each run and the
 | `w12_rules.js` | a rule survives a restart and is in the conversing prompt |
 | `w13_cost.js` | the cost meter with a fake model that reports usage: totals, report line, state `saving` and what it switches off, `usage.json` |
 | `w14_creeper_standing.js` | Amendment 2 F3: a creeper that stands (NoAI) near the house is left alone well within 90 s, never approached closer than 8 blocks; at night the bot does not open the door near it and digs in 24 blocks away |
+| `w15_storage.js` | v0.1.4.7 S: `!storeItems` with a full inventory stores what the keep plan stores and keeps tools, food, torches; `chests.json`; after a restart `!chests` and `!fetchItem("bread", 5)` from a chest 40 blocks away that only the index knows; a full chest is skipped, a chest that fills up is left for the next |
+| `w16_harvest.js` | F: `!harvest` in a fenced farm: ripe wheat taken and planted again, unripe stands, no farmland turned to dirt, fence whole, gate closed |
+| `w17_plant.js` | F: `!plant` with a hoe plants farmland, grass and dirt (48 cells); without a hoe only the farmland; nothing dug around the field |
+| `w18_bone_meal.js` | F: `!makeBoneMeal` with only seeds makes nothing and keeps the seeds; with leaves it makes bone meal and keeps every seed |
+| `w19_farm_cycle.js` | F: the player writes "get back to farming", the fake model answers `!farmCycle`: harvest, the wheat in the chest next to the field, planting, the gate closed, the text in order |
+| `w20_farm_old_command.js` | F: `!collectBlocks("wheat", 5)` with `farming_pack` on harvests 5 ripe plants and plants again; off, the old command breaks wheat and plants nothing, also inside a saved farm (Amendment 2, I5); `!setArea` of a fenced field counts its gate (I6) |
+| `w21_trees.js` | T: `!chopTrees(4)` next to a house with log posts cuts the whole tree, not the house, and plants a sapling; a house of logs with leaves on its roof is no tree |
+| `w22_tall_tree.js` | T: a trunk of 9 logs is cut whole from a pillar that is taken away; the bot ends on the ground with the 9 logs |
+| `w23_tools.js` | T: `!getTool("pickaxe", "stone")` with an empty inventory: tree, wooden pickaxe, stone, stone pickaxe |
+| `w24_mine_basics.js` | M0 (deep world): the bot digs a shaft of 20 blocks; `!leaveMine`, `!goToMine`, `!leaveMine` up and down its ladders, timed, never hurt, never falling |
+| `w25_shaft.js` | M (deep): a shaft of 30 blocks with lava beside it and a cave under it put in while the bot digs: ladders, lava closed, no fall, the way up; with 10 ladders the rest is a staircase |
+| `w26_tunnel.js` | M (deep): 24 steps from the base with a vein of 5, lava beside and a cave ahead on the line: straight, 1 wide, 2 high, torches at 8 and 16, the whole vein taken, lava closed, cave closed off, the tunnel turned |
+| `w27_mining_trip.js` | M (deep): `!mineOre("iron", 6)` twice with iron ore beside the way: back on the surface with 6 raw_iron, cobblestone in the chest of the mine, the mine in the store; the second trip uses the same shaft and goes on at the end of the tunnel |
+| `w28_mine_house.js` | M (deep): a protected house 5 blocks from the bot: the entrance of the mine is at least 8 blocks from it, nothing under or beside the house changed |
+| `w29_flags_off_0147.js` | the four switches of v0.1.4.7 off: none of their 14 commands exists for the model, no pack object, no `chests.json` or `mines.json`, `!collectBlocks` for logs and ore as in v0.1.4.6 |
 
 ## Hygiene
 
@@ -175,3 +240,14 @@ not start, and it never connects to port 55916.
 - mineflayer-pathfinder plans diagonal steps past the corner of a solid block and then cannot walk
   them (it resets "stuck" for ever); after opening a fence gate it steers to the corner of the gate.
   See the area guard (diagonals) and `goToGoal` in `skills.js` (a stuck walk at a door or gate).
+- `setblock` of the block that is there already answers "Could not set the block"; the builders
+  accept that answer.
+- `/give` is confirmed by the server before the bot has the items in its own view: wait for them.
+- Since 1.21.5 the armour and the off hand of a player are in `equipment`, not in `Inventory`.
+- Leaves never decay while the random tick speed is 0, so no sapling comes from them; a scenario
+  that needs a sapling gives one. A ripe wheat drops 0 to 3 seeds; a scenario that plants again at
+  once gives a few seeds, or the result would depend on luck.
+- The old `!collectBlocks` of v0.1.4.6 took no crop inside a saved farm (the air above a crop was
+  a block of the farm for its guard; fixed in v0.1.4.7, Amendment 2 I5, phase `saved` of `w20`), and
+  at a closed fenced field that is not saved it did nothing for 210 s (known, not fixed): `w20`
+  compares with an open field.

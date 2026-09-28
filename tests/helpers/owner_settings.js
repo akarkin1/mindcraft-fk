@@ -40,6 +40,10 @@ const isReflexTable = (value) => isPlainObject(value) && Object.entries(value).e
 
 const NUMBER = Object.freeze({ type: 'number', text: 'a finite number of 0 or more', valid: isNumberZeroOrMore });
 
+// v0.1.4.7: minutes that must be more than 0, and { "<item name>": <whole number of 0 or more, or -1 for all> }
+const isNumberAboveZero = (value) => typeof value === 'number' && Number.isFinite(value) && value > 0;
+const isKeepTable = (value) => isPlainObject(value) && Object.entries(value).every(([name, count]) => name.trim() !== '' && Number.isInteger(count) && count >= -1);
+
 // `type` is the type of the key's entry in src/mindcraft/public/settings_spec.json.
 export const OWNER_SETTING_RULES = Object.freeze({
     // v0.1.4.3, persistence
@@ -74,6 +78,13 @@ export const OWNER_SETTING_RULES = Object.freeze({
     home_pack: BOOLEAN,
     home_reflexes: Object.freeze({ type: 'object', text: `an object with the booleans ${HOME_REFLEXES.join(', ')}`, valid: isReflexTable }),
     creeper_fighting: BOOLEAN,
+    // v0.1.4.7, work skills
+    storage_pack: BOOLEAN,
+    farming_pack: BOOLEAN,
+    wood_pack: BOOLEAN,
+    mining_pack: BOOLEAN,
+    mining_max_minutes: Object.freeze({ type: 'number', text: 'a finite number greater than 0', valid: isNumberAboveZero }),
+    keep_items: Object.freeze({ type: 'object', text: 'an object of item names, each with a whole number to keep or -1 for all, as { "wheat_seeds": 32 }', valid: isKeepTable }),
     // commands the owner blocks, for example "!restart"
     blocked_actions: Object.freeze({ type: 'array', text: 'an array of command names that each start with "!", like "!restart"', valid: isCommandList }),
 });

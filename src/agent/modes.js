@@ -5,6 +5,8 @@ import settings from './settings.js'
 import convoManager from './conversation.js';
 import { withKillTimer } from '../utils/kill_timer.js';
 import { DoorTracker, closeDoorsBehind, isInShelter, isNight, shouldShelter, nightShelterRoutine, creeperCheck, runCreeperProcedure } from './packs/home/index.js';
+import { isBuiltBlock, isLogBlock } from './areas/area_scan.js';
+import { Vec3 } from 'vec3';
 
 async function say(agent, message) {
     agent.bot.modes.behavior_log += message + '\n';
@@ -314,6 +316,43 @@ function torchAllowed(bot) {
     }
 }
 
+const AIR_NAMES = ['air', 'cave_air', 'void_air'];
+
+// v0.1.4.7 Amendment 2, I4: a tree or a roof above the bot is no surface.
+function isNoSurface(name) {
+    return AIR_NAMES.includes(name) || name.endsWith('_leaves') || isLogBlock(name) || isBuiltBlock(name);
+}
+
+// v0.1.4.7, part G: how many blocks the bot stands under the surface of its column. The surface is the
+// highest block above the head that is not air, leaves, a log or a built block (Amendment 2, I4), below
+// the height limit `top` of the world; the depth is its y minus the y of the feet, 0 when there is no
+// such block. getBlockName(x, y, z) returns a name, or null for a block that is not loaded, which counts
+// as air. Pure.
+export function depthUnderSurface(getBlockName, pos, top) {
+    const x = Math.floor(pos.x), feet = Math.floor(pos.y), z = Math.floor(pos.z);
+    for (let y = Math.floor(top) - 1; y > feet + 1; y--) {
+        const name = getBlockName(x, y, z);
+        if (typeof name === 'string' && !isNoSurface(name))
+            return y - feet;
+    }
+    return 0;
+}
+
+// v0.1.4.7, part G: while the bot is more than 8 blocks under the surface, night_shelter waits. Pure.
+export function nightShelterWaits(depth) {
+    return depth > 8;
+}
+
+// The depth of the bot under the surface, from bot.world; 0 when it cannot be read. Never throws.
+function depthOfBot(bot) {
+    try {
+        const top = (bot.game?.minY ?? -64) + (bot.game?.height ?? 384);
+        return depthUnderSurface((x, y, z) => bot.blockAt(new Vec3(x, y, z))?.name ?? null, bot.entity.position, top);
+    } catch (error) {
+        return 0;
+    }
+}
+
 // v0.1.4.6, G4: while the mode creeper_safety is on, a creeper is no target for self_defense and cowardice.
 function leftToCreeperSafety(entity) {
     return entity?.name === 'creeper' && modes_map.creeper_safety?.on === true;
@@ -370,6 +409,8 @@ const home_modes = [
                 });
                 if (!decision?.go)
                     return;
+                if (settings.mining_pack && nightShelterWaits(depthOfBot(bot)))
+                    return; // v0.1.4.7: deep under the surface, in the mine, the night reflex waits
                 this.last_attempt = Date.now();
                 say(agent, 'It is getting dark. I go to the shelter.');
                 execute(this, agent, async () => {

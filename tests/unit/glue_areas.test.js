@@ -180,6 +180,57 @@ describe('collectBlock with the area guard', () => {
         assert.deepEqual(bot.collected, [{ x: house.inside.x, y: 62, z: house.inside.z }]);
     });
 
+    // v0.1.4.7 Amendment 2, I5: the rule of F4 looks only at blocks above that are not air and lie
+    // in an area of type building (bot.areaGuard.inBuilding).
+    function farmScene({ withHouse = false } = {}) {
+        const world = createBlockWorld().flatGround(63);
+        const field = world.field({ x: 10, y: 63, z: 0, width: 3, depth: 3 });
+        const store = new AS.AreaStore(path.join(dir, 'areas.json'));
+        store.load();
+        // the box of scanFarm: the cells and the fence, from one block below the ground to 3 above
+        store.set({ name: 'field', type: 'farm', min: { x: field.ring.min.x, y: 62, z: field.ring.min.z },
+            max: { x: field.ring.max.x, y: 67, z: field.ring.max.z }, source: 'scan' });
+        let house = null;
+        if (withHouse) {
+            world.fill(-8, 60, -8, 8, 62, 8, 'dirt');
+            house = world.house({ x: 0, y: 63, z: 0 });
+            store.set({ name: 'home', type: 'building', min: { x: house.min.x - 1, y: house.min.y - 1, z: house.min.z - 1 },
+                max: { x: house.max.x + 1, y: house.max.y + 1, z: house.max.z + 1 }, source: 'scan' });
+        }
+        const bot = makeBot(world, { x: field.inside.x + 0.5, y: 64, z: field.inside.z + 0.5 });
+        // crops are collected by hand (mustCollectManually): goToPosition teleports in cheat mode
+        bot.modes.isOn = (name) => name === 'cheat';
+        bot.chat = () => {};
+        bot.nearestEntity = () => null;
+        bot.dig = async (block) => {
+            bot.collected.push({ x: block.position.x, y: block.position.y, z: block.position.z });
+            world.set(block.position.x, block.position.y, block.position.z, 'air');
+        };
+        AG.installAreaGuard(bot, { store, log() {} });
+        return { world, field, house, bot };
+    }
+
+    test('I5: in a saved farm the old collectBlock takes the wheat; the air above a crop is no reason to refuse', async () => {
+        const { world, field, bot } = farmScene();
+        assert.equal(world.get(field.inside.x, 65, field.inside.z), 'air');
+        assert.equal(await skills.collectBlock(bot, 'wheat', 5), true, bot.output);
+        assert.equal(bot.collected.length, 5, bot.output);
+        assert.ok(bot.collected.every((p) => p.y === 64), JSON.stringify(bot.collected));
+        assert.ok(!bot.output.includes('protected area'), bot.output);
+        assert.ok(bot.output.includes('Collected 5 wheat.'), bot.output);
+        assert.equal(world.get(field.min.x, 63, field.min.z), 'farmland', 'the farmland stays');
+    });
+
+    test('I5: the ground under the floor of a building is still no candidate, with a farm near', async () => {
+        const { world, house, bot } = farmScene({ withHouse: true });
+        bot.entity.position = new Vec3(house.inside.x + 0.5, house.inside.y, house.inside.z + 0.5);
+        assert.equal(world.get(house.inside.x, 61, house.inside.z), 'dirt', 'dirt 2 blocks under the floor, below the box');
+        assert.equal(await skills.collectBlock(bot, 'dirt', 3), true, bot.output);
+        const underHouse = (p) => p.x >= house.min.x - 1 && p.x <= house.max.x + 1 && p.z >= house.min.z - 1 && p.z <= house.max.z + 1;
+        assert.equal(bot.collected.length, 3);
+        assert.equal(bot.collected.some(underHouse), false, JSON.stringify(bot.collected));
+    });
+
     test('without bot.areaGuard: unchanged, the nearest log is taken, also from the house', async () => {
         const { world, house, houseLogs } = scene(20);
         const bot = makeBot(world, inside(house));

@@ -110,15 +110,51 @@ export function treePlan(x, z, g, height = 5) {
     return { x, z, g, height, logs, base: { x, y: g, z } };
 }
 
-export async function buildTree(t) {
+// options.natural: leaves as a tree grows them (persistent=false; they do not decay while the random
+// tick speed is 0, which is the world default of the runner). Without it the leaves are placed ones.
+export async function buildTree(t, { natural = false } = {}) {
     const top = t.g + t.height;
+    const leaves = `minecraft:oak_leaves[persistent=${natural ? 'false' : 'true'}]`;
     const cmds = [
         `setblock ${t.x} ${t.g} ${t.z} minecraft:dirt`,
-        `fill ${t.x - 2} ${top - 1} ${t.z - 2} ${t.x + 2} ${top} ${t.z + 2} minecraft:oak_leaves[persistent=true] replace minecraft:air`,
-        `fill ${t.x - 1} ${top + 1} ${t.z - 1} ${t.x + 1} ${top + 2} ${t.z + 1} minecraft:oak_leaves[persistent=true] replace minecraft:air`,
+        `fill ${t.x - 2} ${top - 1} ${t.z - 2} ${t.x + 2} ${top} ${t.z + 2} ${leaves} replace minecraft:air`,
+        `fill ${t.x - 1} ${top + 1} ${t.z - 1} ${t.x + 1} ${top + 2} ${t.z + 1} ${leaves} replace minecraft:air`,
         `fill ${t.x} ${t.g + 1} ${t.z} ${t.x} ${top} ${t.z} minecraft:oak_log[axis=y]`,
     ];
     return commands(cmds);
+}
+
+// The box of a tree of treePlan: trunk, crown and the ground block, for a snapshot or a scan.
+export function treeBox(t) {
+    return { min: { x: t.x - 2, y: t.g, z: t.z - 2 }, max: { x: t.x + 2, y: t.g + t.height + 2, z: t.z + 2 } };
+}
+
+// A house of logs (v0.1.4.7 "Trees"): walls of oak logs 3 high around a floor of 5 x 5 with its
+// north-west corner at (x, z), an opening for a door in the north wall, a roof of oak planks at g+4
+// and oak leaves on the roof (natural ones, as leaves that hang over a roof). No tree anywhere.
+export function logHousePlan(x, z, g) {
+    return {
+        box: { min: { x, y: g, z }, max: { x: x + 4, y: g + 5, z: z + 4 } },
+        door: { x: x + 2, y: g + 1, z },
+        inside: { x: x + 2, y: g + 1, z: z + 2 },
+        roofLeaves: { min: { x, y: g + 5, z }, max: { x: x + 4, y: g + 5, z: z + 4 } },
+    };
+}
+
+export async function buildLogHouse(h) {
+    const { min, max } = h.box;
+    const g = min.y;
+    const out = await commands([
+        `fill ${min.x} ${g} ${min.z} ${max.x} ${g} ${max.z} minecraft:oak_planks`,
+        `fill ${min.x} ${g + 1} ${min.z} ${max.x} ${g + 3} ${max.z} minecraft:oak_log[axis=y]`,
+        `fill ${min.x + 1} ${g + 1} ${min.z + 1} ${max.x - 1} ${g + 3} ${max.z - 1} minecraft:air`,
+        `fill ${h.door.x} ${g + 1} ${h.door.z} ${h.door.x} ${g + 2} ${h.door.z} minecraft:air`,
+        `fill ${min.x} ${g + 4} ${min.z} ${max.x} ${g + 4} ${max.z} minecraft:oak_planks`,
+        `fill ${min.x} ${g + 5} ${min.z} ${max.x} ${g + 5} ${max.z} minecraft:oak_leaves[persistent=false]`,
+    ]);
+    const bad = out.flat().filter((l) => /Could not|not loaded|Incorrect|Unknown|Expected|Invalid/.test(l));
+    if (bad.length) throw new Error('building the log house failed: ' + bad.slice(0, 3).join(' | '));
+    return out;
 }
 
 // ------------------------------------------------------------------ fenced field
@@ -162,6 +198,329 @@ export async function buildFarm(f, { gate = true, crops = true } = {}) {
     return commands(cmds);
 }
 
+// A fenced field with chosen cells (v0.1.4.7, part F). size x size blocks with the north-west corner
+// at (x, z): an oak fence at g+1 around it with an oak fence gate in the middle of the north side, a
+// water source in the middle of the ground, and every other inner cell as `cell(i, j)` says, i and j
+// from 1 to size - 2 (i to the east, j to the south):
+//   { ground: 'farmland' | 'grass_block' | 'dirt' | 'coarse_dirt', crop?: 'wheat', age?: 0..7 }
+// Returns { box, gate, water, fence, outsideGate, inside, cells, fenceRing } where every cell is
+// { i, j, ground, above, spec } (ground: the position of the ground block, above: the block over it).
+export function fieldPlan(x, z, g, cell, size = 9) {
+    const mid = Math.floor(size / 2);
+    const cells = [];
+    for (let j = 1; j <= size - 2; j++) {
+        for (let i = 1; i <= size - 2; i++) {
+            if (i === mid && j === mid) continue;
+            cells.push({ i, j, ground: { x: x + i, y: g, z: z + j }, above: { x: x + i, y: g + 1, z: z + j }, spec: { ground: 'farmland', ...cell(i, j) } });
+        }
+    }
+    const fenceRing = [];
+    for (let i = 0; i < size; i++) {
+        for (let j = 0; j < size; j++) {
+            if (i === 0 || j === 0 || i === size - 1 || j === size - 1) fenceRing.push({ x: x + i, y: g + 1, z: z + j });
+        }
+    }
+    return {
+        box: { min: { x, y: g, z }, max: { x: x + size - 1, y: g + 1, z: z + size - 1 } },
+        gate: { x: x + mid, y: g + 1, z },
+        water: { x: x + mid, y: g, z: z + mid },
+        fence: { x, y: g + 1, z: z + mid },
+        outsideGate: { x: x + mid, y: g + 1, z: z - 3 },
+        inside: { x: x + mid - 1, y: g + 1, z: z + mid },
+        cells, fenceRing,
+    };
+}
+
+// options.fence false: the same cells without the fence and the gate (an open field).
+export async function buildField(f, { fence = true } = {}) {
+    const { min, max } = f.box;
+    const g = min.y;
+    const cmds = [
+        `fill ${min.x} ${g - 1} ${min.z} ${max.x} ${g - 1} ${max.z} minecraft:dirt`,
+        `fill ${min.x} ${g} ${min.z} ${max.x} ${g} ${max.z} minecraft:grass_block`,
+        `fill ${min.x} ${g + 1} ${min.z} ${max.x} ${g + 1} ${max.z} minecraft:${fence ? 'oak_fence' : 'air'}`,
+        `fill ${min.x + 1} ${g + 1} ${min.z + 1} ${max.x - 1} ${g + 1} ${max.z - 1} minecraft:air`,
+        `setblock ${P(f.water)} minecraft:water`,
+    ];
+    if (fence) cmds.push(`setblock ${P(f.gate)} minecraft:oak_fence_gate[facing=south,open=false]`);
+    for (const c of f.cells) {
+        const ground = c.spec.ground === 'farmland' ? 'minecraft:farmland[moisture=7]' : MC(c.spec.ground);
+        cmds.push(`setblock ${P(c.ground)} ${ground}`);
+        if (c.spec.crop) cmds.push(`setblock ${P(c.above)} ${MC(c.spec.crop)}[age=${c.spec.age ?? 0}]`);
+    }
+    const out = await commands(cmds);
+    // "Could not set the block": the block is there already (grass on grass)
+    const bad = out.flat().filter((l) => /not loaded|Incorrect|Unknown|Expected|Invalid/.test(l));
+    if (bad.length) throw new Error('building the field failed: ' + bad.slice(0, 3).join(' | '));
+    return out;
+}
+
+// ------------------------------------------------------------------ containers (v0.1.4.7, part S)
+
+const ONE_PER_STACK = /_(pickaxe|axe|shovel|hoe|sword|helmet|chestplate|leggings|boots)$|^(bow|shield|crossbow|shears|water_bucket|lava_bucket|bucket|.*_bed)$/;
+export const stackSize = (name) => (ONE_PER_STACK.test(name) ? 1 : 64);
+
+// Splits { name: count } or [[name, count], ...] into stacks: a list of [name, count].
+export function stacksOf(items) {
+    const list = Array.isArray(items) ? items : Object.entries(items);
+    const out = [];
+    for (const [name, count] of list) {
+        for (let left = count; left > 0; left -= stackSize(name)) out.push([name, Math.min(left, stackSize(name))]);
+    }
+    return out;
+}
+
+// A chest (single, facing north) or a barrel at p with the items in its first slots. A chest needs
+// air above it to open (a fact of the game); the caller keeps that block free.
+export async function buildChest(p, items = {}, { kind = 'chest', facing = 'north' } = {}) {
+    const block = kind === 'barrel' ? 'minecraft:barrel[facing=up]' : `minecraft:${kind}[facing=${facing},type=single]`;
+    const stacks = stacksOf(items);
+    if (stacks.length > 27) throw new Error(`a chest has 27 slots, not ${stacks.length}`);
+    const cmds = [`setblock ${P(p)} minecraft:air`, `setblock ${P(p)} ${block}`];
+    stacks.forEach(([name, count], slot) => cmds.push(`item replace block ${P(p)} container.${slot} with ${MC(name)} ${count}`));
+    const out = await commands(cmds);
+    // the first command may answer "Could not set the block" when the block was air already
+    const bad = out.slice(1).flat().filter((l) => /Could not|not loaded|Incorrect|Unknown|Expected|Invalid|is not a container/.test(l));
+    if (bad.length) throw new Error('building the chest failed: ' + bad.slice(0, 3).join(' | '));
+    return out;
+}
+
+// A chest whose 27 slots are all full (64 of `name` in each), or `free` slots left empty.
+export async function buildFullChest(p, name = 'stone', { free = 0 } = {}) {
+    return buildChest(p, [[name, 64 * (27 - free)]]);
+}
+
+// A composter at p, empty unless `level` is given (0 to 8).
+export async function buildComposter(p, level = 0) {
+    return commands([`setblock ${P(p)} minecraft:composter[level=${level}]`]);
+}
+
+// The level of a composter (0 to 8), or null when there is none.
+export async function composterLevel(p) {
+    const out = await commands([0, 1, 2, 3, 4, 5, 6, 7, 8].map((n) => `execute if block ${P(p)} minecraft:composter[level=${n}]`));
+    const i = out.findIndex(passed);
+    return i >= 0 ? i : null;
+}
+
+// The items of an SNBT list as the server prints it: [{Slot: 0b, id: "minecraft:bread", count: 5}, ...]
+// (components of a tool may be nested in braces). Returns [{ slot, name, count }].
+// With open '{' it reads the items of a compound instead: {head: {count: 1, id: "..."}, offhand: {...}}
+// (the equipment of a player since 1.21.5: armour and the off hand are no longer in Inventory).
+export function parseItemList(text, open = '[') {
+    const close = open === '[' ? ']' : '}';
+    const start = text.indexOf(open);
+    if (start < 0) return [];
+    const objects = [];
+    let depth = 0, from = -1, quote = false;
+    for (let i = start + 1; i < text.length; i++) {
+        const ch = text[i];
+        if (ch === '"' && text[i - 1] !== '\\') quote = !quote;
+        if (quote) continue;
+        if (ch === '{') { if (depth === 0) from = i; depth++; }
+        else if (ch === '}' && depth > 0) { depth--; if (depth === 0 && from >= 0) { objects.push(text.slice(from, i + 1)); from = -1; } }
+        else if (ch === close && depth === 0) break;
+    }
+    return objects.map((o) => {
+        const top = o.replace(/components: \{.*\}(?=[,}])/s, '');
+        const id = /id: "(?:minecraft:)?([\w.-]+)"/.exec(top)?.[1] ?? /id: "(?:minecraft:)?([\w.-]+)"/.exec(o)?.[1] ?? null;
+        const count = Number(/count: (\d+)/.exec(top)?.[1] ?? 1);
+        const slot = Number(/Slot: (-?\d+)b/.exec(top)?.[1] ?? NaN);
+        return { slot, name: id, count };
+    }).filter((x) => x.name);
+}
+
+// { name: count } of a list of { name, count }.
+export function countsOf(list) {
+    const out = {};
+    for (const { name, count } of list) out[name] = (out[name] || 0) + count;
+    return out;
+}
+
+// The items of a container at p from the server: { name: count } ({} when empty), or null when the
+// block is no container.
+export async function chestItems(p) {
+    const out = await command(`data get block ${P(p)} Items`);
+    const line = out.find((l) => /has the following block data: /.test(l));
+    if (line) return countsOf(parseItemList(line.slice(line.indexOf('block data: ') + 12)));
+    if (out.some((l) => /Found no elements matching Items/.test(l))) return {};
+    return null;
+}
+
+// The number of free slots of a chest at p (27 slots).
+export async function chestFreeSlots(p) {
+    const out = await command(`data get block ${P(p)} Items`);
+    const line = out.find((l) => /has the following block data: /.test(l));
+    return line ? 27 - parseItemList(line.slice(line.indexOf('block data: ') + 12)).length : 27;
+}
+
+// ------------------------------------------------------------------ inventory of a player
+
+// The inventory of a player from the server, with armour and the off hand: { name: count }.
+export async function inventoryOf(name) {
+    const out = await commands([`data get entity ${name} Inventory`, `data get entity ${name} equipment`]);
+    const at = (lines) => lines.find((l) => /has the following entity data: /.test(l));
+    const main = at(out[0]);
+    const worn = at(out[1]);
+    const list = main ? parseItemList(main.slice(main.indexOf('entity data: ') + 13)) : [];
+    if (worn) list.push(...parseItemList(worn.slice(worn.indexOf('entity data: ') + 13), '{'));
+    return countsOf(list);
+}
+
+// The inventory once it did not change for `still` ms (right after crafting or picking up, counts can
+// be wrong for a moment). Resolves with { items, stable }.
+export async function stableInventory(name, { ms = 8000, still = 500 } = {}) {
+    const t0 = Date.now();
+    let last = JSON.stringify(await inventoryOf(name));
+    let since = Date.now();
+    for (;;) {
+        await new Promise((r) => setTimeout(r, 150));
+        const now = JSON.stringify(await inventoryOf(name));
+        if (now !== last) { last = now; since = Date.now(); }
+        if (Date.now() - since >= still) return { items: JSON.parse(last), stable: true };
+        if (Date.now() - t0 >= ms) return { items: JSON.parse(last), stable: false };
+    }
+}
+
+// Items that lie on the ground in a box (item entities, drops not picked up): [{ name, count, pos }].
+export async function itemsOnGround(box) {
+    const sel = `@e[type=minecraft:item,x=${box.min.x},y=${box.min.y},z=${box.min.z},dx=${box.max.x - box.min.x},dy=${box.max.y - box.min.y},dz=${box.max.z - box.min.z}]`;
+    const out = await commands([`execute as ${sel} run data get entity @s Item`, `execute as ${sel} run data get entity @s Pos`]);
+    const items = out[0].filter((l) => /has the following entity data: \{/.test(l)).map((l) => parseItemList(`[${l.slice(l.indexOf('entity data: ') + 13)}]`)[0]);
+    const pos = out[1].filter((l) => /has the following entity data: \[/.test(l)).map((l) => {
+        const n = l.slice(l.indexOf('[')).match(/-?\d+(?:\.\d+)?/g).map(Number);
+        return { x: n[0], y: n[1], z: n[2] };
+    });
+    return items.map((it, i) => ({ name: it?.name, count: it?.count, pos: pos[i] ?? null }));
+}
+
+// Items as a short text for notes: "12 wheat, 3 wheat_seeds".
+export function itemsText(items) {
+    const e = Object.entries(items || {}).filter(([, n]) => n > 0).sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1));
+    return e.length ? e.map(([n, c]) => `${c} ${n}`).join(', ') : '(nothing)';
+}
+
+// ------------------------------------------------------------------ crops
+
+// The age of a crop at p (0 to maxAge), or null when the block is not that crop.
+export async function cropAge(p, crop = 'wheat', maxAge = 7) {
+    return (await cropAges([p], crop, maxAge))[0];
+}
+
+// The ages of the crops at many positions, in one batch of commands: a list of numbers or null.
+export async function cropAges(list, crop = 'wheat', maxAge = 7) {
+    const cmds = [];
+    for (const p of list) for (let a = 0; a <= maxAge; a++) cmds.push(`execute if block ${P(p)} ${MC(crop)}[age=${a}]`);
+    const out = await commands(cmds, 60000);
+    return list.map((p, k) => {
+        for (let a = 0; a <= maxAge; a++) if (passed(out[k * (maxAge + 1) + a])) return a;
+        return null;
+    });
+}
+
+// ------------------------------------------------------------------ reading many blocks
+
+// Which of `names` each position holds, in one batch: a list of a name or null (none of them).
+// Names may carry states: 'wheat[age=7]'.
+export async function blockNames(list, names) {
+    const cmds = [];
+    for (const p of list) for (const n of names) cmds.push(`execute if block ${P(p)} ${MC(n)}`);
+    const out = await commands(cmds, 120000);
+    return list.map((p, k) => {
+        for (let i = 0; i < names.length; i++) if (passed(out[k * names.length + i])) return names[i];
+        return null;
+    });
+}
+
+// Every position of a box, x then y then z.
+export function boxPositions(box) {
+    const out = [];
+    for (let x = box.min.x; x <= box.max.x; x++) {
+        for (let y = box.min.y; y <= box.max.y; y++) {
+            for (let z = box.min.z; z <= box.max.z; z++) out.push({ x, y, z });
+        }
+    }
+    return out;
+}
+
+// The positions of a box that hold one of `names`: [{ pos, name }].
+export async function findBlocks(box, names) {
+    const list = boxPositions(box);
+    const got = await blockNames(list, names);
+    return list.map((pos, i) => ({ pos, name: got[i] })).filter((x) => x.name);
+}
+
+// ------------------------------------------------------------------ underground (v0.1.4.7, part M)
+
+// Directions of the mine store and the unit steps of them.
+export const DIRS = { north: { x: 0, z: -1 }, south: { x: 0, z: 1 }, east: { x: 1, z: 0 }, west: { x: -1, z: 0 } };
+export const rightOf = (d) => ({ north: 'east', east: 'south', south: 'west', west: 'north' }[d]);
+export const leftOf = (d) => ({ north: 'west', west: 'south', south: 'east', east: 'north' }[d]);
+export const add = (p, d, n = 1, dy = 0) => ({ x: p.x + DIRS[d].x * n, y: p.y + dy, z: p.z + DIRS[d].z * n });
+
+// A shaft of 1 by 1 from the ground block at `top` (x, g, z) down `depth` blocks: the blocks from
+// y g - depth + 1 to g are air, the floor is the block at g - depth. With ladders, every air block of
+// the shaft holds a ladder on the wall at the `wall` side (the ladder faces the other way). Returns
+// { column, top, bottom (where a bot stands at the bottom), ladders: [positions], wall }.
+export async function digShaft(top, depth, { ladders = true, wall = 'south' } = {}) {
+    const face = { south: 'north', north: 'south', east: 'west', west: 'east' }[wall];
+    const cmds = [`fill ${top.x} ${top.y - depth + 1} ${top.z} ${top.x} ${top.y} ${top.z} minecraft:air`];
+    const list = [];
+    if (ladders) {
+        for (let y = top.y - depth + 1; y <= top.y; y++) list.push({ x: top.x, y, z: top.z });
+        const back = add({ x: top.x, y: 0, z: top.z }, wall);
+        cmds.push(`fill ${back.x} ${top.y - depth + 1} ${back.z} ${back.x} ${top.y} ${back.z} minecraft:stone replace minecraft:air`);
+        cmds.push(`fill ${top.x} ${top.y - depth + 1} ${top.z} ${top.x} ${top.y} ${top.z} minecraft:ladder[facing=${face}]`);
+    }
+    const out = await commands(cmds);
+    const bad = out.flat().filter((l) => /Could not|not loaded|Incorrect|Unknown|Expected|Invalid|Too many/.test(l));
+    if (bad.length) throw new Error('digging the shaft failed: ' + bad.slice(0, 3).join(' | '));
+    return { column: { x: top.x, z: top.z }, top, bottom: { x: top.x, y: top.y - depth + 1, z: top.z }, ladders: list, wall };
+}
+
+// Air in a box (a room, a cave). Returns the box.
+export async function carve(box, block = 'air') {
+    const out = await commands([`fill ${P(box.min)} ${P(box.max)} ${MC(block)}`]);
+    const bad = out.flat().filter((l) => /Could not|not loaded|Incorrect|Unknown|Expected|Invalid|Too many/.test(l));
+    if (bad.length) throw new Error(`fill ${block} failed: ` + bad.slice(0, 3).join(' | '));
+    return box;
+}
+
+// A vein: ore blocks at the positions (one vein when they touch). Returns the positions.
+export async function placeVein(list, ore = 'iron_ore') {
+    await commands(list.map((p) => `setblock ${P(p)} ${MC(ore)}`));
+    return list;
+}
+
+// A vein of `n` ore blocks that starts beside a line at `start` and goes away from it in direction
+// `away` and down: the first block touches the line, the others touch the one before with a face.
+export function veinBeside(start, away, n = 5) {
+    const out = [start];
+    const steps = [[away, 1, 0], [null, 0, -1], [away, 1, 0], [null, 0, 1], [away, 1, 0], [null, 0, -1]];
+    let p = start;
+    for (let i = 0; out.length < n; i++) {
+        const [d, k, dy] = steps[i % steps.length];
+        p = d ? add(p, d, k, dy) : { ...p, y: p.y + dy };
+        out.push(p);
+    }
+    return out;
+}
+
+// A source of lava at p, with stone around it where there is air, so it stays a pocket.
+export async function lavaPocket(p) {
+    const cmds = [];
+    for (const [dx, dy, dz] of [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]]) {
+        cmds.push(`setblock ${p.x + dx} ${p.y + dy} ${p.z + dz} minecraft:stone keep`);
+    }
+    cmds.push(`setblock ${P(p)} minecraft:lava`);
+    return commands(cmds);
+}
+
+// The box of a cave of w x h x d blocks whose middle top block is at `topMiddle`.
+export function caveBox(topMiddle, w = 3, h = 3, d = 3) {
+    const hw = Math.floor(w / 2), hd = Math.floor(d / 2);
+    return { min: { x: topMiddle.x - hw, y: topMiddle.y - h + 1, z: topMiddle.z - hd }, max: { x: topMiddle.x - hw + w - 1, y: topMiddle.y, z: topMiddle.z - hd + d - 1 } };
+}
+
 // ------------------------------------------------------------------ reading blocks
 
 export async function blockIs(p, name) {
@@ -189,10 +548,10 @@ export async function setOpen(p, open, kind = 'oak_door') {
 
 const BACKUP_Y = 280; // snapshots are cloned high above the region, out of reach of every search
 
-// Takes a snapshot of a box: the server clones it to a place high above the same columns.
-// Returns { box, at } for compareSnapshot.
-export async function snapshotBox(box) {
-    const at = { x: box.min.x, y: BACKUP_Y, z: box.min.z };
+// Takes a snapshot of a box: the server clones it to a place high above the same columns (from y 280
+// on, or `y` for a second snapshot over the same columns). Returns { box, at } for compareSnapshot.
+export async function snapshotBox(box, { y = BACKUP_Y } = {}) {
+    const at = { x: box.min.x, y, z: box.min.z };
     const out = await command(`clone ${P(box.min)} ${P(box.max)} ${P(at)} replace force`);
     if (!out.some((l) => /Successfully cloned/.test(l))) throw new Error('snapshot failed: ' + out.join(' | '));
     return { box, at, count: (box.max.x - box.min.x + 1) * (box.max.y - box.min.y + 1) * (box.max.z - box.min.z + 1) };

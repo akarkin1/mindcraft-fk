@@ -29,7 +29,7 @@ import { CostMeter } from './cost/cost_meter.js';
 import { AreaStore } from './areas/area_store.js';
 import { installAreaGuard } from './areas/area_guard.js';
 import { RuleStore } from './rules/rule_store.js';
-import { autoEatOptions } from './packs/home/index.js';
+import { autoEatOptions, passThrough, enterBuilding, doorIsSafe } from './packs/home/index.js';
 
 // A number setting of v0.1.4.6: a value that is not finite or is below 0 counts as the default.
 export function numberSetting(value, fallback) {
@@ -193,6 +193,21 @@ export class Agent {
             this.blocked_actions.push('!rememberArea', '!setArea', '!forgetArea', '!areas', '!allowChanges');
         if (!settings.home_pack)
             this.blocked_actions.push('!goToShelter', '!eat');
+        // the parts of v0.1.4.7: a pack is imported only while a switch needs it; the commands of a part
+        // that is off, or whose pack could not be loaded, are hidden
+        if (settings.storage_pack || settings.farming_pack || settings.wood_pack || settings.mining_pack) {
+            this.work_packs = await this._loadWorkPacks();
+            if (!settings.world_memory && (this.work_packs.storage || this.work_packs.mining))
+                console.warn('Without world_memory the chest index and the mine store live in memory only and are lost when the bot stops.');
+        }
+        if (!settings.storage_pack || !this.work_packs?.storage)
+            this.blocked_actions.push('!storeItems', '!fetchItem', '!chests');
+        if (!settings.farming_pack || !this.work_packs?.farming)
+            this.blocked_actions.push('!farmCycle', '!harvest', '!plant', '!makeBoneMeal', '!fertilize');
+        if (!settings.wood_pack || !this.work_packs?.wood)
+            this.blocked_actions.push('!chopTrees', '!getTool', '!craftSupplies');
+        if (!settings.mining_pack || !this.work_packs?.mining)
+            this.blocked_actions.push('!mineOre', '!goToMine', '!leaveMine');
         blacklistCommands(this.blocked_actions);
 
         console.log(this.name, 'logging into minecraft...');
@@ -268,6 +283,8 @@ export class Agent {
                 }
                 if (areas_on)
                     this._areaStore(); // the protected areas of this world
+                if (this.work_packs)
+                    this._workStores(); // the chest index and the mine store of this world (v0.1.4.7)
               
                 this._setupEventHandlers(save_data, init_message);
                 this.startEvents();
@@ -385,6 +402,101 @@ export class Agent {
             skills,
             world,
         };
+    }
+
+    async _loadWorkPacks(loaders = {}) {
+        // v0.1.4.7: the packs of the work skills, each imported only while a switch needs it. A pack may be
+        // called by another pack whatever its own switch says (spec section 1): the storage pack serves the
+        // other three, the wood pack serves mining. A pack that cannot be loaded logs one warning, and its
+        // commands stay hidden. Never throws. loaders is for tests: a function per pack that replaces its import.
+        const packs = {};
+        const failed = (name, error) => console.warn(`Could not load the ${name} pack, its commands stay hidden:`, error?.message ?? error);
+        if (settings.storage_pack || settings.farming_pack || settings.wood_pack || settings.mining_pack) {
+            try {
+                packs.storage = await (loaders.storage ? loaders.storage() : import('./packs/storage/index.js'));
+            } catch (error) {
+                failed('storage', error);
+            }
+        }
+        if (settings.farming_pack) {
+            try {
+                packs.farming = await (loaders.farming ? loaders.farming() : import('./packs/farming/index.js'));
+            } catch (error) {
+                failed('farming', error);
+            }
+        }
+        if (settings.wood_pack || settings.mining_pack) {
+            try {
+                packs.wood = await (loaders.wood ? loaders.wood() : import('./packs/wood/index.js'));
+            } catch (error) {
+                failed('wood', error);
+            }
+        }
+        if (settings.mining_pack) {
+            try {
+                packs.mining = await (loaders.mining ? loaders.mining() : import('./packs/mining/index.js'));
+            } catch (error) {
+                failed('mining', error);
+            }
+        }
+        return packs;
+    }
+
+    _workStore(key, Store, file) {
+        // v0.1.4.7: the chest index (key chests) or the mine store (key mines) of the current world, made
+        // when the world is known and again when it changes, like the area store. Without world_memory it
+        // lives in memory only. null before the world is known or when it cannot be made. Never throws.
+        if (typeof Store !== 'function')
+            return null;
+        const dir = settings.world_memory ? (this.world_memory?.worldDir ?? null) : ''; // '': in memory only
+        const stores = this.work_stores ?? (this.work_stores = {});
+        if (stores[key]?.dir !== dir) {
+            stores[key] = { dir, store: null };
+            if (dir !== null) {
+                try {
+                    const store = new Store(dir ? `${dir}/${file}` : null);
+                    store.load();
+                    stores[key].store = store;
+                } catch (error) {
+                    console.warn(`Could not open ${file} of this world:`, error);
+                }
+            }
+        }
+        return stores[key].store;
+    }
+
+    _workStores() {
+        // v0.1.4.7: the chest index and the mine store of the current world, when their packs are loaded
+        const packs = this.work_packs;
+        if (!packs)
+            return { chests: null, mines: null };
+        return {
+            chests: this._workStore('chests', packs.storage?.ChestIndex, 'chests.json'),
+            mines: this._workStore('mines', packs.mining?.MineStore, 'mines.json'),
+        };
+    }
+
+    packContext() {
+        // what the packs of v0.1.4.7 get (spec section 2): the home context, the chest index and the mine
+        // store of this world, and the functions of the other packs. Only the parts of v0.1.4.7 call it.
+        const ctx = {
+            ...this.homeContext(),
+            ...this._workStores(),
+            storage: null,
+            tools: null,
+            wood: null,
+            home: { passThrough, enterBuilding, doorIsSafe }, // as they are, not bound (Amendment 1, part F)
+        };
+        const packs = this.work_packs;
+        if (!packs)
+            return ctx;
+        if (typeof packs.storage?.bindStorage === 'function')
+            ctx.storage = packs.storage.bindStorage(this.bot, ctx); // storeItems and fetchItem bound to the bot
+        if (packs.wood) {
+            ctx.tools = packs.wood.TOOLS_API ?? null; // ensureTool and craftSupplies, not bound (Amendment 1, part T)
+            ctx.wood = packs.wood.WOOD_API ?? null; // chopTrees, not bound
+        }
+        return ctx;
     }
 
     async _resolveWorld(load_mem) {

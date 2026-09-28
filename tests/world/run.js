@@ -1,10 +1,15 @@
-// World test runner of release v0.1.4.6 (`npm run test:world`): tests on a REAL Minecraft server.
+// World test runner of releases v0.1.4.6 and v0.1.4.7 (`npm run test:world`): tests on a REAL
+// Minecraft server.
 //
-// One server process per run: the official Minecraft 1.21.8 server from MC_TEST_SERVER_DIR (default
-// %LOCALAPPDATA%\Mindcraft\test-server) with the Java of MC_TEST_JAVA (default: the Java 21 of the
-// Minecraft launcher). It runs on 127.0.0.1, port 25599 or the next free one, offline mode, a flat
-// world, in a fresh temp directory (os.tmpdir()/mc-world-*) that is removed at the end. The server
-// folder is only read. Without server or Java: "World tests skipped: no test server found.", exit 0.
+// One server process per world type: the official Minecraft 1.21.8 server from MC_TEST_SERVER_DIR
+// (default %LOCALAPPDATA%\Mindcraft\test-server) with the Java of MC_TEST_JAVA (default: the Java 21 of
+// the Minecraft launcher). It runs on 127.0.0.1, port 25599 or the next free one, offline mode, in a
+// fresh temp directory (os.tmpdir()/mc-world-*) that is removed at the end. The server folder is only
+// read. Without server or Java: "World tests skipped: no test server found.", exit 0.
+// World types (mc_server.js): `flat`, the default flat world with the ground at y -61, for the
+// scenarios of v0.1.4.6 and the work above ground; `deep`, bedrock, 120 layers of stone, 3 of dirt and
+// grass at y 60, for the mining scenarios. The scenarios of each type run with their own server, the
+// flat ones first; a type none of the selected scenarios needs starts no server.
 //
 // Every scenario runs in its own node process with its own temp directory as working directory
 // (bots/ lands there), in its own region of the world (200 blocks from the others). It sends
@@ -29,13 +34,15 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { locateServer, McServer, findFreePort, killPid, pidAlive, OWNER_PORT } from './mc_server.js';
+import {
+    locateServer, McServer, findFreePort, killPid, pidAlive, OWNER_PORT, WORLD_TYPES, worldProperties, worldProbes,
+} from './mc_server.js';
 
 const WORLD_DIR = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(WORLD_DIR, '..', '..');
 const TMP_PREFIX = 'mc-world-';
 
-// name, file, timeout in seconds, depends on monsters
+// name, file, timeout in seconds, depends on monsters, world type ('flat' when not given)
 const SCENARIOS = [
     ['baseline', 'w01_baseline.js', 180, false],
     ['flags_off', 'w02_flags_off.js', 240, false],
@@ -51,6 +58,23 @@ const SCENARIOS = [
     ['rules', 'w12_rules.js', 200, false],
     ['cost', 'w13_cost.js', 200, false],
     ['creeper_standing', 'w14_creeper_standing.js', 240, false], // NoAI: the creeper does not move (F3)
+    // v0.1.4.7: the work skills
+    ['storage', 'w15_storage.js', 300, false],
+    ['harvest', 'w16_harvest.js', 300, false],
+    ['plant', 'w17_plant.js', 420, false],
+    ['bone_meal', 'w18_bone_meal.js', 300, false],
+    ['farm_cycle', 'w19_farm_cycle.js', 360, false],
+    ['farm_old_command', 'w20_farm_old_command.js', 780, false],
+    ['trees', 'w21_trees.js', 420, false],
+    ['tall_tree', 'w22_tall_tree.js', 420, false],
+    ['tools', 'w23_tools.js', 480, false],
+    ['flags_off_0147', 'w29_flags_off_0147.js', 300, false],
+    // the mining scenarios run in the deep world, with a server of their own
+    ['mine_basics', 'w24_mine_basics.js', 600, false, 'deep'],
+    ['shaft', 'w25_shaft.js', 900, false, 'deep'],
+    ['tunnel', 'w26_tunnel.js', 600, false, 'deep'],
+    ['mining_trip', 'w27_mining_trip.js', 900, false, 'deep'],
+    ['mine_house', 'w28_mine_house.js', 600, false, 'deep'],
 ];
 
 const args = process.argv.slice(2);
@@ -100,21 +124,30 @@ const tempsBefore = new Set(leftoverTemps());
 // ------------------------------------------------------------------ the server
 
 const runDir = fs.mkdtempSync(path.join(os.tmpdir(), TMP_PREFIX + 'run-'));
-const serverDir = path.join(runDir, 'server');
-const port = await findFreePort();
-if (port === OWNER_PORT) throw new Error('refusing the port of the owner');
-const server = new McServer({ ...loc, dir: serverDir, port, echo: null });
-server.prepare();
+const servers = []; // every server this run started, one per world type
+let server = null; // the server of the world type that runs now
+let port = null;
+
+// Creates the server of a world type in its own folder of the run directory (not started yet).
+async function makeServer(type) {
+    port = await findFreePort();
+    if (port === OWNER_PORT) throw new Error('refusing the port of the owner');
+    const s = new McServer({ ...loc, dir: path.join(runDir, 'server-' + type), port, echo: null });
+    s.worldType = type;
+    s.prepare(worldProperties(type));
+    servers.push(s);
+    return s;
+}
 
 let exiting = false;
-process.on('exit', () => { if (server.pid && server.running) killPid(server.pid); });
+process.on('exit', () => { for (const s of servers) if (s.pid && s.running) killPid(s.pid); });
 for (const sig of ['SIGINT', 'SIGTERM', 'SIGBREAK']) {
     process.on(sig, () => {
         if (exiting) return;
         exiting = true;
         console.log(`\n${sig}: stopping the server and the scenario`);
         for (const c of children) killPid(c.pid);
-        killPid(server.pid);
+        for (const s of servers) if (s.pid) killPid(s.pid);
         try { fs.rmSync(runDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 }); } catch { /* reported below */ }
         process.exit(130);
     });
@@ -143,6 +176,7 @@ const control = http.createServer(async (req, res) => {
     try {
         if (req.headers['x-mcw-token'] !== token) return send(403, { ok: false, error: 'bad token' });
         const body = req.method === 'POST' ? JSON.parse((await readBody(req)) || '{}') : {};
+        if (!server) return send(200, { ok: false, error: 'no server is running' });
         if (req.url === '/commands') {
             const out = await server.commands(body.commands || [], body.ms || 30000);
             return send(200, { ok: true, out });
@@ -187,6 +221,17 @@ async function findGround() {
     throw new Error('could not find the ground at 0,0');
 }
 
+// Proves the layers of the world type at the column 0,0: the lowest and the highest block of each
+// layer, y 0 deep in the stone of the deep world, and air above the ground. The server falls back
+// to the default flat world without an error when it cannot read `generator-settings`, so a deep
+// world is never assumed. Returns { ok, lines, ground }.
+async function verifyWorld(type) {
+    const { probes, ground } = worldProbes(type);
+    const out = (await server.commands(['forceload add 0 0', ...probes.map((p) => `execute if block 0 ${p.y} 0 ${p.block}`), 'forceload remove 0 0'])).slice(1, -1);
+    const lines = probes.map((p, i) => `${out[i].some((l) => l.startsWith('Test passed')) ? 'ok' : 'WRONG'} y ${p.y} ${p.block.replace('minecraft:', '')}`);
+    return { ok: lines.every((l) => l.startsWith('ok')), lines, ground };
+}
+
 // ------------------------------------------------------------------ scenarios
 
 function makeScenarioDir() {
@@ -219,7 +264,7 @@ function runScenarioOnce(name, file, timeoutS, run) {
                 ANTHROPIC_API_KEY: 'placeholder-not-a-key',
                 MCW_CONTROL: controlUrl, MCW_TOKEN: token, MCW_SERVER_PORT: String(port),
                 MCW_REGION_X: String(ox), MCW_REGION_Z: String(oz), MCW_GROUND_Y: String(groundY),
-                MCW_RUN: String(run), MCW_REGION: String(region), MCW_TMP: tmp,
+                MCW_RUN: String(run), MCW_REGION: String(region), MCW_TMP: tmp, MCW_WORLD: server.worldType,
             },
             stdio: ['ignore', 'pipe', 'pipe'],
             windowsHide: true,
@@ -288,7 +333,7 @@ function report(r, timeoutS, label) {
         fs.writeFileSync(path.join(logDir, `${r.name}_run${r.run}.log`), r.lines.join('\n') + '\n');
         fs.writeFileSync(path.join(logDir, `${r.name}_run${r.run}_server.log`), r.serverLines.join('\n') + '\n');
     }
-    console.log(`${j.pass ? 'PASS' : 'FAIL'} ${label} (${(r.ms / 1000).toFixed(1)} s, region x=${r.ox})${j.pass ? '' : '\n    reason: ' + j.reason}`);
+    console.log(`${j.pass ? 'PASS' : 'FAIL'} ${label} (${(r.ms / 1000).toFixed(1)} s, ${server.worldType} world, region x=${r.ox})${j.pass ? '' : '\n    reason: ' + j.reason}`);
     return j.pass;
 }
 
@@ -297,60 +342,79 @@ function report(r, timeoutS, label) {
 const tStart = Date.now();
 const outcomes = [];
 let hygieneProblems = [];
-console.log(`world tests v0.1.4.6: node ${process.version}, repository ${ROOT}, ${selected.length} scenario(s)`);
+console.log(`world tests v0.1.4.7: node ${process.version}, repository ${ROOT}, ${selected.length} scenario(s)`);
 console.log(`server ${loc.jar}\njava ${loc.java}`);
-try {
-    await server.start();
-    console.log(`server ready on 127.0.0.1:${port} after ${(server.startMs / 1000).toFixed(1)} s (pid ${server.pid})`);
-    await server.commands(WORLD_DEFAULTS);
-    groundY = await findGround();
-    console.log(`ground at 0,0: the top block is at y ${groundY}, a bot stands at y ${groundY + 1}`);
 
-    for (const [name, file, timeoutS, monsters] of selected) {
-        if (!monsters) {
-            const r = await runScenarioOnce(name, file, timeoutS, 1);
-            const pass = report(r, timeoutS, name);
-            outcomes.push({ name, pass, ms: r.ms, runs: [pass] });
-            continue;
-        }
-        const runs = [];
-        let totalMs = 0;
-        for (let run = 1; run <= 3; run++) {
-            const r = await runScenarioOnce(name, file, timeoutS, run);
-            totalMs += r.ms;
-            runs.push(report(r, timeoutS, `${name} run ${run}`));
-            const passes = runs.filter(Boolean).length;
-            const fails = runs.length - passes;
-            if (passes >= 2 || fails >= 2) break;
-        }
-        const pass = runs.filter(Boolean).length >= 2;
-        console.log(`${pass ? 'PASS' : 'FAIL'} ${name}: ${runs.filter(Boolean).length} of ${runs.length} runs passed (${runs.map((p) => (p ? 'pass' : 'fail')).join(', ')})`);
-        outcomes.push({ name, pass, ms: totalMs, runs });
+async function runScenario([name, file, timeoutS, monsters]) {
+    if (!monsters) {
+        const r = await runScenarioOnce(name, file, timeoutS, 1);
+        const pass = report(r, timeoutS, name);
+        outcomes.push({ name, pass, ms: r.ms, runs: [pass] });
+        return;
     }
-} catch (e) {
-    console.log('RUNNER ERROR ' + (e && e.stack || e));
-    hygieneProblems.push('runner error: ' + (e && e.message));
-    const tail = server.lines.slice(-30).map((l) => l.raw);
-    for (const l of tail) console.log(`    S ${l}`);
+    const runs = [];
+    let totalMs = 0;
+    for (let run = 1; run <= 3; run++) {
+        const r = await runScenarioOnce(name, file, timeoutS, run);
+        totalMs += r.ms;
+        runs.push(report(r, timeoutS, `${name} run ${run}`));
+        const passes = runs.filter(Boolean).length;
+        const fails = runs.length - passes;
+        if (passes >= 2 || fails >= 2) break;
+    }
+    const pass = runs.filter(Boolean).length >= 2;
+    console.log(`${pass ? 'PASS' : 'FAIL'} ${name}: ${runs.filter(Boolean).length} of ${runs.length} runs passed (${runs.map((p) => (p ? 'pass' : 'fail')).join(', ')})`);
+    outcomes.push({ name, pass, ms: totalMs, runs });
+}
+
+// Runs the scenarios of one world type with a server of their own.
+async function runWorld(type, list) {
+    server = await makeServer(type);
+    try {
+        await server.start();
+        console.log(`${type} world: server ready on 127.0.0.1:${port} after ${(server.startMs / 1000).toFixed(1)} s (pid ${server.pid})`);
+        await server.commands(WORLD_DEFAULTS);
+        const layers = await verifyWorld(type);
+        console.log(`${type} world: layers at 0,0: ${layers.lines.join(', ')}`);
+        if (!layers.ok) throw new Error(`the ${type} world does not have its layers: the server did not accept generator-settings`);
+        groundY = await findGround();
+        if (groundY !== layers.ground) throw new Error(`the ground of the ${type} world is at y ${groundY}, expected ${layers.ground}`);
+        console.log(`${type} world: the top block is at y ${groundY}, a bot stands at y ${groundY + 1}`);
+        for (const s of list) await runScenario(s);
+    } catch (e) {
+        console.log(`RUNNER ERROR (${type} world) ` + (e && e.stack || e));
+        hygieneProblems.push(`runner error (${type} world): ` + (e && e.message));
+        const tail = server.lines.slice(-30).map((l) => l.raw);
+        for (const l of tail) console.log(`    S ${l}`);
+    } finally {
+        for (const c of children) killPid(c.pid);
+        const st = await server.stop(20000);
+        console.log(`${type} world: server stopped: ${st.killed ? 'KILLED after 20 s' : 'with "stop"'}, exit ${JSON.stringify(st.exit)}`);
+        if (st.killed) hygieneProblems.push(`the server of the ${type} world did not stop within 20 s and was killed`);
+        if (logDir) {
+            try { fs.copyFileSync(path.join(server.dir, 'logs', 'latest.log'), path.join(logDir, `server_latest_${type}.log`)); } catch { /* none */ }
+        }
+        if (pidAlive(server.pid)) {
+            killPid(server.pid);
+            hygieneProblems.push(`server process ${server.pid} (${type} world) was still alive after the stop and was killed`);
+        }
+    }
+}
+
+try {
+    for (const type of WORLD_TYPES) {
+        const list = selected.filter((s) => (s[4] || 'flat') === type);
+        if (list.length) await runWorld(type, list);
+    }
 } finally {
     for (const c of children) killPid(c.pid);
-    const st = await server.stop(20000);
-    console.log(`server stopped: ${st.killed ? 'KILLED after 20 s' : 'with "stop"'}, exit ${JSON.stringify(st.exit)}`);
-    if (st.killed) hygieneProblems.push('the server did not stop within 20 s and was killed');
-    if (logDir) {
-        try { fs.copyFileSync(path.join(serverDir, 'logs', 'latest.log'), path.join(logDir, 'server_latest.log')); } catch { /* none */ }
-    }
     await new Promise((resolve) => control.close(resolve));
-    if (pidAlive(server.pid)) {
-        killPid(server.pid);
-        hygieneProblems.push(`server process ${server.pid} was still alive after the stop and was killed`);
-    }
     try { fs.rmSync(runDir, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 }); } catch (e) { hygieneProblems.push('run dir: ' + e.message); }
 }
 
 // ------------------------------------------------------------------ hygiene
 
-if (pidAlive(server.pid)) hygieneProblems.push(`server process ${server.pid} is alive`);
+for (const s of servers) if (pidAlive(s.pid)) hygieneProblems.push(`server process ${s.pid} (${s.worldType} world) is alive`);
 const newTemps = leftoverTemps().filter((n) => !tempsBefore.has(n));
 if (newTemps.length) hygieneProblems.push(`temp directories left: ${newTemps.join(', ')}`);
 const botsAfter = repoBots();
@@ -362,7 +426,7 @@ if (JSON.stringify(serverFolderAfter) !== JSON.stringify(serverFolderBefore)) {
     hygieneProblems.push(`the server folder changed: new or changed ${JSON.stringify(added.slice(0, 5))}, gone ${JSON.stringify(gone.slice(0, 5))}`);
 }
 for (const p of hygieneProblems) console.log(`FAIL hygiene: ${p}`);
-if (!hygieneProblems.length) console.log(`hygiene: no server process left (pid ${server.pid} ended), no ${TMP_PREFIX}* temp directory left, repository bots/ unchanged, server folder unchanged (logs not compared)`);
+if (!hygieneProblems.length) console.log(`hygiene: no server process left (pid ${servers.map((s) => s.pid).join(', ')} ended), no ${TMP_PREFIX}* temp directory left, repository bots/ unchanged, server folder unchanged (logs not compared)`);
 
 const failed = outcomes.filter((o) => !o.pass);
 const total = ((Date.now() - tStart) / 1000).toFixed(1);

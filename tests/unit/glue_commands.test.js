@@ -160,6 +160,36 @@ describe('!setArea, !forgetArea, !areas, !allowChanges', () => {
         assert.deepEqual(agent.area_store.get('home').entrances, [door]);
     });
 
+    // v0.1.4.7 Amendment 2, I6: the doors and fence gates inside the box are looked up in the world.
+    test('!setArea for a fenced field counts its gate and saves it as an entrance', async () => {
+        const { world, field } = makeWorld();
+        const agent = makeAgent({ at: { x: 30.5, y: 64, z: 10.5 }, world });
+        const { min, max } = field.ring;
+        const reply = await command('!setArea').perform(agent, 'wheat_farm', 'farm', min.x, 62, min.z, max.x, 67, max.z);
+        assert.equal(reply, `Area "wheat_farm" (farm) saved: 7 x 6 x 7 blocks, from (${min.x}, 62, ${min.z}) to (${max.x}, 67, ${max.z}), 1 gate.`);
+        assert.deepEqual(agent.area_store.get('wheat_farm').entrances, [{ ...field.gate, kind: 'gate' }]);
+    });
+
+    test('!setArea for a house saves the lower block of its door only', async () => {
+        const { world, house } = makeWorld();
+        const agent = makeAgent({ at: { x: 30.5, y: 64, z: 10.5 }, world });
+        assert.equal(world.get(house.door.x, house.door.y + 1, house.door.z), 'oak_door', 'a door of two blocks');
+        const reply = await command('!setArea').perform(agent, 'home', 'building', house.min.x, house.min.y, house.min.z, house.max.x, house.max.y, house.max.z);
+        assert.ok(reply.endsWith(', 1 door.'), reply);
+        assert.deepEqual(agent.area_store.get('home').entrances, [{ ...house.door, kind: 'door' }]);
+    });
+
+    test('!setArea: a box over the house and the field counts both kinds; a door taken away is gone', async () => {
+        const { world, house, field } = makeWorld();
+        const agent = makeAgent({ at: { x: 30.5, y: 64, z: 10.5 }, world });
+        const reply = await command('!setArea').perform(agent, 'yard', 'building', house.min.x, 62, field.ring.min.z, field.ring.max.x, 67, house.max.z);
+        assert.ok(reply.endsWith(', 1 door, 1 gate.'), reply);
+        world.set(house.door.x, house.door.y, house.door.z, 'air');
+        world.set(house.door.x, house.door.y + 1, house.door.z, 'air');
+        const again = await command('!setArea').perform(agent, 'yard', 'building', house.min.x, 62, field.ring.min.z, field.ring.max.x, 67, house.max.z);
+        assert.ok(again.endsWith(', 0 doors, 1 gate.'), again);
+    });
+
     test('!forgetArea', async () => {
         const agent = makeAgent({ at: { x: 0, y: 64, z: 0 } });
         await command('!setArea').perform(agent, 'home', 'building', 0, 62, 0, 8, 67, 6);

@@ -1,0 +1,170 @@
+// Texts of the storage pack that the player or the model reads. The spec v0.1.4.7 S3 gives most of
+// them word for word, tests compare them. Pure.
+
+/** Fixed texts. */
+export const TEXTS = Object.freeze({
+    nothingToStore: 'I have nothing to store. I keep my tools, food and torches.',
+    noChest: 'I know no chest nearby. Place one or take me to one.',
+    noChests: 'I know no chests in this world.',
+    chestsHeader: 'Chests I know in this world:',
+    noItemName: 'Tell me which item to fetch.',
+});
+
+/** Most kinds of items a list names before ` and <n> more kinds`. */
+export const LIST_MAX = 6;
+/** Most chests the list of chests names. */
+export const CHESTS_MAX = 10;
+
+function blockCoord(value) {
+    return typeof value === 'number' && Number.isFinite(value) ? Math.floor(value) : value;
+}
+
+function errorText(err) {
+    if (typeof err === 'string') {
+        return err;
+    }
+    return typeof err?.message === 'string' ? err.message : 'unknown error';
+}
+
+/**
+ * `(x, y, z)` with block coordinates.
+ * @param {{x: number, y: number, z: number}} pos
+ * @returns {string}
+ */
+export function posText(pos) {
+    return `(${blockCoord(pos?.x)}, ${blockCoord(pos?.y)}, ${blockCoord(pos?.z)})`;
+}
+
+/**
+ * `12 wheat, 3 wheat_seeds`: sorted by count, highest first, then by name; at most 6 kinds,
+ * followed by ` and <n> more kinds`. Counts of 0 or less are left out.
+ * @param {Object<string, number>|{name: string, count: number}[]} counts
+ * @returns {string}
+ */
+export function countsText(counts) {
+    let list = [];
+    if (Array.isArray(counts)) {
+        list = counts.map(e => ({ name: e?.name, count: e?.count }));
+    } else if (counts && typeof counts === 'object') {
+        list = Object.entries(counts).map(([name, count]) => ({ name, count }));
+    }
+    list = list.filter(e => typeof e.name === 'string' && typeof e.count === 'number' && e.count > 0)
+        .sort((a, b) => b.count - a.count || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+    const shown = list.slice(0, LIST_MAX).map(e => `${e.count} ${e.name}`).join(', ');
+    return list.length > LIST_MAX ? `${shown} and ${list.length - LIST_MAX} more kinds` : shown;
+}
+
+function hasCounts(counts) {
+    return countsText(counts).length > 0;
+}
+
+function placeText(chests, preposition) {
+    const list = Array.isArray(chests) ? chests : [];
+    return list.length === 1 ? `${preposition} the chest at ${posText(list[0])}` : `${preposition} ${list.length} chests`;
+}
+
+/**
+ * The text of storeItems. `reason` says why something is left: `no_chest`, `full`, `unreachable`,
+ * `interrupted`, `timeout` or `error` (with `error`).
+ * @param {{stored?: object, left?: object, chests?: object[], reason?: string|null, error?: Error|string}} result
+ * @returns {string}
+ */
+export function storeText(result) {
+    const r = result && typeof result === 'object' ? result : {};
+    const did = hasCounts(r.stored) ? `I stored ${countsText(r.stored)} ${placeText(r.chests, 'in')}.` : '';
+    const then = text => (did ? `${did} ${text}` : text);
+    if (r.reason === 'error') {
+        return then(`I could not store my things: ${errorText(r.error)}`);
+    }
+    if (!hasCounts(r.left)) {
+        return did || TEXTS.nothingToStore;
+    }
+    const carry = countsText(r.left);
+    switch (r.reason) {
+    case 'no_chest':
+        return then(TEXTS.noChest);
+    case 'full':
+        return did ? `${did} The chests are full now, I still carry ${carry}.` : `All chests nearby are full. I still carry ${carry}.`;
+    case 'unreachable':
+        return did ? `${did} I could not get to another chest, I still carry ${carry}.`
+            : `I could not get to a chest nearby or open it. I still carry ${carry}.`;
+    case 'interrupted':
+        return did ? `${did} I was stopped, I still carry ${carry}.` : 'I was stopped before I stored anything.';
+    case 'timeout':
+        return did ? `${did} I ran out of time, I still carry ${carry}.` : `I ran out of time before I stored anything. I still carry ${carry}.`;
+    default:
+        return then(`I could not store my things: ${errorText(r.error)}`);
+    }
+}
+
+/**
+ * `I know no chest with <name>.`
+ * @param {string} name
+ * @returns {string}
+ */
+export function notFoundText(name) {
+    return `I know no chest with ${name}.`;
+}
+
+/**
+ * The text of fetchItem. `reason` says why less came: `not_found`, `no_more`, `inventory_full`,
+ * `unreachable` (with `failedAt`, the first chest it could not get to), `interrupted`, `timeout`
+ * or `error` (with `error`). Without a reason the bot took what was asked for.
+ * @param {{name?: string, taken?: number, chests?: object[], reason?: string|null, failedAt?: object, error?: Error|string}} result
+ * @returns {string}
+ */
+export function fetchText(result) {
+    const r = result && typeof result === 'object' ? result : {};
+    const name = typeof r.name === 'string' && r.name.length > 0 ? r.name : 'an item';
+    const taken = typeof r.taken === 'number' && r.taken > 0 ? r.taken : 0;
+    const did = taken > 0 ? `I took ${taken} ${name} ${placeText(r.chests, 'from')}.` : '';
+    switch (r.reason) {
+    case 'no_more':
+        return did ? `${did} There was no more.` : `I found no ${name} in the chests I know.`;
+    case 'inventory_full':
+        return did ? `${did} My inventory is full.` : `My inventory is full, I took no ${name}.`;
+    case 'unreachable':
+        if (did) {
+            return `${did} I could not get to the other chests with ${name}.`;
+        }
+        return r.failedAt ? `I could not get to the chest with ${name} at ${posText(r.failedAt)}.` : `I could not get to a chest with ${name}.`;
+    case 'interrupted':
+        return did ? `${did} I was stopped.` : `I was stopped before I took any ${name}.`;
+    case 'timeout':
+        return did ? `${did} I ran out of time.` : `I ran out of time before I took any ${name}.`;
+    case 'error':
+        return did ? `${did} I could not take more: ${errorText(r.error)}` : `I could not take ${name}: ${errorText(r.error)}`;
+    default:
+        return did || notFoundText(name);
+    }
+}
+
+/**
+ * One line of the list of chests: `- (-13, 63, 28): 12 wheat, 3 wheat_seeds, 4 free slots`, or
+ * `- (x, y, z): empty, 27 free slots`.
+ * @param {{x,y,z,items: object, free_slots: number}} chest
+ * @returns {string}
+ */
+export function chestLine(chest) {
+    const content = hasCounts(chest?.items) ? countsText(chest.items) : 'empty';
+    const free = typeof chest?.free_slots === 'number' ? chest.free_slots : 0;
+    return `- ${posText(chest)}: ${content}, ${free} free slots`;
+}
+
+/**
+ * The text of the command !chests: `Chests I know in this world:` and one line per chest, at most
+ * 10, then `And <n> more chests.`; without chests `I know no chests in this world.`
+ * @param {object[]} chests in the order to list them
+ * @returns {string}
+ */
+export function chestListText(chests) {
+    const list = Array.isArray(chests) ? chests : [];
+    if (list.length === 0) {
+        return TEXTS.noChests;
+    }
+    const lines = [TEXTS.chestsHeader, ...list.slice(0, CHESTS_MAX).map(chestLine)];
+    if (list.length > CHESTS_MAX) {
+        lines.push(`And ${list.length - CHESTS_MAX} more chests.`);
+    }
+    return lines.join('\n');
+}

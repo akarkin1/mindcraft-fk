@@ -65,6 +65,12 @@ const settings = {
     "home_pack": false, // commands and reflexes for home: shelter at night, doors, beds, food and creepers
     "home_reflexes": { "door_closing": true, "night_shelter": true, "creeper_safety": true }, // with home_pack: which reflexes are on
     "creeper_fighting": false, // with home_pack: fight a creeper that was led away from the base instead of running from it
+    "storage_pack": false, // store and fetch items with the chests the bot knows: !storeItems, !fetchItem, !chests
+    "farming_pack": false, // harvest, plant and fertilize a farm with !farmCycle and more; !collectBlocks on crops harvests and plants again
+    "wood_pack": false, // cut real trees, craft tools and supplies: !chopTrees, !getTool, !craftSupplies; !collectBlocks on logs cuts trees
+    "mining_pack": false, // mine an ore in a mine with a shaft and a tunnel: !mineOre, !goToMine, !leaveMine
+    "mining_max_minutes": 30, // with mining_pack: the longest time of one mining trip
+    "keep_items": {}, // items the bot keeps when it stores into chests, e.g. {"wheat_seeds": 32, "iron_ingot": -1}, -1 for all
     "allow_vision": false, // allows vision model to interpret screenshots as inputs
     "blocked_actions" : ["!checkBlueprint", "!checkBlueprintLevel", "!getBlueprint", "!getBlueprintLevel", "!restart"] , // commands to disable and remove from docs. Ex: ["!setMode"]
     "code_timeout_mins": -1, // minutes code is allowed to run. -1 for no timeout
