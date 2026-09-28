@@ -38,6 +38,9 @@ const SCENARIOS = [
     ['skill_flags_off', 's13_skill_flags_off.js'],
     ['skill_agent_start', 's14_skill_agent_start.js'],
     ['skill_partial_flags', 's15_skill_partial_flags.js'],
+    // v0.1.4.5
+    ['skill_guardrails', 's16_skill_guardrails.js'],
+    ['playtest_fixes', 's17_playtest_fixes.js'],
 ];
 
 const args = process.argv.slice(2);

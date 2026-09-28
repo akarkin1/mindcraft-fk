@@ -26,19 +26,25 @@
 // declared above it, or reads the browser global window is not saved and no file is written; the same
 // function with the value as a parameter is saved and runs. B4 code with a syntax error or with
 // eval( is given back to the model and the next attempt ends !newAction successfully.
+// v0.1.4.5: the index entry has consecutive_errors (G1); every function that is meant to be
+// reviewed has a loop or a second call of skills./world. so that it is not trivial (G3); a trivial
+// function is neither reviewed nor saved (G3); "import //" that the review description puts into
+// the doc block is refused by the validator (G5), and "import /* x */" in generated code is already
+// refused by the sandbox when the code is prepared; a save message is separated from the text
+// before by exactly one line break.
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import {
     scenarioMain, check, note, startServer, startRealAgent, stopRealAgent, exitSoon, runCommand,
-    snapshotDir, sameSnapshot, codeReply, readJson, listFiles, withTimeout, sleep, importProject,
+    snapshotDir, sameSnapshot, codeReply, readJson, listFiles, withTimeout, sleep, importProject, endsWithLine,
 } from './helpers.js';
 
 const NAME = 'e2e_capture';
 const SKILLS = path.join('bots', NAME, 'skills');
 const SAVE_TEXT = /Saved this code as the skill|Updated the saved skill/;
 const ENTRY_KEYS = ['name', 'signature', 'description', 'status', 'version', 'created', 'updated', 'uses',
-    'failures', 'consecutive_failures', 'last_used', 'last_error', 'source_task', 'hash'];
+    'failures', 'consecutive_failures', 'consecutive_errors', 'last_used', 'last_error', 'source_task', 'hash'];
 const review = (achieved, reusable, description = 'Logs a marker and an amount.') =>
     JSON.stringify({ achieved, reusable, description, reason: 'e2e canned review' });
 
@@ -63,7 +69,8 @@ const CAPTURE_FN = [
 ].join('\n');
 const CAPTURE_CODE = CAPTURE_FN + '\nawait gatherDirtAndWalk(bot, 3, 5);';
 
-// One async function with a doc block that logs `marker amount`, and its call.
+// One async function with a doc block that logs `marker amount`, and its call. It calls
+// world.getPosition and skills.wait, so it is not trivial (G3) and reaches the review.
 const markerFn = (name, marker, extraLines = []) => [
     `async function ${name}(bot, amount) {`,
     '    /**',
@@ -72,7 +79,22 @@ const markerFn = (name, marker, extraLines = []) => [
     '     * @param {number} amount, the number to log.',
     '     * @returns {Promise<boolean>} true when done.',
     '     **/',
+    '    const start = world.getPosition(bot);',
     ...extraLines,
+    `    log(bot, '${marker} ' + amount);`,
+    '    await skills.wait(bot, 10);',
+    '    return start.y > -64;',
+    '}',
+    `await ${name}(bot, 7);`,
+].join('\n');
+// The same with one call of skills. only and no loop: trivial (G3).
+const trivialFn = (name, marker) => [
+    `async function ${name}(bot, amount) {`,
+    '    /**',
+    `     * Logs the marker ${marker} and an amount.`,
+    '     * @param {MinecraftBot} bot, reference to the minecraft bot.',
+    '     * @param {number} amount, the number to log.',
+    '     **/',
     `    log(bot, '${marker} ' + amount);`,
     '    await skills.wait(bot, 10);',
     '    return true;',
@@ -136,7 +158,7 @@ await scenarioMain({
             try { index = readJson(path.join(SKILLS, 'index.json')); } catch (e) { note('index.json: ' + e.message); }
             const entry = index?.skills?.gatherDirtAndWalk;
             check(index?.version === 1 && Object.keys(index?.skills || {}).length === 1, 'capture: index.json has version 1 and one skill', JSON.stringify(index));
-            check(entry && JSON.stringify(Object.keys(entry)) === JSON.stringify(ENTRY_KEYS), 'capture: the index entry has exactly the keys of the spec',
+            check(entry && JSON.stringify(Object.keys(entry)) === JSON.stringify(ENTRY_KEYS), 'capture: the index entry has exactly the keys of the spec (G1: consecutive_errors after consecutive_failures)',
                 JSON.stringify(entry && Object.keys(entry)));
             check(entry?.name === 'gatherDirtAndWalk' && entry.signature === 'gatherDirtAndWalk(bot, count, step)'
                 && entry.status === 'active' && entry.version === 1,
@@ -144,14 +166,15 @@ await scenarioMain({
             check(entry?.description === 'Gets the given number of dirt blocks and walks the given number of blocks east.',
                 'capture: the first line of the own doc block is the description (it wins over the review)', JSON.stringify(entry?.description));
             check(entry?.source_task === TASK, 'capture: source_task is the task of the !newAction', JSON.stringify(entry?.source_task));
-            check(entry?.uses === 0 && entry.failures === 0 && entry.consecutive_failures === 0 && entry.last_used === null && entry.last_error === null,
-                'capture: counters 0, last_used and last_error null', JSON.stringify(entry));
+            check(entry?.uses === 0 && entry.failures === 0 && entry.consecutive_failures === 0 && entry.consecutive_errors === 0
+                && entry.last_used === null && entry.last_error === null,
+            'capture: counters 0 (also consecutive_errors), last_used and last_error null', JSON.stringify(entry));
             check(typeof entry?.created === 'string' && !Number.isNaN(Date.parse(entry.created)) && entry.updated === entry.created,
                 'capture: created is an ISO time and updated equals it', `${entry?.created} ${entry?.updated}`);
             const hash = source === null ? null : crypto.createHash('sha256').update(source, 'utf8').digest('hex');
             check(entry?.hash === hash, 'capture: hash is the SHA-256 of the saved source', `${entry?.hash} vs ${hash}`);
-            const SAVED = '\nSaved this code as the skill customSkills.gatherDirtAndWalk. You can call it in later code.';
-            check(cap.ret.endsWith(SAVED), 'capture: the reply of !newAction ends with a line break and the save message', JSON.stringify(cap.ret.slice(-160)));
+            const SAVED = 'Saved this code as the skill customSkills.gatherDirtAndWalk. You can call it in later code.';
+            check(endsWithLine(cap.ret, SAVED), 'capture: the reply of !newAction ends with the save message after exactly one line break', JSON.stringify(cap.ret.slice(-160)));
             check(cap.reviews.length === 1, 'capture: exactly one review request', `reviews=${cap.reviews.length}`);
             const rp = cap.reviews[0]?.prompt || '';
             check(rp.includes(`the Minecraft bot ${NAME} wrote`), 'review prompt names the bot', rp.slice(0, 120));
@@ -176,7 +199,9 @@ await scenarioMain({
                 '     * @param {MinecraftBot} bot, reference to the minecraft bot.',
                 '     * @param {number} price, the price.',
                 '     **/',
-                "    log(bot, 'Price: $' + price + \" / $& / $$ / $' / $` end\");",
+                '    for (const tag of [price]) {',
+                "        log(bot, 'Price: $' + tag + \" / $& / $$ / $' / $` end\");",
+                '    }',
                 '    await skills.wait(bot, 10);',
                 '    return true;',
                 '}',
@@ -274,9 +299,10 @@ await scenarioMain({
                 '     * @param {MinecraftBot} bot, reference to the minecraft bot.',
                 '     * @param {number} amount, the number to log.',
                 '     **/',
+                '    const start = world.getPosition(bot);',
                 `    log(bot, '${marker} ' + amount);`,
                 '    await skills.wait(bot, 10);',
-                '    return true;',
+                '    return start.y > -64;',
                 '}',
                 `await ${name}(bot, 7);`,
             ].join('\n');
@@ -336,7 +362,7 @@ await scenarioMain({
                 reviews: [review(true, true, 'Logs the kilo marker and an amount.')],
             });
             const a4Entry = fs.existsSync(path.join(SKILLS, 'index.json')) ? readJson(path.join(SKILLS, 'index.json')).skills?.logMarkerKilo : undefined;
-            check(a4.ret.includes('marker-k 7') && a4.ret.endsWith('\nSaved this code as the skill customSkills.logMarkerKilo. You can call it in later code.'),
+            check(a4.ret.includes('marker-k 7') && endsWithLine(a4.ret, 'Saved this code as the skill customSkills.logMarkerKilo. You can call it in later code.'),
                 '[A4] a function whose doc block has only @ lines is saved when the review gives a description', JSON.stringify(a4.ret.slice(-120)));
             check(a4Entry?.description === 'Logs the kilo marker and an amount.',
                 '[A4] its index description is the description of the review, not the @ line', JSON.stringify(a4Entry?.description));
@@ -345,7 +371,8 @@ await scenarioMain({
             // description (line break and */ in it made harmless, K1 and amendment), and loads
             const NODOC_FN = [
                 'async function writeNoDocCount(bot, count) {',
-                "    log(bot, 'nodoc ' + count);",
+                '    const start = world.getPosition(bot);',
+                "    log(bot, 'nodoc ' + count + ' at y' + Math.round(start.y));",
                 '    await skills.wait(bot, 10);',
                 '    return true;',
                 '}',
@@ -366,8 +393,8 @@ await scenarioMain({
                 '     * await customSkills.writeNoDocCount(bot, count);',
                 '     **/',
             ].join('\n');
-            check(nd.ret.endsWith('\nSaved this code as the skill customSkills.writeNoDocCount. You can call it in later code.')
-                && ndSource.startsWith('async function writeNoDocCount(bot, count) {\n' + BLOCK + '\n') && ndSource.includes("    log(bot, 'nodoc ' + count);\n"),
+            check(endsWithLine(nd.ret, 'Saved this code as the skill customSkills.writeNoDocCount. You can call it in later code.')
+                && ndSource.startsWith('async function writeNoDocCount(bot, count) {\n' + BLOCK + '\n') && ndSource.includes("    log(bot, 'nodoc ' + count + ' at y' + Math.round(start.y));\n"),
             'a function without a doc block is saved with the doc block of the spec built from the review description', JSON.stringify(ndSource));
             const ndEntry = readJson(path.join(SKILLS, 'index.json')).skills?.writeNoDocCount;
             check(ndEntry?.description === 'Writes nodoc */ and a count. Second line.', 'its index description is the review description (line break made a space)',
@@ -388,12 +415,13 @@ await scenarioMain({
                 '        return count * 2;',
                 '    }',
                 '    const item = { constructorName: "box" };',
-                "    log(bot, 'retrieval ' + (await retrieval(n)) + ' ' + item.constructorName);",
+                '    const start = world.getPosition(bot);',
+                "    log(bot, 'retrieval ' + (await retrieval(n)) + ' ' + item.constructorName + ' y' + Math.round(start.y));",
                 '    return true;',
                 '}',
             ].join('\n');
             const rt = await newAction('Retrieval of four', { replies: [codeReply(RETRIEVAL_FN + '\nawait collectRetrieval(bot, 4);')], reviews: [review(true, true)] });
-            check(rt.ret.includes('retrieval 8 box') && rt.ret.endsWith('\nSaved this code as the skill customSkills.collectRetrieval. You can call it in later code.'),
+            check(rt.ret.includes('retrieval 8 box') && endsWithLine(rt.ret, 'Saved this code as the skill customSkills.collectRetrieval. You can call it in later code.'),
                 '[A1] a function with retrieval( and .constructorName is saved (no forbidden token)', JSON.stringify(rt.ret.slice(-140)));
 
             // B3: a skill must not use names from outside
@@ -405,7 +433,8 @@ await scenarioMain({
                 '     * @param {MinecraftBot} bot, reference to the minecraft bot.',
                 '     * @param {string} blockName, the block to use.',
                 '     **/',
-                "    log(bot, 'row of ' + SIZE + ' ' + blockName);",
+                '    const start = world.getPosition(bot);',
+                "    log(bot, 'row of ' + SIZE + ' ' + blockName + ' at y' + Math.round(start.y));",
                 '    await skills.wait(bot, 10);',
                 '    return true;',
                 '}',
@@ -435,18 +464,51 @@ await scenarioMain({
                 '    const up = new Vec3(0, 1, 0);',
                 '    const plan = { block: blockName, size: Math.max(1, size), up: up.y };',
                 "    console.log('row plan ' + JSON.stringify(plan));",
-                '    await skills.wait(bot, 10);',
+                '    for (let i = 0; i < plan.size; i++) {',
+                '        await skills.wait(bot, 1);',
+                '    }',
                 '    return Number.isInteger(plan.size) && Array.isArray([plan]);',
                 '}',
                 "await buildRowWithSize(bot, 'stone', 3);",
             ].join('\n');
             const sp = await newAction('Plan a row of three stone with a parameter', { replies: [codeReply(SIZE_PARAM)], reviews: [review(true, true, 'Plans a row.')] });
             check(sp.ret.includes('row plan {"block":"stone","size":3,"up":1}')
-                && sp.ret.endsWith('\nSaved this code as the skill customSkills.buildRowWithSize. You can call it in later code.')
+                && endsWithLine(sp.ret, 'Saved this code as the skill customSkills.buildRowWithSize. You can call it in later code.')
                 && fs.existsSync(path.join(SKILLS, 'buildRowWithSize.js')),
             '[B3] the same function with size as a parameter (and Vec3, Math, JSON, console, Number, Array) is saved', JSON.stringify(sp.ret.slice(-140)));
             const spUse = await newAction('Plan a row of two dirt', { replies: [codeReply("await customSkills.buildRowWithSize(bot, 'dirt', 2);")] });
             check(spUse.ret.includes('row plan {"block":"dirt","size":2,"up":1}'), '[B3] the saved skill runs with the value it gets', JSON.stringify(spUse.ret.slice(-120)));
+
+            // G3: a trivial function (no loop, one call of skills.) is neither reviewed nor saved
+            await noCapture('[G3] a trivial function (no loop, one call of skills.)', 'Log marker r',
+                { replies: [codeReply(trivialFn('logMarkerRomeo', 'marker-r'))], reviews: [review(true, true)] },
+                { marker: /marker-r 7/, reviews: 0 });
+            // G5: the doc block built from the review description would hold "import //", which the
+            // sandbox refuses anywhere in a text; the validator refuses it before saving
+            const IMPORT_NODOC = [
+                'async function countForLater(bot, n) {',
+                '    const start = world.getPosition(bot);',
+                "    log(bot, 'count for later ' + n + ' at y' + Math.round(start.y));",
+                '    await skills.wait(bot, 10);',
+                '    return true;',
+                '}',
+                'await countForLater(bot, 3);',
+            ].join('\n');
+            await noCapture('[G5] the review description puts "import //" into the doc block', 'Count for later',
+                { replies: [codeReply(IMPORT_NODOC)], reviews: [review(true, true, 'Counts items for import // later.')] },
+                { marker: /count for later 3/, reviews: 1 });
+            check(!fs.existsSync(path.join(SKILLS, 'countForLater.js')), '[G5] no file countForLater.js was written');
+            // G5 as generated code: "import /* x */" in a comment of the function is refused by the
+            // sandbox already when the code is prepared (B4), so it never runs and is not saved
+            const g5 = await noCapture('[G5] the function has "import /* x */" in a comment', 'Log marker s',
+                {
+                    replies: [codeReply(markerFn('importCommentFn', 'marker-s', ['    // import /* x */ is only a comment here'])),
+                        codeReply("log(bot, 'marker-s second attempt');\nawait skills.wait(bot, 10);")],
+                    reviews: [review(true, true)],
+                },
+                { marker: /marker-s second attempt/, reviews: 0, coding: 2 });
+            check(g5.feedback[0]?.includes('could not be prepared') && /import/i.test(g5.feedback[0] ?? ''),
+                '[G5] the first attempt with "import /* x */" was given back as code that could not be prepared', JSON.stringify(g5.feedback[0]?.slice(0, 200)));
 
             // B4: code that cannot be prepared for the sandbox is given back to the model
             const PREP = 'Error: Code could not be prepared for execution:\n';

@@ -12,12 +12,14 @@
 //              manager, commands blocked, prompts byte for byte, no skills folder).
 // noLockdown   sandbox_lockdown false: skills load, run and are captured in the compartment
 //              without the SES lockdown.
+// v0.1.4.5: the functions call world.getPosition and skills.wait, so they are not trivial (G3);
+// save messages follow the text before after exactly one line break.
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
     scenarioMain, check, note, startServer, startRealAgent, stopRealAgent, exitSoon, runCommand, runPhase,
-    codeReply, readJson, listFiles, withTimeout, importProject,
+    codeReply, readJson, listFiles, withTimeout, importProject, endsWithLine,
 } from './helpers.js';
 
 const SELF = fileURLToPath(import.meta.url);
@@ -28,7 +30,8 @@ const fnCode = (word, name = 'writeTheWord') => [
     '     * @param {MinecraftBot} bot, reference to the minecraft bot.',
     '     * @param {number} n, the number.',
     '     **/',
-    `    log(bot, '${word} ' + n);`,
+    '    const start = world.getPosition(bot);',
+    `    log(bot, '${word} ' + n + ' at y' + Math.round(start.y));`,
     '    await skills.wait(bot, 10);',
     '    return true;',
     '}',
@@ -84,13 +87,13 @@ await scenarioMain({
             let r = await newAction('Write alpha three', [codeReply(fnCode('alpha'))], [REVIEW]);
             check(r.ret.includes('alpha 3') && r.reviews.length === 1 && fs.existsSync(path.join(SKILLS, 'writeTheWord.js')),
                 'captureOnly: the function is reviewed and saved', JSON.stringify(listFiles(SKILLS)));
-            check(r.ret.endsWith('\nSaved this code as the skill writeTheWord.'), '[A3] captureOnly: the message for created names the skill without customSkills',
+            check(endsWithLine(r.ret, 'Saved this code as the skill writeTheWord.'), '[A3] captureOnly: the message for created names the skill without customSkills',
                 JSON.stringify(r.ret.slice(-80)));
             const cp = r.coding[0]?.prompt ?? '';
             check(cp.includes('#### SAVED SKILLS ###\nRULES FOR NEW CODE:') && !cp.includes('RULES FOR SAVED SKILLS') && !cp.includes('No skills are saved yet.'),
                 'captureOnly: the coding prompt has the header and the rules for new code, nothing about saved skills');
             r = await newAction('Write beta three', [codeReply(fnCode('beta'))], [REVIEW]);
-            check(r.ret.endsWith('\nUpdated the saved skill writeTheWord.'), '[A3] captureOnly: the message for updated names the skill without customSkills',
+            check(endsWithLine(r.ret, 'Updated the saved skill writeTheWord.'), '[A3] captureOnly: the message for updated names the skill without customSkills',
                 JSON.stringify(r.ret.slice(-80)));
             check(readJson(path.join(SKILLS, 'index.json')).skills?.writeTheWord?.version === 2, 'captureOnly: the update is version 2');
             const cp2 = r.coding[0]?.prompt ?? '';
@@ -155,7 +158,7 @@ await scenarioMain({
             let r = await newAction('Use the old skill', [codeReply('await customSkills.oldSkill(bot, 8);')]);
             check(r.ret.includes('old 8'), 'noLockdown: the saved skill runs', JSON.stringify(r.ret.slice(-100)));
             r = await newAction('Write eps three', [codeReply(fnCode('eps', 'writeEps'))], [REVIEW]);
-            check(r.ret.endsWith('\nSaved this code as the skill customSkills.writeEps. You can call it in later code.') && fs.existsSync(path.join(SKILLS, 'writeEps.js')),
+            check(endsWithLine(r.ret, 'Saved this code as the skill customSkills.writeEps. You can call it in later code.') && fs.existsSync(path.join(SKILLS, 'writeEps.js')),
                 'noLockdown: a new skill is captured', JSON.stringify(r.ret.slice(-100)));
             r = await newAction('Use eps', [codeReply('await customSkills.writeEps(bot, 2);')]);
             check(r.ret.includes('eps 2'), 'noLockdown: the new skill runs at once', JSON.stringify(r.ret.slice(-100)));

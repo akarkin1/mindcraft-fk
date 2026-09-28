@@ -12,12 +12,20 @@
 //   --commands=<bool>     [E2E_COMMANDS]   answer the chat commands "/give <who> <item> [count]"
 //                                          (set_slot into the next hotbar slot) and "/tp [who] <x> <y> <z>"
 //                                          (position packet) as a vanilla server would; off by default
+//   --floor=<y>           [E2E_FLOOR]      send the 3 x 3 chunks around the spawn with a stone floor at
+//                                          height y, so the bot has physics and can walk; no chunks by default
 //
 // stdin commands: "chat" prints the chat messages received so far on one line
-// "CHAT <json array>"; "quit" (or closing stdin) stops the server.
+// "CHAT <json array>"; "kick <json>" sends every client a kick_disconnect packet whose reason is
+// the given value (the NBT form of Minecraft 1.21, for example
+// {"type":"compound","value":{"translate":{"type":"string","value":"multiplayer.disconnect.x"}}})
+// and closes its connection; "quit" (or closing stdin) stops the server.
 import readline from 'node:readline';
 import mc from 'minecraft-protocol';
 import minecraftData from 'minecraft-data';
+import prismarineRegistry from 'prismarine-registry';
+import prismarineChunk from 'prismarine-chunk';
+import { Vec3 } from 'vec3';
 
 const VERSION = '1.21.8';
 const mcData = minecraftData(VERSION);
@@ -38,6 +46,8 @@ const hardcore = String(param('hardcore', 'E2E_HARDCORE', 'false')) === 'true';
 const dimension = String(param('dimension', 'E2E_DIMENSION', 'overworld')).replace(/^minecraft:/, '');
 const [posX, posY, posZ] = String(param('pos', 'E2E_POS', '0.5,64,0.5')).split(',').map(Number);
 const answerCommands = String(param('commands', 'E2E_COMMANDS', 'false')) === 'true';
+const floorParam = String(param('floor', 'E2E_FLOOR', ''));
+const floorY = floorParam === '' ? null : Number(floorParam);
 
 const out = (line) => process.stdout.write(line + '\n');
 const log = (...parts) => out('[srv] ' + parts.join(' '));
@@ -59,6 +69,28 @@ function toWords(value) {
 }
 
 const chats = [];
+
+// With --floor=<y>: the 3 x 3 chunks around the spawn, stone at height y, full sky light.
+function sendFloor(client) {
+    const registry = prismarineRegistry(VERSION);
+    const Chunk = prismarineChunk(registry);
+    const stone = registry.blocksByName.stone.defaultState;
+    const scx = Math.floor(posX / 16);
+    const scz = Math.floor(posZ / 16);
+    for (let cx = scx - 1; cx <= scx + 1; cx++) {
+        for (let cz = scz - 1; cz <= scz + 1; cz++) {
+            const chunk = new Chunk({ minY: -64, worldHeight: 384 });
+            for (let x = 0; x < 16; x++) {
+                for (let z = 0; z < 16; z++) {
+                    chunk.setBlockStateId(new Vec3(x, floorY, z), stone);
+                    for (let y = floorY + 1; y < floorY + 4; y++) chunk.setSkyLight(new Vec3(x, y, z), 15);
+                }
+            }
+            client.write('map_chunk', { x: cx, z: cz, heightmaps: [], chunkData: chunk.dump(), blockEntities: [], ...chunk.dumpLight() });
+        }
+    }
+    log(`floor: 9 chunks around (${scx}, ${scz}) with stone at y=${floorY}`);
+}
 
 // With --commands=true: /give puts the items into the next hotbar slot, /tp moves the player.
 function answerCommand(client, command) {
@@ -146,6 +178,9 @@ server.on('playerJoin', (client) => {
         yaw: 0, pitch: 0,
         flags: { _value: 0 },
     });
+    if (floorY !== null && Number.isFinite(floorY)) {
+        try { sendFloor(client); } catch (err) { log('floor error:', (err && err.stack) || String(err)); }
+    }
     // mineflayer emits 'spawn' on the first update_health with health > 0
     client.write('update_health', { health: 20, food: 20, foodSaturation: 5 });
     log(`sent login (seed [${seedHigh}, ${seedLow}], dimension ${dimension} #${dimIndex}, hardcore ${hardcore}), server_data, update_time (age ${age}), position (${posX}, ${posY}, ${posZ}), update_health`);
@@ -168,5 +203,16 @@ rl.on('line', (line) => {
     const cmd = line.trim();
     if (cmd === 'chat') out('CHAT ' + JSON.stringify(chats));
     else if (cmd === 'quit') stop('quit command');
+    else if (cmd.startsWith('kick ')) {
+        let reason;
+        try { reason = JSON.parse(cmd.slice(5)); } catch (err) { log('kick: bad json:', err.message); return; }
+        for (const client of Object.values(server.clients || {})) {
+            try {
+                client.write('kick_disconnect', { reason });
+                log('kick sent to', client.username);
+                setTimeout(() => { try { client.socket.end(); } catch { /* gone */ } }, 300);
+            } catch (err) { log('kick error:', err && err.message); }
+        }
+    }
 });
 rl.on('close', () => stop('stdin closed'));
