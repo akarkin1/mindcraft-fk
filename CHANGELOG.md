@@ -6,6 +6,66 @@ This fork is based on [Mindcraft](https://github.com/mindcraft-bots/mindcraft) `
 
 Each release lists new settings and feature flags with their default value.
 
+## [0.1.4.7] - 2026-09-29
+
+Work skills. Four sets of skills that do a whole job with one command: storage, farming, wood and tools, mining. The language model chooses the command, code does the work.
+
+Every set has its own switch and is off by default.
+
+### Added
+
+- **Storage**, setting `storage_pack`, default `false`.
+  - `!storeItems` puts what the bot carries into chests. The bot keeps its best tool of each kind and a spare pickaxe, armour, up to 16 pieces of food, and torches, ladders and cobblestone up to a limit. The setting `keep_items` adds items that stay with the bot.
+  - `!fetchItem` gets an item out of a chest the bot knows.
+  - `!chests` lists the chests the bot knows and what is in them.
+  - The bot remembers per world which chest holds what, in `chests.json` in the folder of the world.
+  - A full chest is skipped and the next one is used. Double chests and barrels work.
+- **Farming**, setting `farming_pack`, default `false`.
+  - `!harvest` takes ripe plants only and plants the same crop again at once. Wheat, carrots, potatoes and beetroots.
+  - `!plant` plants the free ground of a farm, and uses the hoe where the ground is not farmland yet.
+  - `!makeBoneMeal` fills a composter with leaves, grass, flowers and saplings. It never uses seeds, crops or food.
+  - `!fertilize` uses bone meal on plants that are not ripe.
+  - `!farmCycle` does the whole round: harvest, store the harvest in a chest, plant again, fertilize.
+  - The bot enters and leaves a fenced farm through the gate and closes it. It does not jump in the field, so the farmland stays farmland. It digs nothing.
+  - The farm is a saved area of type `farm`, or the ground inside the fence around the bot.
+- **Wood and tools**, setting `wood_pack`, default `false`.
+  - `!chopTrees` cuts real trees only: a trunk that stands on the ground and has leaves. It takes the whole tree, also tall ones, and plants a sapling. Logs of a building are never taken, also when no area is saved: a trunk that touches blocks of a building is no tree.
+  - `!getTool` makes sure the bot has a tool, and crafts it with every step. A bot with an empty inventory cuts a tree, crafts a wooden pickaxe, breaks stone and crafts a stone pickaxe.
+  - `!craftSupplies` crafts torches, ladders, a chest or a crafting table, and collects the wood for it.
+- **Mining**, setting `mining_pack`, default `false`.
+  - `!mineOre` goes mining for coal, copper, iron, lapis, gold, redstone or diamond. The bot goes down to the best level for the ore, clears a room with a chest, digs one straight tunnel, collects the ore with the whole vein, and comes back up.
+  - The way down is a shaft with ladders. When the ladders are used up, it goes on as a staircase.
+  - Lava, water and caves beside the shaft and the tunnel are closed with cobblestone before the bot digs. It never digs a block while a block of the view is unknown.
+  - When the inventory is nearly full, the bot stores into the chest of the mine and goes on. It places a second chest when the first is full.
+  - The bot takes the best pickaxe it has, stone or better for every trip, and a spare one for a long trip.
+  - A mine is remembered per world in `mines.json`. The next trip uses the same shaft and goes on at the end of the tunnel.
+  - No shaft is dug within 8 blocks of a protected area.
+  - `!goToMine` and `!leaveMine`.
+  - Setting `mining_max_minutes`, default `30`: the longest time of one trip.
+- **Old commands lead to the new skills.** While the set is on, `!collectBlocks` with a crop harvests ripe plants only, with a log it cuts trees, and with an ore that is not in sight it goes mining. `!putInChest`, `!takeFromChest` and `!viewChest` update what the bot knows about the chest.
+- 14 prompt examples and 45 sentences of the routing list for the new commands.
+- 15 more scenarios on the real Minecraft server, 29 in all, and a second world type with 120 layers of stone for mining.
+
+### Changed
+
+- With every part of this and the last release on, the chat prompt has about 4,020 tokens without conversation, against about 2,620 with all parts off. The commands of this release are about 820 of them.
+- While `mining_pack` is on, the reflex `night_shelter` waits while the bot is more than 8 blocks under the ground, so it does not pull the bot out of the mine.
+
+### Fixed
+
+- With protected areas on, `!collectBlocks` took no crop inside a saved farm and answered that all blocks belong to a protected area. The rule that protects the ground under the floor of a building also looked at the air above the plants. A defect of `0.1.4.6`.
+- `!setArea` did not know the doors and gates inside the box and answered `0 gates` for a fenced field. A defect of `0.1.4.6`.
+- A unit test of the cost meter depended on which of two requests ended first.
+
+### Known limitations
+
+- Without shears, grass and leaves give nothing when they are broken. A bot without shears can collect flowers and saplings for the composter, nothing else. It says so when it made less bone meal than asked.
+- The bot plants a sapling where a tree stood if it has one. Leaves give saplings slowly, so after most trees it has none and says so. A single sapling of dark oak never grows.
+- The bot does not smelt. It cannot make iron tools from ore by itself.
+- Mining was tried in a test world of flat stone with lava, water and caves that were put there. Not tried: natural caves of irregular shape, big lakes of lava, monsters in the mine, levels with deepslate.
+- A chest counts as full when it has no empty slot, also when a stack of the same item in it has room.
+- With `farming_pack` off and no saved area, the old `!collectBlocks` for a crop does nothing at a fenced field whose gate is closed.
+
 ## [0.1.4.6] - 2026-09-28
 
 Cost control, and the first set of basic skills: home and safety. The bot measures what it costs. It can protect buildings and farms, close doors behind itself, go to shelter at dusk, lead creepers away from a building, and keep rules that the player teaches.
