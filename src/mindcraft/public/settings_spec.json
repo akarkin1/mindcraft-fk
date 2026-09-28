@@ -167,6 +167,16 @@
         "description": "With skill_learning and skill_reuse on: whether to offer the !useSkill command that runs a saved skill directly",
         "default": false
     },
+    "skill_max_count": {
+        "type": "number",
+        "description": "With skill_learning on: the most skills the library keeps. Code of a new skill is not saved when the library is full, a new version of a saved skill always is. 0 for no limit",
+        "default": 100
+    },
+    "skill_disable_after_errors": {
+        "type": "number",
+        "description": "With skill_learning on: switch a saved skill off after it threw an error this many times in a row. 0 to never switch a skill off",
+        "default": 3
+    },
     "code_timeout_mins": {
         "type": "number",
         "description": "Number of minutes to allow code execution. -1 for no timeout",

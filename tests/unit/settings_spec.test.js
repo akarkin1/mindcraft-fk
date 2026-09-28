@@ -46,6 +46,19 @@ describe('settings.js', () => {
             .filter((k) => !KNOWN_SPEC_GAPS.includes(k));
         assert.deepEqual(missing, []);
     });
+
+    // v0.1.4.5: in a play test the model used !restart as an answer to a remark of the player,
+    // which restarted the bot. The fork blocks it; the blueprint commands stay blocked.
+    test('blocked_actions contains !restart and still the four blueprint commands; the line keeps its comment', () => {
+        assert.ok(Array.isArray(settings.blocked_actions));
+        assert.ok(settings.blocked_actions.includes('!restart'), JSON.stringify(settings.blocked_actions));
+        for (const name of ['!checkBlueprint', '!checkBlueprintLevel', '!getBlueprint', '!getBlueprintLevel']) {
+            assert.ok(settings.blocked_actions.includes(name), name);
+        }
+        const line = settingsSource.split(/\r?\n/).find((l) => l.includes('"blocked_actions"'));
+        assert.ok(line, 'line of blocked_actions');
+        assert.ok(line.includes('// commands to disable and remove from docs. Ex: ["!setMode"]'), line);
+    });
 });
 
 describe('src/mindcraft/public/settings_spec.json', () => {
@@ -130,6 +143,35 @@ describe('settings_spec.json: skill settings of v0.1.4.4', () => {
 
     test('none of the four keys is in the list of known gaps, and settings.js has all four', () => {
         for (const [key] of SKILL_ENTRIES) {
+            assert.equal(KNOWN_SPEC_GAPS.includes(key), false, key);
+            assert.ok(key in settings, `settings.js has ${key}`);
+        }
+    });
+});
+
+// Spec v0.1.4.5 "Guardrails", section "Settings": the two limits of the skill library get an
+// entry with type, description and the default in code.
+describe('settings_spec.json: skill guardrails of v0.1.4.5', () => {
+    const LIMIT_ENTRIES = [
+        ['skill_max_count', 'number', 100],
+        ['skill_disable_after_errors', 'number', 3],
+    ];
+    for (const [key, type, codeDefault] of LIMIT_ENTRIES) {
+        test(`${key}: type "${type}", default ${JSON.stringify(codeDefault)}, a description that says what 0 does`, () => {
+            const entry = spec[key];
+            assert.ok(entry, `entry ${key} exists`);
+            assert.equal(entry.type, type);
+            assert.strictEqual(entry.default, codeDefault);
+            assert.equal(typeof entry.description, 'string');
+            assert.ok(entry.description.trim().length > 0);
+            assert.match(entry.description, /\b0\b/, 'the description names the value 0');
+        });
+    }
+
+    test('both come after skill_command, are no known gaps, and settings.js has both', () => {
+        const keys = Object.keys(spec);
+        for (const [key] of LIMIT_ENTRIES) {
+            assert.ok(keys.indexOf(key) > keys.indexOf('skill_command'), key);
             assert.equal(KNOWN_SPEC_GAPS.includes(key), false, key);
             assert.ok(key in settings, `settings.js has ${key}`);
         }

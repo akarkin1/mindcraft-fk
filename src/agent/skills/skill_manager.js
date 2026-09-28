@@ -14,6 +14,7 @@ import {
     signatureOf,
     instrument,
     isSingleFunction,
+    isTrivialFunction,
 } from './skill_source.js';
 import { loadSkills } from './skill_loader.js';
 import { snapshotState, diffState, buildReviewPrompt, parseReview } from './skill_review.js';
@@ -21,6 +22,8 @@ import { buildCodingSection, buildConversingSection } from './skill_prompt.js';
 
 const NO_RESPONSE = '//no response';
 const NO_SKILLS = 'No skills are saved yet.';
+const DEFAULT_MAX_COUNT = 100;
+const DEFAULT_DISABLE_AFTER_ERRORS = 3;
 
 function isObject(value) {
     return value !== null && typeof value === 'object';
@@ -72,6 +75,35 @@ export function skillFlags(settings) {
     }
 }
 
+// One limit of the guardrails: a finite number of 0 or more, rounded down. Anything else,
+// also a value that cannot be read, is the default.
+function limitOf(settings, key, fallback) {
+    try {
+        const value = isObject(settings) ? settings[key] : undefined;
+        if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
+            return fallback;
+        }
+        return Math.max(0, Math.floor(value)); // Math.max turns -0 into 0
+    } catch {
+        return fallback;
+    }
+}
+
+/**
+ * The guardrails of the skill library (v0.1.4.5). maxCount is settings.skill_max_count
+ * (default 100), disableAfterErrors is settings.skill_disable_after_errors (default 3).
+ * 0 switches a guardrail off. A value that is not a finite number of 0 or more counts as
+ * the default, a number with a fraction is rounded down. Never throws.
+ * @param {object} settings
+ * @returns {{maxCount: number, disableAfterErrors: number}}
+ */
+export function skillLimits(settings) {
+    return {
+        maxCount: limitOf(settings, 'skill_max_count', DEFAULT_MAX_COUNT),
+        disableAfterErrors: limitOf(settings, 'skill_disable_after_errors', DEFAULT_DISABLE_AFTER_ERRORS),
+    };
+}
+
 /**
  * Skill learning of one bot. The members that the agent, the coder, the prompter and
  * the commands call never throw.
@@ -105,10 +137,13 @@ export class SkillManager {
         this.builtinNames = Array.isArray(builtinNames) ? builtinNames : [];
         this.reviewTemplate = reviewTemplate;
         this.flags = skillFlags(settings);
+        this.limits = skillLimits(settings);
         this.dir = `${botsDir}/${name}/skills`;
         this._emptySkills = Object.freeze({});
         this._customSkills = this._emptySkills;
         this._loaded = [];
+        this._notices = []; // texts for the model, taken by takeNotices()
+        this._reloadDue = false; // a skill was switched off while code was running
         this.store = null;
         try {
             this.store = new SkillStore(this.dir, typeof now === 'function' ? { now } : {});
@@ -129,6 +164,26 @@ export class SkillManager {
             console.warn(`Skill store ${this.dir} could not be loaded:`, warningText(err));
         }
         return this._reload();
+    }
+
+    /**
+     * Returns the notices queued since the last call, for example that a skill was switched
+     * off after errors in a row (v0.1.4.5, G1), and empties the queue. The skills are not
+     * reloaded while code is running; a reload that became due meanwhile is done here first,
+     * so later code gets a library without the disabled skill. Never throws.
+     * @returns {string[]}
+     */
+    takeNotices() {
+        try {
+            if (this._reloadDue) {
+                this._reload();
+            }
+        } catch (err) {
+            console.warn('Could not reload the saved skills:', warningText(err));
+        }
+        const notices = this._notices;
+        this._notices = [];
+        return notices;
     }
 
     /**
@@ -207,9 +262,11 @@ export class SkillManager {
      * Saves the function of a successful code run as a skill when the review model
      * agrees that the task was done and the function is reusable. Stops at the first
      * failing step with `reason`: capture_off, interrupted, threw, no_code, the reason of
-     * pickSkillCandidate, review_failed, not_achieved, not_reusable, no_description,
-     * invalid (with `errors`), unchanged; save_failed when the store throws and error for anything
-     * else unexpected. On success the skills are loaded again when flags.reuse.
+     * pickSkillCandidate, trivial, library_full (with a message), review_failed, not_achieved,
+     * not_reusable, no_description, invalid (with `errors`), unchanged; save_failed when the store
+     * throws and error for anything else unexpected. trivial and library_full (v0.1.4.5, G3 and G2)
+     * come before the review call and never refuse a new version of a saved skill.
+     * On success the skills are loaded again when flags.reuse.
      * Never throws and never rejects.
      * @param {{code: string, output: string, task: string, before: object, after: object, interrupted: boolean, threw: boolean}} run
      * @returns {Promise<{saved: boolean, action: string|null, name: string|null, reason: string|null, errors: {code: string, message: string}[], message: string}>}
@@ -341,6 +398,22 @@ export class SkillManager {
         }
         const name = candidate.name;
 
+        // The guardrails before the review call (v0.1.4.5): first the trivial check (G3), then the
+        // size limit (G2). A new version of a saved skill is never refused.
+        if (this.store?.get(name) === undefined) {
+            if (isTrivialFunction(candidate.source)) {
+                return notSaved('trivial', name);
+            }
+            const count = this.store?.size ?? 0;
+            if (this.limits.maxCount > 0 && count >= this.limits.maxCount) {
+                return {
+                    ...notSaved('library_full', name),
+                    message: `The skill library is full (${count} skills), so this code was not saved as a skill. `
+                        + 'Use !forgetSkill to remove a skill that is no longer needed.',
+                };
+            }
+        }
+
         let review;
         try {
             const text = buildReviewPrompt(this.reviewTemplate, {
@@ -434,20 +507,21 @@ export class SkillManager {
     }
 
     // Loads the active skills into a new frozen customSkills object (flags.reuse only).
+    // This also does a reload that became due while code was running (G1).
     _reload() {
+        this._reloadDue = false;
         if (!this.flags.reuse || !this.store) {
             this._customSkills = this._emptySkills;
             this._loaded = [];
             return 0;
         }
         try {
-            const store = this.store;
             const { customSkills, loaded, skipped } = loadSkills({
-                store,
+                store: this.store,
                 makeCompartment: this.makeCompartment,
                 endowments: this.endowments,
                 instrument,
-                onUse: (name, outcome) => store.recordUse(name, outcome),
+                onUse: (name, outcome) => this._recordUse(name, outcome),
                 check: isSingleFunction, // loading runs no code (Amendment 2, B2)
             });
             for (const skip of skipped) {
@@ -459,6 +533,34 @@ export class SkillManager {
             console.warn('Could not load the saved skills:', warningText(err));
         }
         return this._loaded.length;
+    }
+
+    // onUse of the loader: counts the run in the store. A skill that threw disableAfterErrors
+    // times in a row while it was active is switched off and a notice is queued (G1). This runs
+    // inside code that is still running and holds the current customSkills, so nothing is
+    // reloaded here: the reload is due, takeNotices() does it. Never throws.
+    _recordUse(name, outcome) {
+        try {
+            const store = this.store;
+            store.recordUse(name, outcome);
+            const limit = this.limits.disableAfterErrors;
+            if (limit <= 0) {
+                return;
+            }
+            const entry = store.get(name);
+            if (!isObject(entry) || entry.status !== 'active' || !(entry.consecutive_errors >= limit)) {
+                return;
+            }
+            if (store.setStatus(name, 'disabled') !== true) {
+                return;
+            }
+            this._reloadDue = true;
+            this._notices.push(`The skill customSkills.${name} was switched off after ${entry.consecutive_errors} errors in a row. `
+                + `Last error: ${entry.last_error}. Write a corrected version of the function under the same name to switch it on again.`);
+            console.warn(`Skill ${name} was switched off after ${entry.consecutive_errors} errors in a row.`);
+        } catch (err) {
+            console.warn(`Could not record a use of the skill ${name}:`, warningText(err));
+        }
     }
 
     _entries() {

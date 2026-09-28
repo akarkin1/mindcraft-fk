@@ -20,7 +20,8 @@ const S = await loadSrc(MODULE);
 const T0 = Date.UTC(2026, 8, 28, 9, 15, 30);
 const iso = (ms) => new Date(ms).toISOString();
 const sha = (text) => crypto.createHash('sha256').update(text, 'utf8').digest('hex');
-const ENTRY_KEYS = ['consecutive_failures', 'created', 'description', 'failures', 'hash', 'last_error', 'last_used', 'name', 'signature', 'source_task', 'status', 'updated', 'uses', 'version'];
+// v0.1.4.5, G1 adds consecutive_errors.
+const ENTRY_KEYS = ['consecutive_errors', 'consecutive_failures', 'created', 'description', 'failures', 'hash', 'last_error', 'last_used', 'name', 'signature', 'source_task', 'status', 'updated', 'uses', 'version'];
 
 let root; // temp directory of the test
 let dir; // store directory, <root>/skills (not created in advance)
@@ -92,6 +93,7 @@ describe('save(): created', () => {
         assert.equal(e.uses, 0);
         assert.equal(e.failures, 0);
         assert.equal(e.consecutive_failures, 0);
+        assert.equal(e.consecutive_errors, 0);
         assert.equal(e.last_used, null);
         assert.equal(e.last_error, null);
         assert.equal(e.source_task, 'build a wall');
@@ -356,6 +358,169 @@ describe('recordUse(name, { ok, error })', () => {
     });
 });
 
+// Spec v0.1.4.5, G1: consecutive_errors counts the runs in a row that ended with a THROWN error
+// (recordUse with `error`). A run that returned false does not count and does not reset it,
+// anything else resets it to 0. The other counters keep their meaning.
+describe('consecutive_errors (v0.1.4.5, G1)', () => {
+    const counters = (e) => ({ uses: e.uses, failures: e.failures, consecutive_failures: e.consecutive_failures, consecutive_errors: e.consecutive_errors, last_error: e.last_error });
+
+    test('comes directly after consecutive_failures in an entry and in index.json', () => {
+        const store = loaded();
+        const { entry } = store.save(saveArgs('buildWall'));
+        const keys = Object.keys(entry);
+        assert.equal(keys.indexOf('consecutive_errors'), keys.indexOf('consecutive_failures') + 1);
+        assert.deepEqual(Object.keys(readIndex().skills.buildWall), keys);
+    });
+
+    test('a throw counts, a returned false neither counts nor resets, anything else resets; stored in index.json', () => {
+        const store = loaded();
+        store.save(saveArgs('buildWall'));
+        const step = (result) => {
+            store.recordUse('buildWall', result);
+            return counters(store.get('buildWall'));
+        };
+        assert.deepEqual(step({ ok: false, error: 'Error: one' }), { uses: 1, failures: 1, consecutive_failures: 1, consecutive_errors: 1, last_error: 'Error: one' });
+        assert.deepEqual(step({ ok: false, error: 'Error: two' }), { uses: 2, failures: 2, consecutive_failures: 2, consecutive_errors: 2, last_error: 'Error: two' });
+        // returned false: a failure as before, but no error and no reset
+        assert.deepEqual(step({ ok: false }), { uses: 3, failures: 3, consecutive_failures: 3, consecutive_errors: 2, last_error: null });
+        assert.deepEqual(step({ ok: false, error: 'Error: three' }), { uses: 4, failures: 4, consecutive_failures: 4, consecutive_errors: 3, last_error: 'Error: three' });
+        assert.deepEqual(readIndex().skills.buildWall.consecutive_errors, 3);
+        assert.deepEqual(step({ ok: true }), { uses: 5, failures: 4, consecutive_failures: 0, consecutive_errors: 0, last_error: 'Error: three' });
+        assert.deepEqual(readIndex().skills.buildWall, store.get('buildWall'));
+    });
+
+    test('an error text that is empty counts as a throw; error null or undefined does not', () => {
+        const store = loaded();
+        store.save(saveArgs('buildWall'));
+        store.recordUse('buildWall', { ok: false, error: '' });
+        assert.equal(store.get('buildWall').consecutive_errors, 1);
+        store.recordUse('buildWall', { ok: false, error: null });
+        store.recordUse('buildWall', { ok: false, error: undefined });
+        store.recordUse('buildWall', { ok: false });
+        assert.equal(store.get('buildWall').consecutive_errors, 1);
+        assert.equal(store.get('buildWall').consecutive_failures, 4);
+    });
+
+    test('the boolean form: false neither counts nor resets, true resets', () => {
+        const store = loaded();
+        store.save(saveArgs('buildWall'));
+        store.recordUse('buildWall', { ok: false, error: 'x' });
+        store.recordUse('buildWall', false);
+        assert.equal(store.get('buildWall').consecutive_errors, 1);
+        store.recordUse('buildWall', true);
+        assert.equal(store.get('buildWall').consecutive_errors, 0);
+    });
+
+    test('ok with an error text is a success: it resets', () => {
+        const store = loaded();
+        store.save(saveArgs('buildWall'));
+        store.recordUse('buildWall', { ok: false, error: 'x' });
+        store.recordUse('buildWall', { ok: true, error: 'ignored' });
+        assert.equal(store.get('buildWall').consecutive_errors, 0);
+    });
+
+    test('save of a new version sets it to 0 and the status to active; unchanged keeps it', () => {
+        const store = loaded();
+        store.save(saveArgs('buildWall', { source: sourceOf('buildWall', 'One.') }));
+        for (let i = 0; i < 3; i++) store.recordUse('buildWall', { ok: false, error: 'boom' });
+        store.setStatus('buildWall', 'disabled');
+        assert.equal(store.save(saveArgs('buildWall', { source: sourceOf('buildWall', 'One.') })).action, 'unchanged');
+        assert.equal(store.get('buildWall').consecutive_errors, 3);
+        const result = store.save(saveArgs('buildWall', { source: sourceOf('buildWall', 'Two.') }));
+        assert.equal(result.action, 'updated');
+        assert.equal(result.entry.consecutive_errors, 0);
+        assert.equal(result.entry.status, 'active');
+        assert.equal(result.entry.uses, 3, 'uses are kept');
+        assert.equal(readIndex().skills.buildWall.consecutive_errors, 0);
+    });
+
+    test('an entry read from disk without the key gets 0, and the repaired index is written back', () => {
+        const first = loaded();
+        first.save(saveArgs('buildWall'));
+        const index = readIndex();
+        delete index.skills.buildWall.consecutive_errors;
+        fs.writeFileSync(file('index.json'), JSON.stringify(index, null, 2));
+        const second = newStore();
+        assert.equal(second.load(), 1);
+        assert.equal(second.get('buildWall').consecutive_errors, 0);
+        assert.deepEqual(Object.keys(second.get('buildWall')).sort(), ENTRY_KEYS);
+        assert.equal(readIndex().skills.buildWall.consecutive_errors, 0, 'written back');
+    });
+
+    test('a stored count is kept on load; a value that is not a count becomes 0', () => {
+        const first = loaded();
+        for (const name of ['aaaSkill', 'bbbSkill', 'cccSkill', 'dddSkill']) first.save(saveArgs(name));
+        const index = readIndex();
+        index.skills.aaaSkill.consecutive_errors = 2;
+        index.skills.bbbSkill.consecutive_errors = -1;
+        index.skills.cccSkill.consecutive_errors = '3';
+        index.skills.dddSkill.consecutive_errors = 1.5;
+        fs.writeFileSync(file('index.json'), JSON.stringify(index, null, 2));
+        const second = loaded();
+        assert.deepEqual(second.list().map((e) => e.consecutive_errors), [2, 0, 0, 0]);
+    });
+
+    test('unknown name: nothing happens', () => {
+        const store = loaded();
+        assert.doesNotThrow(() => store.recordUse('digHole', { ok: false, error: 'x' }));
+        assert.equal(store.size, 0);
+    });
+
+    // Decision of the tech lead for v0.1.4.5: enabling resets consecutive_errors, nothing else.
+    const threeErrors = () => {
+        const store = loaded();
+        store.save(saveArgs('buildWall'));
+        store.recordUse('buildWall', { ok: true });
+        for (let i = 0; i < 3; i++) store.recordUse('buildWall', { ok: false, error: 'Error: boom' });
+        store.recordUse('buildWall', { ok: false }); // a returned false: a failure, but no error
+        return store;
+    };
+
+    test("setStatus(name, 'active') sets consecutive_errors to 0; the other counters stay; stored in index.json", () => {
+        const store = threeErrors();
+        store.setStatus('buildWall', 'disabled');
+        const before = store.get('buildWall');
+        assert.deepEqual(counters(before), { uses: 5, failures: 4, consecutive_failures: 4, consecutive_errors: 3, last_error: null });
+        assert.equal(store.setStatus('buildWall', 'active'), true);
+        const after = store.get('buildWall');
+        assert.deepEqual(after, { ...before, status: 'active', consecutive_errors: 0 });
+        assert.deepEqual(readIndex().skills.buildWall, after);
+    });
+
+    test("setStatus(name, 'active') on a skill that is already active also resets consecutive_errors", () => {
+        const store = threeErrors();
+        assert.equal(store.get('buildWall').status, 'active');
+        assert.equal(store.setStatus('buildWall', 'active'), true);
+        assert.equal(store.get('buildWall').consecutive_errors, 0);
+        assert.equal(store.get('buildWall').consecutive_failures, 4);
+        assert.equal(readIndex().skills.buildWall.consecutive_errors, 0);
+    });
+
+    test("setStatus(name, 'active') with nothing to change writes nothing", () => {
+        const store = loaded();
+        store.save(saveArgs('buildWall'));
+        const before = fileState();
+        assert.equal(store.setStatus('buildWall', 'active'), true);
+        assert.deepEqual(fileState(), before);
+    });
+
+    test("setStatus(name, 'disabled') changes no counter", () => {
+        const store = threeErrors();
+        const before = store.get('buildWall');
+        assert.equal(store.setStatus('buildWall', 'disabled'), true);
+        assert.deepEqual(store.get('buildWall'), { ...before, status: 'disabled' });
+        assert.equal(store.setStatus('buildWall', 'disabled'), true);
+        assert.equal(store.get('buildWall').consecutive_errors, 3);
+    });
+
+    test('an invalid status or an unknown name resets nothing', () => {
+        const store = threeErrors();
+        assert.equal(store.setStatus('buildWall', 'ACTIVE'), false);
+        assert.equal(store.setStatus('digHole', 'active'), false);
+        assert.equal(store.get('buildWall').consecutive_errors, 3);
+    });
+});
+
 describe('remove(name)', () => {
     test('the file is MOVED to .history/<name>.removed-<UTC stamp>.js, the entry removed; true', () => {
         const store = loaded();
@@ -537,7 +702,7 @@ describe('load()', () => {
         assert.equal(e.version, 1);
         assert.equal(e.description, 'Builds a wall of the given length.');
         assert.equal(e.signature, 'buildWall(bot, length)');
-        assert.deepEqual([e.uses, e.failures, e.consecutive_failures], [0, 0, 0]);
+        assert.deepEqual([e.uses, e.failures, e.consecutive_failures, e.consecutive_errors], [0, 0, 0, 0]);
         assert.equal(e.hash, sha(wall));
         const h = store.get('digHole');
         assert.equal(h.description, 'Digs a hole.');

@@ -354,7 +354,8 @@ describe('loading runs no code (Amendment 2, B2)', () => {
                 let evaluated = 0;
                 const makeCompartment = (e) => {
                     const c = LOCK.makeCompartment(e);
-                    return { evaluate: (src) => { evaluated++; return c.evaluate(src); } };
+                    // v0.1.4.5, G4: the fake passes the global object through, so the library can be protected
+                    return { evaluate: (src) => { evaluated++; return c.evaluate(src); }, globalThis: c.globalThis };
                 };
                 const result = await load([{ name: 'goodOne', source: fnSource('goodOne', ['return 1;']) }], { check, makeCompartment });
                 assert.deepEqual(result.loaded, []);
@@ -372,9 +373,8 @@ describe('loading runs no code (Amendment 2, B2)', () => {
             ['it adds a symbol member', escape('customSkills[Symbol.iterator] = 1')],
             ['it adds a member that is not enumerable', escape('Object.defineProperty(customSkills, "hidden", { value: 1 })')],
             ['it replaces the prototype of customSkills', escape('Object.setPrototypeOf(customSkills, { extra: async function extra() { return "extra"; } })')],
-            ['it replaces the binding customSkills of the compartment', escape('customSkills = { bbbSkill: async function bbbSkill() { return "replaced"; } }')],
-            ['it deletes the binding customSkills', escape('delete globalThis.customSkills')],
-            ['it turns the binding into a getter that still returns the library', escape('(() => { const real = customSkills; Object.defineProperty(globalThis, "customSkills", { get: () => real, configurable: true }); })()')],
+            // v0.1.4.5, G4: replacing, deleting or redefining the binding customSkills now throws while
+            // the hostile file is evaluated; those three cases moved to the tests of G4 below.
         ];
         for (const [label, source] of CASES) {
             test(`${label}: a NEW frozen empty customSkills, loaded [], every active skill skipped, a warning`, async () => {
@@ -399,13 +399,19 @@ describe('loading runs no code (Amendment 2, B2)', () => {
             });
         }
 
-        test('fail closed: a compartment whose globalThis cannot be read counts as changed', async () => {
+        // v0.1.4.5, G4: a global object that cannot be read or is missing now fails earlier, when the
+        // library is protected (see the tests of G4). These two fakes pass the protection and then
+        // change the global object, so the check after loading still has to catch it.
+        test('fail closed: a global object that cannot be read after loading counts as changed', async () => {
             const makeCompartment = (e) => {
                 const c = LOCK.makeCompartment(e);
+                let reads = 0;
                 return {
                     evaluate: (src) => c.evaluate(src),
                     get globalThis() {
-                        throw new Error('no access');
+                        reads++;
+                        if (reads > 1) throw new Error('no access');
+                        return c.globalThis;
                     },
                 };
             };
@@ -414,13 +420,36 @@ describe('loading runs no code (Amendment 2, B2)', () => {
             assert.deepEqual(result.skipped, [{ name: 'goodOne', error: CHANGED }]);
         });
 
-        test('a compartment without globalThis (a fake): only the library itself is checked', async () => {
+        test('fail closed: a global object that is gone after loading counts as changed', async () => {
             const makeCompartment = (e) => {
                 const c = LOCK.makeCompartment(e);
-                return { evaluate: (src) => c.evaluate(src) };
+                let reads = 0;
+                return {
+                    evaluate: (src) => c.evaluate(src),
+                    get globalThis() {
+                        reads++;
+                        return reads > 1 ? undefined : c.globalThis;
+                    },
+                };
             };
             const result = await load([{ name: 'goodOne', source: fnSource('goodOne', ['return 1;']) }], { makeCompartment });
-            assert.deepEqual(result.loaded, ['goodOne']);
+            assert.deepEqual(result.skipped, [{ name: 'goodOne', error: CHANGED }]);
+        });
+
+        test('a global object that is another object after loading, without the binding, counts as changed', async () => {
+            const makeCompartment = (e) => {
+                const c = LOCK.makeCompartment(e);
+                let reads = 0;
+                return {
+                    evaluate: (src) => c.evaluate(src),
+                    get globalThis() {
+                        reads++;
+                        return reads > 1 ? {} : c.globalThis;
+                    },
+                };
+            };
+            const result = await load([{ name: 'goodOne', source: fnSource('goodOne', ['return 1;']) }], { makeCompartment });
+            assert.deepEqual(result.skipped, [{ name: 'goodOne', error: CHANGED }]);
         });
 
         test('a skill that was already skipped for another reason is listed once, with the text of the give-up', async () => {
@@ -466,6 +495,205 @@ describe('loading runs no code (Amendment 2, B2)', () => {
     });
 });
 
+// Spec v0.1.4.5, G4: directly after the compartment is made and before any skill is evaluated, the
+// loader defines customSkills on the compartment's global object as not writable and not
+// configurable, with the library object as value. Load-time code and a microtask it starts can no
+// longer replace the name, also WITHOUT the option check. If that is not possible, all active
+// skills are skipped with 'the skill library could not be protected' and an empty frozen library
+// is returned. The checks of Amendment 2, B2 stay (see above).
+describe('the name customSkills cannot be replaced in the sandbox (v0.1.4.5, G4)', () => {
+    const UNPROTECTED = 'the skill library could not be protected';
+    const escape = (code) => `async function aaaSkill(bot) { return 1; }) && (${code}, true) && (async function aaaSkill(bot) { return 1; }`;
+    // makeCompartment that keeps the compartment, so the test can look at its global object
+    const spy = () => {
+        const made = [];
+        return { made, makeCompartment: (e) => { const c = LOCK.makeCompartment(e); made.push(c); return c; } };
+    };
+    const withProbe = () => {
+        const probe = {};
+        return { probe, endowments: { ...makeEndowments(), probe } };
+    };
+    const binding = (compartment) => Object.getOwnPropertyDescriptor(compartment.globalThis, 'customSkills');
+
+    test('the binding is a constant with the library as value, already before the first skill is evaluated', async () => {
+        const seen = [];
+        const makeCompartment = (e) => {
+            const c = LOCK.makeCompartment(e);
+            return {
+                get globalThis() {
+                    return c.globalThis;
+                },
+                evaluate: (src) => {
+                    seen.push(Object.getOwnPropertyDescriptor(c.globalThis, 'customSkills'));
+                    return c.evaluate(src);
+                },
+            };
+        };
+        const { customSkills } = await load([{ name: 'innerSkill', source: INNER }, { name: 'outerSkill', source: OUTER }], { makeCompartment });
+        assert.equal(seen.length, 2);
+        for (const d of seen) {
+            assert.equal(d.value, customSkills);
+            assert.equal(d.writable, false);
+            assert.equal(d.configurable, false);
+        }
+    });
+
+    test('skills still call each other through customSkills', async () => {
+        const { made, makeCompartment } = spy();
+        const { customSkills, loaded } = await load([{ name: 'outerSkill', source: OUTER }, { name: 'innerSkill', source: INNER }], { makeCompartment, check: SRC.isSingleFunction });
+        assert.deepEqual(loaded, ['innerSkill', 'outerSkill']);
+        assert.equal(await customSkills.outerSkill(makeBot()), 42);
+        assert.equal(binding(made[0]).value, customSkills);
+    });
+
+    const LOAD_TIME = [
+        ['assigns a new object to the name', 'customSkills = { innerSkill: async function innerSkill() { return 0; } }'],
+        ['deletes the name', 'delete globalThis.customSkills'],
+        ['turns the name into a getter', '(() => { const real = customSkills; Object.defineProperty(globalThis, "customSkills", { get: () => real, configurable: true }); })()'],
+        ['makes the name writable again', 'Object.defineProperty(globalThis, "customSkills", { writable: true })'],
+    ];
+    for (const [label, code] of LOAD_TIME) {
+        test(`load-time code that ${label}, without check: it throws, that skill is skipped, the others load and call each other`, async () => {
+            const { made, makeCompartment } = spy();
+            const { probe, endowments } = withProbe();
+            const result = await load([
+                { name: 'aaaSkill', source: escape(`${code}, probe.ran = true`) },
+                { name: 'innerSkill', source: INNER },
+                { name: 'outerSkill', source: OUTER },
+            ], { makeCompartment, endowments });
+            assert.equal(probe.ran, undefined, 'the code after the attempt did not run');
+            assert.deepEqual(result.loaded, ['innerSkill', 'outerSkill']);
+            assert.equal(result.skipped.length, 1);
+            assert.equal(result.skipped[0].name, 'aaaSkill');
+            assert.match(result.skipped[0].error, /TypeError/);
+            assert.equal(await result.customSkills.outerSkill(makeBot()), 42);
+            const d = binding(made[0]);
+            assert.equal(d.value, result.customSkills);
+            assert.equal(d.writable, false);
+            assert.equal(d.configurable, false);
+        });
+    }
+
+    test('load-time code that catches its failed attempt: the name stays, all skills load (this protection does not need check)', async () => {
+        const { made, makeCompartment } = spy();
+        const { probe, endowments } = withProbe();
+        const result = await load([
+            { name: 'aaaSkill', source: escape('(() => { try { customSkills = {}; probe.replaced = true; } catch (e) { probe.error = String(e); } })()') },
+            { name: 'innerSkill', source: INNER },
+            { name: 'outerSkill', source: OUTER },
+        ], { makeCompartment, endowments });
+        assert.match(probe.error, /TypeError/);
+        assert.equal(probe.replaced, undefined);
+        assert.deepEqual(result.loaded, ['aaaSkill', 'innerSkill', 'outerSkill']);
+        assert.equal(binding(made[0]).value, result.customSkills);
+        assert.equal(await result.customSkills.outerSkill(makeBot()), 42);
+    });
+
+    test('a microtask started at load time cannot replace the name or add a member, without check', async () => {
+        const { made, makeCompartment } = spy();
+        const { probe, endowments } = withProbe();
+        const later = [
+            'Promise.resolve().then(() => {',
+            '  try { customSkills = { innerSkill: async function innerSkill() { return 0; } }; probe.replaced = true; } catch (e) { probe.assign = String(e); }',
+            '  try { customSkills.extra = async function extra() { return "extra"; }; probe.added = true; } catch (e) { probe.add = String(e); }',
+            '  probe.done = true;',
+            '})',
+        ].join(' ');
+        // called directly, not through the awaiting helper, so no microtask runs before the first checks
+        const result = L.loadSkills({
+            store: fakeStore([{ name: 'aaaSkill', source: escape(later) }, { name: 'innerSkill', source: INNER }, { name: 'outerSkill', source: OUTER }]),
+            makeCompartment, endowments, instrument: SRC.instrument, onUse: () => {},
+        });
+        assert.equal(probe.done, undefined, 'the microtask has not run while loading');
+        assert.deepEqual(result.loaded, ['aaaSkill', 'innerSkill', 'outerSkill'], 'the load-time code left the library alone, so all load');
+        await new Promise((resolve) => setImmediate(resolve));
+        assert.equal(probe.done, true, 'the microtask ran after loading');
+        assert.match(probe.assign, /TypeError/);
+        assert.match(probe.add, /TypeError/, 'the library is frozen by then');
+        assert.equal(probe.replaced, undefined);
+        assert.equal(probe.added, undefined);
+        assert.equal(binding(made[0]).value, result.customSkills);
+        assert.equal(result.customSkills.extra, undefined);
+        assert.equal(await result.customSkills.outerSkill(makeBot()), 42, 'skills still call the real innerSkill');
+    });
+
+    test('a microtask that adds a member to the library before it is frozen cannot happen: loading is synchronous', async () => {
+        // the loader evaluates, checks and freezes in one synchronous run, so no microtask runs in between
+        const { probe, endowments } = withProbe();
+        const result = await load([
+            { name: 'aaaSkill', source: escape('Promise.resolve().then(() => { try { customSkills.extra = 1; } catch (e) { probe.add = String(e); } })') },
+            { name: 'innerSkill', source: INNER },
+        ], { endowments });
+        assert.ok(Object.isFrozen(result.customSkills));
+        await new Promise((resolve) => setImmediate(resolve));
+        assert.match(probe.add, /TypeError/);
+        assert.equal(result.customSkills.extra, undefined);
+    });
+
+    const UNPROTECTABLE = [
+        ['the compartment has no global object (a fake)', (c) => ({ evaluate: (src) => c.evaluate(src) })],
+        ['the global object cannot be read', (c) => ({ evaluate: (src) => c.evaluate(src), get globalThis() { throw new Error('no access'); } })],
+        ['the global object is not extensible and has no binding', (c) => ({ evaluate: (src) => c.evaluate(src), globalThis: Object.preventExtensions({}) })],
+        ['the binding is already a constant with another value', (c) => ({ evaluate: (src) => c.evaluate(src), globalThis: Object.defineProperty({}, 'customSkills', { value: {}, writable: false, configurable: false }) })],
+        ['the global object refuses the definition', (c) => ({ evaluate: (src) => c.evaluate(src), globalThis: new Proxy({}, { defineProperty: () => false }) })],
+        ['the global object reports a writable binding after the definition', (c) => ({
+            evaluate: (src) => c.evaluate(src),
+            globalThis: new Proxy({}, { defineProperty: () => true, getOwnPropertyDescriptor: () => ({ value: 1, writable: true, configurable: true, enumerable: true }) }),
+        })],
+    ];
+    for (const [label, fake] of UNPROTECTABLE) {
+        test(`not possible because ${label}: every active skill is skipped with "${UNPROTECTED}", nothing is evaluated, an empty frozen library`, async () => {
+            let evaluated = 0;
+            const given = [];
+            const makeCompartment = (e) => {
+                given.push(e.customSkills);
+                const c = LOCK.makeCompartment(e);
+                return fake({ evaluate: (src) => { evaluated++; return c.evaluate(src); } });
+            };
+            const skills = [
+                { name: 'innerSkill', source: INNER },
+                { name: 'outerSkill', source: OUTER },
+                { name: 'offSkill', source: fnSource('offSkill', ['return 0;']), status: 'disabled' },
+            ];
+            let result;
+            await assert.doesNotReject(async () => {
+                result = await load(skills, { makeCompartment, check: SRC.isSingleFunction });
+            });
+            assert.equal(evaluated, 0, 'no skill was evaluated');
+            assert.deepEqual(result.loaded, []);
+            assert.deepEqual(result.skipped, [{ name: 'innerSkill', error: UNPROTECTED }, { name: 'outerSkill', error: UNPROTECTED }]);
+            assert.ok(Object.isFrozen(result.customSkills));
+            assert.deepEqual(Reflect.ownKeys(result.customSkills), []);
+            assert.notEqual(result.customSkills, given[0], 'not the object the compartment got');
+            assert.ok(cap.of('warn').some((r) => r.text.includes(UNPROTECTED)), 'a warning is logged');
+        });
+    }
+
+    test('not possible and no active skill: an empty result without a warning', async () => {
+        const makeCompartment = (e) => ({ evaluate: (src) => LOCK.makeCompartment(e).evaluate(src) });
+        const result = await load([{ name: 'offSkill', source: fnSource('offSkill', ['return 0;']), status: 'disabled' }], { makeCompartment });
+        assert.deepEqual(result.loaded, []);
+        assert.deepEqual(result.skipped, []);
+        assert.equal(cap.of('warn').length, 0);
+    });
+
+    test('with the real SkillStore and the manager\'s check: the binding is protected as well', async () => {
+        const root = makeTmpDir();
+        try {
+            const store = new STORE.SkillStore(path.join(root, 'skills'), { now: () => new Date(Date.UTC(2026, 8, 28)) });
+            store.load();
+            store.save({ name: 'innerSkill', source: INNER, description: 'Inner.', signature: 'innerSkill(bot)', sourceTask: 't' });
+            const { made, makeCompartment } = spy();
+            const { customSkills } = await load(null, { store, makeCompartment, check: SRC.isSingleFunction });
+            assert.equal(binding(made[0]).value, customSkills);
+            assert.equal(binding(made[0]).writable, false);
+            assert.throws(() => made[0].evaluate('customSkills = {}'), TypeError);
+        } finally {
+            removeTmpDir(root);
+        }
+    });
+});
+
 describe('never throws', () => {
     const shapeOk = (result) => {
         assert.ok(result && typeof result === 'object');
@@ -482,6 +710,27 @@ describe('never throws', () => {
         shapeOk(result);
         assert.deepEqual(result.loaded, []);
         assert.equal(Object.isFrozen(result.customSkills), true);
+    });
+
+    test('entries of the list that cannot be read or have no usable name are left out; the others load', async () => {
+        const good = fakeStore([{ name: 'goodOne', source: fnSource('goodOne', ['return 1;']) }]);
+        const store = {
+            list: () => [
+                null, 42, 'goodOne',
+                { get status() { throw new Error('status getter'); }, name: 'badStatus' },
+                { status: 'active', get name() { throw new Error('name getter'); } },
+                { status: 'active', name: '' },
+                { status: 'active', name: 7 },
+                ...good.list(),
+            ],
+            read: (name) => good.read(name),
+        };
+        let result;
+        await assert.doesNotReject(async () => {
+            result = await load(null, { store, check: SRC.isSingleFunction });
+        });
+        assert.deepEqual(result.loaded, ['goodOne']);
+        assert.deepEqual(result.skipped, []);
     });
 
     test('store.read throws for one skill: that skill is skipped', async () => {

@@ -149,7 +149,7 @@ describe('source text: every new call is guarded by the manager', () => {
     const FILES = [
         ['src/agent/coder.js', {}],
         ['src/models/prompter.js', PROMPTER_OPTIONS],
-        ['src/agent/commands/actions.js', { tryRequired: ['captureFromRun'] }],
+        ['src/agent/commands/actions.js', { tryRequired: ['captureFromRun', 'takeNotices'] }],
         ['src/agent/commands/queries.js', {}],
     ];
     for (const [file, options] of FILES) {
@@ -182,6 +182,13 @@ describe('source text: every new call is guarded by the manager', () => {
     test('src/agent/commands/actions.js: captureFromRun of !newAction is wrapped in try', () => {
         const result = analyseSkillGuards('src/agent/commands/actions.js', { tryRequired: ['captureFromRun'] });
         assert.ok(result.uses.some((u) => u.name === 'captureFromRun'), 'captureFromRun is called');
+        assert.deepEqual(result.notInTry, []);
+    });
+
+    test('src/agent/commands/actions.js: takeNotices() is called only behind the manager guard and inside try (v0.1.4.5, G1)', () => {
+        const result = analyseSkillGuards('src/agent/commands/actions.js', { tryRequired: ['takeNotices'] });
+        assert.ok(result.uses.some((u) => u.name === 'takeNotices'), 'takeNotices is called');
+        assert.deepEqual(result.unguarded, []);
         assert.deepEqual(result.notInTry, []);
     });
 

@@ -37,8 +37,10 @@ const DEVICE_NAMES = new Set([
 // Checked on the whole source text, including comments and strings. A token matches a whole
 // name only (Amendment 1, A1), so `retrieval(` or `item.constructorName` are not refused.
 // `(?<![\w$])` means "not preceded by a letter, digit, _ or $", `(?![\w$])` "not followed by one".
+// import( (v0.1.4.5, G5): like the sandbox, also `import` followed by optional whitespace and
+// `//` or `/*`, and not after a `.` (x.import(1) is a method call), but after a spread `...`.
 const FORBIDDEN_TOKENS = Object.freeze([
-    { token: 'import(', pattern: /(?<![\w$])import\s*\(/ },
+    { token: 'import(', pattern: /(?:(?<![\w$.])|(?<=\.\.\.))import\s*(?:\(|\/[/*])/ },
     { token: 'eval(', pattern: /(?<![\w$])eval\s*\(/ },
     { token: '<!--', pattern: /<!--/ },
     { token: '-->', pattern: /-->/ },
