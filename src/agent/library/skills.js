@@ -52,7 +52,7 @@ export async function craftRecipe(bot, itemName, num=1) {
      **/
     let placedTable = false;
 
-    if (mc.getItemCraftingRecipes(itemName).length == 0) {
+    if (!mc.getItemCraftingRecipes(itemName)?.length) { // null: no recipe, or not an item
         log(bot, `${itemName} is either not an item, or it does not have a crafting recipe!`);
         return false;
     }

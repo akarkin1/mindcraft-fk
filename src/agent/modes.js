@@ -3,6 +3,7 @@ import * as world from './library/world.js';
 import * as mc from '../utils/mcdata.js';
 import settings from './settings.js'
 import convoManager from './conversation.js';
+import { withKillTimer } from '../utils/kill_timer.js';
 
 async function say(agent, message) {
     agent.bot.modes.behavior_log += message + '\n';
@@ -123,9 +124,8 @@ const modes_list = [
                 say(agent, 'I\'m stuck!');
                 this.stuck_time = 0;
                 execute(this, agent, async () => {
-                    const crashTimeout = setTimeout(() => { agent.cleanKill("Got stuck and couldn't get unstuck") }, 10000);
-                    await skills.moveAway(bot, 5);
-                    clearTimeout(crashTimeout);
+                    // the timer is cleared also when moveAway throws (e.g. PathStopped after !stop)
+                    await withKillTimer(() => { agent.cleanKill("Got stuck and couldn't get unstuck") }, 10000, () => skills.moveAway(bot, 5));
                     say(agent, 'I\'m free.');
                 });
             }

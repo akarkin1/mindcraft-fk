@@ -134,8 +134,9 @@ export class Agent {
 
             // Log and Analyze
             // handleDisconnection handles logging to console and server
-            const { type } = handleDisconnection(this.name, reason);
+            const { type, msg } = handleDisconnection(this.name, reason);
      
+            console.log(`Agent process ends with exit code 1: ${msg}`);
             process.exit(1);
         };
         
@@ -674,9 +675,11 @@ export class Agent {
     
 
     cleanKill(msg='Killing agent process...', code=1) {
-        this.history.add('system', msg);
-        this.bot.chat(code > 1 ? 'Restarting.': 'Exiting.');
-        this.history.save();
+        console.log(`Agent process ends with exit code ${code}: ${msg}`);
+        // the history or the bot may not exist yet: the exit must happen in every case
+        try { this.history.add('system', msg); } catch (_) { /* no history */ }
+        try { this.bot.chat(code > 1 ? 'Restarting.': 'Exiting.'); } catch (_) { /* no bot */ }
+        try { this.history.save(); } catch (_) { /* no history */ }
         process.exit(code);
     }
     async checkTaskDone() {
