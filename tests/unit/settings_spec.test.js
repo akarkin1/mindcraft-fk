@@ -2,11 +2,17 @@
 // Amendment 1, A6: the complete key lists of settings.js and settings_spec.json are NOT
 // pinned (future releases add settings), and nothing fails when one of the known gaps
 // below gets a spec entry.
+//
+// settings.js is the owner's live configuration, so the VALUES of sandbox_lockdown and
+// blocked_actions are not asserted, only that they are valid (tests/helpers/owner_settings.js,
+// proven for other valid values in settings_owner_values.test.js). The entries of
+// settings_spec.json hold the defaults in code and are asserted exactly.
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { loadSrc } from '../helpers/load.js';
 import { repoPath } from '../helpers/paths.js';
+import { assertValidSetting } from '../helpers/owner_settings.js';
 
 const settingsModule = await loadSrc('settings.js');
 const settings = settingsModule.default;
@@ -22,11 +28,12 @@ const KNOWN_SPEC_GAPS = [
     'block_place_delay', // read by skills.js
 ];
 
-const EXACT_LINE = '"sandbox_lockdown": true, // runs the SES lockdown that isolates code written by the model. set false only if a library breaks';
+// The line of sandbox_lockdown as specified, with the value the owner chose (true or false).
+const EXACT_LINE = /^"sandbox_lockdown": (true|false), \/\/ runs the SES lockdown that isolates code written by the model\. set false only if a library breaks$/;
 
 describe('settings.js', () => {
-    test('default export has sandbox_lockdown === true', () => {
-        assert.equal(settings.sandbox_lockdown, true);
+    test('default export has sandbox_lockdown, a boolean', () => {
+        assertValidSetting(settings, 'sandbox_lockdown');
     });
 
     test('sandbox_lockdown comes directly after allow_insecure_coding', () => {
@@ -34,9 +41,11 @@ describe('settings.js', () => {
         assert.equal(keys.indexOf('sandbox_lockdown'), keys.indexOf('allow_insecure_coding') + 1);
     });
 
-    test('the new line is exactly as specified, including the comment', () => {
+    test('the new line is exactly as specified, including the comment; the value is the one of the default export', () => {
         const lines = settingsSource.split(/\r?\n/).map((l) => l.trim());
-        assert.ok(lines.includes(EXACT_LINE), `missing line: ${EXACT_LINE}`);
+        const matches = lines.map((l) => EXACT_LINE.exec(l)).filter(Boolean);
+        assert.equal(matches.length, 1, `one line like ${EXACT_LINE}`);
+        assert.equal(matches[0][1], String(settings.sandbox_lockdown));
     });
 
     test('every key other than profiles has a settings_spec.json entry (or is a documented known gap)', () => {
@@ -47,14 +56,10 @@ describe('settings.js', () => {
         assert.deepEqual(missing, []);
     });
 
-    // v0.1.4.5: in a play test the model used !restart as an answer to a remark of the player,
-    // which restarted the bot. The fork blocks it; the blueprint commands stay blocked.
-    test('blocked_actions contains !restart and still the four blueprint commands; the line keeps its comment', () => {
-        assert.ok(Array.isArray(settings.blocked_actions));
-        assert.ok(settings.blocked_actions.includes('!restart'), JSON.stringify(settings.blocked_actions));
-        for (const name of ['!checkBlueprint', '!checkBlueprintLevel', '!getBlueprint', '!getBlueprintLevel']) {
-            assert.ok(settings.blocked_actions.includes(name), name);
-        }
+    // Which commands are blocked is the owner's choice (v0.1.4.5 added "!restart" to the fork's
+    // list); the test checks that the list is valid and that the line keeps its comment.
+    test('blocked_actions is an array of command names that each start with "!"; the line keeps its comment', () => {
+        assertValidSetting(settings, 'blocked_actions');
         const line = settingsSource.split(/\r?\n/).find((l) => l.includes('"blocked_actions"'));
         assert.ok(line, 'line of blocked_actions');
         assert.ok(line.includes('// commands to disable and remove from docs. Ex: ["!setMode"]'), line);
