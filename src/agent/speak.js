@@ -1,4 +1,4 @@
-import { exec, spawn } from 'child_process';
+import { execFile, spawn } from 'child_process';
 import { promises as fs } from 'fs';
 import os from 'os';
 import path from 'path';
@@ -7,6 +7,27 @@ import { TTSConfig as geminiTTSConfig } from '../models/gemini.js';
 
 let speakingQueue = []; // each item: {text, model, audioData, ready}
 let isSpeaking = false;
+
+// System speech: no shell, and the text is never part of a command line. PowerShell runs a
+// constant script that reads the text from an environment variable of the child process;
+// say and espeak get the text as one argument after '--'.
+const TTS_TEXT_VAR = 'MINDCRAFT_TTS_TEXT';
+const WIN_TTS_SCRIPT = 'Add-Type -AssemblyName System.Speech; ' +
+    '$s=New-Object System.Speech.Synthesis.SpeechSynthesizer; $s.Rate=2; ' +
+    `$s.Speak($env:${TTS_TEXT_VAR}); $s.Dispose()`;
+
+// Line breaks, tabs and other control characters become spaces.
+function cleanSpeechText(text) {
+    return String(text ?? '').replace(/[\p{Cc}\p{Zl}\p{Zp}]/gu, ' ');
+}
+
+// What is started to speak the text: { command, args, env }, env holds the extra variables of the child.
+export function systemSpeechCommand(text, platform = process.platform) {
+    const clean = cleanSpeechText(text);
+    if (platform === 'win32')
+        return { command: 'powershell', args: ['-NoProfile', '-NonInteractive', '-Command', WIN_TTS_SCRIPT], env: { [TTS_TEXT_VAR]: clean } };
+    return { command: platform === 'darwin' ? 'say' : 'espeak', args: ['--', clean], env: {} };
+}
 
 export function speak(text, speak_model) {
     const model = speak_model || 'system';
@@ -62,14 +83,13 @@ async function processQueue() {
     }
     const item = speakingQueue.shift();
     const { text: txt, model, audioData } = item;
-    if (txt.trim() === '') {
+    if (cleanSpeechText(txt).trim() === '') {
         isSpeaking = false;
         processQueue();
         return;
     }
 
     const isWin = process.platform === 'win32';
-    const isMac = process.platform === 'darwin';
 
     // wait for preprocessing if needed
     try {
@@ -83,20 +103,18 @@ async function processQueue() {
     }
 
     if (model === 'system') {
-        // system TTS
-        const cmd = isWin
-            ? `powershell -NoProfile -Command "Add-Type -AssemblyName System.Speech; \
-            $s=New-Object System.Speech.Synthesis.SpeechSynthesizer; $s.Rate=2; \
-            $s.Speak('${txt.replace(/'/g,"''")}'); $s.Dispose()"`
-            : isMac
-            ? `say "${txt.replace(/"/g,'\\"')}"`
-            : `espeak "${txt.replace(/"/g,'\\"')}"`;
-
-        exec(cmd, err => {
+        // system TTS, no shell (see systemSpeechCommand)
+        const { command, args, env } = systemSpeechCommand(txt);
+        const done = err => {
             if (err) console.error('TTS error', err);
             isSpeaking = false;
             processQueue();
-        });
+        };
+        try {
+            execFile(command, args, { env: { ...process.env, ...env }, windowsHide: true }, done);
+        } catch (err) {
+            done(err);
+        }
 
     } 
     else {
