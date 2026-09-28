@@ -6,6 +6,37 @@ This fork is based on [Mindcraft](https://github.com/mindcraft-bots/mindcraft) `
 
 Each release lists new settings and feature flags with their default value.
 
+## [0.1.4.5] - 2026-09-28
+
+Fixes from the first play test, and limits for the skill library.
+
+### Security
+
+- **Text-to-speech could run commands on the computer.** With `speak` on, the reply of the bot was put into a shell command, and only single quotes were escaped. A reply with a double quote, `&` or `|` could run a command. What the bot says is influenced by what other players write in chat. The text is now handed over as data and no shell is used. The bug came from upstream and affected Windows, macOS and Linux.
+
+### Added
+
+- Setting `skill_disable_after_errors`, default `3`. A saved skill that ends with an error this many times in a row is switched off, and the bot is told why. A corrected version under the same name switches it on again, and so does `!enableSkill`. `0` switches this off. A run that returns `false` does not count as an error.
+- Setting `skill_max_count`, default `100`. When the skill library has this many skills, new skills are not saved and the bot is told to forget one first. New versions of saved skills are always accepted. `0` switches the limit off.
+- Every end of the agent process prints its reason and exit code to the console. Before, some restarts left no trace in the log.
+
+### Changed
+
+- A function that does next to nothing is not reviewed and not saved as a skill: no loop and at most one call of a built-in or saved function. This saves one call to the model.
+- The command `!restart` is blocked in the fork's `settings.js`. In the play test the model used it as an answer to a remark of the player. Remove it from `blocked_actions` to get it back.
+
+### Fixed
+
+- `!craftRecipe` ended with a `TypeError` for an item without a crafting recipe, such as `farmland`. It now answers that the item has no recipe.
+- The bot restarted 10 seconds after its attempt to get unstuck was interrupted, for example by `!stop`. The timer that ends the process is now cleared in that case.
+- The reason for a kick by the server was printed as `[object Object]`. It is now printed as text, for example `multiplayer.disconnect.invalid_player_movement`.
+- Text-to-speech failed for every reply that contained a line break.
+- Item goals of the NPC system failed for every item without a crafting recipe.
+- A skill file could not replace the name `customSkills` in the sandbox in release `0.1.4.4` as long as the first of two protections was active. The second protection now holds on its own as well.
+- A skill that contains `import` followed by a comment is refused when it is saved. Before, it was saved and could not be loaded.
+
+All bugs in this list except the last two came from upstream.
+
 ## [0.1.4.4] - 2026-09-28
 
 Skills release. The bot can save code that worked as a named skill and call it again later. Skills belong to the bot and are shared by all its worlds. The feature is behind a feature flag and is off by default.
