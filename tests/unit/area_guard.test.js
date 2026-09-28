@@ -107,13 +107,13 @@ describe('installAreaGuard(bot, options)', () => {
     test('returns the full guard; bot.areaGuard is a frozen view without permits (Amendment 2, F2)', () => {
         const { bot } = fakeBot();
         const guard = install(bot);
-        for (const member of ['canBreak', 'canPlace', 'canUse', 'permit', 'revoke', 'permits', 'explain', 'protectMovements']) {
+        for (const member of ['canBreak', 'canPlace', 'canUse', 'permit', 'revoke', 'permits', 'explain', 'protectMovements', 'inBuilding']) {
             assert.equal(typeof guard[member], 'function', member);
         }
         assert.notEqual(bot.areaGuard, guard);
-        assert.deepEqual(Object.keys(bot.areaGuard).sort(), ['canBreak', 'canPlace', 'canUse', 'explain', 'protectMovements']);
+        assert.deepEqual(Object.keys(bot.areaGuard).sort(), ['canBreak', 'canPlace', 'canUse', 'explain', 'inBuilding', 'protectMovements']);
         assert.ok(Object.isFrozen(bot.areaGuard));
-        for (const member of ['canBreak', 'canPlace', 'canUse', 'explain', 'protectMovements']) {
+        for (const member of ['canBreak', 'canPlace', 'canUse', 'explain', 'protectMovements', 'inBuilding']) {
             assert.equal(bot.areaGuard[member], guard[member], member);
         }
         assert.throws(() => { bot.areaGuard.permit = () => 0; }, TypeError, 'ES modules are strict: a frozen object refuses new members');
@@ -406,6 +406,34 @@ describe('permit, revoke, permits', () => {
         const guard = install(fakeBot().bot, { now: () => new Date(clock) });
         assert.equal(guard.permit('home', 1), T0 + MINUTE);
         assert.equal(guard.canBreak(block('oak_planks', 2, 64, 2)), true);
+    });
+});
+
+describe('inBuilding(pos) (v0.1.4.7 Amendment 2, I5)', () => {
+    test('true in an area of type building, false in a farm and outside', () => {
+        const guard = install(fakeBot().bot);
+        assert.equal(guard.inBuilding({ x: 2, y: 64, z: 2 }), true, 'home');
+        assert.equal(guard.inBuilding({ x: 2.7, y: 67.9, z: 0.1 }), true, 'floored, the top layer of home');
+        assert.equal(guard.inBuilding({ x: 12, y: 64, z: 2 }), false, 'field is a farm');
+        assert.equal(guard.inBuilding({ x: 2, y: 68, z: 2 }), false, 'above home');
+        assert.equal(guard.inBuilding({ x: 20, y: 64, z: 20 }), false, 'outside');
+        assert.equal(guard.inBuilding({ x: 6, y: 64, z: 2 }), true, 'where the farm garden overlaps home, home is still a building');
+        assert.equal(guard.inBuilding({ x: 102, y: 64, z: 2 }), false, 'nether_base is in another dimension');
+    });
+
+    test('a permit opens the building; after the permit it is a building again', () => {
+        const guard = install(fakeBot().bot);
+        guard.permit('home', 5);
+        assert.equal(guard.inBuilding({ x: 2, y: 64, z: 2 }), false);
+        clock += 5 * MINUTE;
+        assert.equal(guard.inBuilding({ x: 2, y: 64, z: 2 }), true);
+    });
+
+    test('junk and a broken store give false, never a throw', () => {
+        const guard = install(fakeBot().bot, { store: () => { throw new Error('gone'); } });
+        assert.equal(guard.inBuilding({ x: 2, y: 64, z: 2 }), false);
+        const ok = install(fakeBot().bot);
+        for (const junk of [null, undefined, {}, { x: 'a', y: 1, z: 2 }, 5]) assert.equal(ok.inBuilding(junk), false);
     });
 });
 

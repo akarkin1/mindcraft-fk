@@ -1,4 +1,5 @@
 import * as skills from '../library/skills.js';
+import * as world from '../library/world.js';
 import settings from '../settings.js';
 import convoManager from '../conversation.js';
 import { Vec3 } from 'vec3';
@@ -84,12 +85,12 @@ function costAllows(agent, what) {
 
 // Runs fn as the action `action:<label>`, like runAsAction, and returns the text that fn returns
 // (the replies of the home pack, v0.1.4.6). Without a text: the output of the action. Nothing when
-// the action was interrupted.
-async function runForText(agent, label, fn) {
+// the action was interrupted. timeout in minutes, -1 for none.
+async function runForText(agent, label, fn, timeout = -1) {
     let text = null;
     const code_return = await agent.actions.runAction(`action:${label}`, async () => {
         text = await fn();
-    }, { timeout: -1, resume: false });
+    }, { timeout, resume: false });
     if (code_return.interrupted && !code_return.timedout)
         return;
     if (code_return.success && typeof text === 'string' && text !== '')
@@ -139,6 +140,31 @@ function areaErrorText(error, name) {
 // The name of the block at x, y, z for the scans, null when it is not loaded.
 const blockNameOf = (bot) => (x, y, z) => bot.blockAt(new Vec3(x, y, z))?.name ?? null;
 
+// v0.1.4.7 Amendment 2, I6: the doors (the lower block only) and fence gates in the box, from the
+// world. An entrance that was saved before stays where its block is not loaded.
+function entrancesInBox(bot, box, saved) {
+    const found = [];
+    for (let x = box.min.x; x <= box.max.x; x++) {
+        for (let z = box.min.z; z <= box.max.z; z++) {
+            for (let y = box.min.y; y <= box.max.y; y++) {
+                const block = bot.blockAt(new Vec3(x, y, z), false); // no extra infos: up to 196608 blocks
+                const name = block?.name;
+                if (typeof name !== 'string')
+                    continue;
+                if (name.endsWith('_fence_gate')) {
+                    found.push({ x, y, z, kind: 'gate' });
+                } else if (name.endsWith('_door')) {
+                    const half = block.getProperties?.()?.half;
+                    if (half === 'lower' || (half !== 'upper' && bot.blockAt(new Vec3(x, y - 1, z))?.name !== name))
+                        found.push({ x, y, z, kind: 'door' });
+                }
+            }
+        }
+    }
+    const unloaded = saved.filter(e => bot.blockAt(new Vec3(e.x, e.y, e.z)) === null);
+    return [...found, ...unloaded];
+}
+
 // v0.1.4.6, !rememberHere: the building around the bot as an area, when one is found and no area of
 // that name exists. Returns the sentence for the reply, or null. Never throws.
 function saveBuildingAround(agent, name) {
@@ -176,6 +202,99 @@ async function enterBuildingAround(agent, pos, dimension) {
     } catch (error) {
         console.warn('Could not enter the building through the door:', error);
     }
+}
+
+// The work skills of v0.1.4.7 (spec section 7, part G). The packs come from agent.work_packs, which
+// the agent fills only while a switch needs them; nothing here imports a pack.
+const STORAGE_OFF = 'The storage pack is off.';
+const FARMING_OFF = 'The farming pack is off.';
+const WOOD_OFF = 'The wood pack is off.';
+const MINING_OFF = 'The mining pack is off.';
+const UNKNOWN_ORE = (ore) => `I do not know the ore "${ore}". I know coal, copper, iron, lapis, gold, redstone and diamond.`;
+
+// Runs fn(pack, bot, ctx) of a work pack as the action `action:<label>` and returns the text of its
+// result word for word, like the commands of the home pack. Nothing when the action was interrupted.
+async function runPack(agent, label, pack, name, fn) {
+    if (!pack)
+        return `The ${name} pack could not be loaded.`;
+    return await runForText(agent, label, async () => (await fn(pack, agent.bot, agent.packContext()))?.text);
+}
+
+// S4: the position of the chest that !putInChest, !takeFromChest and !viewChest will use, the nearest
+// chest within 32 blocks as skills.js finds it; null while storage_pack is off. Never throws.
+function chestToRecord(agent) {
+    if (!settings.storage_pack || !agent.work_packs?.storage)
+        return null;
+    try {
+        return world.getNearestBlock(agent.bot, 'chest', 32)?.position ?? null;
+    } catch (error) {
+        console.warn('Could not find the chest for the chest index:', error);
+        return null;
+    }
+}
+
+// S4, Amendment 1: after the old chest commands the chest index is updated with lookIntoChest of the
+// storage pack. Its messages go to the console, not into the output of the command. Never throws.
+async function recordChest(agent, pos) {
+    if (!settings.storage_pack || !pos)
+        return;
+    try {
+        const ctx = agent.packContext();
+        ctx.log = (text) => console.log(text);
+        await agent.work_packs.storage.lookIntoChest(agent.bot, ctx, pos);
+    } catch (error) {
+        console.warn('Could not update the chest index:', error);
+    }
+}
+
+// M5: true when a block of the ore, in stone or deepslate, is within 16 blocks and the bot can see it.
+function oreInSight(bot, type) {
+    try {
+        const base = type.replace(/^deepslate_/, '');
+        return world.getNearestBlocks(bot, [base, `deepslate_${base}`], 16, 32).some((block) => bot.canSeeBlock(block));
+    } catch (error) {
+        console.warn('Could not look for the ore:', error);
+        return false;
+    }
+}
+
+// F3, T5, M5: the skill of a work pack that !collectBlocks leads to for a block, or null for the old
+// collecting. Decided by the name of the block and the switches. Never throws.
+function collectWork(agent, type) {
+    try {
+        if (settings.farming_pack && agent.work_packs?.farming?.harvestTarget(type))
+            return { name: 'farming', pack: agent.work_packs.farming, run: (pack, bot, ctx, num) => pack.harvestCrops(bot, ctx, '', { limit: num }) };
+        if (settings.wood_pack && agent.work_packs?.wood?.woodKind(type))
+            return { name: 'wood', pack: agent.work_packs.wood, run: (pack, bot, ctx, num) => pack.chopTrees(bot, ctx, num, pack.woodKind(type)) };
+        const ore = settings.mining_pack ? agent.work_packs?.mining?.oreOf(type) : null;
+        if (ore && !oreInSight(agent.bot, type))
+            return { name: 'mining', pack: agent.work_packs.mining, run: (pack, bot, ctx, num) => pack.mineOre(bot, ctx, ore.ore ?? type, num) };
+    } catch (error) {
+        console.warn('Could not choose the skill for !collectBlocks:', error);
+    }
+    return null;
+}
+
+// M5: !goToMine goes down into the mine of the ore, without an ore into the nearest mine of the store,
+// with descendToLevel of the mining pack.
+async function goToMine(pack, bot, ctx, ore) {
+    const mines = ctx.mines;
+    let mine = null;
+    if (ore !== '') {
+        const row = pack.oreOf(ore);
+        if (!row)
+            return { ok: false, reason: 'unknown_ore', text: UNKNOWN_ORE(ore) };
+        mine = mines?.get(row.ore ?? ore) ?? null;
+        if (!mine)
+            return { ok: false, reason: 'no_mine', text: `I know no mine for ${row.ore ?? ore}.` };
+    } else {
+        const pos = bot.entity.position;
+        const distance = (m) => Math.hypot(m.entrance.x - pos.x, m.entrance.y - pos.y, m.entrance.z - pos.z);
+        mine = (mines?.list() ?? []).filter((m) => m?.entrance).sort((a, b) => distance(a) - distance(b))[0] ?? null;
+        if (!mine)
+            return { ok: false, reason: 'no_mine', text: 'I know no mine in this world.' };
+    }
+    return await pack.descendToLevel(bot, ctx, mine.level, { mine });
 }
 
 export const actionsList = [
@@ -446,7 +565,15 @@ export const actionsList = [
                 const box = normalizeBox({ x: x1, y: y1, z: z1 }, { x: x2, y: y2, z: z2 });
                 // the doors of a saved area of that name stay when they are inside the new box
                 const entrances = (store.get(name)?.entrances ?? []).filter(e => contains(box, e));
-                const area = store.set({ name, type, min: box.min, max: box.max, dimension: agent.bot.game?.dimension, entrances, source: 'manual' });
+                const dimension = agent.bot.game?.dimension;
+                let area = store.set({ name, type, min: box.min, max: box.max, dimension, entrances, source: 'manual' });
+                // v0.1.4.7 Amendment 2, I6: then the doors and gates in the box are looked up in the world
+                try {
+                    const found = entrancesInBox(agent.bot, area, entrances);
+                    area = store.set({ name, type, min: area.min, max: area.max, dimension, entrances: found, source: 'manual' });
+                } catch (error) {
+                    console.warn('Could not look up the doors and gates of the area:', error);
+                }
                 return areaSavedText(area);
             } catch (error) {
                 return areaErrorText(error, name);
@@ -545,7 +672,9 @@ export const actionsList = [
             'num': { type: 'int', description: 'The number of items to put in the chest.', domain: [1, Number.MAX_SAFE_INTEGER] }
         },
         perform: runAsAction(async (agent, item_name, num) => {
+            const chest = chestToRecord(agent); // v0.1.4.7, S4: null while storage_pack is off
             await skills.putInChest(agent.bot, item_name, num);
+            await recordChest(agent, chest);
         })
     },
     {
@@ -556,7 +685,9 @@ export const actionsList = [
             'num': { type: 'int', description: 'The number of items to take.', domain: [1, Number.MAX_SAFE_INTEGER] }
         },
         perform: runAsAction(async (agent, item_name, num) => {
+            const chest = chestToRecord(agent); // v0.1.4.7, S4: null while storage_pack is off
             await skills.takeFromChest(agent.bot, item_name, num);
+            await recordChest(agent, chest);
         })
     },
     {
@@ -564,7 +695,9 @@ export const actionsList = [
         description: 'View the items/counts of the nearest chest.',
         params: { },
         perform: runAsAction(async (agent) => {
+            const chest = chestToRecord(agent); // v0.1.4.7, S4: null while storage_pack is off
             await skills.viewChest(agent.bot);
+            await recordChest(agent, chest);
         })
     },
     {
@@ -588,9 +721,15 @@ export const actionsList = [
             'type': { type: 'BlockName', description: 'The block type to collect.' },
             'num': { type: 'int', description: 'The number of blocks to collect.', domain: [1, Number.MAX_SAFE_INTEGER], default: 1 }
         },
-        perform: runAsAction(async (agent, type, num) => {
-            await skills.collectBlock(agent.bot, type, num);
-        }, false, 10) // 10 minute timeout
+        perform: async function (agent, type, num) {
+            // v0.1.4.7 (F3, T5, M5): while a switch is on, crops, logs and ores lead to the skill of the pack
+            const work = collectWork(agent, type);
+            if (work)
+                return await runPack(agent, 'collectBlocks', work.pack, work.name, (pack, bot, ctx) => work.run(pack, bot, ctx, num));
+            return await runForText(agent, 'collectBlocks', async () => {
+                await skills.collectBlock(agent.bot, type, num);
+            }, 10); // 10 minute timeout
+        }
     },
     {
         name: '!craftRecipe',
@@ -689,6 +828,152 @@ export const actionsList = [
             if (!settings.home_pack)
                 return 'The home pack is off.';
             return await runForText(agent, 'eat', async () => (await eatBestFood(agent.bot, agent.homeContext()))?.text);
+        }
+    },
+    {
+        name: '!storeItems',
+        description: 'Put what you carry into a chest. You keep your tools, food and torches. Use this when your inventory is full, when you come back with things, or when the player says "store", "stash" or "put it in the chest".',
+        perform: async function (agent) {
+            if (!settings.storage_pack)
+                return STORAGE_OFF;
+            return await runPack(agent, 'storeItems', agent.work_packs?.storage, 'storage', (pack, bot, ctx) => pack.storeItems(bot, ctx, {}));
+        }
+    },
+    {
+        name: '!fetchItem',
+        description: 'Get an item out of a chest you know. Use this when you need something you do not carry, or when the player says "take", "get" or "fetch" something from the chest.',
+        params: {
+            'item_name': { type: 'ItemName', description: 'The name of the item to get.' },
+            'num': { type: 'int', description: 'The number of items to get.', domain: [1, Number.MAX_SAFE_INTEGER], default: 1 }
+        },
+        perform: async function (agent, item_name, num) {
+            if (!settings.storage_pack)
+                return STORAGE_OFF;
+            return await runPack(agent, 'fetchItem', agent.work_packs?.storage, 'storage', (pack, bot, ctx) => pack.fetchItem(bot, ctx, item_name, num));
+        }
+    },
+    {
+        name: '!farmCycle',
+        description: 'Do the farm work: harvest what is ripe, store it, plant again. Use this when the player says "farm", "get back to farming", "do the farm work" or "take care of the wheat".',
+        params: {'area': { type: 'string', description: 'The name of the farm, empty for the nearest.', default: '' }},
+        perform: async function (agent, area) {
+            if (!settings.farming_pack)
+                return FARMING_OFF;
+            return await runPack(agent, 'farmCycle', agent.work_packs?.farming, 'farming', (pack, bot, ctx) => pack.farmCycle(bot, ctx, area));
+        }
+    },
+    {
+        name: '!harvest',
+        description: 'Harvest the ripe plants of a farm and plant them again. Unripe plants stay. Use this when the player says "harvest" or "collect the wheat".',
+        params: {'area': { type: 'string', description: 'The name of the farm, empty for the nearest.', default: '' }},
+        perform: async function (agent, area) {
+            if (!settings.farming_pack)
+                return FARMING_OFF;
+            return await runPack(agent, 'harvest', agent.work_packs?.farming, 'farming', (pack, bot, ctx) => pack.harvestCrops(bot, ctx, area));
+        }
+    },
+    {
+        name: '!plant',
+        description: 'Plant seeds on the free ground of a farm. Use this when the player says "plant", "seed" or "sow".',
+        params: {
+            'seed': { type: 'string', description: 'The seed to plant: wheat_seeds, carrot, potato or beetroot_seeds.', default: 'wheat_seeds' },
+            'area': { type: 'string', description: 'The name of the farm, empty for the nearest.', default: '' }
+        },
+        perform: async function (agent, seed, area) {
+            if (!settings.farming_pack)
+                return FARMING_OFF;
+            return await runPack(agent, 'plant', agent.work_packs?.farming, 'farming', (pack, bot, ctx) => pack.plantField(bot, ctx, area, seed));
+        }
+    },
+    {
+        name: '!makeBoneMeal',
+        description: 'Make bone meal in a composter from leaves, grass and flowers. Never from seeds. Use this when the player asks for fertilizer.',
+        params: {'num': { type: 'int', description: 'The number of bone meal to make.', domain: [1, Number.MAX_SAFE_INTEGER], default: 1 }},
+        perform: async function (agent, num) {
+            if (!settings.farming_pack)
+                return FARMING_OFF;
+            return await runPack(agent, 'makeBoneMeal', agent.work_packs?.farming, 'farming', (pack, bot, ctx) => pack.makeBoneMeal(bot, ctx, num));
+        }
+    },
+    {
+        name: '!fertilize',
+        description: 'Use your bone meal on the plants of a farm, so they grow faster.',
+        params: {'area': { type: 'string', description: 'The name of the farm, empty for the nearest.', default: '' }},
+        perform: async function (agent, area) {
+            if (!settings.farming_pack)
+                return FARMING_OFF;
+            return await runPack(agent, 'fertilize', agent.work_packs?.farming, 'farming', (pack, bot, ctx) => pack.fertilize(bot, ctx, area));
+        }
+    },
+    {
+        name: '!chopTrees',
+        description: 'Cut trees and collect the logs. Only real trees, never the logs of a building. Use this when the player asks for wood or logs.',
+        params: {
+            'num': { type: 'int', description: 'The number of logs to get.', domain: [1, Number.MAX_SAFE_INTEGER], default: 8 },
+            'kind': { type: 'string', description: 'The kind of wood, for example "oak", empty for any.', default: '' }
+        },
+        perform: async function (agent, num, kind) {
+            if (!settings.wood_pack)
+                return WOOD_OFF;
+            return await runPack(agent, 'chopTrees', agent.work_packs?.wood, 'wood', (pack, bot, ctx) => pack.chopTrees(bot, ctx, num, kind));
+        }
+    },
+    {
+        name: '!getTool',
+        description: 'Make sure you have a tool: pickaxe, axe, shovel, hoe or sword. You craft it if you have none, with everything that needs. Use this before work that needs a tool.',
+        params: {
+            'kind': { type: 'string', description: 'The tool: pickaxe, axe, shovel, hoe or sword.' },
+            'material': { type: 'string', description: 'The weakest material that is good enough: wooden, stone, iron or diamond. Empty for any.', default: '' }
+        },
+        perform: async function (agent, kind, material) {
+            if (!settings.wood_pack)
+                return WOOD_OFF;
+            return await runPack(agent, 'getTool', agent.work_packs?.wood, 'wood', (pack, bot, ctx) => pack.ensureTool(bot, ctx, kind, material));
+        }
+    },
+    {
+        name: '!craftSupplies',
+        description: 'Craft torches, ladders, a chest or a crafting table, and collect the wood for it.',
+        params: {
+            'item': { type: 'string', description: 'The item: torch, ladder, chest, crafting_table, stick or planks.' },
+            'num': { type: 'int', description: 'The number of items.', domain: [1, Number.MAX_SAFE_INTEGER], default: 1 }
+        },
+        perform: async function (agent, item, num) {
+            if (!settings.wood_pack)
+                return WOOD_OFF;
+            return await runPack(agent, 'craftSupplies', agent.work_packs?.wood, 'wood', (pack, bot, ctx) => pack.craftSupplies(bot, ctx, item, num));
+        }
+    },
+    {
+        name: '!mineOre',
+        description: 'Go mining for an ore: coal, copper, iron, lapis, gold, redstone or diamond. You go down to the right level, dig a tunnel, collect the ore and come back. Use this when the player asks for an ore or for mining.',
+        params: {
+            'ore': { type: 'string', description: 'The ore: coal, copper, iron, lapis, gold, redstone or diamond.' },
+            'num': { type: 'int', description: 'The number of ore items to bring.', domain: [1, Number.MAX_SAFE_INTEGER], default: 8 }
+        },
+        perform: async function (agent, ore, num) {
+            if (!settings.mining_pack)
+                return MINING_OFF;
+            return await runPack(agent, 'mineOre', agent.work_packs?.mining, 'mining', (pack, bot, ctx) => pack.mineOre(bot, ctx, ore, num));
+        }
+    },
+    {
+        name: '!goToMine',
+        description: 'Go down into your mine. Without an ore, the nearest mine.',
+        params: {'ore': { type: 'string', description: 'The ore of the mine, empty for the nearest mine.', default: '' }},
+        perform: async function (agent, ore) {
+            if (!settings.mining_pack)
+                return MINING_OFF;
+            return await runPack(agent, 'goToMine', agent.work_packs?.mining, 'mining', (pack, bot, ctx) => goToMine(pack, bot, ctx, ore));
+        }
+    },
+    {
+        name: '!leaveMine',
+        description: 'Come up from the mine to the surface.',
+        perform: async function (agent) {
+            if (!settings.mining_pack)
+                return MINING_OFF;
+            return await runPack(agent, 'leaveMine', agent.work_packs?.mining, 'mining', (pack, bot, ctx) => pack.climbToSurface(bot, ctx));
         }
     },
     {

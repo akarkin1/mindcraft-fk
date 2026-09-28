@@ -137,7 +137,7 @@ function describeError(err) {
  * of installAreaGuard (the agent) gets the full guard.
  *
  * @returns {{canBreak: Function, canPlace: Function, canUse: Function, permit: Function, revoke: Function,
- *   permits: Function, explain: Function, protectMovements: Function}}
+ *   permits: Function, explain: Function, protectMovements: Function, inBuilding: Function}}
  * @throws {TypeError} without a bot object
  */
 export function installAreaGuard(bot, options = {}) {
@@ -150,8 +150,8 @@ export function installAreaGuard(bot, options = {}) {
     }
     const guard = createGuard(bot, options ?? {});
     guards.set(bot, guard.api);
-    const { canBreak, canPlace, canUse, explain, protectMovements } = guard.api;
-    bot.areaGuard = Object.freeze({ canBreak, canPlace, canUse, explain, protectMovements });
+    const { canBreak, canPlace, canUse, explain, protectMovements, inBuilding } = guard.api;
+    bot.areaGuard = Object.freeze({ canBreak, canPlace, canUse, explain, protectMovements, inBuilding });
     guard.install();
     return guard.api;
 }
@@ -475,6 +475,41 @@ function createGuard(bot, options) {
         return explainText(p, entry);
     }
 
+    /**
+     * True when the position lies in an area of type building that has no running permit, also
+     * where a farm overlaps it (v0.1.4.7 Amendment 2, I5). Never throws; false on an error.
+     * @param {{x: number, y: number, z: number}} pos
+     * @returns {boolean}
+     */
+    function inBuilding(pos) {
+        try {
+            if (!isPosition(pos)) {
+                return false;
+            }
+            const { x, y, z } = floored(pos);
+            let time = NaN;
+            for (const e of entriesFor(currentDimension())) {
+                if (e.farm || x < e.x0 || x > e.x1 || y < e.y0 || y > e.y1 || z < e.z0 || z > e.z1) {
+                    continue;
+                }
+                const end = permitEnds.get(e.name);
+                if (end !== undefined) {
+                    if (Number.isNaN(time)) {
+                        time = nowMs();
+                    }
+                    if (time < end) {
+                        continue;
+                    }
+                }
+                return true;
+            }
+            return false;
+        } catch (err) {
+            checkFailed(err);
+            return false;
+        }
+    }
+
     const breakExclusion = (block) => (canBreak(block) ? 0 : EXCLUDED);
     const placeExclusion = (block) => (canPlace(block?.position, null) ? 0 : EXCLUDED);
 
@@ -676,6 +711,6 @@ function createGuard(bot, options) {
         }
     }
 
-    const api = { canBreak, canPlace, canUse, permit, revoke, permits, explain, protectMovements };
+    const api = { canBreak, canPlace, canUse, permit, revoke, permits, explain, protectMovements, inBuilding };
     return { api, install };
 }

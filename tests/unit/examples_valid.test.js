@@ -78,6 +78,21 @@ const NEW_EXAMPLES = [
     ["no, don't use wheat seeds, you need them to plant the wheat", '!rememberRule'],
     ["do not get logs from the house, you're destroying our shelter", '!rememberRule'],
     ['how much did you cost today?', '!cost'],
+    // v0.1.4.7, part G: one example per command, from the words of the owner where there are any
+    ['put it in the chest', '!storeItems'],
+    ['get 5 bread from the chest', '!fetchItem'],
+    ['whats in the chests?', '!chests'],
+    ['get back to farming', '!farmCycle'],
+    ['harvest the wheat pls', '!harvest'],
+    ['plant the seeds', '!plant'],
+    ['we need some fertilizer', '!makeBoneMeal'],
+    ['make the wheat grow faster', '!fertilize'],
+    ['collect some logs for me', '!chopTrees'],
+    ['make yourself a stone pickaxe', '!getTool'],
+    ['we need torches for the cave', '!craftSupplies'],
+    ['find some iron', '!mineOre'],
+    ['go down into the mine', '!goToMine'],
+    ['come back up to the surface', '!leaveMine'],
 ];
 
 const exampleOf = (sentence) => PROFILE.conversation_examples.find((example) => example.some((t) => t.role === 'user' && t.content.endsWith(': ' + sentence)));
@@ -259,7 +274,8 @@ describe('no example with a hidden command reaches the prompt', () => {
     });
 
     test('with every part on, all examples remain', () => {
-        const hidden = new Set(T.hiddenPartCommands({ player_rules: true, protected_areas: true, world_memory: true, home_pack: true, cost_meter: true }));
+        const hidden = new Set(T.hiddenPartCommands({ player_rules: true, protected_areas: true, world_memory: true, home_pack: true, cost_meter: true,
+            storage_pack: true, farming_pack: true, wood_pack: true, mining_pack: true }));
         assert.equal(hidden.size, 0);
         assert.equal(F.visibleExamples(PROFILE.conversation_examples, (n) => hidden.has(n)).length, PROFILE.conversation_examples.length);
     });

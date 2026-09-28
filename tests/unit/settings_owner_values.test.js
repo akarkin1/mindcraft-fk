@@ -141,6 +141,13 @@ describe('the checks refuse invalid values (they are not empty)', () => {
         home_pack: ['true', 0, null],
         home_reflexes: [null, [], true, { door_closing: 'yes' }, { door_closing: 1 }, { doors: true }],
         creeper_fighting: [1, 'false'],
+        // v0.1.4.7
+        storage_pack: ['true', 1, null],
+        farming_pack: ['false', 0],
+        wood_pack: [null, 'yes'],
+        mining_pack: [1, 'true'],
+        mining_max_minutes: [0, -5, '30', NaN, Infinity, null],
+        keep_items: [null, [], 'x', { wheat_seeds: -2 }, { wheat_seeds: 1.5 }, { wheat_seeds: '32' }, { '': 3 }],
     };
 
     test('every rule has invalid examples here', () => {

@@ -44,6 +44,8 @@ describe('tests/routing/commands.js', () => {
             'cost_meter', 'cost_report_minutes', 'cost_warn_per_hour', 'cost_limit_per_hour', 'cost_limit_per_session',
             'model_prices', 'max_command_result_chars', 'protected_areas', 'player_rules', 'rules_max', 'home_pack',
             'home_reflexes', 'creeper_fighting',
+            // v0.1.4.7
+            'storage_pack', 'farming_pack', 'wood_pack', 'mining_pack', 'mining_max_minutes', 'keep_items',
         ]);
     });
 
@@ -82,8 +84,9 @@ describe('tests/routing/commands.js', () => {
     });
 
     test('hiddenPartCommands: the commands of every part that is off', () => {
-        assert.deepEqual(T.hiddenPartCommands({ player_rules: true, protected_areas: true, world_memory: true, home_pack: true, cost_meter: true }), []);
-        assert.deepEqual(T.hiddenPartCommands({ player_rules: true, cost_meter: true }).sort(),
+        const packs = { storage_pack: true, farming_pack: true, wood_pack: true, mining_pack: true }; // v0.1.4.7
+        assert.deepEqual(T.hiddenPartCommands({ player_rules: true, protected_areas: true, world_memory: true, home_pack: true, cost_meter: true, ...packs }), []);
+        assert.deepEqual(T.hiddenPartCommands({ player_rules: true, cost_meter: true, ...packs }).sort(),
             [...T.PART_COMMANDS.protected_areas, ...T.PART_COMMANDS.home_pack].sort());
         assert.deepEqual(T.hiddenPartCommands({ cost_meter: false }).sort(), T.SPEC_COMMANDS.map((c) => c.name).sort());
     });
@@ -231,7 +234,8 @@ describe('scripts/routing_check.js: settings and sentences', () => {
     });
 
     test('blockedFor: skill commands stay with their flags, no duplicates', () => {
-        const blocked = S.blockedFor({ blocked_actions: ['!useSkill'], world_memory: true, player_rules: true, protected_areas: true, home_pack: true, cost_meter: true }, { capture: true, reuse: false, command: true });
+        const blocked = S.blockedFor({ blocked_actions: ['!useSkill'], world_memory: true, player_rules: true, protected_areas: true, home_pack: true, cost_meter: true,
+            storage_pack: true, farming_pack: true, wood_pack: true, mining_pack: true }, { capture: true, reuse: false, command: true });
         assert.deepEqual(blocked, ['!useSkill']);
     });
 

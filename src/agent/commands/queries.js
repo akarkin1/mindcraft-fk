@@ -315,6 +315,24 @@ export const queryList = [
         }
     },
     {
+        name: '!chests',
+        description: 'List the chests you know and what is in them.',
+        perform: function (agent) {
+            // v0.1.4.7, S4: the text of chestsText of the storage pack, for the dimension of the bot
+            if (!settings.storage_pack)
+                return 'The storage pack is off.';
+            const storage = agent.work_packs?.storage;
+            if (!storage)
+                return 'The storage pack could not be loaded.';
+            try {
+                return storage.chestsText(agent.packContext(), agent.bot.game?.dimension);
+            } catch (error) {
+                console.warn('Could not list the chests:', error);
+                return 'Could not list the chests.';
+            }
+        }
+    },
+    {
         name: '!checkBlueprintLevel',
         description: 'Check if the level is complete and what blocks still need to be placed for the blueprint',
         params: {

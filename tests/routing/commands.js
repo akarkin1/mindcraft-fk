@@ -2,7 +2,7 @@
 // (tests/unit/examples_valid.test.js) and the routing check (scripts/routing_check.js).
 // Pure data, no imports, no side effects.
 //
-// SPEC_COMMANDS are the commands of release v0.1.4.6, TAKEN FROM THE SPEC (sections 4 to 7),
+// SPEC_COMMANDS are the commands of releases v0.1.4.6 and v0.1.4.7, TAKEN FROM THE SPECS,
 // because they do not exist in the code while the parts are written. At the join the real
 // definitions in src/agent/commands/actions.js and queries.js take over: the example check
 // prefers a real definition over an entry of this table, and has a switch to use only the real
@@ -23,6 +23,13 @@ export const SPEC_SETTINGS = {
     home_pack: 'boolean',
     home_reflexes: 'object',
     creeper_fighting: 'boolean',
+    // v0.1.4.7, section 1 of its spec
+    storage_pack: 'boolean',
+    farming_pack: 'boolean',
+    wood_pack: 'boolean',
+    mining_pack: 'boolean',
+    mining_max_minutes: 'number',
+    keep_items: 'object',
 };
 
 // The switches of the parts whose commands are hidden while the switch is off.
@@ -35,6 +42,11 @@ export const PART_COMMANDS = {
     protected_areas: ['!rememberArea', '!setArea', '!forgetArea', '!areas', '!allowChanges'],
     home_pack: ['!goToShelter', '!eat'],
     cost_meter: ['!cost'],
+    // v0.1.4.7: the commands of the four sets (S4, F3, T5, M5 of its spec)
+    storage_pack: ['!storeItems', '!fetchItem', '!chests'],
+    farming_pack: ['!farmCycle', '!harvest', '!plant', '!makeBoneMeal', '!fertilize'],
+    wood_pack: ['!chopTrees', '!getTool', '!craftSupplies'],
+    mining_pack: ['!mineOre', '!goToMine', '!leaveMine'],
 };
 
 // Commands of this release, from the spec. `params` in order; `default` where the spec gives one.
@@ -60,6 +72,33 @@ export const SPEC_COMMANDS = [
     { name: '!eat', section: 'H7', part: 'home_pack', params: [],
         description: 'Eat the best food you have. Use this when you are hungry or hurt, or when the player tells you to eat.' },
     { name: '!cost', section: 'G1', part: 'cost_meter', params: [] },
+    // v0.1.4.7 (sections S4, F3, T5 and M5 of its spec)
+    { name: '!storeItems', section: 'S4', part: 'storage_pack', params: [],
+        description: 'Put what you carry into a chest. You keep your tools, food and torches. Use this when your inventory is full, when you come back with things, or when the player says "store", "stash" or "put it in the chest".' },
+    { name: '!fetchItem', section: 'S4', part: 'storage_pack', params: [{ name: 'item_name', type: 'ItemName' }, { name: 'num', type: 'int', default: 1 }],
+        description: 'Get an item out of a chest you know. Use this when you need something you do not carry, or when the player says "take", "get" or "fetch" something from the chest.' },
+    { name: '!chests', section: 'S4', part: 'storage_pack', params: [], description: 'List the chests you know and what is in them.' },
+    { name: '!farmCycle', section: 'F3', part: 'farming_pack', params: [{ name: 'area', type: 'string', default: '' }],
+        description: 'Do the farm work: harvest what is ripe, store it, plant again. Use this when the player says "farm", "get back to farming", "do the farm work" or "take care of the wheat".' },
+    { name: '!harvest', section: 'F3', part: 'farming_pack', params: [{ name: 'area', type: 'string', default: '' }],
+        description: 'Harvest the ripe plants of a farm and plant them again. Unripe plants stay. Use this when the player says "harvest" or "collect the wheat".' },
+    { name: '!plant', section: 'F3', part: 'farming_pack', params: [{ name: 'seed', type: 'string', default: 'wheat_seeds' }, { name: 'area', type: 'string', default: '' }],
+        description: 'Plant seeds on the free ground of a farm. Use this when the player says "plant", "seed" or "sow".' },
+    { name: '!makeBoneMeal', section: 'F3', part: 'farming_pack', params: [{ name: 'num', type: 'int', default: 1 }],
+        description: 'Make bone meal in a composter from leaves, grass and flowers. Never from seeds. Use this when the player asks for fertilizer.' },
+    { name: '!fertilize', section: 'F3', part: 'farming_pack', params: [{ name: 'area', type: 'string', default: '' }],
+        description: 'Use your bone meal on the plants of a farm, so they grow faster.' },
+    { name: '!chopTrees', section: 'T5', part: 'wood_pack', params: [{ name: 'num', type: 'int', default: 8 }, { name: 'kind', type: 'string', default: '' }],
+        description: 'Cut trees and collect the logs. Only real trees, never the logs of a building. Use this when the player asks for wood or logs.' },
+    { name: '!getTool', section: 'T5', part: 'wood_pack', params: [{ name: 'kind', type: 'string' }, { name: 'material', type: 'string', default: '' }],
+        description: 'Make sure you have a tool: pickaxe, axe, shovel, hoe or sword. You craft it if you have none, with everything that needs. Use this before work that needs a tool.' },
+    { name: '!craftSupplies', section: 'T5', part: 'wood_pack', params: [{ name: 'item', type: 'string' }, { name: 'num', type: 'int', default: 1 }],
+        description: 'Craft torches, ladders, a chest or a crafting table, and collect the wood for it.' },
+    { name: '!mineOre', section: 'M5', part: 'mining_pack', params: [{ name: 'ore', type: 'string' }, { name: 'num', type: 'int', default: 8 }],
+        description: 'Go mining for an ore: coal, copper, iron, lapis, gold, redstone or diamond. You go down to the right level, dig a tunnel, collect the ore and come back. Use this when the player asks for an ore or for mining.' },
+    { name: '!goToMine', section: 'M5', part: 'mining_pack', params: [{ name: 'ore', type: 'string', default: '' }],
+        description: 'Go down into your mine. Without an ore, the nearest mine.' },
+    { name: '!leaveMine', section: 'M5', part: 'mining_pack', params: [], description: 'Come up from the mine to the surface.' },
 ];
 
 // The commands that exist in the code before this release (actions.js and queries.js of v0.1.4.5).
@@ -92,7 +131,8 @@ export function specCommandDef(entry) {
 }
 
 // Default in code of each switch when the key is absent (section 1).
-export const PART_DEFAULTS = { player_rules: false, protected_areas: false, home_pack: false, cost_meter: true };
+export const PART_DEFAULTS = { player_rules: false, protected_areas: false, home_pack: false, cost_meter: true,
+    storage_pack: false, farming_pack: false, wood_pack: false, mining_pack: false };
 
 // Whether a part is on: its switch, or its default when the key is absent. protected_areas also
 // needs world_memory (section 1).

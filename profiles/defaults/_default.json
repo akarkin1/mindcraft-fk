@@ -263,6 +263,100 @@
             {"role": "assistant", "content": "Let me check. !cost"},
             {"role": "system", "content": "Cost: session $1.23 (chat $0.90, memory $0.20, coding $0.13), rate $1.60 per hour, 182 calls.\nBudget: warn at $3 per hour, limit $8 per hour, limit $10 per session. State: normal."},
             {"role": "assistant", "content": "This session cost $1.23 so far, about $1.60 per hour."}
+        ],
+
+        [
+            {"role": "user", "content": "kai_07: put it in the chest"},
+            {"role": "assistant", "content": "Sure, I'll store what I carry. !storeItems"},
+            {"role": "system", "content": "Action output:\nI stored 12 wheat, 3 wheat_seeds in the chest at (-13, 63, 28)."},
+            {"role": "assistant", "content": "Stored 12 wheat and 3 seeds in the chest."}
+        ],
+
+        [
+            {"role": "user", "content": "zed_mc: get 5 bread from the chest"},
+            {"role": "assistant", "content": "On it. !fetchItem(\"bread\", 5)"},
+            {"role": "system", "content": "Action output:\nI took 5 bread from the chest at (-13, 63, 28)."},
+            {"role": "assistant", "content": "Got 5 bread."}
+        ],
+
+        [
+            {"role": "user", "content": "mira_b: whats in the chests?"},
+            {"role": "assistant", "content": "Let me check. !chests"},
+            {"role": "system", "content": "Chests I know in this world:\n- (-13, 63, 28): 12 wheat, 3 wheat_seeds, 4 free slots"},
+            {"role": "assistant", "content": "The chest at -13 63 28 has 12 wheat and 3 wheat seeds."}
+        ],
+
+        [
+            {"role": "user", "content": "oak_owl: get back to farming"},
+            {"role": "assistant", "content": "Back to the farm. !farmCycle"},
+            {"role": "system", "content": "Action output:\nFarm \"wheat_farm\": I harvested 9 wheat and planted 9 again. 6 plants are not ripe yet. I stored 9 wheat in the chest at (-13, 63, 28). The gate is closed."},
+            {"role": "assistant", "content": "Harvested and stored 9 wheat, planted again, and the gate is closed."}
+        ],
+
+        [
+            {"role": "user", "content": "pip_33: harvest the wheat pls"},
+            {"role": "assistant", "content": "Sure. !harvest"},
+            {"role": "system", "content": "Action output:\nI harvested 9 wheat and planted 9 again. 6 plants are not ripe yet."},
+            {"role": "assistant", "content": "Got 9 wheat and planted again. 6 plants still need time."}
+        ],
+
+        [
+            {"role": "user", "content": "juno_r: plant the seeds"},
+            {"role": "assistant", "content": "I'll plant them. !plant(\"wheat_seeds\")"},
+            {"role": "system", "content": "Action output:\nI planted 12 wheat_seeds. 3 places stay empty, I have no more seeds."},
+            {"role": "assistant", "content": "Planted 12 seeds. 3 spots are empty, I ran out of seeds."}
+        ],
+
+        [
+            {"role": "user", "content": "bex_5: we need some fertilizer"},
+            {"role": "assistant", "content": "I'll make bone meal in the composter. !makeBoneMeal(2)"},
+            {"role": "system", "content": "Action output:\nI made 2 bone_meal from 15 items."},
+            {"role": "assistant", "content": "Made 2 bone meal."}
+        ],
+
+        [
+            {"role": "user", "content": "tom_tom: make the wheat grow faster"},
+            {"role": "assistant", "content": "I'll use bone meal on it. !fertilize"},
+            {"role": "system", "content": "Action output:\nI used 6 bone_meal. 4 plants are ripe now."},
+            {"role": "assistant", "content": "Used 6 bone meal, 4 plants are ripe now."}
+        ],
+
+        [
+            {"role": "user", "content": "rena_x: collect some logs for me"},
+            {"role": "assistant", "content": "Sure, I'll cut some trees. !chopTrees(8)"},
+            {"role": "system", "content": "Action output:\nI cut 2 oak trees and got 11 oak_log. I planted 2 saplings."},
+            {"role": "assistant", "content": "Got 11 oak logs from 2 trees and planted 2 saplings."}
+        ],
+
+        [
+            {"role": "user", "content": "gus_mc: make yourself a stone pickaxe"},
+            {"role": "assistant", "content": "On it. !getTool(\"pickaxe\", \"stone\")"},
+            {"role": "system", "content": "Action output:\nI crafted a wooden_pickaxe and a stone_pickaxe."},
+            {"role": "assistant", "content": "I have a stone pickaxe now."}
+        ],
+
+        [
+            {"role": "user", "content": "ivy_9: we need torches for the cave"},
+            {"role": "assistant", "content": "I'll craft some. !craftSupplies(\"torch\", 8)"},
+            {"role": "system", "content": "Action output:\nI crafted 8 torch."},
+            {"role": "assistant", "content": "Crafted 8 torches."}
+        ],
+
+        [
+            {"role": "user", "content": "hal_4: find some iron"},
+            {"role": "assistant", "content": "I'll go mining for iron. !mineOre(\"iron\", 8)"},
+            {"role": "system", "content": "Action output:\nI mined 8 raw_iron. The mine is at (20, 64, -14), its tunnel is 37 blocks long at level 16. I also stored 96 cobblestone in the chest of the mine."},
+            {"role": "assistant", "content": "I'm back with 8 raw iron. The cobblestone is in the chest of the mine."}
+        ],
+
+        [
+            {"role": "user", "content": "sol_22: go down into the mine"},
+            {"role": "assistant", "content": "Going down. !goToMine"}
+        ],
+
+        [
+            {"role": "user", "content": "wren_1: come back up to the surface"},
+            {"role": "assistant", "content": "Coming up. !leaveMine"}
         ]
     ],
 
