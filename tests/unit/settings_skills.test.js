@@ -1,10 +1,16 @@
 // Spec v0.1.4.4, section "Settings": skillFlags(settings) of skill_manager.js and the four
 // settings in the fork's settings.js.
+//
+// settings.js is the owner's live configuration, so its VALUES are not asserted: each key must
+// exist and hold a valid value, and skillFlags / skillLimits of it must be consistent
+// (tests/helpers/owner_settings.js, proven for other valid values in settings_owner_values.test.js).
+// The defaults in code are tested with objects built here.
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { loadSrc } from '../helpers/load.js';
 import { repoPath } from '../helpers/paths.js';
+import { OWNER_SETTING_RULES, assertValidSetting, assertValidSkillFlags, assertValidSkillLimits } from '../helpers/owner_settings.js';
 
 const MANAGER = await loadSrc('src/agent/skills/skill_manager.js');
 const settings = (await loadSrc('settings.js')).default;
@@ -45,17 +51,17 @@ describe('skillFlags(settings)', () => {
         assert.deepEqual(input, copy);
     });
 
-    test("the fork's settings.js gives all false (skill_learning is false)", () => {
-        assert.deepEqual(MANAGER.skillFlags(settings), F(false, false, false));
+    test("settings.js gives three booleans that follow its switches (all false unless skill_learning and allow_insecure_coding are on)", () => {
+        assertValidSkillFlags(MANAGER.skillFlags, settings);
     });
 });
 
 describe('settings.js', () => {
-    const FORK_VALUES = [['skill_learning', false], ['skill_capture', true], ['skill_reuse', true], ['skill_command', false]];
+    const SKILL_KEYS = ['skill_learning', 'skill_capture', 'skill_reuse', 'skill_command'];
 
-    for (const [key, value] of FORK_VALUES) {
-        test(`${key} is ${value}`, () => {
-            assert.strictEqual(settings[key], value);
+    for (const key of SKILL_KEYS) {
+        test(`${key} exists and is ${OWNER_SETTING_RULES[key].text}`, () => {
+            assertValidSetting(settings, key);
         });
     }
 
@@ -63,12 +69,12 @@ describe('settings.js', () => {
         const keys = Object.keys(settings);
         const at = keys.indexOf('sandbox_lockdown');
         assert.ok(at >= 0);
-        assert.deepEqual(keys.slice(at + 1, at + 5).sort(), FORK_VALUES.map(([k]) => k).sort());
+        assert.deepEqual(keys.slice(at + 1, at + 5).sort(), [...SKILL_KEYS].sort());
     });
 
     test('each of the four has a short comment on its line', () => {
         const lines = settingsSource.split(/\r?\n/);
-        for (const [key] of FORK_VALUES) {
+        for (const key of SKILL_KEYS) {
             const line = lines.find((l) => l.includes(`"${key}"`) || new RegExp(`\\b${key}\\s*:`).test(l));
             assert.ok(line, `line of ${key}`);
             const comment = line.split('//')[1];
@@ -128,17 +134,17 @@ describe('skillLimits(settings) (v0.1.4.5)', () => {
         assert.deepStrictEqual(input, { skill_max_count: 7.5, skill_disable_after_errors: -1 });
     });
 
-    test("the fork's settings.js gives 100 and 3", () => {
-        assert.deepStrictEqual(MANAGER.skillLimits(settings), L(100, 3));
+    test('settings.js gives two whole numbers of 0 or more, the values of its two keys', () => {
+        assertValidSkillLimits(MANAGER.skillLimits, settings);
     });
 });
 
 describe('settings.js: the guardrails of v0.1.4.5', () => {
-    const LIMIT_VALUES = [['skill_max_count', 100], ['skill_disable_after_errors', 3]];
+    const LIMIT_KEYS = ['skill_max_count', 'skill_disable_after_errors'];
 
-    for (const [key, value] of LIMIT_VALUES) {
-        test(`${key} is ${value}`, () => {
-            assert.strictEqual(settings[key], value);
+    for (const key of LIMIT_KEYS) {
+        test(`${key} exists and is ${OWNER_SETTING_RULES[key].text}`, () => {
+            assertValidSetting(settings, key);
         });
     }
 
@@ -146,12 +152,12 @@ describe('settings.js: the guardrails of v0.1.4.5', () => {
         const keys = Object.keys(settings);
         const at = keys.indexOf('skill_command');
         assert.ok(at >= 0);
-        assert.deepEqual(keys.slice(at + 1, at + 3), LIMIT_VALUES.map(([k]) => k));
+        assert.deepEqual(keys.slice(at + 1, at + 3), LIMIT_KEYS);
     });
 
     test('each of the two has a short comment on its line', () => {
         const lines = settingsSource.split(/\r?\n/);
-        for (const [key] of LIMIT_VALUES) {
+        for (const key of LIMIT_KEYS) {
             const line = lines.find((l) => l.includes(`"${key}"`));
             assert.ok(line, `line of ${key}`);
             const comment = line.split('//')[1];

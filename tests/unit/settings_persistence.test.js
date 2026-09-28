@@ -1,28 +1,25 @@
 // Spec v0.1.4.3, section "Settings": world_memory, world_id, resume_goal, goal_resume_limit in
 // the fork's settings.js. The settings_spec.json entries are checked in settings_spec.test.js.
+//
+// settings.js is the owner's live configuration, so the VALUES are not asserted: each key must
+// exist and hold a valid value (tests/helpers/owner_settings.js, proven for other valid values in
+// settings_owner_values.test.js). The order of the keys, the comments and CRLF are structure.
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { loadSrc } from '../helpers/load.js';
 import { repoPath } from '../helpers/paths.js';
+import { OWNER_SETTING_RULES, assertValidSetting } from '../helpers/owner_settings.js';
 
 const settings = (await loadSrc('settings.js')).default;
 const settingsSource = fs.readFileSync(repoPath('settings.js'), 'utf8');
 
-// Values of the fork's settings.js (spec table, last column).
-const FORK_VALUES = {
-    world_memory: false,
-    world_id: '',
-    resume_goal: 'after_crash',
-    goal_resume_limit: 3,
-};
-const NEW_KEYS = Object.keys(FORK_VALUES);
+const NEW_KEYS = ['world_memory', 'world_id', 'resume_goal', 'goal_resume_limit'];
 
 describe('settings.js: persistence settings of v0.1.4.3', () => {
-    for (const [key, value] of Object.entries(FORK_VALUES)) {
-        test(`${key} is ${JSON.stringify(value)}`, () => {
-            assert.ok(Object.hasOwn(settings, key), `${key} exists`);
-            assert.strictEqual(settings[key], value);
+    for (const key of NEW_KEYS) {
+        test(`${key} exists and is ${OWNER_SETTING_RULES[key].text}`, () => {
+            assertValidSetting(settings, key);
         });
     }
 
@@ -48,8 +45,13 @@ describe('settings.js: persistence settings of v0.1.4.3', () => {
         assert.equal(/[^\r]\n/.test(settingsSource), false, 'no bare LF line ending');
     });
 
-    test('load_memory and init_message are unchanged', () => {
-        assert.equal(settings.load_memory, true);
-        assert.equal(settings.init_message, 'Respond with hello world and your name');
+    test('load_memory is a boolean and init_message a string', () => {
+        assertValidSetting(settings, 'load_memory');
+        assertValidSetting(settings, 'init_message');
+    });
+
+    test('load_memory and init_message stay directly around the four keys', () => {
+        const keys = Object.keys(settings);
+        assert.equal(keys.indexOf('init_message'), keys.indexOf('load_memory') + 1 + NEW_KEYS.length);
     });
 });
