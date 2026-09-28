@@ -1,6 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { strictFormat } from '../utils/text.js';
 import { getKey } from '../utils/keys.js';
+import { reportUsage } from '../agent/cost/usage_context.js';
 
 export class Claude {
     static prefix = 'anthropic';
@@ -30,11 +31,21 @@ export class Claude {
                     this.params.max_tokens = 4096;
                 }
             }
+            const model = this.model_name || "claude-sonnet-4-20250514";
             const resp = await this.anthropic.messages.create({
-                model: this.model_name || "claude-sonnet-4-20250514",
+                model: model,
                 system: systemMessage,
                 messages: messages,
                 ...(this.params || {})
+            });
+            // cost meter (v0.1.4.6): only a successful request is counted
+            const usage = resp?.usage || {};
+            reportUsage({
+                model: model,
+                input_tokens: usage.input_tokens,
+                output_tokens: usage.output_tokens,
+                cache_read_tokens: usage.cache_read_input_tokens,
+                cache_write_tokens: usage.cache_creation_input_tokens,
             });
 
             console.log('Received.')

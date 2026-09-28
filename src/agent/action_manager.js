@@ -95,6 +95,7 @@ export class ActionManager {
             this.executing = true;
             this.currentActionLabel = actionLabel;
             this.currentActionFn = actionFn;
+            this.timedout = false; // a timeout of an earlier action does not count for this one
 
             // timeout in minutes
             if (timeout > 0) {

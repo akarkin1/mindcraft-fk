@@ -6,6 +6,74 @@ This fork is based on [Mindcraft](https://github.com/mindcraft-bots/mindcraft) `
 
 Each release lists new settings and feature flags with their default value.
 
+## [0.1.4.6] - 2026-09-28
+
+Cost control, and the first set of basic skills: home and safety. The bot measures what it costs. It can protect buildings and farms, close doors behind itself, go to shelter at dusk, lead creepers away from a building, and keep rules that the player teaches.
+
+Every part has its own switch. The new parts are off by default, except the cost meter.
+
+### Added
+
+- **Cost meter**, setting `cost_meter`, default `true`. Every call to a Claude model is counted in tokens and dollars, by model and by purpose: chat, memory, coding, skill review.
+  - The console shows a line every `cost_report_minutes` minutes, default `10`, and at the end of a session.
+  - Sessions are kept in `bots/<name>/usage.json`.
+  - The command `!cost` answers the question what the bot has cost.
+  - Prices are built in for Haiku 4.5, Sonnet 5, Opus 5 and Opus 5.5. The setting `model_prices` adds or replaces prices.
+- **Budget.** Three settings in dollars, `0` switches one off. The default in code is `0` for all three.
+  - `cost_warn_per_hour`, `3` in the fork: the bot warns in chat.
+  - `cost_limit_per_hour`, `8` in the fork, and `cost_limit_per_session`, `10` in the fork: the bot stops working on goals by itself, stops writing new code and skips skill reviews. Chat and commands keep working. It says so in chat, and it says so again when the cost is back below the limit.
+- Setting `max_command_result_chars`, default `0`, `3000` in the fork. A longer result of a command is shortened before it goes into the conversation. A wiki lookup used to put about 500 lines there, which were sent again with each of the next calls.
+- **Protected areas**, setting `protected_areas`, default `false`. It needs `world_memory`.
+  - An area is a box with a type. In a `building` the bot does not break or place blocks. In a `farm` it only plants and harvests.
+  - `!rememberArea` finds the box by itself: the building around the bot, or the ground inside the fence around the bot. `!rememberHere` saves the building around a place as well.
+  - The protection sits on the bot itself. It covers the commands, the path search, the plugins and code that the bot writes.
+  - Doors, chests, beds and the crafting table inside a building work as before.
+  - Commands `!rememberArea`, `!setArea`, `!forgetArea`, `!areas`, and `!allowChanges`, which opens an area for some minutes when the player asks for changes there.
+- **Rules of the player**, setting `player_rules`, default `false`, with `rules_max`, default `20`. A rule that the player teaches is stored for good in `bots/<name>/rules.json` and is part of every prompt. It does not pass through the memory summary, where lessons got lost. Commands `!rememberRule`, `!forgetRule`, `!rules`.
+- **Home pack**, setting `home_pack`, default `false`.
+  - `!goToShelter`: the bot goes to its shelter, gets in through the door and closes it. Without a shelter it digs in and closes the hole.
+  - `!eat`: the bot eats the best food it has.
+  - `!goToBed` handles a bed that is taken, monsters near the bed, and a time of day when sleeping is not possible.
+  - `!goToRememberedPlace` enters a building through the door and closes it.
+- **Reflexes of the home pack**, setting `home_reflexes`. They run in code and need no call to the model.
+  - `door_closing`: a door or gate that the bot walked through is closed, and the bot checks that it is closed. Not while a player stands in the doorway.
+  - `night_shelter`: at dusk the bot stops its work and goes to the shelter, when it works alone. An order to follow a player, and any order given during the night, wins.
+  - `creeper_safety`: with a creeper near a building or a farm, the bot first leads it away, then runs. It enters the shelter only when no monster is near the door. The bot never opens a door while a monster is within 16 blocks of it.
+- Setting `creeper_fighting`, default `false`. With it the bot may fight a creeper on open ground after it led it away, with a sword of stone or better and good health.
+- **Commands in plain words.**
+  - A parameter of a command can have a default, so `!followPlayer("name")` works without the distance.
+  - Arguments in single quotes are read.
+  - The prompt examples contain sentences from a real play session.
+- Routing check: `test-routing.ps1` sends a list of plain sentences to the chat model and reports how many led to the right command. It takes the API key from the PowerShell secret vault. One run costs about 25 cents with Haiku 4.5.
+- Tests on a real Minecraft 1.21.8 server: `npm run test:world`, 14 scenarios with real blocks and real monsters. They need a local test server and are skipped without one.
+
+### Changed
+
+- With all new parts on, the chat prompt is about 550 tokens bigger, which is about 20 percent of the prompt without conversation. Every saved rule adds about 25 tokens.
+
+### Fixed
+
+- Nothing in the bot closed a door. See the reflex `door_closing`.
+- The bot stopped eating before it had finished, and did not take its tool back into the hand afterwards. The options of the automatic eating were incomplete. Fixed with `home_pack` on.
+- `!goToBed` took `bedrock` for a bed.
+- Six prompt examples taught the model calls that the command parser refuses, or commands that do not exist.
+- After the first action that ran into its time limit, every later action was reported as timed out.
+- `!stats` wrote the current action onto the line of the time.
+- `useDoor` failed when no oak door was near.
+- A timer of the movement code opened and closed the nearest door or gate every 1.5 seconds while the bot stood still. The bot could get stuck in a fence gate for good. With the door reflex on, the timer is not used. A bot that makes no progress at a door or gate walks through it in one go and closes it.
+- With protected areas on, the path search no longer plans a diagonal step past the corner of a solid block. The bot could not walk such a step and tried it again and again, for example at the corner post of a house.
+
+All bugs in this list came from upstream.
+
+### Known limitations
+
+- Only calls to Claude models are counted. Calls through other providers are not.
+- The protection of areas guards against mistakes, not against an attacker: code that sends raw packets to the server passes it. Cheat mode, explosions, fire and other players are not guarded.
+- A building is recognised by the blocks a player builds with. A house of plain stone or plain terracotta is not found by the scan. Use `!setArea` for it.
+- The bot cannot lead away a creeper that does not follow it. After two tries to be seen it keeps away from it and says so. It then uses a door that is at least 16 blocks from that creeper, or digs in.
+- The door reflex does not run while another reflex is active, for example while the bot flees.
+- After every respawn the server ignores what the bot does for 3 seconds. The library that connects the bot does not send the message that the server waits for. The first action after a death can be lost.
+
 ## [0.1.4.5] - 2026-09-28
 
 Fixes from the first play test, and limits for the skill library.

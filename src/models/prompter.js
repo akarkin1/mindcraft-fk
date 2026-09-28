@@ -11,9 +11,29 @@ import { fileURLToPath } from 'url';
 import { selectAPI, createModel } from './_model_map.js';
 import { insertSection } from '../agent/skills/skill_prompt.js';
 import { extractTask } from '../agent/skills/skill_review.js';
+import { withPurpose } from '../agent/cost/usage_context.js';
+import { buildRulesSection } from '../agent/rules/rule_prompt.js';
+import { visibleExamples } from '../agent/rules/example_filter.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+// With the cost meter, every call of a model is counted under its purpose (v0.1.4.6, G1).
+function withPurposeOf(agent, purpose, request) {
+    return agent?.cost_meter ? withPurpose(purpose, request) : request();
+}
+
+// The rules of the players go into the prompt after the saved skills (v0.1.4.6, R2 and G5).
+function withRules(agent, prompt) {
+    if (agent?.rule_store) {
+        try {
+            prompt = insertSection(prompt, buildRulesSection(agent.rule_store.list()));
+        } catch (error) {
+            console.warn('Could not add the rules of the players to the prompt:', error);
+        }
+    }
+    return prompt;
+}
 
 export class Prompter {
     constructor(agent, profile) {
@@ -115,6 +135,11 @@ export class Prompter {
             this.convo_examples = new Examples(this.embedding_model, settings.num_examples);
             this.coding_examples = new Examples(this.embedding_model, settings.num_examples);
             
+            // examples that use a hidden command are left out (v0.1.4.6, R5): a blocked command or one that does not exist
+            const isHidden = (name) => (this.agent?.blocked_actions ?? []).includes(name) || !getCommand(name);
+            const visible = (examples) => visibleExamples(examples, isHidden);
+            this.convo_examples.filter = visible;
+            this.coding_examples.filter = visible;
             // Wait for both examples to load before proceeding
             await Promise.all([
                 this.convo_examples.load(this.profile.conversation_examples),
@@ -234,10 +259,11 @@ export class Prompter {
             } else if (typeof prompt === 'string' && prompt.includes('$CUSTOM_SKILLS')) {
                 prompt = insertSection(prompt, ''); // no manager: only the placeholder is removed
             }
+            prompt = withRules(this.agent, prompt);
             let generation;
 
             try {
-                generation = await this.chat_model.sendRequest(messages, prompt);
+                generation = await withPurposeOf(this.agent, 'chat', () => this.chat_model.sendRequest(messages, prompt));
                 if (typeof generation !== 'string') {
                     console.error('Error: Generated response is not a string', generation);
                     throw new Error('Generated response is not a string');
@@ -292,8 +318,9 @@ export class Prompter {
             } else if (typeof prompt === 'string' && prompt.includes('$CUSTOM_SKILLS')) {
                 prompt = insertSection(prompt, ''); // no manager: only the placeholder is removed
             }
+            prompt = withRules(this.agent, prompt);
 
-            let resp = await this.code_model.sendRequest(messages, prompt);
+            let resp = await withPurposeOf(this.agent, 'coding', () => this.code_model.sendRequest(messages, prompt));
             await this._saveLog(prompt, messages, resp, 'coding');
             return resp;
         } finally {
@@ -305,7 +332,7 @@ export class Prompter {
         await this.checkCooldown();
         let prompt = this.profile.saving_memory;
         prompt = await this.replaceStrings(prompt, null, null, to_summarize);
-        let resp = await this.chat_model.sendRequest([], prompt);
+        let resp = await withPurposeOf(this.agent, 'memory', () => this.chat_model.sendRequest([], prompt));
         await this._saveLog(prompt, to_summarize, resp, 'memSaving');
         if (resp?.includes('</think>')) {
             const [_, afterThink] = resp.split('</think>')
@@ -316,7 +343,7 @@ export class Prompter {
 
     async promptSkillReview(text) {
         await this.checkCooldown();
-        let resp = await this.code_model.sendRequest([], text);
+        let resp = await withPurposeOf(this.agent, 'skill_review', () => this.code_model.sendRequest([], text));
         await this._saveLog(text, [], resp, 'skillReview');
         if (resp?.includes('</think>')) {
             const [_, afterThink] = resp.split('</think>');
@@ -331,7 +358,7 @@ export class Prompter {
         let messages = this.agent.history.getHistory();
         messages.push({role: 'user', content: new_message});
         prompt = await this.replaceStrings(prompt, null, null, messages);
-        let res = await this.chat_model.sendRequest([], prompt);
+        let res = await withPurposeOf(this.agent, 'bot_responder', () => this.chat_model.sendRequest([], prompt));
         return res.trim().toLowerCase() === 'respond';
     }
 
@@ -339,7 +366,7 @@ export class Prompter {
         await this.checkCooldown();
         let prompt = this.profile.image_analysis;
         prompt = await this.replaceStrings(prompt, messages, null, null, null);
-        return await this.vision_model.sendVisionRequest(messages, prompt, imageBuffer);
+        return await withPurposeOf(this.agent, 'vision', () => this.vision_model.sendVisionRequest(messages, prompt, imageBuffer));
     }
 
     async promptGoalSetting(messages, last_goals) {
@@ -352,7 +379,7 @@ export class Prompter {
         user_message = await this.replaceStrings(user_message, messages, null, null, last_goals);
         let user_messages = [{role: 'user', content: user_message}];
 
-        let res = await this.chat_model.sendRequest(user_messages, system_message);
+        let res = await withPurposeOf(this.agent, 'goal_setting', () => this.chat_model.sendRequest(user_messages, system_message));
 
         let goal = null;
         try {

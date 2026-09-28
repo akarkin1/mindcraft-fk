@@ -177,6 +177,71 @@
         "description": "With skill_learning on: switch a saved skill off after it threw an error this many times in a row. 0 to never switch a skill off",
         "default": 3
     },
+    "cost_meter": {
+        "type": "boolean",
+        "description": "Whether to count the tokens and dollars of every call to the model, print the cost in the console, save it in bots/<name>/usage.json and answer !cost",
+        "default": true
+    },
+    "cost_report_minutes": {
+        "type": "number",
+        "description": "With cost_meter on: print the cost of the session every this many minutes. 0 for never",
+        "default": 10
+    },
+    "cost_warn_per_hour": {
+        "type": "number",
+        "description": "With cost_meter on: warn in chat when the cost reaches this many dollars per hour. 0 for no warning",
+        "default": 0
+    },
+    "cost_limit_per_hour": {
+        "type": "number",
+        "description": "With cost_meter on: stop working on goals and writing new code at this many dollars per hour, until the rate drops. Chat and commands still work. 0 for no limit",
+        "default": 0
+    },
+    "cost_limit_per_session": {
+        "type": "number",
+        "description": "With cost_meter on: stop working on goals and writing new code for the rest of the session at this many dollars. Chat and commands still work. 0 for no limit",
+        "default": 0
+    },
+    "model_prices": {
+        "type": "object",
+        "description": "With cost_meter on: dollars per million tokens for models without a built-in price, e.g. {\"my-model\": {\"input\": 1, \"output\": 5}}",
+        "default": {}
+    },
+    "max_command_result_chars": {
+        "type": "number",
+        "description": "Shorten a command result in the chat history to this many characters, keeping its start and end. 0 for no limit",
+        "default": 0
+    },
+    "protected_areas": {
+        "type": "boolean",
+        "description": "Whether the bot keeps saved buildings intact and only plants and harvests in saved farms, with !rememberArea and the other area commands. Needs world_memory",
+        "default": false
+    },
+    "player_rules": {
+        "type": "boolean",
+        "description": "Whether to save lasting rules of the players with !rememberRule and put them into every prompt",
+        "default": false
+    },
+    "rules_max": {
+        "type": "number",
+        "description": "With player_rules on: the most rules the bot keeps. 0 for no limit",
+        "default": 20
+    },
+    "home_pack": {
+        "type": "boolean",
+        "description": "Whether to offer !goToShelter, !eat and a better !goToBed, and to run the reflexes of home_reflexes",
+        "default": false
+    },
+    "home_reflexes": {
+        "type": "object",
+        "description": "With home_pack on: which reflexes run. door_closing closes doors behind the bot, night_shelter goes to the shelter at night, creeper_safety leads creepers away from the base",
+        "default": { "door_closing": true, "night_shelter": true, "creeper_safety": true }
+    },
+    "creeper_fighting": {
+        "type": "boolean",
+        "description": "With home_pack on: whether to fight a creeper that was led away from the base instead of running from it",
+        "default": false
+    },
     "code_timeout_mins": {
         "type": "number",
         "description": "Number of minutes to allow code execution. -1 for no timeout",

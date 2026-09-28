@@ -27,6 +27,19 @@ const BOOLEAN = Object.freeze({ type: 'boolean', text: 'a boolean', valid: isBoo
 const STRING = Object.freeze({ type: 'string', text: 'a string', valid: isString });
 const WHOLE_NUMBER = Object.freeze({ type: 'number', text: 'a whole number of 0 or more', valid: isWholeNumber });
 
+// v0.1.4.6: numbers that may have a fraction (dollars, minutes) and the two object settings.
+const isPlainObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
+const isNumberZeroOrMore = (value) => typeof value === 'number' && Number.isFinite(value) && value >= 0;
+const PRICE_KEYS = ['input', 'output', 'cache_read', 'cache_write'];
+// { "<model id>": { input, output, cache_read?, cache_write? } }, dollars per million tokens
+const isPriceTable = (value) => isPlainObject(value) && Object.values(value).every((price) => isPlainObject(price)
+    && Object.keys(price).length > 0 && Object.entries(price).every(([key, dollars]) => PRICE_KEYS.includes(key) && isNumberZeroOrMore(dollars)));
+export const HOME_REFLEXES = Object.freeze(['door_closing', 'night_shelter', 'creeper_safety']);
+// a missing reflex counts as true
+const isReflexTable = (value) => isPlainObject(value) && Object.entries(value).every(([key, on]) => HOME_REFLEXES.includes(key) && isBoolean(on));
+
+const NUMBER = Object.freeze({ type: 'number', text: 'a finite number of 0 or more', valid: isNumberZeroOrMore });
+
 // `type` is the type of the key's entry in src/mindcraft/public/settings_spec.json.
 export const OWNER_SETTING_RULES = Object.freeze({
     // v0.1.4.3, persistence
@@ -47,6 +60,20 @@ export const OWNER_SETTING_RULES = Object.freeze({
     // v0.1.4.5, guardrails
     skill_max_count: WHOLE_NUMBER,
     skill_disable_after_errors: WHOLE_NUMBER,
+    // v0.1.4.6, cost control, home and safety
+    cost_meter: BOOLEAN,
+    cost_report_minutes: NUMBER,
+    cost_warn_per_hour: NUMBER,
+    cost_limit_per_hour: NUMBER,
+    cost_limit_per_session: NUMBER,
+    model_prices: Object.freeze({ type: 'object', text: 'an object of model ids, each with dollars per million tokens as { "input": 1, "output": 5 }', valid: isPriceTable }),
+    max_command_result_chars: WHOLE_NUMBER,
+    protected_areas: BOOLEAN,
+    player_rules: BOOLEAN,
+    rules_max: WHOLE_NUMBER,
+    home_pack: BOOLEAN,
+    home_reflexes: Object.freeze({ type: 'object', text: `an object with the booleans ${HOME_REFLEXES.join(', ')}`, valid: isReflexTable }),
+    creeper_fighting: BOOLEAN,
     // commands the owner blocks, for example "!restart"
     blocked_actions: Object.freeze({ type: 'array', text: 'an array of command names that each start with "!", like "!restart"', valid: isCommandList }),
 });

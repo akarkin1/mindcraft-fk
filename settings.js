@@ -52,6 +52,19 @@ const settings = {
     "skill_command": false, // with skill_learning and skill_reuse: also offer !useSkill to run a saved skill directly
     "skill_max_count": 100, // with skill_learning: most skills kept, code of a new skill is not saved when the library is full. 0 for no limit
     "skill_disable_after_errors": 3, // with skill_learning: switch a skill off after it threw this many times in a row. 0 for never
+    "cost_meter": true, // count the tokens and dollars of every call to the model, print them in the console and answer !cost
+    "cost_report_minutes": 10, // with cost_meter: print the cost of the session every this many minutes. 0 for never
+    "cost_warn_per_hour": 3, // with cost_meter: warn in chat at this many dollars per hour. 0 for no warning
+    "cost_limit_per_hour": 8, // with cost_meter: no goals and no new code at this many dollars per hour, until it drops. 0 for no limit
+    "cost_limit_per_session": 10, // with cost_meter: no goals and no new code for the rest of the session at this many dollars. 0 for no limit
+    "model_prices": {}, // with cost_meter: dollars per million tokens for other models, e.g. {"my-model": {"input": 1, "output": 5}}
+    "max_command_result_chars": 3000, // shorten a command result in the history to this many characters. 0 for no limit
+    "protected_areas": false, // never break or place blocks in saved buildings, only plant and harvest in saved farms. needs world_memory
+    "player_rules": false, // save lasting rules of the players with !rememberRule and put them into every prompt
+    "rules_max": 20, // with player_rules: most rules kept
+    "home_pack": false, // commands and reflexes for home: shelter at night, doors, beds, food and creepers
+    "home_reflexes": { "door_closing": true, "night_shelter": true, "creeper_safety": true }, // with home_pack: which reflexes are on
+    "creeper_fighting": false, // with home_pack: fight a creeper that was led away from the base instead of running from it
     "allow_vision": false, // allows vision model to interpret screenshots as inputs
     "blocked_actions" : ["!checkBlueprint", "!checkBlueprintLevel", "!getBlueprint", "!getBlueprintLevel", "!restart"] , // commands to disable and remove from docs. Ex: ["!setMode"]
     "code_timeout_mins": -1, // minutes code is allowed to run. -1 for no timeout

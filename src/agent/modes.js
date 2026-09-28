@@ -4,6 +4,7 @@ import * as mc from '../utils/mcdata.js';
 import settings from './settings.js'
 import convoManager from './conversation.js';
 import { withKillTimer } from '../utils/kill_timer.js';
+import { DoorTracker, closeDoorsBehind, isInShelter, isNight, shouldShelter, nightShelterRoutine, creeperCheck, runCreeperProcedure } from './packs/home/index.js';
 
 async function say(agent, message) {
     agent.bot.modes.behavior_log += message + '\n';
@@ -144,7 +145,7 @@ const modes_list = [
         on: true,
         active: false,
         update: async function (agent) {
-            const enemy = world.getNearestEntityWhere(agent.bot, entity => mc.isHostile(entity), 16);
+            const enemy = world.getNearestEntityWhere(agent.bot, entity => mc.isHostile(entity) && !leftToCreeperSafety(entity), 16);
             if (enemy && await world.isClearPath(agent.bot, enemy)) {
                 say(agent, `Aaa! A ${enemy.name.replace("_", " ")}!`);
                 execute(this, agent, async () => {
@@ -160,11 +161,11 @@ const modes_list = [
         on: true,
         active: false,
         update: async function (agent) {
-            const enemy = world.getNearestEntityWhere(agent.bot, entity => mc.isHostile(entity), 8);
+            const enemy = world.getNearestEntityWhere(agent.bot, entity => mc.isHostile(entity) && !leftToCreeperSafety(entity), 8);
             if (enemy && await world.isClearPath(agent.bot, enemy)) {
                 say(agent, `Fighting ${enemy.name}!`);
                 execute(this, agent, async () => {
-                    await skills.defendSelf(agent.bot, 8);
+                    await skills.defendSelf(agent.bot, 8, entity => !leftToCreeperSafety(entity));
                 });
             }
         }
@@ -227,6 +228,7 @@ const modes_list = [
         update: function (agent) {
             if (world.shouldPlaceTorch(agent.bot)) {
                 if (Date.now() - this.last_place < this.cooldown * 1000) return;
+                if (!torchAllowed(agent.bot)) return; // a protected area (v0.1.4.6): no torch and no log line
                 execute(this, agent, async () => {
                     const pos = agent.bot.entity.position;
                     await skills.placeBlock(agent.bot, 'torch', pos.x, pos.y, pos.z, 'bottom', true);
@@ -302,6 +304,122 @@ const modes_list = [
         update: function (agent) { /* do nothing */ }
     }
 ];
+
+// v0.1.4.6 (Amendment 1): while bot.areaGuard exists, a torch goes only where the guard allows it. Never throws.
+function torchAllowed(bot) {
+    try {
+        return !bot.areaGuard || bot.areaGuard.canPlace(bot.entity.position, 'torch') !== false;
+    } catch (error) {
+        return true;
+    }
+}
+
+// v0.1.4.6, G4: while the mode creeper_safety is on, a creeper is no target for self_defense and cowardice.
+function leftToCreeperSafety(entity) {
+    return entity?.name === 'creeper' && modes_map.creeper_safety?.on === true;
+}
+
+// The reflexes of the home pack (v0.1.4.6, G4). initModes adds them to modes_list only while
+// settings.home_pack is on and their entry in settings.home_reflexes is not false. Their updates never
+// throw into the update loop.
+const home_modes = [
+    {
+        name: 'creeper_safety',
+        description: 'Back off from creepers and lead them away from the base. Interrupts all actions.',
+        interrupts: ['all'],
+        on: true,
+        active: false,
+        update: async function (agent) {
+            try {
+                // decide() on the creepers within 24 blocks and the areas within 48
+                if (creeperCheck(agent.bot, agent.homeContext()).step === 'none')
+                    return;
+                execute(this, agent, async () => {
+                    const result = await runCreeperProcedure(agent.bot, agent.homeContext());
+                    if (result?.text)
+                        say(agent, result.text);
+                });
+            } catch (error) {
+                console.warn('Mode creeper_safety failed:', error);
+            }
+        }
+    },
+    {
+        name: 'night_shelter',
+        description: 'Go to the shelter when night comes and sleep there. Interrupts all actions.',
+        interrupts: ['all'],
+        on: true,
+        active: false,
+        last_attempt: null,
+        sheltered_at: null, // where the last shelter of this night succeeded (a place or a hole without an area)
+        update: async function (agent) {
+            try {
+                const bot = agent.bot;
+                const ctx = agent.homeContext();
+                if (!isNight(bot.time.timeOfDay))
+                    this.sheltered_at = null;
+                const stayed = this.sheltered_at !== null && bot.entity.position.distanceTo(this.sheltered_at) < 2;
+                const decision = shouldShelter({
+                    timeOfDay: bot.time.timeOfDay,
+                    inShelter: isInShelter(bot, ctx) || stayed,
+                    action: agent.actions.currentActionLabel,
+                    order: agent.last_order ?? null,
+                    selfPrompting: agent.self_prompter.isActive(),
+                    lastAttempt: this.last_attempt,
+                    now: Date.now(),
+                });
+                if (!decision?.go)
+                    return;
+                this.last_attempt = Date.now();
+                say(agent, 'It is getting dark. I go to the shelter.');
+                execute(this, agent, async () => {
+                    // goToShelter, then sleepInBed when a bed is in the shelter
+                    const result = await nightShelterRoutine(bot, ctx);
+                    if (result?.ok)
+                        this.sheltered_at = bot.entity.position.clone();
+                    if (result?.text)
+                        skills.log(bot, result.text);
+                });
+            } catch (error) {
+                console.warn('Mode night_shelter failed:', error);
+            }
+        }
+    },
+    {
+        name: 'door_closing',
+        description: 'Close the doors and gates you walked through. Does not interrupt actions.',
+        interrupts: ['all'],
+        on: true,
+        active: false,
+        tracker: null,
+        // without execute, so the running action goes on. closeDoorsBehind feeds the DoorTracker and
+        // closes the doors it returns; it does nothing while passThrough runs or while it still closes.
+        // It is not awaited, so the update loop does not wait for the doors.
+        update: function (agent) {
+            try {
+                if (this.tracker === null)
+                    this.tracker = new DoorTracker({ now: () => Date.now() });
+                const ctx = { ...agent.homeContext(), log: (text) => console.log(text) }; // not into the output of the action
+                closeDoorsBehind(agent.bot, this.tracker, ctx).catch(error => console.warn('Could not close a door:', error));
+            } catch (error) {
+                console.warn('Mode door_closing failed:', error);
+            }
+        }
+    }
+];
+
+function addHomeModes() {
+    if (!settings.home_pack)
+        return;
+    const reflexes = settings.home_reflexes !== null && typeof settings.home_reflexes === 'object' ? settings.home_reflexes : {};
+    const wanted = home_modes.filter(mode => reflexes[mode.name] !== false && !modes_map[mode.name]);
+    // creeper_safety and night_shelter directly after self_preservation, door_closing at the end
+    const after = modes_list.findIndex(mode => mode.name === 'self_preservation') + 1;
+    modes_list.splice(after, 0, ...wanted.filter(mode => mode.name !== 'door_closing'));
+    modes_list.push(...wanted.filter(mode => mode.name === 'door_closing'));
+    for (const mode of wanted)
+        modes_map[mode.name] = mode;
+}
 
 async function execute(mode, agent, func, timeout=-1) {
     if (agent.self_prompter.isActive())
@@ -434,6 +552,7 @@ class ModeController {
 
 export function initModes(agent) {
     _agent = agent;
+    addHomeModes(); // v0.1.4.6: before the profile sets which modes are on
     // the mode controller is added to the bot object so it is accessible from anywhere the bot is used
     agent.bot.modes = new ModeController();
     if (agent.task) {

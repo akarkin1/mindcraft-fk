@@ -24,12 +24,50 @@ import { SkillManager, skillFlags } from './skills/skill_manager.js';
 import * as skills from './library/skills.js';
 import * as world from './library/world.js';
 import { Vec3 } from 'vec3';
+import { setUsageSink } from './cost/usage_context.js';
+import { CostMeter } from './cost/cost_meter.js';
+import { AreaStore } from './areas/area_store.js';
+import { installAreaGuard } from './areas/area_guard.js';
+import { RuleStore } from './rules/rule_store.js';
+import { autoEatOptions } from './packs/home/index.js';
+
+// A number setting of v0.1.4.6: a value that is not finite or is below 0 counts as the default.
+export function numberSetting(value, fallback) {
+    return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : fallback;
+}
+
+// v0.1.4.6, G2: a command result for the history, cut to max characters (0 for no limit). The first
+// 70 and the last 20 percent of max are kept, with a line between them that says how much is left out.
+export function shortenCommandResult(text, max) {
+    if (typeof text !== 'string' || !(max > 0) || text.length <= max)
+        return text;
+    const head = text.slice(0, Math.floor(max * 0.7));
+    const tail = text.slice(text.length - Math.floor(max * 0.2));
+    return `${head}\n... (shortened, ${text.length - head.length - tail.length} characters left out) ...\n${tail}`;
+}
+
+// v0.1.4.6, G1: prints the cost of the session and saves it, right before the process exits. Never throws.
+function reportCostAtExit(meter) {
+    if (!meter)
+        return;
+    try {
+        console.log(meter.reportLine());
+    } catch (error) {
+        console.warn('Could not print the cost of the session:', error);
+    }
+    try {
+        meter.flush();
+    } catch (error) {
+        console.warn('Could not save the cost of the session:', error);
+    }
+}
 
 export class Agent {
     async start(load_mem=false, init_message=null, count_id=0, is_restart=false) {
         // lock down the realm before any component or the bot is created
         initSandbox(settings);
         this.last_sender = null;
+        this.last_order = null; // the command that a player ordered and that still runs (v0.1.4.6, G3)
         this.count_id = count_id;
         this.is_restart = is_restart;
         this._disconnectHandled = false;
@@ -56,6 +94,25 @@ export class Agent {
             process.exit(1);
             return;
         }
+        if (settings.cost_meter !== false) {
+            try {
+                // v0.1.4.6, G1: every call to a model is counted
+                this.cost_meter = new CostMeter({
+                    settings,
+                    filePath: `./bots/${this.name}/usage.json`,
+                    say: (text) => {
+                        if (this.bot)
+                            this.openChat(text).catch((error) => console.warn('Could not tell the cost:', error));
+                    },
+                    log: (text) => console.log(text),
+                });
+                setUsageSink((report) => this.cost_meter?.record(report));
+                this._startCostTimers();
+            } catch (error) {
+                this.cost_meter = undefined;
+                console.warn('Could not start the cost meter:', error);
+            }
+        }
         
         if (settings.world_memory)
             this.history = new History(this, { defer_storage: true }); // storage is set when the world is known
@@ -75,6 +132,7 @@ export class Agent {
                     getInventoryCounts: world.getInventoryCounts,
                     builtinNames: Object.keys(skills).concat(Object.keys(world)),
                     reviewTemplate: this.prompter.profile.skill_review,
+                    allowReview: () => this._costAllows('skill_review'),
                 });
                 await this.skill_manager.init();
             } catch (error) {
@@ -114,6 +172,27 @@ export class Agent {
             this.blocked_actions.push('!skills', '!forgetSkill', '!disableSkill', '!enableSkill');
         if (!skill_commands.command)
             this.blocked_actions.push('!useSkill');
+        // the parts of v0.1.4.6: the commands of a part that is off are hidden
+        if (settings.player_rules) {
+            try {
+                this.rule_store = new RuleStore(`./bots/${this.name}/rules.json`, { max: numberSetting(settings.rules_max, 20) });
+                this.rule_store.load();
+            } catch (error) {
+                this.rule_store = undefined;
+                console.warn('Could not load the rules of the players:', error);
+            }
+        }
+        const areas_on = Boolean(settings.protected_areas) && Boolean(settings.world_memory); // areas belong to a world
+        if (settings.protected_areas && !settings.world_memory)
+            console.warn('protected_areas needs world_memory, so the protected areas stay off.');
+        if (!this.cost_meter)
+            this.blocked_actions.push('!cost');
+        if (!this.rule_store)
+            this.blocked_actions.push('!rememberRule', '!forgetRule', '!rules');
+        if (!areas_on)
+            this.blocked_actions.push('!rememberArea', '!setArea', '!forgetArea', '!areas', '!allowChanges');
+        if (!settings.home_pack)
+            this.blocked_actions.push('!goToShelter', '!eat');
         blacklistCommands(this.blocked_actions);
 
         console.log(this.name, 'logging into minecraft...');
@@ -126,6 +205,8 @@ export class Agent {
                 console.warn('Could not start world memory:', error);
             }
         }
+        if (areas_on)
+            this._startAreaGuard(); // once, on the bot; it reads the areas of the current world
         
         // Connection Handler
         const onDisconnect = (event, reason) => {
@@ -137,6 +218,7 @@ export class Agent {
             const { type, msg } = handleDisconnection(this.name, reason);
      
             console.log(`Agent process ends with exit code 1: ${msg}`);
+            reportCostAtExit(this.cost_meter);
             process.exit(1);
         };
         
@@ -184,6 +266,8 @@ export class Agent {
                 if (settings.world_memory) {
                     save_data = await this._resolveWorld(load_mem);
                 }
+                if (areas_on)
+                    this._areaStore(); // the protected areas of this world
               
                 this._setupEventHandlers(save_data, init_message);
                 this.startEvents();
@@ -220,6 +304,87 @@ export class Agent {
         } catch (error) {
             console.warn('Could not archive the previous memory:', error);
         }
+    }
+
+    _startCostTimers() {
+        // v0.1.4.6, G1: the budget is checked every minute, the cost is printed every cost_report_minutes
+        const meter = this.cost_meter;
+        if (!meter)
+            return;
+        const every = (minutes, fn) => setInterval(() => {
+            try {
+                fn();
+            } catch (error) {
+                console.warn('Cost meter:', error);
+            }
+        }, Math.min(Math.max(minutes * 60 * 1000, 1000), 2 ** 31 - 1)).unref();
+        every(1, () => meter.check());
+        const report_minutes = numberSetting(settings.cost_report_minutes, 10);
+        if (report_minutes > 0)
+            every(report_minutes, () => console.log(meter.reportLine()));
+    }
+
+    _costAllows(what) {
+        // false only while the cost meter is in the state saving (v0.1.4.6, G1). Never throws.
+        if (!this.cost_meter)
+            return true;
+        try {
+            return this.cost_meter.allows(what) !== false;
+        } catch (error) {
+            console.warn('Could not ask the cost meter:', error);
+            return true;
+        }
+    }
+
+    _startAreaGuard() {
+        // v0.1.4.6, G5: installed once; the guard asks for the store of the current world. Never throws.
+        if (!settings.protected_areas || !settings.world_memory)
+            return;
+        try {
+            // the full guard with permit and revoke stays here; bot.areaGuard has no permits (Amendment 2, F2)
+            this.area_guard = installAreaGuard(this.bot, {
+                store: () => this._areaStore(),
+                getDimension: () => this.bot.game?.dimension,
+                log: (text) => console.log(text),
+            });
+        } catch (error) {
+            console.warn('Could not protect the saved areas:', error);
+        }
+    }
+
+    _areaStore() {
+        // The area store of the current world, created when the world is known and again when it
+        // changes. null before that or when the file cannot be used. Never throws.
+        if (!settings.protected_areas || !settings.world_memory)
+            return null;
+        const dir = this.world_memory?.worldDir ?? null;
+        if (dir !== this._area_dir) {
+            this._area_dir = dir;
+            this.area_store = undefined;
+            if (dir) {
+                try {
+                    const store = new AreaStore(`${dir}/areas.json`);
+                    store.load();
+                    this.area_store = store;
+                } catch (error) {
+                    console.warn('Could not open the protected areas of this world:', error);
+                }
+            }
+        }
+        return this.area_store ?? null;
+    }
+
+    homeContext() {
+        // what the modules of the home pack get (spec v0.1.4.6, section 5)
+        return {
+            areas: this.area_store ?? null,
+            places: this.memory_bank,
+            settings,
+            log: (text) => skills.log(this.bot, text),
+            now: () => Date.now(),
+            skills,
+            world,
+        };
     }
 
     async _resolveWorld(load_mem) {
@@ -333,8 +498,16 @@ export class Agent {
             respondFunc(username, message);
         });
 
-        // Set up auto-eat
-        this.bot.autoEat.options = {
+        // Set up auto-eat (with the home pack the defaults of the plugin are kept, v0.1.4.6 H4)
+        let eat_options = null;
+        if (settings.home_pack) {
+            try {
+                eat_options = autoEatOptions(this.bot.autoEat.options);
+            } catch (error) {
+                console.warn('Could not set the options of auto-eat:', error);
+            }
+        }
+        this.bot.autoEat.options = eat_options ?? {
             priority: 'foodPoints',
             startAt: 14,
             bannedFood: ["rotten_flesh", "spider_eye", "poisonous_potato", "pufferfish", "chicken"]
@@ -414,6 +587,9 @@ export class Agent {
 
         const self_prompt = source === 'system' || source === this.name;
         const from_other_bot = convoManager.isOtherAgent(source);
+        // v0.1.4.6, G3: a command that a player types or that answers a player is an order, from the time of the message
+        const from_player = !self_prompt && !from_other_bot;
+        const order_time = { at: Date.now(), atTimeOfDay: this.bot?.time?.timeOfDay ?? null };
 
         if (!self_prompt && !from_other_bot) { // from user, check for forced commands
             const user_command_name = containsCommand(message);
@@ -428,7 +604,11 @@ export class Agent {
                     // add the preceding message to the history to give context for newAction
                     this.history.add(source, message);
                 }
+                const order = { by: source, ...order_time, command: user_command_name };
+                this.last_order = order;
                 let execute_res = await executeCommand(this, message);
+                if (this.last_order === order)
+                    this.last_order = null; // the ordered command ended
                 if (execute_res) 
                     this.routeResponse(source, execute_res);
                 return true;
@@ -505,13 +685,18 @@ export class Agent {
                         this.routeResponse(source, pre_message);
                 }
 
+                const order = from_player ? { by: source, ...order_time, command: command_name } : null;
+                if (order)
+                    this.last_order = order;
                 let execute_res = await executeCommand(this, res);
+                if (order && this.last_order === order)
+                    this.last_order = null; // the ordered command ended
 
                 console.log('Agent executed:', command_name, 'and got:', execute_res);
                 used_command = true;
 
                 if (execute_res)
-                    this.history.add('system', execute_res);
+                    this.history.add('system', shortenCommandResult(execute_res, numberSetting(settings.max_command_result_chars, 0)));
                 else
                     break;
             }
@@ -680,6 +865,7 @@ export class Agent {
         try { this.history.add('system', msg); } catch (_) { /* no history */ }
         try { this.bot.chat(code > 1 ? 'Restarting.': 'Exiting.'); } catch (_) { /* no bot */ }
         try { this.history.save(); } catch (_) { /* no history */ }
+        reportCostAtExit(this.cost_meter);
         process.exit(code);
     }
     async checkTaskDone() {

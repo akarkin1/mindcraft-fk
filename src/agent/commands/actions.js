@@ -1,6 +1,11 @@
 import * as skills from '../library/skills.js';
 import settings from '../settings.js';
 import convoManager from '../conversation.js';
+import { Vec3 } from 'vec3';
+import { normalizeBox, contains, boxSize } from '../areas/area_geometry.js';
+import { scanBuilding, scanFarm } from '../areas/area_scan.js';
+import { goToShelter, sleepInBed, eatBestFood, enterBuilding } from '../packs/home/index.js';
+import { REMEMBER_RULE_DESCRIPTION, rememberRuleReply, forgetRuleReply } from '../rules/rule_commands.js';
 
 
 function runAsAction (actionFn, resume = false, timeout = -1) {
@@ -65,6 +70,114 @@ function withSkillNotices(agent, text) {
     return text;
 }
 
+// false only while the cost meter is in the state saving (v0.1.4.6, G1). Never throws.
+function costAllows(agent, what) {
+    if (!agent.cost_meter)
+        return true;
+    try {
+        return agent.cost_meter.allows(what) !== false;
+    } catch (error) {
+        console.warn('Could not ask the cost meter:', error);
+        return true;
+    }
+}
+
+// Runs fn as the action `action:<label>`, like runAsAction, and returns the text that fn returns
+// (the replies of the home pack, v0.1.4.6). Without a text: the output of the action. Nothing when
+// the action was interrupted.
+async function runForText(agent, label, fn) {
+    let text = null;
+    const code_return = await agent.actions.runAction(`action:${label}`, async () => {
+        text = await fn();
+    }, { timeout: -1, resume: false });
+    if (code_return.interrupted && !code_return.timedout)
+        return;
+    if (code_return.success && typeof text === 'string' && text !== '')
+        return text;
+    return code_return.message;
+}
+
+// The protected areas of v0.1.4.6 (section 6).
+const AREAS_OFF = 'Protected areas are off.';
+const AREA_TYPES = ['building', 'farm'];
+const AREA_TYPE_TEXT = 'The type of an area is "building" or "farm".';
+const pointText = (p) => `(${p.x}, ${p.y}, ${p.z})`;
+const countText = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+
+// "1 door" for a building, "1 gate" for a farm; the other kind only when there is one.
+function entrancesText(area) {
+    const entrances = Array.isArray(area.entrances) ? area.entrances : [];
+    const doors = entrances.filter(e => e.kind !== 'gate').length;
+    const gates = entrances.length - doors;
+    const parts = area.type === 'farm' ? [countText(gates, 'gate')] : [countText(doors, 'door')];
+    if (area.type === 'farm' && doors > 0)
+        parts.push(countText(doors, 'door'));
+    if (area.type !== 'farm' && gates > 0)
+        parts.push(countText(gates, 'gate'));
+    return parts.join(', ');
+}
+
+function sizeText(area) {
+    const size = boxSize(area);
+    return `${size.x} x ${size.y} x ${size.z} blocks`;
+}
+
+function areaSavedText(area) {
+    return `Area "${area.name}" (${area.type}) saved: ${sizeText(area)}, from ${pointText(area.min)} to ${pointText(area.max)}, ${entrancesText(area)}.`;
+}
+
+function areaErrorText(error, name) {
+    if (error instanceof RangeError)
+        return 'That area is too big. An area has at most 64 x 48 x 64 blocks.';
+    const length = typeof name === 'string' ? name.trim().length : 0;
+    if (length < 1 || length > 64)
+        return 'An area needs a name of 1 to 64 characters.';
+    console.warn('Could not save the area:', error);
+    return `Could not save the area "${name}".`;
+}
+
+// The name of the block at x, y, z for the scans, null when it is not loaded.
+const blockNameOf = (bot) => (x, y, z) => bot.blockAt(new Vec3(x, y, z))?.name ?? null;
+
+// v0.1.4.6, !rememberHere: the building around the bot as an area, when one is found and no area of
+// that name exists. Returns the sentence for the reply, or null. Never throws.
+function saveBuildingAround(agent, name) {
+    try {
+        const store = agent.area_store;
+        if (!store || store.get(name))
+            return null;
+        const bot = agent.bot;
+        const scan = scanBuilding(blockNameOf(bot), bot.entity.position);
+        if (!scan?.found)
+            return null;
+        const area = store.set({ name, type: 'building', min: scan.min, max: scan.max, dimension: bot.game?.dimension,
+            entrances: scan.entrances ?? [], source: 'scan' });
+        return `I also saved the building around it as a protected area: ${sizeText(area)}, ${entrancesText(area)}.`;
+    } catch (error) {
+        console.warn('Could not save the building around the place:', error);
+        return null;
+    }
+}
+
+// v0.1.4.6, H7: with the home pack and protected areas, a place inside a building area is entered
+// with enterBuilding of the home pack: through the entrance nearest to the bot with passThrough,
+// which closes the door behind it. Never throws.
+async function enterBuildingAround(agent, pos, dimension) {
+    if (!settings.home_pack || !agent.area_store)
+        return;
+    try {
+        const bot = agent.bot;
+        const area = agent.area_store.areasAt({ x: pos[0], y: pos[1], z: pos[2] }, dimension).find(a => a.type === 'building');
+        if (!area)
+            return;
+        const result = await enterBuilding(bot, area, agent.homeContext());
+        if (!result?.ok && result?.text)
+            skills.log(bot, result.text);
+    } catch (error) {
+        console.warn('Could not enter the building through the door:', error);
+    }
+}
+
 export const actionsList = [
     {
         name: '!newAction',
@@ -78,6 +191,8 @@ export const actionsList = [
                 agent.openChat('newAction is disabled. Enable with allow_insecure_coding=true in settings.js');
                 return "newAction not allowed! Code writing is disabled in settings. Notify the user.";
             }
+            if (!costAllows(agent, 'coding'))
+                return 'I reached my cost limit and do not write new code now. Use the commands I have.';
             let result = "";
             const actionFn = async () => {
                 try {
@@ -106,6 +221,7 @@ export const actionsList = [
             await agent.actions.stop();
             agent.clearBotLogs();
             agent.actions.cancelResume();
+            agent.last_order = null; // v0.1.4.6, G3
             agent.bot.emit('idle');
             let msg = 'Agent stopped.';
             if (agent.self_prompter.isActive())
@@ -142,7 +258,7 @@ export const actionsList = [
         description: 'Go to the given player.',
         params: {
             'player_name': {type: 'string', description: 'The name of the player to go to.'},
-            'closeness': {type: 'float', description: 'How close to get to the player.', domain: [0, Infinity]}
+            'closeness': {type: 'float', description: 'How close to get to the player.', domain: [0, Infinity], default: 3}
         },
         perform: runAsAction(async (agent, player_name, closeness) => {
             await skills.goToPlayer(agent.bot, player_name, closeness);
@@ -153,7 +269,7 @@ export const actionsList = [
         description: 'Endlessly follow the given player.',
         params: {
             'player_name': {type: 'string', description: 'name of the player to follow.'},
-            'follow_dist': {type: 'float', description: 'The distance to follow from.', domain: [0, Infinity]}
+            'follow_dist': {type: 'float', description: 'The distance to follow from.', domain: [0, Infinity], default: 4}
         },
         perform: runAsAction(async (agent, player_name, follow_dist) => {
             await skills.followPlayer(agent.bot, player_name, follow_dist);
@@ -166,7 +282,7 @@ export const actionsList = [
             'x': {type: 'float', description: 'The x coordinate.', domain: [-Infinity, Infinity]},
             'y': {type: 'float', description: 'The y coordinate.', domain: [-64, 320]},
             'z': {type: 'float', description: 'The z coordinate.', domain: [-Infinity, Infinity]},
-            'closeness': {type: 'float', description: 'How close to get to the location.', domain: [0, Infinity]}
+            'closeness': {type: 'float', description: 'How close to get to the location.', domain: [0, Infinity], default: 1}
         },
         perform: runAsAction(async (agent, x, y, z, closeness) => {
             await skills.goToPosition(agent.bot, x, y, z, closeness);
@@ -177,7 +293,7 @@ export const actionsList = [
         description: 'Find and go to the nearest block of a given type in a given range.',
         params: {
             'type': { type: 'BlockName', description: 'The block type to go to.' },
-            'search_range': { type: 'float', description: 'The range to search for the block. Minimum 32.', domain: [10, 512] }
+            'search_range': { type: 'float', description: 'The range to search for the block. Minimum 32.', domain: [10, 512], default: 64 }
         },
         perform: runAsAction(async (agent, block_type, range) => {
             if (range < 32) {
@@ -192,7 +308,7 @@ export const actionsList = [
         description: 'Find and go to the nearest entity of a given type in a given range.',
         params: {
             'type': { type: 'string', description: 'The type of entity to go to.' },
-            'search_range': { type: 'float', description: 'The range to search for the entity.', domain: [32, 512] }
+            'search_range': { type: 'float', description: 'The range to search for the entity.', domain: [32, 512], default: 64 }
         },
         perform: runAsAction(async (agent, entity_type, range) => {
             await skills.goToNearestEntity(agent.bot, entity_type, 4, range);
@@ -215,6 +331,11 @@ export const actionsList = [
             const saved = agent.memory_bank.rememberPlace(name, pos.x, pos.y, pos.z, agent.bot.game?.dimension);
             if (saved === false)
                 return `Could not save the location "${name}".`;
+            if (agent.area_store) {
+                const building = saveBuildingAround(agent, name);
+                if (building)
+                    return `Location saved as "${name}". ${building}`;
+            }
             return `Location saved as "${name}".`;
         }
     },
@@ -233,6 +354,11 @@ export const actionsList = [
             if (place_dimension && typeof current_dimension === 'string' && current_dimension !== '' && place_dimension !== current_dimension) {
                 skills.log(agent.bot, `"${name}" is in the dimension ${place_dimension}, but you are in ${current_dimension}. You cannot travel between dimensions by yourself.`);
                 return;
+            }
+            if (settings.home_pack && agent.area_store) {
+                await enterBuildingAround(agent, pos, place_dimension ?? current_dimension);
+                if (agent.bot.interrupt_code)
+                    return;
             }
             await skills.goToPosition(agent.bot, pos[0], pos[1], pos[2], 1);
         })
@@ -264,12 +390,132 @@ export const actionsList = [
         }
     },
     {
+        name: '!rememberArea',
+        description: 'Remember the building or the fenced farm you are standing in as a protected area. In a building you will not break or place blocks. In a farm you will only plant and harvest. Use this when the player says "this is home", "this is our base", "this is the farm", or tells you not to damage a place.',
+        params: {
+            'name': { type: 'string', description: 'The name of the area, for example "home".' },
+            'type': { type: 'string', description: 'The type of the area: "building" or "farm".', default: 'building' }
+        },
+        perform: async function (agent, name, type) {
+            const store = agent.area_store;
+            if (!store)
+                return AREAS_OFF;
+            if (!AREA_TYPES.includes(type))
+                return AREA_TYPE_TEXT;
+            try {
+                const bot = agent.bot;
+                const origin = bot.entity.position;
+                const dimension = bot.game?.dimension;
+                const scan = type === 'farm' ? scanFarm(blockNameOf(bot), origin) : scanBuilding(blockNameOf(bot), origin);
+                if (scan?.found) {
+                    const area = store.set({ name, type, min: scan.min, max: scan.max, dimension, entrances: scan.entrances ?? [], source: 'scan' });
+                    return `${areaSavedText(area)} Tell me if that is wrong.`;
+                }
+                if (type === 'farm')
+                    return 'I found no fenced ground here. Stand inside the fence and try again.';
+                // no building found: a box around the bot, 12 blocks in x and z, 4 below and 8 above
+                const x = Math.floor(origin.x), y = Math.floor(origin.y), z = Math.floor(origin.z);
+                const box = normalizeBox({ x: x - 12, y: y - 4, z: z - 12 }, { x: x + 12, y: y + 8, z: z + 12 });
+                const area = store.set({ name, type, min: box.min, max: box.max, dimension, entrances: [], source: 'radius' });
+                return `I found no building here. I saved a box of ${sizeText(area)} around this place as "${area.name}". Use !setArea to correct it.`;
+            } catch (error) {
+                return areaErrorText(error, name);
+            }
+        }
+    },
+    {
+        name: '!setArea',
+        description: 'Save a protected area with the given corners, or correct a saved one.',
+        params: {
+            'name': { type: 'string', description: 'The name of the area.' },
+            'type': { type: 'string', description: 'The type of the area: "building" or "farm".' },
+            'x1': { type: 'float', description: 'The x coordinate of one corner.', domain: [-Infinity, Infinity] },
+            'y1': { type: 'float', description: 'The y coordinate of one corner.', domain: [-64, 320] },
+            'z1': { type: 'float', description: 'The z coordinate of one corner.', domain: [-Infinity, Infinity] },
+            'x2': { type: 'float', description: 'The x coordinate of the opposite corner.', domain: [-Infinity, Infinity] },
+            'y2': { type: 'float', description: 'The y coordinate of the opposite corner.', domain: [-64, 320] },
+            'z2': { type: 'float', description: 'The z coordinate of the opposite corner.', domain: [-Infinity, Infinity] }
+        },
+        perform: async function (agent, name, type, x1, y1, z1, x2, y2, z2) {
+            const store = agent.area_store;
+            if (!store)
+                return AREAS_OFF;
+            if (!AREA_TYPES.includes(type))
+                return AREA_TYPE_TEXT;
+            try {
+                const box = normalizeBox({ x: x1, y: y1, z: z1 }, { x: x2, y: y2, z: z2 });
+                // the doors of a saved area of that name stay when they are inside the new box
+                const entrances = (store.get(name)?.entrances ?? []).filter(e => contains(box, e));
+                const area = store.set({ name, type, min: box.min, max: box.max, dimension: agent.bot.game?.dimension, entrances, source: 'manual' });
+                return areaSavedText(area);
+            } catch (error) {
+                return areaErrorText(error, name);
+            }
+        }
+    },
+    {
+        name: '!forgetArea',
+        description: 'Delete a protected area.',
+        params: {'name': { type: 'string', description: 'The name of the area to forget.' }},
+        perform: async function (agent, name) {
+            const store = agent.area_store;
+            if (!store)
+                return AREAS_OFF;
+            try {
+                if (store.remove(name))
+                    return `Forgot the area "${name}".`;
+            } catch (error) {
+                console.warn('Could not forget the area:', error);
+            }
+            return `No area named "${name}" is saved.`;
+        }
+    },
+    {
+        name: '!allowChanges',
+        description: 'Allow yourself to break and place blocks in a protected area for some minutes. Use this ONLY when the player tells you to build, repair or break something inside that area.',
+        params: {
+            'name': { type: 'string', description: 'The name of the area.' },
+            'minutes': { type: 'int', description: 'For how many minutes, at most 60.', domain: [1, 60, '[]'], default: 10 }
+        },
+        perform: async function (agent, name, minutes) {
+            const store = agent.area_store;
+            const guard = agent.area_guard; // the full guard: bot.areaGuard has no permit (Amendment 2, F2)
+            if (!store || !guard)
+                return AREAS_OFF;
+            try {
+                if (!store.get(name))
+                    return `No area named "${name}" is saved.`;
+                guard.permit(name, minutes);
+                return `You may change blocks in "${name}" for ${minutes} minutes.`;
+            } catch (error) {
+                console.warn('Could not allow changes in the area:', error);
+                return `Could not allow changes in "${name}".`;
+            }
+        }
+    },
+    {
+        name: '!rememberRule',
+        description: REMEMBER_RULE_DESCRIPTION,
+        params: {'text': { type: 'string', description: 'The rule as one short sentence.' }},
+        perform: async function (agent, text) {
+            return rememberRuleReply(agent.rule_store, text); // never throws, also without a store
+        }
+    },
+    {
+        name: '!forgetRule',
+        description: 'Delete a saved rule by its number.',
+        params: {'number': { type: 'int', description: 'The number of the rule, as !rules shows it.' }},
+        perform: async function (agent, number) {
+            return forgetRuleReply(agent.rule_store, number); // never throws, also without a store
+        }
+    },
+    {
         name: '!givePlayer',
         description: 'Give the specified item to the given player.',
         params: { 
             'player_name': { type: 'string', description: 'The name of the player to give the item to.' }, 
             'item_name': { type: 'ItemName', description: 'The name of the item to give.' },
-            'num': { type: 'int', description: 'The number of items to give.', domain: [1, Number.MAX_SAFE_INTEGER] }
+            'num': { type: 'int', description: 'The number of items to give.', domain: [1, Number.MAX_SAFE_INTEGER], default: 1 }
         },
         perform: runAsAction(async (agent, player_name, item_name, num) => {
             await skills.giveToPlayer(agent.bot, item_name, player_name, num);
@@ -340,7 +586,7 @@ export const actionsList = [
         description: 'Collect the nearest blocks of a given type.',
         params: {
             'type': { type: 'BlockName', description: 'The block type to collect.' },
-            'num': { type: 'int', description: 'The number of blocks to collect.', domain: [1, Number.MAX_SAFE_INTEGER] }
+            'num': { type: 'int', description: 'The number of blocks to collect.', domain: [1, Number.MAX_SAFE_INTEGER], default: 1 }
         },
         perform: runAsAction(async (agent, type, num) => {
             await skills.collectBlock(agent.bot, type, num);
@@ -351,7 +597,7 @@ export const actionsList = [
         description: 'Craft the given recipe a given number of times.',
         params: {
             'recipe_name': { type: 'ItemName', description: 'The name of the output item to craft.' },
-            'num': { type: 'int', description: 'The number of times to craft the recipe. This is NOT the number of output items, as it may craft many more items depending on the recipe.', domain: [1, Number.MAX_SAFE_INTEGER] }
+            'num': { type: 'int', description: 'The number of times to craft the recipe. This is NOT the number of output items, as it may craft many more items depending on the recipe.', domain: [1, Number.MAX_SAFE_INTEGER], default: 1 }
         },
         perform: runAsAction(async (agent, recipe_name, num) => {
             await skills.craftRecipe(agent.bot, recipe_name, num);
@@ -413,15 +659,42 @@ export const actionsList = [
     },
     {
         name: '!goToBed',
-        description: 'Go to the nearest bed and sleep.',
-        perform: runAsAction(async (agent) => {
-            await skills.goToBed(agent.bot);
-        })
+        // v0.1.4.6, H7: with the home pack another description and sleepInBed
+        get description() {
+            if (settings.home_pack)
+                return 'Go to the nearest bed and sleep. Use this at night, or when the player says "sleep" or "go to bed".';
+            return 'Go to the nearest bed and sleep.';
+        },
+        perform: async function (agent) {
+            if (settings.home_pack)
+                return await runForText(agent, 'goToBed', async () => (await sleepInBed(agent.bot, agent.homeContext()))?.text);
+            return await runForText(agent, 'goToBed', async () => {
+                await skills.goToBed(agent.bot);
+            });
+        }
+    },
+    {
+        name: '!goToShelter',
+        description: 'Go to your shelter, get in through the door and close it. Use this when night comes, when monsters are near, when the player says "get to shelter", "go home" or "go inside".',
+        perform: async function (agent) {
+            if (!settings.home_pack)
+                return 'The home pack is off.';
+            return await runForText(agent, 'goToShelter', async () => (await goToShelter(agent.bot, agent.homeContext()))?.text);
+        }
+    },
+    {
+        name: '!eat',
+        description: 'Eat the best food you have. Use this when you are hungry or hurt, or when the player tells you to eat.',
+        perform: async function (agent) {
+            if (!settings.home_pack)
+                return 'The home pack is off.';
+            return await runForText(agent, 'eat', async () => (await eatBestFood(agent.bot, agent.homeContext()))?.text);
+        }
     },
     {
         name: '!stay',
         description: 'Stay in the current location no matter what. Pauses all modes.',
-        params: {'type': { type: 'int', description: 'The number of seconds to stay. -1 for forever.', domain: [-1, Number.MAX_SAFE_INTEGER] }},
+        params: {'type': { type: 'int', description: 'The number of seconds to stay. -1 for forever.', domain: [-1, Number.MAX_SAFE_INTEGER], default: 30 }},
         perform: runAsAction(async (agent, seconds) => {
             await skills.stay(agent.bot, seconds);
         })
@@ -450,6 +723,8 @@ export const actionsList = [
             'selfPrompt': { type: 'string', description: 'The goal prompt.' },
         },
         perform: async function (agent, prompt) {
+            if (!costAllows(agent, 'self_prompt'))
+                return 'I reached my cost limit and do not work on goals by myself now.';
             if (convoManager.inConversation()) {
                 agent.self_prompter.setPromptPaused(prompt);
             }

@@ -7,6 +7,8 @@ export class Examples {
         this.model = model;
         this.select_num = select_num;
         this.embeddings = {};
+        // examples => the examples that may be shown, in the same order (v0.1.4.6, R5: no hidden commands)
+        this.filter = null;
     }
 
     turnsToText(turns) {
@@ -61,7 +63,16 @@ export class Examples {
                 wordOverlapScore(turn_text, this.turnsToText(a))
             );
         }
-        let selected = this.examples.slice(0, this.select_num);
+        // filtered after the sort, so the order by similarity of the shown examples stays as it was
+        let visible = this.examples;
+        if (typeof this.filter === 'function') {
+            try {
+                visible = this.filter(this.examples);
+            } catch (err) {
+                console.warn('Could not leave out the examples with hidden commands:', err);
+            }
+        }
+        let selected = visible.slice(0, this.select_num);
         return JSON.parse(JSON.stringify(selected)); // deep copy
     }
 
