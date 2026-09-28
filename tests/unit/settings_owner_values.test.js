@@ -127,6 +127,20 @@ describe('the checks refuse invalid values (they are not empty)', () => {
         skill_max_count: [-1, 0.5, '100', NaN, -Infinity],
         skill_disable_after_errors: [-3, 1.5, '3', Infinity],
         blocked_actions: ['!restart', null, {}, ['restart'], ['!'], ['!new Action'], [3], ['!restart', null]],
+        // v0.1.4.6
+        cost_meter: ['true', 1, null],
+        cost_report_minutes: [-1, '10', NaN, Infinity, null],
+        cost_warn_per_hour: [-0.5, '3', NaN, Infinity],
+        cost_limit_per_hour: [-8, '8', NaN, null],
+        cost_limit_per_session: [-1, '10', -Infinity, null],
+        model_prices: [null, [], 'x', { m: null }, { m: 5 }, { m: {} }, { m: { input: -1 } }, { m: { input: '1' } }, { m: { price: 1 } }],
+        max_command_result_chars: [-1, 2.5, '3000', NaN, null],
+        protected_areas: ['false', 0, null],
+        player_rules: ['true', 1],
+        rules_max: [-1, 1.5, '20', Infinity],
+        home_pack: ['true', 0, null],
+        home_reflexes: [null, [], true, { door_closing: 'yes' }, { door_closing: 1 }, { doors: true }],
+        creeper_fighting: [1, 'false'],
     };
 
     test('every rule has invalid examples here', () => {

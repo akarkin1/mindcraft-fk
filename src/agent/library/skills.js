@@ -3,6 +3,8 @@ import * as world from "./world.js";
 import pf from 'mineflayer-pathfinder';
 import Vec3 from 'vec3';
 import settings from "../../../settings.js";
+import { findOpenables, passThrough } from "../packs/home/doors.js";
+import { sideOf } from "../packs/home/door_logic.js";
 
 const blockPlaceDelay = settings.block_place_delay == null ? 0 : settings.block_place_delay;
 const useDelay = blockPlaceDelay > 0;
@@ -23,6 +25,8 @@ async function autoLight(bot) {
     if (world.shouldPlaceTorch(bot)) {
         try {
             const pos = world.getPosition(bot);
+            if (bot.areaGuard && bot.areaGuard.canPlace(pos, 'torch') === false)
+                return false; // a protected area (v0.1.4.6): no torch and no log line
             return await placeBlock(bot, 'torch', pos.x, pos.y, pos.z, 'bottom', true);
         } catch (err) {return false;}
     }
@@ -375,7 +379,7 @@ export async function attackEntity(bot, entity, kill=true) {
     }
 }
 
-export async function defendSelf(bot, range=9) {
+export async function defendSelf(bot, range=9, filter=null) {
     /**
      * Defend yourself from all nearby hostile mobs until there are no more.
      * @param {MinecraftBot} bot, reference to the minecraft bot.
@@ -387,7 +391,9 @@ export async function defendSelf(bot, range=9) {
     bot.modes.pause('self_defense');
     bot.modes.pause('cowardice');
     let attacked = false;
-    let enemy = world.getNearestEntityWhere(bot, entity => mc.isHostile(entity), range);
+    // filter: the mode self_defense leaves out mobs that another mode handles (creepers, v0.1.4.6)
+    const isTarget = entity => mc.isHostile(entity) && (!filter || filter(entity));
+    let enemy = world.getNearestEntityWhere(bot, isTarget, range);
     while (enemy) {
         await equipHighestAttack(bot);
         if (bot.entity.position.distanceTo(enemy.position) >= 4 && enemy.name !== 'creeper' && enemy.name !== 'phantom') {
@@ -406,7 +412,7 @@ export async function defendSelf(bot, range=9) {
         bot.pvp.attack(enemy);
         attacked = true;
         await new Promise(resolve => setTimeout(resolve, 500));
-        enemy = world.getNearestEntityWhere(bot, entity => mc.isHostile(entity), range);
+        enemy = world.getNearestEntityWhere(bot, isTarget, range);
         if (bot.interrupt_code) {
             bot.pvp.stop();
             return false;
@@ -457,7 +463,37 @@ export async function collectBlock(bot, blockType, num=1, exclude=null) {
     // Blocks to ignore safety for, usually next to lava/water
     const unsafeBlocks = ['obsidian'];
 
+    // With protected areas (bot.areaGuard), a block the guard does not allow is no candidate.
+    const guard = bot.areaGuard;
+    let range = 64;
+    let refused = 0;
+    const guardAllows = (block) => {
+        let allowed = true;
+        try {
+            allowed = !guard || guard.canBreak(block) !== false;
+            // Nor is a block with a protected block above it, such as the ground under the floor of a
+            // house: the way to it leads through the floor (v0.1.4.6, Amendment 2 F4).
+            if (allowed && guard) {
+                for (let dy = 1; dy <= 8; dy++) {
+                    const above = bot.blockAt(block.position.offset(0, dy, 0));
+                    if (!above)
+                        break;
+                    if (guard.canBreak(above) === false) {
+                        allowed = false;
+                        break;
+                    }
+                }
+            }
+        } catch (err) {
+            allowed = true; // bot.dig is guarded as well
+        }
+        if (!allowed)
+            refused++;
+        return allowed;
+    };
+
     for (let i=0; i<num; i++) {
+        refused = 0;
         let blocks = world.getNearestBlocksWhere(bot, block => {
             if (!blocktypes.includes(block.name)) {
                 return false;
@@ -471,12 +507,18 @@ export async function collectBlock(bot, blockType, num=1, exclude=null) {
             }
             if (isLiquid) {
                 // collect only source blocks
-                return block.metadata === 0;
+                return block.metadata === 0 && guardAllows(block);
             }
             
-            return movements.safeToBreak(block) || unsafeBlocks.includes(block.name);
-        }, 64, 1);
+            return (movements.safeToBreak(block) || unsafeBlocks.includes(block.name)) && guardAllows(block);
+        }, range, 1);
 
+        if (blocks.length === 0 && refused > 0 && range === 64) {
+            log(bot, `All ${blockType} blocks nearby belong to a protected area. I look for others farther away.`);
+            range *= 2; // once
+            i--;
+            continue;
+        }
         if (blocks.length === 0) {
             if (collected === 0)
                 log(bot, `No ${blockType} nearby to collect.`);
@@ -1110,7 +1152,10 @@ export async function goToGoal(bot, goal) {
 
     bot.pathfinder.setMovements(final_movements);
     try {
-        await bot.pathfinder.goto(goal);
+        if (doorCheckInterval === null)
+            await gotoThroughDoors(bot, goal, final_movements); // the door reflex is on (v0.1.4.6, F1)
+        else
+            await bot.pathfinder.goto(goal);
         clearInterval(doorCheckInterval);
         return true;
     } catch (err) {
@@ -1120,15 +1165,96 @@ export async function goToGoal(bot, goal) {
     }
 }
 
+// v0.1.4.6 (Amendment 2, F1): while the reflex door_closing of the home pack exists and is on, the
+// pathfinder opens doors and gates and the reflex closes them. The toggle timer would fight it.
+function doorReflexOn(bot) {
+    try {
+        return Boolean(bot.modes && bot.modes.exists && bot.modes.exists('door_closing') && bot.modes.isOn('door_closing'));
+    } catch (err) {
+        return false;
+    }
+}
+
+// v0.1.4.6 (Amendment 2, F1): with the door reflex on, a walk that made no progress for 3 s within 2
+// blocks of a door or gate between the bot and its goal goes through it with passThrough of the home
+// pack (open, walk through, close), then the walk goes on. On the real server the path finder opened
+// a fence gate and then stood at the corner of the gate for ever.
+function goalPoint(goal) {
+    if (goal && goal.entity && goal.entity.position)
+        return goal.entity.position;
+    if (goal && Number.isFinite(goal.x) && Number.isFinite(goal.z))
+        return { x: goal.x + 0.5, y: Number.isFinite(goal.y) ? goal.y : 0, z: goal.z + 0.5 }; // sideOf uses x and z
+    return null;
+}
+
+function doorInTheWay(bot, target) {
+    // a door or fence gate within 2 blocks, the bot on one side of it and the target on the other
+    if (!target)
+        return null;
+    for (const door of findOpenables(bot, 2)) {
+        const there = sideOf(door, target);
+        if (door.kind !== 'trapdoor' && there !== 0 && sideOf(door, bot.entity.position) !== there)
+            return door;
+    }
+    return null;
+}
+
+async function passStuckDoor(bot, door) {
+    log(bot, `I am stuck at the door at (${door.x}, ${door.y}, ${door.z}). I walk through it.`);
+    const result = await passThrough(bot, door, { log: (text) => log(bot, text) }, { allowDig: false });
+    return result.ok === true;
+}
+
+async function gotoThroughDoors(bot, goal, movements) {
+    for (let tries = 0; ; tries++) {
+        let stuckAt = null;
+        let last = bot.entity.position.clone();
+        let since = Date.now();
+        const watch = tries < 2 ? setInterval(() => {
+            try {
+                const pos = bot.entity.position;
+                if (pos.distanceTo(last) >= 0.1) {
+                    last = pos.clone();
+                    since = Date.now();
+                }
+                else if (stuckAt === null && !bot.interrupt_code && Date.now() - since >= 3000) {
+                    stuckAt = doorInTheWay(bot, goalPoint(goal));
+                    if (stuckAt)
+                        bot.pathfinder.setGoal(null); // goto rejects with GoalChanged
+                }
+            } catch (err) {
+                // the walk goes on without help
+            }
+        }, 250) : null;
+        try {
+            await bot.pathfinder.goto(goal);
+            return;
+        } catch (err) {
+            if (stuckAt === null || bot.interrupt_code)
+                throw err;
+        } finally {
+            clearInterval(watch);
+        }
+        await passStuckDoor(bot, stuckAt);
+        if (bot.interrupt_code)
+            return;
+        bot.pathfinder.setMovements(movements);
+    }
+}
+
 let _doorInterval = null;
 function startDoorInterval(bot) {
     /**
      * Start helper interval that opens nearby doors if the bot is stuck.
      * @param {MinecraftBot} bot, reference to the minecraft bot.
-     * @returns {number} the interval id.
+     * @returns {number} the interval id, or null while the door reflex of the home pack is on.
      **/
     if (_doorInterval) {
         clearInterval(_doorInterval);
+        _doorInterval = null;
+    }
+    if (doorReflexOn(bot)) {
+        return null;
     }
     let prev_pos = bot.entity.position.clone();
     let prev_check = Date.now();
@@ -1357,6 +1483,10 @@ export async function followPlayer(bot, username, distance=4) {
     bot.pathfinder.setGoal(new pf.goals.GoalFollow(player, distance), true);
     log(bot, `You are now actively following player ${username}.`);
 
+    // v0.1.4.6 (Amendment 2, F1): with the door reflex on, a door or gate the bot is stuck at is passed with passThrough
+    let stuck_pos = bot.entity.position.clone();
+    let stuck_since = Date.now();
+    let door_helps = 0;
 
     while (!bot.interrupt_code) {
         await new Promise(resolve => setTimeout(resolve, 500));
@@ -1364,8 +1494,29 @@ export async function followPlayer(bot, username, distance=4) {
         const distance_from_player = bot.entity.position.distanceTo(player.position);
 
         const teleport_distance = 100;
-        const ignore_modes_distance = 30; 
+        const ignore_modes_distance = 30;
         const nearby_distance = distance + 2;
+
+        if (bot.entity.position.distanceTo(stuck_pos) >= 0.1 || distance_from_player <= nearby_distance) {
+            stuck_pos = bot.entity.position.clone();
+            stuck_since = Date.now();
+            if (distance_from_player <= nearby_distance)
+                door_helps = 0;
+        }
+        else if (doorCheckInterval === null && door_helps < 3 && Date.now() - stuck_since >= 3000 && doorReflexOn(bot)) {
+            const door = doorInTheWay(bot, player.position);
+            if (door) {
+                door_helps++;
+                bot.pathfinder.setGoal(null);
+                await passStuckDoor(bot, door);
+                if (bot.interrupt_code)
+                    break;
+                bot.pathfinder.setMovements(move);
+                bot.pathfinder.setGoal(new pf.goals.GoalFollow(player, distance), true);
+                stuck_pos = bot.entity.position.clone();
+                stuck_since = Date.now();
+            }
+        }
 
         if (distance_from_player > teleport_distance && bot.modes.isOn('cheat')) {
             // teleport with cheat mode
@@ -1517,7 +1668,7 @@ export async function useDoor(bot, door_pos=null) {
     if (!door_pos) {
         for (let door_type of ['oak_door', 'spruce_door', 'birch_door', 'jungle_door', 'acacia_door', 'dark_oak_door',
                                'mangrove_door', 'cherry_door', 'bamboo_door', 'crimson_door', 'warped_door']) {
-            door_pos = world.getNearestBlock(bot, door_type, 16).position;
+            door_pos = world.getNearestBlock(bot, door_type, 16)?.position;
             if (door_pos) break;
         }
     } else {
@@ -1558,7 +1709,7 @@ export async function goToBed(bot) {
      **/
     const beds = bot.findBlocks({
         matching: (block) => {
-            return block.name.includes('bed');
+            return block.name.endsWith('_bed'); // not bedrock
         },
         maxDistance: 32,
         count: 1

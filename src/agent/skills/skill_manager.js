@@ -113,7 +113,8 @@ export class SkillManager {
      * The store lives in `${botsDir}/${name}/skills`. Nothing is read before init().
      * @param {{name: string, botsDir?: string, settings: object, prompter: {promptSkillReview: function(string): Promise<string>},
      *     makeCompartment: function(object): object, endowments: {skills: object, world: object, Vec3: function, log: function},
-     *     getInventoryCounts: function(object): object, builtinNames?: string[], reviewTemplate: string, now?: () => Date}} options
+     *     getInventoryCounts: function(object): object, builtinNames?: string[], reviewTemplate: string, now?: () => Date,
+     *     allowReview?: () => boolean}} options
      */
     constructor(options) {
         const {
@@ -127,6 +128,7 @@ export class SkillManager {
             builtinNames = [],
             reviewTemplate,
             now,
+            allowReview = null,
         } = isObject(options) ? options : {};
         this.name = name;
         this.settings = settings;
@@ -136,6 +138,8 @@ export class SkillManager {
         this.getInventoryCounts = getInventoryCounts;
         this.builtinNames = Array.isArray(builtinNames) ? builtinNames : [];
         this.reviewTemplate = reviewTemplate;
+        // () => false while the cost limit is reached (v0.1.4.6, G1): no review call then
+        this.allowReview = typeof allowReview === 'function' ? allowReview : null;
         this.flags = skillFlags(settings);
         this.limits = skillLimits(settings);
         this.dir = `${botsDir}/${name}/skills`;
@@ -262,10 +266,11 @@ export class SkillManager {
      * Saves the function of a successful code run as a skill when the review model
      * agrees that the task was done and the function is reusable. Stops at the first
      * failing step with `reason`: capture_off, interrupted, threw, no_code, the reason of
-     * pickSkillCandidate, trivial, library_full (with a message), review_failed, not_achieved,
+     * pickSkillCandidate, trivial, library_full (with a message), cost_limit, review_failed, not_achieved,
      * not_reusable, no_description, invalid (with `errors`), unchanged; save_failed when the store
      * throws and error for anything else unexpected. trivial and library_full (v0.1.4.5, G3 and G2)
-     * come before the review call and never refuse a new version of a saved skill.
+     * come before the review call and never refuse a new version of a saved skill. cost_limit
+     * (v0.1.4.6): allowReview() said no, so the review is not called.
      * On success the skills are loaded again when flags.reuse.
      * Never throws and never rejects.
      * @param {{code: string, output: string, task: string, before: object, after: object, interrupted: boolean, threw: boolean}} run
@@ -375,6 +380,19 @@ export class SkillManager {
         }
     }
 
+    // true when allowReview says no. Never throws: an error of allowReview allows the review.
+    _reviewRefused() {
+        if (this.allowReview === null) {
+            return false;
+        }
+        try {
+            return this.allowReview() === false;
+        } catch (err) {
+            console.warn('Could not ask whether a review is allowed:', warningText(err));
+            return false;
+        }
+    }
+
     async _capture(run) {
         if (!this.flags.capture) {
             return notSaved('capture_off');
@@ -412,6 +430,9 @@ export class SkillManager {
                         + 'Use !forgetSkill to remove a skill that is no longer needed.',
                 };
             }
+        }
+        if (this._reviewRefused()) {
+            return notSaved('cost_limit', name);
         }
 
         let review;

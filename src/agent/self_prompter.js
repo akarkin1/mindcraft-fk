@@ -63,6 +63,8 @@ export class SelfPrompter {
         let no_command_count = 0;
         const MAX_NO_COMMAND = 3;
         while (!this.interrupt) {
+            if (!this._costAllows())
+                break; // the cost limit is reached: update() starts the loop again when the cost is below it
             const msg = `You are self-prompting with the goal: '${this.prompt}'. Your next response MUST contain a command with this syntax: !commandName. Respond:`;
             
             let used_command = await this.agent.handleMessage('system', msg, -1);
@@ -86,9 +88,26 @@ export class SelfPrompter {
         this.interrupt = false;
     }
 
+    _costAllows() {
+        // false only while the cost meter is in the state saving (v0.1.4.6, G1). Never throws.
+        const meter = this.agent.cost_meter;
+        if (!meter)
+            return true;
+        try {
+            return meter.allows('self_prompt') !== false;
+        } catch (error) {
+            console.warn('Could not ask the cost meter:', error);
+            return true;
+        }
+    }
+
     update(delta) {
+        if (this.loop_active && !this._costAllows()) {
+            this.stopLoop(); // the cost limit is reached
+            return;
+        }
         // automatically restarts loop
-        if (this.state === ACTIVE && !this.loop_active && !this.interrupt) {
+        if (this.state === ACTIVE && !this.loop_active && !this.interrupt && this._costAllows()) {
             if (this.agent.isIdle())
                 this.idle_time += delta;
             else

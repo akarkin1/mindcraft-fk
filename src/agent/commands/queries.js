@@ -4,6 +4,9 @@ import { getCommandDocs } from './index.js';
 import convoManager from '../conversation.js';
 import { checkLevelBlueprint, checkBlueprint } from '../tasks/construction_tasks.js';
 import { load } from 'cheerio';
+import settings from '../settings.js';
+import { isNight } from '../packs/home/index.js';
+import { rulesReply } from '../rules/rule_commands.js';
 
 const pad = (str) => {
     return '\n' + str + '\n';
@@ -23,6 +26,15 @@ export const queryList = [
             if (agent.world_memory?.world) {
                 res += `\n- World: ${agent.world_memory.world.label}`;
                 res += `\n- Dimension: ${bot.game.dimension}`;
+            }
+            if (agent.area_store) { // v0.1.4.6, G5
+                try {
+                    const area = agent.area_store.areasAt(pos, bot.game.dimension)[0];
+                    if (area)
+                        res += `\n- Area: ${area.name} (${area.type}, protected)`;
+                } catch (error) {
+                    console.warn('Could not read the protected areas:', error);
+                }
             }
             // Gameplay
             res += `\n- Gamemode: ${bot.game.gameMode}`;
@@ -48,12 +60,14 @@ export const queryList = [
             } else {
                 res += '\n- Time: Night';
             }
+            if (settings.home_pack && isNight(bot.time.timeOfDay)) // v0.1.4.6, G5
+                res += '\n- It is night. Stay in the shelter until the morning unless a player tells you otherwise.';
 
             // get the bot's current action
             let action = agent.actions.currentActionLabel;
             if (agent.isIdle())
                 action = 'Idle';
-            res += `\- Current Action: ${action}`;
+            res += `\n- Current Action: ${action}`;
 
 
             let players = world.getNearbyPlayerNames(bot);
@@ -243,6 +257,60 @@ export const queryList = [
             } catch (error) {
                 console.warn('Could not list the saved skills:', error);
                 return 'Could not list the saved skills.';
+            }
+        }
+    },
+    {
+        name: '!areas',
+        description: 'List the protected areas of this world.',
+        perform: function (agent) {
+            const store = agent.area_store;
+            if (!store)
+                return 'Protected areas are off.';
+            try {
+                const areas = store.list();
+                if (areas.length === 0)
+                    return 'No areas are saved in this world.';
+                const point = (p) => `(${p.x}, ${p.y}, ${p.z})`;
+                const count = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+                const lines = ['Protected areas in this world:'];
+                for (const area of areas) {
+                    const entrances = Array.isArray(area.entrances) ? area.entrances : [];
+                    const doors = entrances.filter(e => e.kind !== 'gate').length;
+                    const gates = entrances.length - doors;
+                    // "1 door" for a building, "1 gate" for a farm; the other kind only when there is one
+                    const parts = area.type === 'farm' ? [count(gates, 'gate')] : [count(doors, 'door')];
+                    if (area.type === 'farm' && doors > 0)
+                        parts.push(count(doors, 'door'));
+                    if (area.type !== 'farm' && gates > 0)
+                        parts.push(count(gates, 'gate'));
+                    lines.push(`- ${area.name} (${area.type}): from ${point(area.min)} to ${point(area.max)}, ${parts.join(', ')}`);
+                }
+                return lines.join('\n');
+            } catch (error) {
+                console.warn('Could not list the protected areas:', error);
+                return 'Could not list the protected areas.';
+            }
+        }
+    },
+    {
+        name: '!rules',
+        description: 'List the rules that the players asked you to remember.',
+        perform: function (agent) {
+            return rulesReply(agent.rule_store); // never throws, also without a store
+        }
+    },
+    {
+        name: '!cost',
+        description: 'Get what you cost in this session: calls to the model, tokens, dollars and the budget.',
+        perform: function (agent) {
+            if (!agent.cost_meter)
+                return 'The cost meter is off.';
+            try {
+                return agent.cost_meter.summaryText();
+            } catch (error) {
+                console.warn('Could not read the cost meter:', error);
+                return 'Could not read the cost meter.';
             }
         }
     },

@@ -144,8 +144,10 @@ describe('the guard rule of the source checks: only the branch that runs with th
 });
 
 describe('source text: every new call is guarded by the manager', () => {
-    // prompter.js: without a manager, only a prompt with the placeholder is touched (A6)
-    const PROMPTER_OPTIONS = { tryRequired: ['codingSection', 'conversingSection'], guardPattern: /manager|\$CUSTOM_SKILLS/ };
+    // prompter.js: without a manager, only a prompt with the placeholder is touched (A6). v0.1.4.6 puts
+    // the rules of the players into the prompts with insertSection too, behind the rule store (R2):
+    // that guard counts as well (tests/unit/glue_flags_off.test.js checks it on its own).
+    const PROMPTER_OPTIONS = { tryRequired: ['codingSection', 'conversingSection'], guardPattern: /manager|\$CUSTOM_SKILLS|rule_store/ };
     const FILES = [
         ['src/agent/coder.js', {}],
         ['src/models/prompter.js', PROMPTER_OPTIONS],
@@ -161,8 +163,9 @@ describe('source text: every new call is guarded by the manager', () => {
     }
 
     test('src/models/prompter.js: without a manager only insertSection(prompt, \'\') runs, and only behind a check for $CUSTOM_SKILLS (A6)', () => {
-        // With the manager as the only guard, exactly the two removals of the placeholder are left over.
-        const managerOnly = analyseSkillGuards('src/models/prompter.js', { tryRequired: PROMPTER_OPTIONS.tryRequired });
+        // With the manager (and the rule store of v0.1.4.6) as the only guard, exactly the two removals
+        // of the placeholder are left over.
+        const managerOnly = analyseSkillGuards('src/models/prompter.js', { tryRequired: PROMPTER_OPTIONS.tryRequired, guardPattern: /manager|rule_store/ });
         assert.deepEqual(managerOnly.unguarded.map((u) => u.text), ["insertSection(prompt, '')", "insertSection(prompt, '')"]);
         const lines = readRepoFile('src/models/prompter.js').split(/\r?\n/);
         for (const use of managerOnly.unguarded) {
