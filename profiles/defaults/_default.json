@@ -36,16 +36,16 @@
 
         [
             {"role": "system", "content": "say hi to john_goodman"},
-            {"role": "assistant", "content": "!startConversation(\"john_goodman\", \"Hey John\"))"},
+            {"role": "assistant", "content": "!startConversation(\"john_goodman\", \"Hey John\")"},
             {"role": "user", "content": "john_goodman: (FROM OTHER BOT)Hey there! What's up?"},
             {"role": "assistant", "content": "Hey John, not much. Just saying hi."},
             {"role": "user", "content": "john_goodman: (FROM OTHER BOT)Bye!"},
-            {"role": "assistant", "content": "Bye! !endConversation('john_goodman')"}
+            {"role": "assistant", "content": "Bye! !endConversation(\"john_goodman\")"}
         ],
 
         [
             {"role": "system", "content": "work together with the other bot to build a house"},
-            {"role": "assistant", "content": "!startConversation(\"terrance\", \"Hey gpt! Let's work together to build a house. Let's build it at x:942, y:54, z:1355\"))"},
+            {"role": "assistant", "content": "!startConversation(\"terrance\", \"Hey gpt! Let's work together to build a house. Let's build it at x:942, y:54, z:1355\")"},
             {"role": "user", "content": "terrance: (FROM OTHER BOT)I can build the base, you can build the walls.  !newAction(\"Build a 10x10 wall of a house at x:942, y:54, z:1355\")"}
         ],
 
@@ -59,12 +59,12 @@
         [
             {"role": "user", "content": "rupert: (FROM OTHER BOT)Let's collaborate to build a house!"},
             {"role": "assistant", "content": "Sure! I'll share information to help coordinate. Let's center the build at x:942, y:54, z:1355 !newAction(\"Build a 10x10 base of a house at location\")"},
-            {"role": "user", "content": "rupert: (FROM OTHER BOT)Alright, I'll build the walls! !newAction('Build a 10x10 wall of a house at the same location')"}
+            {"role": "user", "content": "rupert: (FROM OTHER BOT)Alright, I'll build the walls! !newAction(\"Build a 10x10 wall of a house at the same location\")"}
         ],
 
         [
             {"role": "user", "content": "gort: (FROM OTHER BOT)Let's do it, onward!"},
-            {"role": "assistant", "content": "Alright, I'll start by getting some cobblestone. !collectBlocks('stone', 10)"}
+            {"role": "assistant", "content": "Alright, I'll start by getting some cobblestone. !collectBlocks(\"stone\", 10)"}
         ],
 
         [
@@ -171,8 +171,8 @@
         [
             {"role": "user", "content": "umpire_man: follow me without hunting"},
             {"role": "assistant", "content": "Okay, first I'll turn off hunting mode !setMode(\"hunting\", false)"},
-            {"role": "system", "content": "'hunting' mode disabled."},
-            {"role": "assistant", "content": "Now I'll follow you !followPlayer(\"umpire_man\")"}
+            {"role": "system", "content": "Mode hunting is now off."},
+            {"role": "assistant", "content": "Now I'll follow you !followPlayer(\"umpire_man\", 4)"}
         ],
 
         [
@@ -192,17 +192,19 @@
             {"role": "assistant", "content": "Alright, since I have a wooden pickaxe already I'll plan from there. !goal(\"1. Collect 3 cobblestone. 2. Craft sticks 3. Find or make a crafting table. 4. Craft a stone pickaxe.\")"}
         ],
         [
-            {"role": "system", "content": "You are self-prompting with the goal: \"Get a wooden pickaxe\". Respond:"},
+            {"role": "system", "content": "You are self-prompting with the goal: 'Get a wooden pickaxe'. Your next response MUST contain a command with this syntax: !commandName. Respond:"},
             {"role": "assistant", "content": "What's around me? !nearbyBlocks"},
             {"role": "system", "content": "NEARBY_BLOCKS\n- oak_log\n- dirt\n- cobblestone"},
-            {"role": "assistant", "content": "I see some oak logs, dirt, and cobblestone nearby. My goal is to craft a wooden pickaxe. I'll start by collecting some wood. !collectBlock(\"oak_log\", 10)"},
-            {"role": "system", "content": "Successfully collected 9 wood."},
-            {"role": "assistant", "content": "I collected 9 oak logs. I need a pickaxe first, which requires planks and sticks. !craftItem(\"oak_plank\", 9)"},
-            {"role": "system", "content": "Successfully crafted 9 oak_planks."},
-            {"role": "assistant", "content": "I have crafted 9 oak planks. Now I need sticks. !craftItem(\"stick\", 2)"},
-            {"role": "system", "content": "Successfully crafted 2 sticks."},
-            {"role": "assistant", "content": "I have crafted 2 sticks. Now I can craft a wooden pickaxe. !craftItem(\"wooden_pickaxe\", 1)"},
-            {"role": "system", "content": "Successfully crafted 1 wooden_pickaxe."},
+            {"role": "assistant", "content": "I see some oak logs, dirt, and cobblestone nearby. My goal is to craft a wooden pickaxe. I'll start by collecting some wood. !collectBlocks(\"oak_log\", 3)"},
+            {"role": "system", "content": "Action output:\nCollected 3 oak_log."},
+            {"role": "assistant", "content": "I collected 3 oak logs. A pickaxe needs planks, sticks and a crafting table. First the planks. !craftRecipe(\"oak_planks\", 3)"},
+            {"role": "system", "content": "Action output:\nSuccessfully crafted oak_planks, you now have 12 oak_planks."},
+            {"role": "assistant", "content": "I have 12 oak planks. Now I need sticks. !craftRecipe(\"stick\", 1)"},
+            {"role": "system", "content": "Action output:\nSuccessfully crafted stick, you now have 4 stick."},
+            {"role": "assistant", "content": "Now a crafting table. !craftRecipe(\"crafting_table\", 1)"},
+            {"role": "system", "content": "Action output:\nSuccessfully crafted crafting_table, you now have 1 crafting_table."},
+            {"role": "assistant", "content": "Now I can craft a wooden pickaxe. !craftRecipe(\"wooden_pickaxe\", 1)"},
+            {"role": "system", "content": "Action output:\nPlaced crafting_table at (13, 64, -2).\nSuccessfully crafted wooden_pickaxe, you now have 1 wooden_pickaxe.\nCollected 1 crafting_table."},
             {"role": "assistant", "content": "Looks like I have a wooden pickaxe now! Goal accomplished. !endGoal"}
         ],
         [
@@ -212,6 +214,55 @@
         [
             {"role": "system", "content": "You are self-prompting with the goal: 'Build a house'. Respond:"},
             {"role": "assistant", "content": "Alright, lets start with the basic structure. !newAction(\"Build an 8x8 base for the house.\")"}
+        ],
+
+        [
+            {"role": "user", "content": "lumi_7: get to shelter"},
+            {"role": "assistant", "content": "On my way to the shelter. !goToShelter"},
+            {"role": "system", "content": "Action output:\nI am in the shelter \"home\". The door is closed."},
+            {"role": "assistant", "content": "I'm inside and the door is closed."}
+        ],
+
+        [
+            {"role": "user", "content": "rook_22: eat some food!"},
+            {"role": "assistant", "content": "Good idea. !eat"},
+            {"role": "system", "content": "Action output:\nI ate 2 bread."},
+            {"role": "assistant", "content": "I ate 2 bread, I'm full now."}
+        ],
+
+        [
+            {"role": "user", "content": "maple_leaf: this place is home, remember this"},
+            {"role": "assistant", "content": "I'll remember this house as home and keep it safe. !rememberArea(\"home\", \"building\")"},
+            {"role": "system", "content": "Area \"home\" (building) saved: 9 x 6 x 7 blocks, from (-8, 62, 25) to (0, 67, 31), 1 door. Tell me if that is wrong."},
+            {"role": "assistant", "content": "Saved our home with its door. I won't break or place blocks there."}
+        ],
+
+        [
+            {"role": "user", "content": "tess_b: do not ever forget to close the door behind yourself"},
+            {"role": "assistant", "content": "Got it, I'll save that as a rule. !rememberRule(\"Always close the door behind you.\")"},
+            {"role": "system", "content": "Rule 1 saved: \"Always close the door behind you.\""},
+            {"role": "assistant", "content": "Saved. I will always close the door behind me."}
+        ],
+
+        [
+            {"role": "user", "content": "farmer_joe: no, don't use wheat seeds, you need them to plant the wheat"},
+            {"role": "assistant", "content": "Sorry, I'll keep them for planting. !rememberRule(\"Wheat seeds are for planting, never use them for anything else.\")"},
+            {"role": "system", "content": "Rule 2 saved: \"Wheat seeds are for planting, never use them for anything else.\""},
+            {"role": "assistant", "content": "Saved. The seeds are only for planting now."}
+        ],
+
+        [
+            {"role": "user", "content": "nora_mc: do not get logs from the house, you're destroying our shelter"},
+            {"role": "assistant", "content": "I'm sorry! I'll remember that. !rememberRule(\"Never take logs or other blocks from the house.\")"},
+            {"role": "system", "content": "Rule 3 saved: \"Never take logs or other blocks from the house.\""},
+            {"role": "assistant", "content": "Saved. I'll get logs from trees instead."}
+        ],
+
+        [
+            {"role": "user", "content": "dex_99: how much did you cost today?"},
+            {"role": "assistant", "content": "Let me check. !cost"},
+            {"role": "system", "content": "Cost: session $1.23 (chat $0.90, memory $0.20, coding $0.13), rate $1.60 per hour, 182 calls.\nBudget: warn at $3 per hour, limit $8 per hour, limit $10 per session. State: normal."},
+            {"role": "assistant", "content": "This session cost $1.23 so far, about $1.60 per hour."}
         ]
     ],
 

@@ -26,8 +26,12 @@ export function blacklistCommands(commands) {
     }
 }
 
-const commandRegex = /!(\w+)(?:\(((?:-?\d+(?:\.\d+)?|true|false|"[^"]*")(?:\s*,\s*(?:-?\d+(?:\.\d+)?|true|false|"[^"]*"))*)\))?/
-const argRegex = /-?\d+(?:\.\d+)?|true|false|"[^"]*"/g;
+// An argument is a number, true, false, a text in double quotes or a text in single quotes.
+// Inside single quotes an apostrophe belongs to the text unless a comma, a closing parenthesis
+// or the end follows it, so 'Don't break it' is one argument.
+const argPattern = String.raw`-?\d+(?:\.\d+)?|true|false|"[^"]*"|'(?:[^']|'(?!\s*(?:[,)]|$)))*'`;
+const commandRegex = new RegExp(String.raw`!(\w+)(?:\(((?:${argPattern})(?:\s*,\s*(?:${argPattern}))*)\))?`);
+const argRegex = new RegExp(argPattern, 'g');
 
 export function containsCommand(message) {
     const commandMatch = message.match(commandRegex);
@@ -92,9 +96,10 @@ function checkInInterval(number, lowerBound, upperBound, endpointType) {
  * Returns an object containing the command, the command name, and the comand parameters.
  * If parsing unsuccessful, returns an error message as a string.
  * @param {string} message - A message from a player or language model containing a command.
+ * @param {function(string): Object} lookup - Finds a command by name. Default: the command list.
  * @returns {string | Object}
  */
-export function parseCommandMessage(message) {
+export function parseCommandMessage(message, lookup = getCommand) {
     const commandMatch = message.match(commandRegex);
     if (!commandMatch) return `Command is incorrectly formatted`;
 
@@ -104,13 +109,13 @@ export function parseCommandMessage(message) {
     if (commandMatch[2]) args = commandMatch[2].match(argRegex);
     else args = [];
 
-    const command = getCommand(commandName);
+    const command = lookup(commandName);
     if(!command) return `${commandName} is not a command.`
 
     const params = commandParams(command);
     const paramNames = commandParamNames(command);
     
-    if (args.length !== params.length)
+    if (args.length !== params.length && !defaultsFill(params, args.length))
         return `Command ${command.name} was given ${args.length} args, but requires ${params.length} args.`;
 
     
@@ -169,8 +174,23 @@ export function parseCommandMessage(message) {
         }
         args[i] = arg;
     }
+    for (let i = args.length; i < params.length; i++)
+        args.push(params[i].default);
     
     return { commandName, args };
+}
+
+// True when fewer arguments than parameters are given and every missing parameter has a default.
+function defaultsFill(params, given) {
+    return given < params.length && params.slice(given).every(param => param.default !== undefined);
+}
+
+// ' (optional, default 4)' for a parameter with a default, '' otherwise. Texts are quoted.
+function defaultNote(param) {
+    if (param.default === undefined)
+        return '';
+    const value = typeof param.default === 'string' ? JSON.stringify(param.default) : String(param.default);
+    return ` (optional, default ${value})`;
 }
 
 export function truncCommandMessage(message) {
@@ -229,7 +249,7 @@ export async function executeCommand(agent, message) {
     }
 }
 
-export function getCommandDocs(agent) {
+export function getCommandDocs(agent, commands = commandList) {
     const typeTranslations = {
         //This was added to keep the prompt the same as before type checks were implemented.
         //If the language model is giving invalid inputs changing this might help.
@@ -243,7 +263,7 @@ export function getCommandDocs(agent) {
     let docs = `\n*COMMAND DOCS\n You can use the following commands to perform actions and get information about the world. 
     Use the commands with the syntax: !commandName or !commandName("arg1", 1.2, ...) if the command takes arguments.\n
     Do not use codeblocks. Use double quotes for strings. Only use one command in each response, trailing commands and comments will be ignored.\n`;
-    for (let command of commandList) {
+    for (let command of commands) {
         if (agent.blocked_actions.includes(command.name)) {
             continue;
         }
@@ -251,7 +271,7 @@ export function getCommandDocs(agent) {
         if (command.params) {
             docs += 'Params:\n';
             for (let param in command.params) {
-                docs += `${param}: (${typeTranslations[command.params[param].type]??command.params[param].type}) ${command.params[param].description}\n`;
+                docs += `${param}: (${typeTranslations[command.params[param].type]??command.params[param].type}) ${command.params[param].description}${defaultNote(command.params[param])}\n`;
             }
         }
     }
