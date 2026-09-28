@@ -5,6 +5,8 @@ import * as espree from 'espree';
 const WRAP_PREFIX = '(async (bot) => {\n';
 const WRAP_SUFFIX = '\n})';
 const INDENT = '    ';
+const LOOP_TYPES = new Set(['ForStatement', 'ForInStatement', 'ForOfStatement', 'WhileStatement', 'DoWhileStatement']);
+const SANDBOX_OBJECTS = new Set(['skills', 'world', 'customSkills']);
 
 function parseOptions() {
     return { ecmaVersion: 'latest', sourceType: 'script', range: true, comment: true };
@@ -377,6 +379,52 @@ export function instrument(source) {
         .split('console.log(').join('log(bot,')
         .split('log("').join('log(bot,"')
         .split(';\n').join('; if(bot.interrupt_code) {log(bot, "Code interrupted.");return;}\n');
+}
+
+// Whether a callee is a member of skills, world or customSkills: skills.collectBlock,
+// customSkills.other, also computed or optional member access and deeper chains.
+function isSandboxCallee(callee) {
+    let node = callee;
+    let members = 0;
+    while (node?.type === 'MemberExpression' || node?.type === 'ChainExpression') {
+        if (node.type === 'MemberExpression') {
+            members++;
+            node = node.object;
+        } else {
+            node = node.expression;
+        }
+    }
+    return members > 0 && node?.type === 'Identifier' && SANDBOX_OBJECTS.has(node.name);
+}
+
+/**
+ * Whether a function is too simple to become a skill (v0.1.4.5, G3): its body contains no
+ * loop (for, for...in, for...of, while, do...while) and at most one call whose callee starts
+ * with skills., world. or customSkills. Loops and calls inside nested functions count,
+ * comments and strings do not. A source that does not parse or has no function: false.
+ * Never throws.
+ * @param {string} functionSource
+ * @returns {boolean}
+ */
+export function isTrivialFunction(functionSource) {
+    try {
+        const found = findFunction(functionSource);
+        if (found === null) {
+            return false;
+        }
+        let loops = 0;
+        let calls = 0;
+        forEachNode(found.fn.body, node => {
+            if (LOOP_TYPES.has(node.type)) {
+                loops++;
+            } else if (node.type === 'CallExpression' && isSandboxCallee(node.callee)) {
+                calls++;
+            }
+        });
+        return loops === 0 && calls <= 1;
+    } catch {
+        return false;
+    }
 }
 
 /**

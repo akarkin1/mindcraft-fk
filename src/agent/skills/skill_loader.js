@@ -81,6 +81,43 @@ function emptyResult() {
 
 const NOT_A_SINGLE_FUNCTION = 'not a single function';
 const LIBRARY_CHANGED = 'the skill library was changed while loading';
+const LIBRARY_UNPROTECTED = 'the skill library could not be protected';
+
+// Names of the active entries, each once, in list order. An entry that cannot be read is left out.
+function activeNames(entries) {
+    const names = [];
+    for (const entry of entries) {
+        try {
+            if (isObject(entry) && entry.status === 'active') {
+                const name = entry.name;
+                if (typeof name === 'string' && name !== '' && !names.includes(name)) {
+                    names.push(name); // a name listed twice is handled once
+                }
+            }
+        } catch {
+            // left out
+        }
+    }
+    return names;
+}
+
+// v0.1.4.5, G4: makes the name customSkills on the global object of the compartment a constant
+// with the library as value, so code that runs while loading, or later in a microtask it
+// started, cannot replace, delete or redefine it. True only when the binding reads back as
+// exactly that: a value that is the library, not writable, not configurable.
+function protectLibrary(compartment, lib) {
+    try {
+        const global = compartment.globalThis;
+        if (!isObject(global)) {
+            return false;
+        }
+        Object.defineProperty(global, 'customSkills', { value: lib, writable: false, configurable: false });
+        const binding = Object.getOwnPropertyDescriptor(global, 'customSkills');
+        return isObject(binding) && binding.value === lib && binding.writable === false && binding.configurable === false;
+    } catch {
+        return false;
+    }
+}
 
 // Rejects a text before it is evaluated when the check says no, throws or answers anything but true.
 function passesCheck(check, name, text) {
@@ -97,15 +134,16 @@ function passesCheck(check, name, text) {
 // Whether code that ran while loading changed the library: an own member (also a symbol or a
 // member that is not enumerable), not extensible any more, another prototype, or the binding
 // `customSkills` of the compartment is no longer a plain value that is the library (replaced,
-// deleted or turned into a getter). A compartment without globalThis is not checked for that.
+// deleted or turned into a getter). Since G4 the binding is protected before any skill runs, so
+// a global object that is gone or cannot be read now means the compartment changed.
 function libraryChanged(lib, compartment) {
     try {
         if (Reflect.ownKeys(lib).length > 0 || !Object.isExtensible(lib) || Object.getPrototypeOf(lib) !== Object.prototype) {
             return true;
         }
-        const global = compartment?.globalThis;
+        const global = compartment.globalThis;
         if (!isObject(global)) {
-            return false;
+            return true;
         }
         const binding = Object.getOwnPropertyDescriptor(global, 'customSkills');
         return !binding || !('value' in binding) || binding.value !== lib;
@@ -132,6 +170,12 @@ function libraryChanged(lib, compartment) {
  * a new frozen empty customSkills, loaded [], every active skill skipped with
  * 'the skill library was changed while loading'. Otherwise the wrappers are added
  * and customSkills is frozen. A name is in loaded or in skipped, never in both.
+ *
+ * The name cannot be replaced (v0.1.4.5, G4): directly after the compartment is made and
+ * before any skill is evaluated, customSkills is defined on the compartment's global object
+ * as not writable and not configurable, with the library as value. If that is not possible,
+ * every active skill is skipped with 'the skill library could not be protected' and a new
+ * frozen empty customSkills is returned.
  * Never throws.
  * @param {{store: object, makeCompartment: function(object): object, endowments: object, instrument: function(string): string,
  *     onUse: function(string, {ok: boolean, error?: string}): void, check?: function(string, string): boolean}} options
@@ -151,7 +195,7 @@ export function loadSkills(options) {
     }
     const lib = {};
     const skipped = [];
-    const active = []; // names of the active skills, each once, in list order
+    const active = activeNames(entries);
     const functions = new Map();
     let compartment = null;
     let compartmentError = null;
@@ -160,18 +204,15 @@ export function loadSkills(options) {
     } catch (err) {
         compartmentError = err;
     }
+    if (compartment !== null && !protectLibrary(compartment, lib)) {
+        if (active.length > 0) {
+            console.warn(`Saved skills were not loaded: ${LIBRARY_UNPROTECTED}.`);
+        }
+        return { customSkills: Object.freeze({}), loaded: [], skipped: active.map(name => ({ name, error: LIBRARY_UNPROTECTED })) };
+    }
     const prepare = typeof instrument === 'function' ? instrument : (source) => source;
-    for (const entry of entries) {
-        let name;
+    for (const name of active) {
         try {
-            if (!isObject(entry) || entry.status !== 'active') {
-                continue;
-            }
-            name = entry.name;
-            if (typeof name !== 'string' || name === '' || active.includes(name)) {
-                continue; // a name listed twice is handled once
-            }
-            active.push(name);
             if (compartment === null) {
                 throw compartmentError ?? new Error('no compartment');
             }
@@ -190,12 +231,10 @@ export function loadSkills(options) {
             }
             functions.set(name, fn);
         } catch (err) {
-            if (typeof name === 'string') {
-                skipped.push({ name, error: errorText(err) });
-            }
+            skipped.push({ name, error: errorText(err) });
         }
     }
-    if (libraryChanged(lib, compartment)) {
+    if (compartment !== null && libraryChanged(lib, compartment)) {
         console.warn(`Saved skills were not loaded: ${LIBRARY_CHANGED}.`);
         return { customSkills: Object.freeze({}), loaded: [], skipped: active.map(name => ({ name, error: LIBRARY_CHANGED })) };
     }

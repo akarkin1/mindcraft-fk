@@ -50,8 +50,10 @@ const settings = {
     "skill_capture": true, // with skill_learning: review code that worked and save it as a skill when it is general
     "skill_reuse": true, // with skill_learning: show the saved skills to the model and let its code call them as customSkills.<name>
     "skill_command": false, // with skill_learning and skill_reuse: also offer !useSkill to run a saved skill directly
+    "skill_max_count": 100, // with skill_learning: most skills kept, code of a new skill is not saved when the library is full. 0 for no limit
+    "skill_disable_after_errors": 3, // with skill_learning: switch a skill off after it threw this many times in a row. 0 for never
     "allow_vision": false, // allows vision model to interpret screenshots as inputs
-    "blocked_actions" : ["!checkBlueprint", "!checkBlueprintLevel", "!getBlueprint", "!getBlueprintLevel"] , // commands to disable and remove from docs. Ex: ["!setMode"]
+    "blocked_actions" : ["!checkBlueprint", "!checkBlueprintLevel", "!getBlueprint", "!getBlueprintLevel", "!restart"] , // commands to disable and remove from docs. Ex: ["!setMode"]
     "code_timeout_mins": -1, // minutes code is allowed to run. -1 for no timeout
     "relevant_docs_count": 5, // number of relevant code function docs to select for prompting. -1 for all
 

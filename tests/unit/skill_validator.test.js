@@ -321,6 +321,79 @@ describe('forbidden_token matches whole names (Amendment 1, A1)', () => {
     });
 });
 
+// Spec v0.1.4.5, G5: the token import( also matches the name import, not preceded by a letter, digit,
+// _, $ or ., followed by optional whitespace and // or /*. The sandbox refuses this text anywhere in
+// a source, also inside a comment or a string. The error message names the token import(.
+describe('forbidden_token: import followed by a comment (v0.1.4.5, G5)', () => {
+    const importErrors = (result) => result.errors.filter((e) => e.code === 'forbidden_token' && e.message.includes('"import("'));
+
+    const FAIL = [
+        // the examples of the spec
+        ['import // x', ['// see import // x']],
+        ['import/* x */', ['// see import/* x */']],
+        ['a doc comment that contains import /* the list */', null],
+        // whitespace, line breaks, code, strings
+        ['import and a tab before //', ['// import\t// x']],
+        ['import, a line break and /*', ['/* import', '/* x */']],
+        ['import //, as code before a comment', ['const list = [];', 'list.push(1); // import //']],
+        ['in a string', ['log(bot, "import /* the list */");']],
+        ['in a template literal', ['log(bot, `import // x`);']],
+        ['at the start of a line', ['/*', 'import // x', '*/']],
+        ['after a spread: ...import(', ['const all = [...import("x")];']],
+        ['after a spread: ...import //', ['// [...import // x]']],
+    ];
+    for (const [label, body] of FAIL) {
+        test(`fails: ${label} -> one forbidden_token error that names import(`, () => {
+            const source = body === null
+                ? [
+                    'async function buildWall(bot, length) {',
+                    '    /**',
+                    '     * Builds a wall of the given length from the blocks of the import /* the list */',
+                    '    const pos = bot.entity.position;',
+                    '    for (let i = 0; i < length; i++) {',
+                    "        await skills.placeBlock(bot, 'dirt', pos.x + i, pos.y, pos.z);",
+                    '    }',
+                    '    return true;',
+                    '}',
+                    '',
+                ].join('\n')
+                : good('buildWall', body);
+            const result = validate({ name: 'buildWall', source });
+            assertShape(result);
+            assert.equal(importErrors(result).length, 1, JSON.stringify(result.errors));
+            assert.equal(result.errors.filter((e) => e.code === 'forbidden_token').length, 1, JSON.stringify(result.errors));
+        });
+    }
+
+    test('import( and import // in one source: still one error for the token import(', () => {
+        const result = validate({ name: 'buildWall', source: good('buildWall', ['// import("x") and import // y']) });
+        assert.equal(importErrors(result).length, 1);
+    });
+
+    const PASS = [
+        // the examples of the spec
+        ['important(1)', 'const a = important(1);'],
+        ['reimport(bot)', 'const b = reimport(bot);'],
+        ['x.import(1)', 'const c = x.import(1);'],
+        // the name import after a name character or a dot, or not followed by // or /*
+        ['important // x', 'const d = important; // x'],
+        ['reimport /* x */', 'const e = reimport; /* x */'],
+        ['_import // x', 'const f = _import; // x'],
+        ['$import // x', 'const g = $import; // x'],
+        ['import9 // x', 'const h = import9; // x'],
+        ['x.import // x', 'const k = x.import; // x'],
+        ['x?.import(1)', 'const l = x?.import(1);'],
+        ['import followed by another operator', '// import / 2'],
+        ['import followed by a word', '// import the blocks'],
+    ];
+    const OUTSIDE = ['important', 'reimport', 'x', '_import', '$import', 'import9'];
+    for (const [label, line] of PASS) {
+        test(`passes: ${label}`, () => {
+            assert.deepEqual(validate({ name: 'buildWall', source: good('buildWall', [line]), extraGlobals: OUTSIDE }), { ok: true, errors: [] });
+        });
+    }
+});
+
 // Amendment 2, B3: the function uses only names it declares itself, its parameters, the names of
 // the sandbox (skills, world, Vec3, log, customSkills), console and the standard objects of
 // JavaScript. Implemented with the rule no-undef of ESLint. One error; the message lists the

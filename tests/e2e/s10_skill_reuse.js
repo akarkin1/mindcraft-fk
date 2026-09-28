@@ -11,13 +11,16 @@
 //         another body is saved as version 2, the old source is in .history/, the reply ends with
 //         the update message, and code in the same process (and the other skill) gets the new body.
 // after   a NEW process loads version 2 from disk.
+// v0.1.4.5: announceTwice waits after its call of announceCount, so it has two calls of
+// skills./customSkills. and is not trivial (G3); save messages follow the text before after
+// exactly one line break.
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import {
     scenarioMain, check, note, startServer, startRealAgent, stopRealAgent, exitSoon, runCommand, runPhase,
-    codeReply, readJson, listFiles, withTimeout, emitData,
+    codeReply, readJson, listFiles, withTimeout, emitData, endsWithLine,
 } from './helpers.js';
 
 const SELF = fileURLToPath(import.meta.url);
@@ -54,6 +57,7 @@ const TWICE = [
     '     **/',
     "    log(bot, 'twice start ' + word);",
     '    const ok = await customSkills.announceCount(bot, word, 2);',
+    '    await skills.wait(bot, 10);',
     "    log(bot, 'twice end ' + word);",
     '    return ok;',
     '}',
@@ -117,7 +121,7 @@ await scenarioMain({
             code.reviews.push(reviewYes('Writes a word several times.'));
             const used = await withTimeout(agent.handleMessage('e2e_player', 'Please announce dirt two times'), 30000, 'handleMessage');
             const result = agent.history.turns.find((t) => t.role === 'system' && t.content.includes('announce dirt #2'));
-            check(used === true && result?.content.endsWith('\n' + SAVED),
+            check(used === true && endsWithLine(result?.content, SAVED),
                 'learn: through Agent.handleMessage, the result of !newAction in the history ends with the save message', JSON.stringify(result?.content.slice(-140)));
             check(readIndex()?.skills?.announceCount?.source_task === 'Announce dirt two times',
                 'learn: source_task is the task the chat model wrote in !newAction', JSON.stringify(readIndex()?.skills?.announceCount?.source_task));
@@ -128,7 +132,7 @@ await scenarioMain({
                 [reviewYes('Writes a word twice.')]);
             check(/twice start sand\nannounce sand #1\nannounce sand #2\ntwice end sand/.test(r.ret),
                 'learn: new code whose function calls customSkills.announceCount passes the lint and runs the saved skill', JSON.stringify(r.ret.slice(-300)));
-            check(r.ret.endsWith('\nSaved this code as the skill customSkills.announceTwice. You can call it in later code.'),
+            check(endsWithLine(r.ret, 'Saved this code as the skill customSkills.announceTwice. You can call it in later code.'),
                 'learn: announceTwice was saved', JSON.stringify(r.ret.slice(-120)));
             check(r.reviews[0]?.prompt.includes('SKILLS SAVED SO FAR: announceCount(bot, word, times)\n'),
                 'learn: the second review prompt lists the skill saved before', JSON.stringify(/SKILLS SAVED SO FAR: .*/.exec(r.reviews[0]?.prompt || '')?.[0]));
@@ -188,7 +192,7 @@ await scenarioMain({
             r = await newAction('Announce clay with the count', [codeReply(COUNT_V2 + "\nawait announceCount(bot, 'clay', 4);")],
                 [reviewYes('Writes the word and the count.')]);
             check(r.ret.includes('ANNOUNCE v2 clay x4'), 'update: the new function ran', JSON.stringify(r.ret.slice(-160)));
-            check(r.ret.endsWith('\nUpdated the saved skill customSkills.announceCount.'), 'update: the reply ends with the update message',
+            check(endsWithLine(r.ret, 'Updated the saved skill customSkills.announceCount.'), 'update: the reply ends with the update message after exactly one line break',
                 JSON.stringify(r.ret.slice(-100)));
             check(r.reviews[0]?.prompt.includes('SKILLS SAVED SO FAR: announceCount(bot, word, times), announceTwice(bot, word)\n'),
                 'update: the review prompt lists both saved skills', JSON.stringify(/SKILLS SAVED SO FAR: .*/.exec(r.reviews[0]?.prompt || '')?.[0]));

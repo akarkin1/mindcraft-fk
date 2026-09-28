@@ -43,6 +43,28 @@ function parseSkillArgs(text) {
     return null;
 }
 
+// Appends a line to a result text: trailing whitespace and line breaks of the text are removed
+// first, so exactly one line break separates them.
+function appendLine(text, line) {
+    return String(text).trimEnd() + '\n' + line;
+}
+
+// Appends the notices of the skill manager to a result text, each on its own line, for example
+// that a skill was switched off after errors in a row. With flags.reuse only.
+function withSkillNotices(agent, text) {
+    if (!agent.skill_manager)
+        return text;
+    try {
+        if (agent.skill_manager.flags.reuse) {
+            for (const notice of agent.skill_manager.takeNotices())
+                text = appendLine(text, notice);
+        }
+    } catch (error) {
+        console.warn('Could not read the notices of the skills:', error);
+    }
+    return text;
+}
+
 export const actionsList = [
     {
         name: '!newAction',
@@ -68,13 +90,13 @@ export const actionsList = [
             if (agent.skill_manager && agent.coder.last_run != null) {
                 try {
                     const capture = await agent.skill_manager.captureFromRun(agent.coder.last_run);
-                    if (capture.saved)
-                        result += '\n' + capture.message;
+                    if (typeof capture.message === 'string' && capture.message !== '')
+                        result = appendLine(result, capture.message);
                 } catch (error) {
                     console.warn('Could not save the code as a skill:', error);
                 }
             }
-            return result;
+            return withSkillNotices(agent, result);
         }
     },
     {
@@ -636,15 +658,15 @@ export const actionsList = [
             };
             const code_return = await agent.actions.runAction('action:useSkill', actionFn, {timeout: settings.code_timeout_mins});
             if (run?.error === 'unknown_skill')
-                return `No skill named "${name}" is saved.`;
+                return withSkillNotices(agent, `No skill named "${name}" is saved.`);
             if (code_return.interrupted && !code_return.timedout)
                 return;
             if (run && !run.ok && run.error)
-                return `The skill "${name}" failed: ${run.error}`;
+                return withSkillNotices(agent, `The skill "${name}" failed: ${run.error}`);
             const output = code_return.message;
             if (!output || output.trim() === 'Action output:')
-                return `The skill "${name}" finished.`;
-            return output;
+                return withSkillNotices(agent, `The skill "${name}" finished.`);
+            return withSkillNotices(agent, output);
         }
     },
 ];

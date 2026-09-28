@@ -7,9 +7,12 @@
 //             saves a new skill next to the garbage and lists the skills; the corrupt index is set
 //             aside (not deleted) and rebuilt from the skill files; the directory and the other
 //             files stay as they were. B1: a skill whose file is written but cannot be loaded
-//             (SES refuses "import //" anywhere in a text, also in the doc block built from the
-//             review description) is saved with the message "..., but it could not be loaded."
-//             for created and for updated, and is listed as [broken].
+//             (SES refuses "$import(" anywhere in a text, also in the doc block built from the
+//             review description, and the validator does not match it) is saved with the message
+//             "..., but it could not be loaded." for created and for updated, and is listed as
+//             [broken]. (v0.1.4.5: "import //" is refused by the validator now, G5.)
+// v0.1.4.5: the saved functions call world.getPosition and skills.wait, so they are not trivial
+// (G3); save messages follow the text before after exactly one line break.
 // notADir     bots/<name>/skills is a FILE. B1: the skill file cannot be written, so nothing is
 //             announced as saved, the store knows no skill that is not on disk, no command
 //             throws, the next coding prompt offers nothing and the bot keeps working.
@@ -20,7 +23,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
     scenarioMain, check, note, startServer, startRealAgent, stopRealAgent, exitSoon, runCommand, runPhase,
-    codeReply, listFiles, readJson, withTimeout,
+    codeReply, listFiles, readJson, withTimeout, endsWithLine,
 } from './helpers.js';
 
 const SELF = fileURLToPath(import.meta.url);
@@ -42,23 +45,26 @@ const NEW_FN = [
     '     * @param {MinecraftBot} bot, reference to the minecraft bot.',
     '     * @param {number} n, the number.',
     '     **/',
-    "    log(bot, 'new thing ' + n);",
+    '    const start = world.getPosition(bot);',
+    "    log(bot, 'new thing ' + n + ' at y' + Math.round(start.y));",
     '    await skills.wait(bot, 10);',
     '    return true;',
     '}',
     'await writeNewThing(bot, 5);',
 ].join('\n');
 const REVIEW = JSON.stringify({ achieved: true, reusable: true, description: 'Writes a new thing.', reason: 'e2e' });
-// no own doc block: the block is built from the review description, which SES refuses to evaluate
+// no own doc block: the block is built from the review description, which SES refuses to
+// evaluate ("$import(" matches the import pattern of SES, not the forbidden token of the validator)
 const IMPORT_FN = (v) => [
     'async function noteImportCount(bot, n) {',
-    `    log(bot, 'import note ' + n + ' v${v}');`,
+    '    const start = world.getPosition(bot);',
+    `    log(bot, 'import note ' + n + ' v${v} at y' + Math.round(start.y));`,
     '    await skills.wait(bot, 10);',
     '    return true;',
     '}',
     'await noteImportCount(bot, 2);',
 ].join('\n');
-const IMPORT_REVIEW = JSON.stringify({ achieved: true, reusable: true, description: 'Notes the import // of n items.', reason: 'e2e' });
+const IMPORT_REVIEW = JSON.stringify({ achieved: true, reusable: true, description: 'Notes the $import( of n items.', reason: 'e2e' });
 
 async function withAgent(name, steps) {
     const server = await startServer({ seedHigh: 14, seedLow: 6, motd: 'Skill Start World' });
@@ -109,23 +115,23 @@ await scenarioMain({
             let r = await newAction('Use the good skill', [codeReply("await customSkills.goodSkill(bot, 'morning');")]);
             check(r.includes('good morning'), 'garbage: generated code calls the good skill', JSON.stringify(r.slice(-100)));
             r = await newAction('Write a new thing', [codeReply(NEW_FN)], [REVIEW]);
-            check(r.endsWith('\nSaved this code as the skill customSkills.writeNewThing. You can call it in later code.')
+            check(endsWithLine(r, 'Saved this code as the skill customSkills.writeNewThing. You can call it in later code.')
                 && fs.readFileSync(path.join(dir, 'writeNewThing.js'), 'utf8') === NEW_FN.slice(0, NEW_FN.lastIndexOf('\nawait')) + '\n',
             'garbage: a new skill is saved next to the garbage', JSON.stringify(r.slice(-120)));
             // B1: the skill file is written but cannot be loaded; the message says so
             r = await newAction('Note the import of two items', [codeReply(IMPORT_FN(1))], [IMPORT_REVIEW]);
             const importFile = path.join(dir, 'noteImportCount.js');
             check(r.includes('import note 2 v1'), 'garbage: the code of the skill that cannot be loaded ran', JSON.stringify(r.slice(-200)));
-            check(fs.existsSync(importFile) && fs.readFileSync(importFile, 'utf8').includes('Notes the import // of n items.'),
+            check(fs.existsSync(importFile) && fs.readFileSync(importFile, 'utf8').includes('Notes the $import( of n items.'),
                 '[B1] the skill file was written, with the doc block built from the review description');
             check(!agent.skill_manager.knownNames().includes('customSkills.noteImportCount'), '[B1] the written skill is not among the loaded skills',
                 JSON.stringify(agent.skill_manager.knownNames()));
-            check(r.endsWith('\nSaved this code as the skill noteImportCount, but it could not be loaded.'),
+            check(endsWithLine(r, 'Saved this code as the skill noteImportCount, but it could not be loaded.'),
                 '[B1] created: the reply says that the saved skill could not be loaded', JSON.stringify(r.slice(-120)));
             r = await newAction('Note the import of two items again', [codeReply(IMPORT_FN(2))], [IMPORT_REVIEW]);
             check(r.includes('import note 2 v2') && readJson(path.join(dir, 'index.json')).skills?.noteImportCount?.version === 2,
                 'garbage: the changed function was saved as version 2', JSON.stringify(r.slice(-160)));
-            check(r.endsWith('\nUpdated the saved skill noteImportCount, but it could not be loaded.'),
+            check(endsWithLine(r, 'Updated the saved skill noteImportCount, but it could not be loaded.'),
                 '[B1] updated: the reply says that the saved skill could not be loaded', JSON.stringify(r.slice(-120)));
             r = await newAction('Use the good skill again', [codeReply("await customSkills.goodSkill(bot, 'evening');")]);
             check(r.includes('good evening'), 'garbage: the bot keeps working after the skill that cannot be loaded', JSON.stringify(r.slice(-100)));
@@ -176,7 +182,7 @@ await scenarioMain({
             check(JSON.stringify(agent.skill_manager?.knownNames()) === JSON.stringify(['customSkills.goodSkill']),
                 'index.json is a directory: the start loads the skill from the skill files', JSON.stringify(agent.skill_manager?.knownNames()));
             let r = await newAction('Write a new thing', [codeReply(NEW_FN)], [REVIEW]);
-            check(r.endsWith('\nSaved this code as the skill customSkills.writeNewThing. You can call it in later code.')
+            check(endsWithLine(r, 'Saved this code as the skill customSkills.writeNewThing. You can call it in later code.')
                 && fs.existsSync(path.join(dir, 'writeNewThing.js')),
             '[B1] only index.json could not be written: the skill counts as saved', JSON.stringify(r.slice(-120)));
             r = await newAction('Use the new thing', [codeReply('await customSkills.writeNewThing(bot, 6);')]);

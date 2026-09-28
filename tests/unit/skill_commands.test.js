@@ -64,13 +64,22 @@ afterEach(() => {
 });
 
 // A fake manager with the members the commands use. Skills: buildWall logs output, quietSkill
-// logs nothing, breaker fails with an error text; anything else is unknown.
-function makeManager({ capture } = {}) {
+// logs nothing, breaker fails with an error text; anything else is unknown. `notices` are what
+// takeNotices() returns once (v0.1.4.5, G1); `notices` an Error makes takeNotices() throw it.
+function makeManager({ capture, notices = [], reuse = true } = {}) {
     const calls = [];
     const known = new Set(['buildWall', 'quietSkill', 'breaker']);
+    let queued = notices;
     const manager = {
         calls,
-        flags: { capture: true, reuse: true, command: true },
+        flags: { capture: true, reuse, command: reuse },
+        takeNotices() {
+            calls.push(['takeNotices']);
+            if (queued instanceof Error) throw queued;
+            const taken = queued;
+            queued = [];
+            return taken;
+        },
         customSkills: Object.freeze({ buildWall: async () => true, quietSkill: async () => true, breaker: async () => { throw new Error('boom'); } }),
         knownNames: () => [...known].sort().map((n) => `customSkills.${n}`),
         has(name) {
@@ -313,7 +322,8 @@ describe('!useSkill checks the name first (Amendment 1, A5)', () => {
         const manager = makeManager();
         const agent = makeAgent({ manager });
         await action('!useSkill').perform(agent, 'buildWall', '[2]');
-        assert.deepEqual(manager.calls.map((c) => c[0]), ['has', 'run']);
+        // v0.1.4.5, G1: the notices are taken after the run
+        assert.deepEqual(manager.calls.map((c) => c[0]), ['has', 'run', 'takeNotices']);
         assert.deepEqual(agent.actions.calls.map((c) => c.label), ['action:useSkill']);
     });
 
@@ -405,5 +415,206 @@ describe('!newAction: the capture step', () => {
             reply = await action('!newAction').perform(makeAgent({ manager, lastRun: LAST_RUN }), 'build a wall');
         });
         assert.equal(reply, SUMMARY);
+    });
+
+    // v0.1.4.5, G2: the message is appended whenever it is not empty, not only when saved.
+    test('not saved, but with a message (the library is full): the message is appended', async () => {
+        const FULL = 'The skill library is full (100 skills), so this code was not saved as a skill. Use !forgetSkill to remove a skill that is no longer needed.';
+        const manager = makeManager({ capture: { saved: false, action: null, name: 'buildWall', reason: 'library_full', errors: [], message: FULL } });
+        const reply = await action('!newAction').perform(makeAgent({ manager, lastRun: LAST_RUN }), 'build a wall');
+        assert.equal(reply, SUMMARY + '\n' + FULL);
+    });
+
+    test('a message that is not a string is not appended', async () => {
+        const manager = makeManager({ capture: { saved: false, action: null, name: null, reason: 'error', errors: [], message: undefined } });
+        const reply = await action('!newAction').perform(makeAgent({ manager, lastRun: LAST_RUN }), 'build a wall');
+        assert.equal(reply, SUMMARY);
+    });
+});
+
+// v0.1.4.5, G1: !newAction and !useSkill call takeNotices() after the run and after the capture and
+// append every notice to their result text, each on its own line. With flags.reuse only, in try/catch.
+describe('the notices of the skill manager (v0.1.4.5, G1)', () => {
+    const LAST_RUN = Object.freeze({ code: 'await buildWall(bot, 3);', output: 'Wall built.', task: 'build a wall', before: {}, after: {}, interrupted: false, threw: false });
+    const N1 = 'The skill customSkills.breaker was switched off after 3 errors in a row. Last error: Error: boom. Write a corrected version of the function under the same name to switch it on again.';
+    const N2 = 'Second notice.';
+
+    beforeEach(() => {
+        settings.allow_insecure_coding = true;
+        settings.code_timeout_mins = -1;
+    });
+
+    test('!newAction: after the capture message, each notice on its own line; takeNotices comes after the capture', async () => {
+        const manager = makeManager({ notices: [N1, N2], capture: { saved: true, action: 'created', name: 'buildWall', reason: null, errors: [], message: CAPTURE_MESSAGE } });
+        const reply = await action('!newAction').perform(makeAgent({ manager, lastRun: LAST_RUN }), 'build a wall');
+        assert.equal(reply, SUMMARY + '\n' + CAPTURE_MESSAGE + '\n' + N1 + '\n' + N2);
+        assert.deepEqual(manager.calls.map((c) => c[0]), ['captureFromRun', 'takeNotices']);
+    });
+
+    test('!newAction: the notices come also when there is nothing to capture (the code threw, last_run is null)', async () => {
+        const manager = makeManager({ notices: [N1] });
+        const reply = await action('!newAction').perform(makeAgent({ manager, lastRun: null }), 'build a wall');
+        assert.equal(reply, SUMMARY + '\n' + N1);
+        assert.deepEqual(manager.calls.map((c) => c[0]), ['takeNotices']);
+    });
+
+    test('!newAction: the notices come also when the capture fails', async () => {
+        const manager = makeManager({ notices: [N1], capture: new Error('capture failed') });
+        const reply = await action('!newAction').perform(makeAgent({ manager, lastRun: LAST_RUN }), 'build a wall');
+        assert.equal(reply, SUMMARY + '\n' + N1);
+    });
+
+    test('!newAction: reuse off: takeNotices is not called', async () => {
+        const manager = makeManager({ notices: [N1], reuse: false });
+        const reply = await action('!newAction').perform(makeAgent({ manager, lastRun: LAST_RUN }), 'build a wall');
+        assert.equal(reply, SUMMARY);
+        assert.equal(manager.calls.some((c) => c[0] === 'takeNotices'), false);
+    });
+
+    test('!newAction: takeNotices throws: no throw, the text is unchanged, a warning', async () => {
+        const manager = makeManager({ notices: new Error('notices broke') });
+        let reply;
+        await assert.doesNotReject(async () => {
+            reply = await action('!newAction').perform(makeAgent({ manager, lastRun: LAST_RUN }), 'build a wall');
+        });
+        assert.equal(reply, SUMMARY);
+        assert.ok(cap.of('warn').some((r) => r.text.includes('notices broke')));
+    });
+
+    test('!newAction: no manager: nothing is taken, the text is unchanged', async () => {
+        assert.equal(await action('!newAction').perform(makeAgent({ lastRun: LAST_RUN }), 'build a wall'), SUMMARY);
+    });
+
+    // Decision of the tech lead for v0.1.4.5: the line break at the end of the action output is
+    // removed before a notice is appended, so exactly one line break separates them.
+    const USE_CASES = [
+        ['a throw of the skill', 'breaker', '[]', 'The skill "breaker" failed: Error: boom'],
+        ['the action output', 'buildWall', '[5]', 'Placed 5 blocks.'],
+        ['a skill that logged nothing', 'quietSkill', '[]', 'The skill "quietSkill" finished.'],
+    ];
+    for (const [label, name, args, text] of USE_CASES) {
+        test(`!useSkill, ${label}: the notices follow the reply, each on its own line`, async () => {
+            const manager = makeManager({ notices: [N1, N2] });
+            const reply = await action('!useSkill').perform(makeAgent({ manager }), name, args);
+            assert.equal(reply, text + '\n' + N1 + '\n' + N2);
+            assert.deepEqual(manager.calls.map((c) => c[0]), ['has', 'run', 'takeNotices']);
+        });
+    }
+
+    // Decision of the tech lead for v0.1.4.5: trailing whitespace and line breaks of the text before
+    // an appended notice or capture message are removed first; with nothing appended the text is unchanged.
+    describe('exactly one line break before an appended line', () => {
+        const withCode = (agent, text) => {
+            agent.coder.generateCode = async function () {
+                this.last_run = LAST_RUN;
+                return text;
+            };
+            return agent;
+        };
+        const MESSY = SUMMARY + '\n\n  \t\r\n';
+
+        test('!newAction: before the capture message', async () => {
+            const manager = makeManager({ capture: { saved: true, action: 'created', name: 'buildWall', reason: null, errors: [], message: CAPTURE_MESSAGE } });
+            const reply = await action('!newAction').perform(withCode(makeAgent({ manager }), MESSY), 'build a wall');
+            assert.equal(reply, SUMMARY + '\n' + CAPTURE_MESSAGE);
+        });
+
+        test('!newAction: before the notices, also after a capture message', async () => {
+            const manager = makeManager({ notices: [N1, N2] });
+            const reply = await action('!newAction').perform(withCode(makeAgent({ manager }), MESSY), 'build a wall');
+            assert.equal(reply, SUMMARY + '\n' + N1 + '\n' + N2);
+        });
+
+        test('!newAction: nothing appended: the text is unchanged, trailing line breaks included', async () => {
+            const manager = makeManager();
+            const reply = await action('!newAction').perform(withCode(makeAgent({ manager }), MESSY), 'build a wall');
+            assert.equal(reply, MESSY);
+            assert.equal(await action('!newAction').perform(withCode(makeAgent(), MESSY), 'build a wall'), MESSY, 'no manager');
+        });
+
+        test('!useSkill: the action output ending with line breaks and nothing appended is unchanged', async () => {
+            const reply = await action('!useSkill').perform(makeAgent({ manager: makeManager() }), 'buildWall', '[5]');
+            assert.equal(reply, 'Placed 5 blocks.\n');
+        });
+
+        test('!useSkill: an action output with several trailing line breaks and spaces before a notice', async () => {
+            const manager = makeManager({ notices: [N1] });
+            manager.run = async (name, args, bot) => {
+                bot.output += 'Placed 2 blocks.\n\n   \n';
+                return { ok: true, result: true, error: null };
+            };
+            const reply = await action('!useSkill').perform(makeAgent({ manager }), 'buildWall', '[2]');
+            assert.equal(reply, 'Placed 2 blocks.\n' + N1);
+        });
+    });
+
+    test('!useSkill: the skill was switched off before it ran: "No skill named ..." and the notices', async () => {
+        const manager = makeManager({ notices: [N1] });
+        manager.run = async () => ({ ok: false, result: null, error: 'unknown_skill' });
+        const reply = await action('!useSkill').perform(makeAgent({ manager }), 'breaker', '[]');
+        assert.equal(reply, noSkill('breaker') + '\n' + N1);
+    });
+
+    test('!useSkill: an interrupted run returns nothing and leaves the notices queued', async () => {
+        const manager = makeManager({ notices: [N1] });
+        const agent = makeAgent({ manager });
+        agent.actions.runAction = async (label, fn) => {
+            await fn();
+            return { success: false, interrupted: true, timedout: false, message: '' };
+        };
+        assert.equal(await action('!useSkill').perform(agent, 'buildWall', '[1]'), undefined);
+        assert.equal(manager.calls.some((c) => c[0] === 'takeNotices'), false);
+    });
+
+    test('!useSkill: an unknown name does not take the notices (nothing ran)', async () => {
+        const manager = makeManager({ notices: [N1] });
+        assert.equal(await action('!useSkill').perform(makeAgent({ manager }), 'nothingHere', '[]'), noSkill('nothingHere'));
+        assert.equal(manager.calls.some((c) => c[0] === 'takeNotices'), false);
+    });
+
+    test('!useSkill: reuse off: takeNotices is not called', async () => {
+        const manager = makeManager({ notices: [N1], reuse: false });
+        const reply = await action('!useSkill').perform(makeAgent({ manager }), 'quietSkill', '[]');
+        assert.equal(reply, 'The skill "quietSkill" finished.');
+        assert.equal(manager.calls.some((c) => c[0] === 'takeNotices'), false);
+    });
+
+    test('!useSkill: takeNotices throws: no throw, the reply is unchanged', async () => {
+        const manager = makeManager({ notices: new Error('notices broke') });
+        let reply;
+        await assert.doesNotReject(async () => {
+            reply = await action('!useSkill').perform(makeAgent({ manager }), 'breaker', '[]');
+        });
+        assert.equal(reply, 'The skill "breaker" failed: Error: boom');
+    });
+
+    test('with a real SkillManager: the third throw in a row brings the notice, then the skill is gone', async () => {
+        const MANAGER = await loadSrc('src/agent/skills/skill_manager.js');
+        const STORE = await loadSrc('src/agent/skills/skill_store.js');
+        const LOCK = await loadSrc('src/agent/library/lockdown.js');
+        const root = makeTmpDir();
+        try {
+            const store = new STORE.SkillStore(`${root}/andy/skills`);
+            store.load();
+            store.save({ name: 'thrower', source: 'async function thrower(bot) {\n    /** Always throws. */\n    throw new Error("no path");\n}\n', description: 'Always throws.', signature: 'thrower(bot)' });
+            const manager = new MANAGER.SkillManager({
+                name: 'andy', botsDir: root, settings: { allow_insecure_coding: true, skill_learning: true, skill_command: true },
+                prompter: {}, makeCompartment: LOCK.makeCompartment, endowments: makeEndowments(), getInventoryCounts: () => ({}),
+                builtinNames: [], reviewTemplate: '',
+            });
+            assert.equal(manager.init(), 1);
+            const agent = makeAgent({ manager });
+            const failed = 'The skill "thrower" failed: Error: no path';
+            assert.equal(await action('!useSkill').perform(agent, 'thrower', '[]'), failed);
+            assert.equal(await action('!useSkill').perform(agent, 'thrower', '[]'), failed);
+            assert.equal(await action('!useSkill').perform(agent, 'thrower', '[]'), failed + '\n'
+                + 'The skill customSkills.thrower was switched off after 3 errors in a row. Last error: Error: no path. '
+                + 'Write a corrected version of the function under the same name to switch it on again.');
+            assert.equal(manager.has('thrower'), false, 'reloaded by takeNotices()');
+            assert.equal(await action('!useSkill').perform(agent, 'thrower', '[]'), noSkill('thrower'));
+            assert.equal(agent.actions.calls.length, 3, 'the fourth call does not reach runAction');
+        } finally {
+            removeTmpDir(root);
+        }
     });
 });

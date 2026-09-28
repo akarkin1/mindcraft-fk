@@ -93,11 +93,17 @@ function makeEntry(fields) {
         uses: fields.uses,
         failures: fields.failures,
         consecutive_failures: fields.consecutive_failures,
+        consecutive_errors: fields.consecutive_errors,
         last_used: fields.last_used,
         last_error: fields.last_error,
         source_task: fields.source_task,
         hash: fields.hash,
     };
+}
+
+// Whether the result of a run says the skill threw (v0.1.4.5, G1): `error` is given.
+function threwError(result) {
+    return result !== null && typeof result === 'object' && result.error !== undefined && result.error !== null;
 }
 
 function signatureFromSource(name, source) {
@@ -309,6 +315,7 @@ export class SkillStore {
                 uses: 0,
                 failures: 0,
                 consecutive_failures: 0,
+                consecutive_errors: 0,
                 last_used: null,
                 last_error: null,
             });
@@ -328,6 +335,7 @@ export class SkillStore {
             version: current.version + 1,
             updated: stamp,
             consecutive_failures: 0,
+            consecutive_errors: 0,
         });
         this._entries.set(name, entry);
         this._writeIndex();
@@ -354,7 +362,9 @@ export class SkillStore {
     }
 
     /**
-     * Sets the status and writes the index.
+     * Sets the status and writes the index when something changed. 'active' also sets
+     * consecutive_errors to 0, so a skill switched off after errors starts to count again
+     * when it is enabled (v0.1.4.5). No other counter changes.
      * @param {string} name
      * @param {'active'|'disabled'} status
      * @returns {boolean} true if the skill exists and the status is valid
@@ -364,8 +374,16 @@ export class SkillStore {
         if (entry === undefined || !STATUSES.has(status)) {
             return false;
         }
+        let changed = false;
         if (entry.status !== status) {
             entry.status = status;
+            changed = true;
+        }
+        if (status === 'active' && entry.consecutive_errors !== 0) {
+            entry.consecutive_errors = 0;
+            changed = true;
+        }
+        if (changed) {
             this._writeIndex();
         }
         return true;
@@ -373,7 +391,9 @@ export class SkillStore {
 
     /**
      * Counts one call of a skill and writes the index. Unknown name: nothing happens.
-     * A failure without error text sets last_error to null.
+     * A failure without error text sets last_error to null. `error` given (not undefined or
+     * null) means the skill threw: consecutive_errors increases (v0.1.4.5, G1). A failure
+     * without an error (the skill returned false) neither counts there nor resets it; ok resets it.
      * @param {string} name
      * @param {{ok: boolean, error?: *}} result
      */
@@ -387,10 +407,14 @@ export class SkillStore {
         entry.last_used = this._date().toISOString();
         if (ok) {
             entry.consecutive_failures = 0;
+            entry.consecutive_errors = 0;
         } else {
             entry.failures += 1;
             entry.consecutive_failures += 1;
             entry.last_error = errorTextOf(result?.error);
+            if (threwError(result)) {
+                entry.consecutive_errors += 1;
+            }
         }
         this._writeIndex();
     }
@@ -478,6 +502,7 @@ export class SkillStore {
             uses: countOr(stored.uses, 0),
             failures: countOr(stored.failures, 0),
             consecutive_failures: countOr(stored.consecutive_failures, 0),
+            consecutive_errors: countOr(stored.consecutive_errors, 0), // absent before v0.1.4.5
             last_used: stringOrNull(stored.last_used),
             last_error: stringOrNull(stored.last_error),
             source_task: stringOrNull(stored.source_task),
@@ -518,6 +543,7 @@ export class SkillStore {
                 uses: 0,
                 failures: 0,
                 consecutive_failures: 0,
+                consecutive_errors: 0,
                 last_used: null,
                 last_error: null,
                 source_task: null,

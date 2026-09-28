@@ -95,10 +95,10 @@ export const failedChecks = () => results.filter((r) => !r.pass);
 // ---------------------------------------------------------------- fake server
 
 export async function startServer({ seedHigh = 0, seedLow = 0, motd = 'e2e fake server', age = 1000,
-    hardcore = false, dimension = 'overworld', pos = '0.5,64,0.5', commands = false } = {}) {
+    hardcore = false, dimension = 'overworld', pos = '0.5,64,0.5', commands = false, floor = '' } = {}) {
     const args = [path.join(E2E_DIR, 'fake_server.js'),
         `--seed-high=${seedHigh}`, `--seed-low=${seedLow}`, `--motd=${motd}`, `--age=${age}`,
-        `--hardcore=${hardcore}`, `--dimension=${dimension}`, `--pos=${pos}`, `--commands=${commands}`];
+        `--hardcore=${hardcore}`, `--dimension=${dimension}`, `--pos=${pos}`, `--commands=${commands}`, `--floor=${floor}`];
     const child = spawn(process.execPath, args, {
         cwd: process.cwd(), stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true,
     });
@@ -124,6 +124,10 @@ export async function startServer({ seedHigh = 0, seedLow = 0, motd = 'e2e fake 
             const p = waitLine(/^CHAT /, 5000, 'fake server chat list');
             child.stdin.write('chat\n');
             return JSON.parse((await p).slice(5));
+        },
+        // Sends every connected client a kick_disconnect packet with this reason (see fake_server.js).
+        kick(reason) {
+            child.stdin.write('kick ' + JSON.stringify(reason) + '\n');
         },
         async stop() {
             try { child.stdin.write('quit\n'); child.stdin.end(); } catch { /* gone */ }
@@ -262,7 +266,8 @@ export async function runCommand(agent, text) {
 // A scenario may need several processes (a new process per world visit). The scenario
 // file runs "main" in the process started by run.js and starts itself again with
 // --phase=<name> for each visit. The phase inherits the working directory (temp dir).
-export async function runPhase(file, phase, env = {}, ms = 40000) {
+// expectExit: the exit code the phase must end with (a phase may end the process on purpose).
+export async function runPhase(file, phase, env = {}, ms = 40000, expectExit = 0) {
     const child = spawn(process.execPath, [file, `--phase=${phase}`], {
         cwd: process.cwd(), stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true,
         env: { ...process.env, ...env },
@@ -286,7 +291,7 @@ export async function runPhase(file, phase, env = {}, ms = 40000) {
         const m = /^DATA (\w+) (.*)$/.exec(l);
         if (m) data[m[1]] = JSON.parse(m[2]);
     }
-    check(ex.code === 0 && failed.length === 0, `phase ${phase} finished`,
+    check(ex.code === expectExit && failed.length === 0, `phase ${phase} finished${expectExit === 0 ? '' : ' with exit code ' + expectExit}`,
         `exit code ${ex.code}${ex.signal ? ' signal ' + ex.signal : ''}, ${failed.length} failed check(s)`);
     return { code: ex.code, lines, failed, data };
 }
@@ -450,6 +455,9 @@ export function snapshotDir(dir) {
 }
 
 export const sameSnapshot = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+
+// Whether text ends with line, separated from the text before by exactly one line break.
+export const endsWithLine = (text, line) => typeof text === 'string' && text.endsWith('\n' + line) && !text.endsWith('\n\n' + line);
 
 // Records the text of every console.<method> call from now on; the output is still printed.
 // Install it before startRealAgent: the lockdown then wraps this function like the original.

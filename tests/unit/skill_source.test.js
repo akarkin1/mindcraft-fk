@@ -481,6 +481,91 @@ describe('isSingleFunction(name, text)', () => {
     });
 });
 
+// Spec v0.1.4.5, G3: a function is trivial when its body contains no loop (for, for...of, for...in,
+// while, do) and at most ONE call whose callee starts with skills., world. or customSkills. Calls
+// inside nested functions count. A source that does not parse: false. Never throws.
+describe('isTrivialFunction(functionSource) (v0.1.4.5, G3)', () => {
+    const fn = (...body) => lines('async function collectLogs(bot, count) {', '    /**', '     * Collects logs.', '     **/', ...body.map((l) => '    ' + l), '}', '');
+    const TRUE = [
+        ['no call at all', fn('return count > 0;')],
+        ['an empty body', 'async function f(bot) {}'],
+        ['one call of skills.', fn("await skills.collectBlock(bot, 'oak_log', count);", 'return true;')],
+        ['one call of world.', fn("const block = world.getNearestBlock(bot, 'oak_log', 16);", 'return block !== null;')],
+        ['one call of customSkills.', fn('return await customSkills.buildWall(bot, count);')],
+        ['one sandbox call and calls of bot, log, Math, JSON and a local helper',
+            fn("await skills.goToPosition(bot, 1, 2, 3);", "log(bot, 'done');", "bot.chat('hi');", 'const n = Math.max(1, count);', 'JSON.stringify({ n });', 'const helper = (x) => x + 1;', 'return helper(n) > 0;')],
+        ['names that only look like the sandbox objects', fn('mySkills.a(); skillsX.b(); worldly.c(); this_world(); customSkillsList.d();', 'await skills.wait(bot, 1);')],
+        ['a member of another object named skills', fn('bot.skills.a(); bot.world.b(); await skills.wait(bot, 1);')],
+        ['if, else, try, catch and switch are no loops', fn('if (count > 1) { await skills.wait(bot, 1); } else { log(bot, "x"); }', 'try { JSON.parse("1"); } catch (e) { return false; }', 'switch (count) { case 1: break; default: return true; }')],
+        ['array methods are no loops', fn('[1, 2].forEach((x) => log(bot, x));', '[1].map((x) => x * 2);', "await skills.wait(bot, 1);")],
+        ['loops and sandbox calls in comments and strings do not count', fn("// for (;;) skills.a(); world.b();", "log(bot, 'while (true) { skills.a(); world.b(); }');", '/* do { customSkills.x(); } while (1) */', 'return true;')],
+        ['a sandbox function passed as a value is no call', fn('const f = skills.wait;', 'const g = world.getNearestBlock;', 'return typeof f === typeof g;')],
+        ['new of a sandbox member is no call', fn('const v = new world.Thing();', 'await skills.wait(bot, 1);')],
+        ['a loop in the parameters is not in the body', 'async function f(bot, n = [1].map((x) => { for (;;) { break; } return x; })) {\n    return n;\n}\n'],
+    ];
+    for (const [label, source] of TRUE) {
+        test(`true: ${label}`, () => {
+            assert.equal(S.isTrivialFunction(source), true, source);
+        });
+    }
+
+    const FALSE = [
+        ['a for loop', fn('for (let i = 0; i < count; i++) { log(bot, i); }')],
+        ['a for...of loop', fn('for (const x of [1, 2]) { log(bot, x); }')],
+        ['a for...in loop', fn('for (const k in bot) { log(bot, k); }')],
+        ['a for await loop', fn('for await (const x of []) { log(bot, x); }')],
+        ['a while loop', fn('while (count-- > 0) { log(bot, count); }')],
+        ['a do...while loop', fn('do { count--; } while (count > 0);')],
+        ['a loop without a block', fn('while (count-- > 0) log(bot, count);')],
+        ['a loop inside a nested function', fn('const repeat = () => { for (let i = 0; i < 2; i++) log(bot, i); };', 'repeat();')],
+        ['two calls of skills.', fn("await skills.collectBlock(bot, 'oak_log', count);", "await skills.craftRecipe(bot, 'oak_planks', 1);")],
+        ['a skills. and a world. call', fn("const b = world.getNearestBlock(bot, 'x', 16);", 'await skills.breakBlockAt(bot, b.position.x, b.position.y, b.position.z);')],
+        ['a world. and a customSkills. call', fn('world.getInventoryCounts(bot);', 'await customSkills.buildWall(bot, 1);')],
+        ['two customSkills. calls', fn('await customSkills.buildWall(bot, 1);', 'await customSkills.buildWall(bot, 2);')],
+        ['the same call twice', fn('await skills.wait(bot, 1);', 'await skills.wait(bot, 1);')],
+        ['a call inside a nested function counts', fn('const go = async () => skills.goToPosition(bot, 1, 2, 3);', "await skills.collectBlock(bot, 'oak_log', 1);")],
+        ['a call inside a nested function declaration counts', fn('async function inner() { await world.getNearestBlock(bot, "x", 1); }', 'await inner();', 'await skills.wait(bot, 1);')],
+        ['a computed member counts', fn("await skills['collectBlock'](bot, 'oak_log', 1);", 'await skills.wait(bot, 1);')],
+        ['an optional call counts', fn('await skills.wait?.(bot, 1);', 'await world.getNearestBlock?.(bot, "x", 1);')],
+        ['optional member access counts', fn('await skills?.wait(bot, 1);', 'await world?.getNearestBlock(bot, "x", 1);')],
+        ['an optional chain in parentheses as callee counts', fn('await (skills?.wait)(bot, 1);', 'await (world?.a.b)(bot);')],
+        ['a deeper member chain counts', fn('skills.wait.call(null, bot, 1);', 'world.a.b.c(bot);')],
+        ['calls in arguments of another call count', fn('log(bot, world.getInventoryCounts(bot), world.getPosition(bot));')],
+    ];
+    for (const [label, source] of FALSE) {
+        test(`false: ${label}`, () => {
+            assert.equal(S.isTrivialFunction(source), false, source);
+        });
+    }
+
+    for (const [label, source] of [
+        ['a syntax error', 'async function f(bot) {\n    return (;\n}\n'],
+        ['an empty text', ''],
+        ['no function at all', 'const x = 1;\n'],
+        ['only a comment', '/** Collects logs. */\n'],
+    ]) {
+        test(`false: ${label}`, () => {
+            assert.equal(S.isTrivialFunction(source), false);
+        });
+    }
+
+    test('never throws: false for values that are not a string', () => {
+        for (const value of [undefined, null, 42, {}, [], { toString: () => 'async function f(bot) {}' }, Symbol('x')]) {
+            let result;
+            assert.doesNotThrow(() => {
+                result = S.isTrivialFunction(value);
+            });
+            assert.equal(result, false, String(typeof value));
+        }
+    });
+
+    test('CRLF line endings and the instrumented form give the same answer', () => {
+        const one = fn("await skills.collectBlock(bot, 'oak_log', count);", 'return true;');
+        assert.equal(S.isTrivialFunction(one.replace(/\n/g, '\r\n')), true);
+        assert.equal(S.isTrivialFunction(S.instrument(one)), true);
+    });
+});
+
 describe('module rules', () => {
     test('pure: imports only espree, sibling skill modules and built-ins without I/O; no mineflayer, no model SDK, not skills.js or world.js', () => {
         assertSkillModuleImports(MODULE, { pure: true, allowPackages: ['espree'] });

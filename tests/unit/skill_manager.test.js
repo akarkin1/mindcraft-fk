@@ -871,6 +871,442 @@ describe('captureFromRun(run): never throws and never rejects', () => {
     });
 });
 
+// Spec v0.1.4.5, G1: a skill that keeps throwing is switched off. The loader's wrapper calls onUse,
+// the manager records the run and may disable the skill, but does not reload while code is running:
+// takeNotices() reloads first and then returns the queued notices once.
+describe('G1: a skill that keeps throwing is switched off (v0.1.4.5)', () => {
+    // maybeFails(bot, mode): throws for "throw", returns false for "false", true otherwise.
+    const MAYBE = fnSource('maybeFails', ['/**', ' * Fails on request.', ' **/', 'if (mode === "throw") throw new Error("bad block");', 'return mode !== "false";'], 'bot, mode');
+    const SEED = [{ source: MAYBE, description: 'Fails on request.' }, ...SEED_TWO];
+    const NOTICE = (n = 3, name = 'maybeFails', error = 'Error: bad block') => `The skill customSkills.${name} was switched off after ${n} errors in a row. `
+        + `Last error: ${error}. Write a corrected version of the function under the same name to switch it on again.`;
+    const runs = async (manager, modes, bot = makeBot()) => {
+        const results = [];
+        for (const mode of modes) results.push(await manager.run('maybeFails', [mode], bot));
+        return results;
+    };
+    const entry = (manager, name = 'maybeFails') => manager.store.get(name);
+
+    test('three throws in a row: the skill is disabled and the exact notice is queued', async () => {
+        seed(SEED);
+        const { manager } = await ready();
+        const results = await runs(manager, ['throw', 'throw', 'throw']);
+        assert.deepEqual(results.map((r) => r.ok), [false, false, false]);
+        assert.equal(entry(manager).status, 'disabled');
+        assert.equal(entry(manager).consecutive_errors, 3);
+        assert.equal(entry(manager).last_error, 'Error: bad block');
+        assert.ok(manager.listText().includes('- maybeFails(bot, mode): Fails on request. (used 3 times, 3 failed) [disabled]'), manager.listText());
+        assert.deepEqual(manager.takeNotices(), [NOTICE()]);
+    });
+
+    test('takeNotices() called twice returns the notices once; nothing queued: []', async () => {
+        seed(SEED);
+        const { manager } = await ready();
+        assert.deepEqual(manager.takeNotices(), []);
+        await runs(manager, ['throw', 'throw', 'throw']);
+        assert.deepEqual(manager.takeNotices(), [NOTICE()]);
+        assert.deepEqual(manager.takeNotices(), []);
+    });
+
+    test('no reload while code runs: until takeNotices() the library object stays, then the skill is gone', async () => {
+        seed(SEED);
+        const { manager } = await ready();
+        const before = manager.customSkills;
+        await runs(manager, ['throw', 'throw', 'throw']);
+        assert.equal(manager.customSkills, before, 'the same object until takeNotices()');
+        assert.ok(manager.knownNames().includes('customSkills.maybeFails'));
+        assert.equal(manager.has('maybeFails'), true);
+
+        manager.takeNotices();
+        assert.notEqual(manager.customSkills, before, 'reloaded');
+        assert.deepEqual(manager.knownNames(), ['customSkills.addUp', 'customSkills.digHole']);
+        assert.equal(manager.has('maybeFails'), false);
+        assert.equal(manager.customSkills.maybeFails, undefined);
+        assert.equal(Object.isFrozen(manager.customSkills), true);
+        // code that still holds the old object keeps working with it
+        assert.equal(await before.addUp(makeBot(), 1, 2), 3);
+    });
+
+    test('a disabled skill is refused by run() at once, and is not offered in the prompts', async () => {
+        seed(SEED);
+        const { manager } = await ready({ settings: { ...ON, skill_command: true } });
+        await runs(manager, ['throw', 'throw', 'throw']);
+        assert.equal((await manager.run('maybeFails', ['ok'], makeBot())).error, 'unknown_skill');
+        assert.ok(!manager.codingSection('fail on request').includes('maybeFails'));
+        assert.ok(!manager.conversingSection().includes('maybeFails'));
+    });
+
+    test('the running code keeps working with the library object it has', async () => {
+        const RETRY = fnSource('retrySkill', [
+            '/**', ' * Calls maybeFails five times, then addUp.', ' **/',
+            'let caught = 0;',
+            'for (let i = 0; i < 5; i++) {',
+            '    try {',
+            '        await customSkills.maybeFails(bot, "throw");',
+            '    } catch (e) {',
+            '        caught++;',
+            '    }',
+            '}',
+            'const sum = await customSkills.addUp(bot, 1, 2);',
+            'return caught + ":" + sum + ":" + typeof customSkills.maybeFails;',
+        ]);
+        seed([...SEED, { source: RETRY, description: 'Calls maybeFails five times, then addUp.' }]);
+        const { manager } = await ready();
+        const result = await manager.run('retrySkill', [], makeBot());
+        assert.deepEqual(result, { ok: true, result: '5:3:function', error: null });
+        assert.equal(entry(manager).status, 'disabled');
+        assert.equal(entry(manager).consecutive_errors, 5, 'further throws of the disabled skill are still counted');
+        assert.equal(entry(manager, 'retrySkill').uses, 1);
+        assert.deepEqual(manager.takeNotices(), [NOTICE()], 'one notice, not one per throw');
+    });
+
+    test('two throws, one success, two throws: not disabled', async () => {
+        seed(SEED);
+        const { manager } = await ready();
+        await runs(manager, ['throw', 'throw', 'ok', 'throw', 'throw']);
+        assert.equal(entry(manager).status, 'active');
+        assert.equal(entry(manager).consecutive_errors, 2);
+        assert.deepEqual(manager.takeNotices(), []);
+        assert.equal(manager.has('maybeFails'), true);
+    });
+
+    test('a run that returns false neither counts nor resets', async () => {
+        seed(SEED);
+        const { manager } = await ready();
+        await runs(manager, ['false', 'false', 'false', 'false']);
+        assert.equal(entry(manager).consecutive_errors, 0, 'false does not count');
+        assert.equal(entry(manager).failures, 4);
+        await runs(manager, ['throw', 'false', 'throw', 'false']);
+        assert.equal(entry(manager).status, 'active');
+        assert.equal(entry(manager).consecutive_errors, 2, 'false does not reset');
+        await runs(manager, ['throw']);
+        assert.equal(entry(manager).status, 'disabled');
+        assert.deepEqual(manager.takeNotices(), [NOTICE()]);
+    });
+
+    test('the limit 0 never disables', async () => {
+        seed(SEED);
+        const { manager } = await ready({ settings: { ...ON, skill_disable_after_errors: 0 } });
+        await runs(manager, ['throw', 'throw', 'throw', 'throw', 'throw', 'throw']);
+        assert.equal(entry(manager).status, 'active');
+        assert.equal(entry(manager).consecutive_errors, 6);
+        assert.deepEqual(manager.takeNotices(), []);
+        assert.equal(manager.has('maybeFails'), true);
+    });
+
+    test('another limit: disabled when the count reaches it; the notice names the count', async () => {
+        seed(SEED);
+        const { manager } = await ready({ settings: { ...ON, skill_disable_after_errors: 1 } });
+        await runs(manager, ['throw']);
+        assert.equal(entry(manager).status, 'disabled');
+        assert.deepEqual(manager.takeNotices(), [NOTICE(1)]);
+    });
+
+    test('a skill that is interrupted records nothing', async () => {
+        seed(SEED);
+        const { manager } = await ready();
+        const bot = makeBot({ interrupt_code: true });
+        const results = await runs(manager, ['throw', 'throw', 'throw', 'throw'], bot);
+        assert.deepEqual(results.map((r) => r.ok), [false, false, false, false], 'the error still comes back');
+        assert.equal(entry(manager).uses, 0);
+        assert.equal(entry(manager).consecutive_errors, 0);
+        assert.equal(entry(manager).status, 'active');
+        assert.deepEqual(manager.takeNotices(), []);
+    });
+
+    test('a skill that was already disabled by hand is not disabled again and gives no notice', async () => {
+        seed(SEED);
+        const { manager } = await ready();
+        const lib = manager.customSkills;
+        manager.store.setStatus('maybeFails', 'disabled'); // disabled in the store while code holds the old object
+        for (let i = 0; i < 3; i++) await assert.rejects(lib.maybeFails(makeBot(), 'throw'), /bad block/);
+        assert.equal(entry(manager).consecutive_errors, 3);
+        assert.deepEqual(manager.takeNotices(), []);
+    });
+
+    // Decision of the tech lead for v0.1.4.5: enabling resets consecutive_errors.
+    test('!enableSkill (setStatus active) after the switch-off resets the count: one more throw does not switch it off again', async () => {
+        seed(SEED);
+        const { manager } = await ready();
+        await runs(manager, ['throw', 'throw', 'throw']);
+        manager.takeNotices();
+        assert.equal(manager.setStatus('maybeFails', 'active'), true);
+        assert.equal(entry(manager).consecutive_errors, 0);
+        assert.equal(entry(manager).consecutive_failures, 3, 'the other counters stay');
+        assert.equal(manager.has('maybeFails'), true);
+        await runs(manager, ['throw', 'throw']);
+        assert.equal(entry(manager).status, 'active');
+        assert.deepEqual(manager.takeNotices(), []);
+        await runs(manager, ['throw']);
+        assert.equal(entry(manager).status, 'disabled', 'three new errors in a row switch it off again');
+        assert.deepEqual(manager.takeNotices(), [NOTICE()]);
+    });
+
+    test('saving a new version under the same name switches the skill on again (a trivial new version too)', async () => {
+        seed(SEED);
+        const { manager } = await ready();
+        await runs(manager, ['throw', 'throw', 'throw']);
+        manager.takeNotices();
+        const FIXED = fnSource('maybeFails', ['/**', ' * Fails on request, now without throwing.', ' **/', 'return mode !== "false";'], 'bot, mode');
+        const result = await manager.captureFromRun(makeRun({ code: FIXED + 'await maybeFails(bot, "ok");' }));
+        assert.equal(result.saved, true, JSON.stringify(result));
+        assert.equal(result.action, 'updated');
+        assert.equal(entry(manager).status, 'active');
+        assert.equal(entry(manager).consecutive_errors, 0);
+        assert.equal(manager.has('maybeFails'), true);
+        assert.equal((await manager.run('maybeFails', ['throw'], makeBot())).result, true);
+    });
+
+    test('an error of the store while recording does not reach the skill or its caller', async () => {
+        seed(SEED);
+        const { manager } = await ready();
+        manager.store.recordUse = () => {
+            throw new Error('disk full');
+        };
+        const result = await manager.run('maybeFails', ['throw'], makeBot());
+        assert.equal(result.ok, false);
+        assert.equal(result.error, 'Error: bad block');
+        assert.ok(cap.of('warn').some((r) => r.text.includes('disk full')));
+    });
+
+    test('the store refuses to disable: no notice, no reload due', async () => {
+        seed(SEED);
+        const { manager } = await ready();
+        manager.store.setStatus = () => false;
+        const before = manager.customSkills;
+        await runs(manager, ['throw', 'throw', 'throw']);
+        assert.deepEqual(manager.takeNotices(), []);
+        assert.equal(manager.customSkills, before, 'no reload');
+    });
+
+    test('takeNotices() never throws: a reload that fails still returns the notices', async () => {
+        seed(SEED);
+        let sandboxDown = false;
+        const makeCompartment = (endowments) => {
+            if (sandboxDown) throw new Error('sandbox down');
+            return LOCK.makeCompartment(endowments);
+        };
+        const { manager } = await ready({ makeCompartment });
+        await runs(manager, ['throw', 'throw', 'throw']);
+        sandboxDown = true;
+        let notices;
+        assert.doesNotThrow(() => {
+            notices = manager.takeNotices();
+        });
+        assert.deepEqual(notices, [NOTICE()]);
+        assert.deepEqual(manager.knownNames(), []);
+        manager._reload = () => {
+            throw new Error('reload broke');
+        };
+        manager._reloadDue = true;
+        assert.deepEqual(manager.takeNotices(), []);
+    });
+
+    test('a reload for another reason (setStatus) does the due reload too; the notices stay queued', async () => {
+        seed(SEED);
+        const { manager } = await ready();
+        await runs(manager, ['throw', 'throw', 'throw']);
+        manager.setStatus('digHole', 'disabled');
+        assert.deepEqual(manager.knownNames(), ['customSkills.addUp']);
+        assert.deepEqual(manager.takeNotices(), [NOTICE()]);
+    });
+
+    test('before init and with reuse off: takeNotices() is []', async () => {
+        seed(SEED);
+        assert.deepEqual(newManager().manager.takeNotices(), []);
+        const { manager } = await ready({ settings: { ...ON, skill_reuse: false } });
+        assert.deepEqual(manager.takeNotices(), []);
+    });
+
+    test('limits is skillLimits(settings)', () => {
+        for (const settings of [ON, { ...ON, skill_max_count: 5, skill_disable_after_errors: 0 }, {}]) {
+            assert.deepEqual(newManager({ settings }).manager.limits, M.skillLimits(settings));
+        }
+    });
+});
+
+// Spec v0.1.4.5, G2: after a candidate was found, after the trivial check of G3 (decision of the tech
+// lead) and BEFORE the review call, a new skill is refused when the store has maxCount entries
+// (active and disabled). A new version of a saved skill is never refused.
+describe('G2: the library has a size limit (v0.1.4.5)', () => {
+    const FULL = (count) => `The skill library is full (${count} skills), so this code was not saved as a skill. `
+        + 'Use !forgetSkill to remove a skill that is no longer needed.';
+    const LIMIT = (n) => ({ settings: { ...ON, skill_max_count: n } });
+
+    test('full: a new skill is not reviewed and not saved; reason library_full with the exact message', async () => {
+        seed(SEED_TWO);
+        const { manager, prompter } = await ready(LIMIT(2));
+        const result = await manager.captureFromRun(makeRun());
+        assert.deepEqual(result, { saved: false, action: null, name: 'buildDirtWall', reason: 'library_full', errors: [], message: FULL(2) });
+        assert.equal(prompter.calls.length, 0, 'no review call');
+        assert.equal(fs.existsSync(path.join(storeDir(), 'buildDirtWall.js')), false);
+        assert.equal(manager.has('buildDirtWall'), false);
+    });
+
+    test('disabled skills count', async () => {
+        seed([{ source: ADD_UP, description: 'Adds two numbers.' }, { source: DIG_HOLE, description: 'Digs a hole.', status: 'disabled' }]);
+        const { manager } = await ready(LIMIT(2));
+        assert.equal((await manager.captureFromRun(makeRun())).reason, 'library_full');
+    });
+
+    test('over the limit (the limit was lowered): the count in the message is the real count', async () => {
+        seed(SEED_TWO);
+        const { manager } = await ready(LIMIT(1));
+        assert.equal((await manager.captureFromRun(makeRun())).message, FULL(2));
+    });
+
+    test('below the limit: saved', async () => {
+        seed(SEED_TWO);
+        const { manager } = await ready(LIMIT(3));
+        const result = await manager.captureFromRun(makeRun());
+        assert.equal(result.saved, true, JSON.stringify(result));
+        assert.equal(result.action, 'created');
+    });
+
+    test('a new version of a saved skill is never refused, also above the limit', async () => {
+        seed([{ source: GOOD_FN, description: 'Builds a wall of dirt of the given length.' }, ...SEED_TWO]);
+        const { manager, prompter } = await ready(LIMIT(1));
+        const result = await manager.captureFromRun(makeRun({ code: V2_FN + '\nawait buildDirtWall(bot, 3);' }));
+        assert.equal(result.saved, true, JSON.stringify(result));
+        assert.equal(result.action, 'updated');
+        assert.equal(prompter.calls.length, 1);
+    });
+
+    test('the same source of a saved skill in a full library: unchanged, not library_full', async () => {
+        seed([{ source: GOOD_FN, description: 'Builds a wall of dirt of the given length.' }]);
+        const { manager } = await ready(LIMIT(1));
+        assert.equal((await manager.captureFromRun(makeRun())).reason, 'unchanged');
+    });
+
+    test('0 means no limit', async () => {
+        seed(SEED_TWO);
+        const { manager } = await ready(LIMIT(0));
+        assert.equal((await manager.captureFromRun(makeRun())).saved, true);
+    });
+
+    test('the default limit is 100', async () => {
+        seed(SEED_TWO);
+        const { manager } = await ready();
+        assert.equal(manager.limits.maxCount, 100);
+        Object.defineProperty(manager.store, 'size', { get: () => 99, configurable: true });
+        const below = await manager.captureFromRun(makeRun());
+        assert.equal(below.saved, true, JSON.stringify(below));
+        manager.forget('buildDirtWall');
+        Object.defineProperty(manager.store, 'size', { get: () => 100, configurable: true });
+        assert.equal((await manager.captureFromRun(makeRun())).message, FULL(100));
+    });
+
+    test('after forget there is room again', async () => {
+        seed(SEED_TWO);
+        const { manager } = await ready(LIMIT(2));
+        assert.equal((await manager.captureFromRun(makeRun())).reason, 'library_full');
+        assert.equal(manager.forget('addUp'), true);
+        assert.equal((await manager.captureFromRun(makeRun())).saved, true);
+    });
+
+    test('the check comes after step 5: code without a candidate stops with the reason of the picker', async () => {
+        seed(SEED_TWO);
+        const { manager } = await ready(LIMIT(2));
+        assertStopped(await manager.captureFromRun(makeRun({ code: 'await skills.wait(bot, 1);' })), 'no_function');
+    });
+
+    // Decision of the tech lead for v0.1.4.5: the trivial check (G3) comes first, the size limit second.
+    test('the check comes after the rule of G3: a trivial function in a full library is trivial, with an empty message', async () => {
+        seed(SEED_TWO);
+        const { manager, prompter } = await ready(LIMIT(2));
+        const result = await manager.captureFromRun(makeRun({ code: TRIVIAL_FN + '\nawait collectLogs(bot, 3);' }));
+        assert.deepEqual(result, { saved: false, action: null, name: 'collectLogs', reason: 'trivial', errors: [], message: '' });
+        assert.equal(prompter.calls.length, 0);
+    });
+
+    test('capture on, reuse off: the limit holds as well', async () => {
+        seed(SEED_TWO);
+        const { manager } = await ready({ settings: { ...ON, skill_reuse: false, skill_max_count: 2 } });
+        assert.equal((await manager.captureFromRun(makeRun())).reason, 'library_full');
+    });
+});
+
+// Spec v0.1.4.5, G3: before the review call, a trivial candidate (isTrivialFunction) is not reviewed
+// and not saved. By decision of the tech lead this comes BEFORE the check of G2. A new version of a
+// saved skill is never refused.
+const TRIVIAL_FN = lines(
+    'async function collectLogs(bot, count) {',
+    '    /**',
+    '     * Collects the given number of oak logs.',
+    '     **/',
+    "    await skills.collectBlock(bot, 'oak_log', count);",
+    '    return true;',
+    '}',
+);
+describe('G3: no review call for trivial functions (v0.1.4.5)', () => {
+    test('a trivial function is not reviewed and not saved: reason trivial, message empty', async () => {
+        const { manager, prompter } = await ready();
+        const result = await manager.captureFromRun(makeRun({ code: TRIVIAL_FN + '\nawait collectLogs(bot, 3);' }));
+        assert.deepEqual(result, { saved: false, action: null, name: 'collectLogs', reason: 'trivial', errors: [], message: '' });
+        assert.equal(prompter.calls.length, 0, 'no review call');
+        assert.equal(fs.existsSync(path.join(storeDir(), 'collectLogs.js')), false);
+    });
+
+    test('a function without any sandbox call and without a loop is trivial', async () => {
+        const { manager, prompter } = await ready();
+        const code = 'async function addUp(bot, a, b) {\n    /** Adds. */\n    return a + b;\n}\nawait addUp(bot, 1, 2);';
+        assertStopped(await manager.captureFromRun(makeRun({ code })), 'trivial');
+        assert.equal(prompter.calls.length, 0);
+    });
+
+    test('two sandbox calls: reviewed and saved', async () => {
+        const code = TRIVIAL_FN.replace('    return true;', "    await skills.craftRecipe(bot, 'oak_planks', count);\n    return true;") + '\nawait collectLogs(bot, 3);';
+        const { manager, prompter } = await ready();
+        const result = await manager.captureFromRun(makeRun({ code }));
+        assert.equal(result.saved, true, JSON.stringify(result));
+        assert.equal(prompter.calls.length, 1);
+    });
+
+    test('a loop: reviewed and saved (the good example of the step tests)', async () => {
+        const { manager, prompter } = await ready();
+        assert.equal(SRC.isTrivialFunction(GOOD_FN), false, 'precondition: GOOD_FN has a loop');
+        assert.equal((await manager.captureFromRun(makeRun())).saved, true);
+        assert.equal(prompter.calls.length, 1);
+    });
+
+    test('a trivial new version of a saved skill is reviewed and saved', async () => {
+        seed([{ source: GOOD_FN, description: 'Builds a wall of dirt of the given length.' }]);
+        const { manager, prompter } = await ready();
+        const code = TRIVIAL_FN.replace('collectLogs(bot, count)', 'buildDirtWall(bot, length)').replace('count);', 'length);') + '\nawait buildDirtWall(bot, 3);';
+        assert.equal(SRC.isTrivialFunction(SRC.parseGeneratedCode(code).functions[0].source), true, 'precondition: trivial');
+        const result = await manager.captureFromRun(makeRun({ code }));
+        assert.equal(result.saved, true, JSON.stringify(result));
+        assert.equal(result.action, 'updated');
+        assert.equal(prompter.calls.length, 1);
+    });
+
+    test('a trivial function whose name is saved only in other case is still trivial (not the same skill)', async () => {
+        seed([{ source: TRIVIAL_FN.replace('collectLogs', 'collectlogs'), description: 'Old.' }]);
+        const { manager } = await ready();
+        assert.equal((await manager.captureFromRun(makeRun({ code: TRIVIAL_FN + '\nawait collectLogs(bot, 3);' }))).reason, 'trivial');
+    });
+});
+
+// Spec v0.1.4.5, G4: the loader protects the name customSkills in the compartment of the skills.
+describe('G4: the skills compartment of the manager (v0.1.4.5)', () => {
+    test('the name customSkills is a constant with the loaded library; skills still call each other', async () => {
+        seed([{ source: INNER, description: 'Inner.' }, { source: OUTER, description: 'Outer.' }]);
+        const made = [];
+        const makeCompartment = (e) => {
+            const c = LOCK.makeCompartment(e);
+            made.push(c);
+            return c;
+        };
+        const { manager } = await ready({ makeCompartment });
+        const binding = Object.getOwnPropertyDescriptor(made[0].globalThis, 'customSkills');
+        assert.equal(binding.value, manager.customSkills);
+        assert.equal(binding.writable, false);
+        assert.equal(binding.configurable, false);
+        assert.throws(() => made[0].evaluate('customSkills = {}'), TypeError);
+        assert.equal((await manager.run('outerSkill', [], makeBot())).result, 42);
+    });
+});
+
 describe('module rules', () => {
     test('no mineflayer, no model SDK, not skills.js or world.js, no require()', () => {
         assertSkillModuleImports(MODULE);
