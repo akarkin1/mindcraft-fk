@@ -17,19 +17,120 @@ export {
     emitData, recordConsole, readJson, listFiles, exitSoon, MODES_OFF, MODEL, ROOT, env,
 };
 
-// The settings of this release, all off (the "Flags off" scenario and the base of the others).
+// The settings of releases v0.1.4.6 and v0.1.4.7, all off (the "Flags off" scenarios and the base of
+// the others). The four switches of v0.1.4.7 are off here too, so the scenarios of v0.1.4.6 run as
+// before whatever the owner sets in settings.js.
 export const NEW_FLAGS_OFF = {
     cost_meter: false, protected_areas: false, player_rules: false, home_pack: false, creeper_fighting: false,
     max_command_result_chars: 0,
+    storage_pack: false, farming_pack: false, wood_pack: false, mining_pack: false,
 };
 
-// The commands of this release that the model may see only while their part is on.
+// The commands of release v0.1.4.6 that the model may see only while their part is on.
 export const NEW_COMMANDS = {
     protected_areas: ['!rememberArea', '!setArea', '!forgetArea', '!areas', '!allowChanges'],
     player_rules: ['!rememberRule', '!forgetRule', '!rules'],
     home_pack: ['!goToShelter', '!eat'],
 };
 export const NEW_MODES = ['creeper_safety', 'night_shelter', 'door_closing'];
+
+// The commands of release v0.1.4.7 by switch (spec S4, F3, T5, M5).
+export const WORK_COMMANDS = {
+    storage_pack: ['!storeItems', '!fetchItem', '!chests'],
+    farming_pack: ['!farmCycle', '!harvest', '!plant', '!makeBoneMeal', '!fertilize'],
+    wood_pack: ['!chopTrees', '!getTool', '!craftSupplies'],
+    mining_pack: ['!mineOre', '!goToMine', '!leaveMine'],
+};
+
+// Gives items to a player through the console: { name: count } or [[name, count], ...]. With the
+// agent's bot as `bot`, it waits until the bot's own view of its inventory has them (the server
+// confirms the give before the bot has the packet; a command that starts at once would not see them).
+export async function giveItems(player, items, bot = null) {
+    const list = Array.isArray(items) ? items : Object.entries(items);
+    const count = (name) => (bot ? bot.inventory.items().filter((i) => i.name === name).reduce((n, i) => n + i.count, 0) : 0);
+    const before = Object.fromEntries(list.map(([n]) => [n, count(n)]));
+    const out = await commands(list.map(([n, c]) => `give ${player} ${n.includes(':') ? n : 'minecraft:' + n} ${c}`));
+    const bad = out.flat().filter((l) => /Unknown item|Expected|Invalid|No player was found|Can't give/.test(l));
+    if (bad.length) throw new Error('give failed: ' + bad.slice(0, 3).join(' | '));
+    if (bot) {
+        const want = {};
+        for (const [n, c] of list) want[n] = (want[n] ?? before[n]) + c;
+        const seen = await waitFor(() => Object.entries(want).every(([n, c]) => count(n) >= c), { ms: 8000, every: 50 });
+        if (!seen.ok) note(`give: the bot does not see all items yet: ${Object.keys(want).map((n) => `${n} ${count(n)} of ${want[n]}`).join(', ')}`);
+        await sleep(200);
+    }
+    return out;
+}
+
+// Runs fn(bot, ctx) of a work pack as an action of the agent, the way the commands of the glue do
+// (`ctx` is agent.packContext()), for the functions of the spec that have no command of their own.
+// Resolves with { result, action, ms }: the result object of the pack function, or
+// { ok: false, reason: 'threw', text } when it threw (the spec says it never throws).
+export async function runSkill(agent, label, fn, ms = 300000) {
+    const t0 = Date.now();
+    let result = null;
+    const action = await withTimeout(agent.actions.runAction(`action:${label}`, async () => {
+        try {
+            result = await fn(agent.bot, agent.packContext());
+        } catch (e) {
+            result = { ok: false, reason: 'threw', text: errText(e) };
+        }
+    }, { timeout: ms / 60000 }), ms + 10000, label).catch((e) => ({ error: e.message }));
+    return { result, action, ms: Date.now() - t0 };
+}
+
+// ------------------------------------------------------------------ mining (v0.1.4.7, part M)
+
+// The settings of the mining scenarios: the owner's parts of v0.1.4.6 that matter underground and
+// the mining pack with a time limit that fits a test.
+export const MINING_SETTINGS = {
+    ...NEW_FLAGS_OFF, protected_areas: true, world_memory: true, mining_pack: true, mining_max_minutes: 12,
+};
+
+// What a bot takes on a mining trip when the scenario is not about preparing it (tripNeeds of M2:
+// ladders for the depth, 16 torches, 32 cobblestone, 8 food, a pickaxe and a spare, a chest).
+export const MINING_KIT = [
+    ['iron_pickaxe', 2], ['ladder', 64], ['torch', 32], ['cobblestone', 64], ['bread', 16], ['chest', 2],
+];
+
+// Watches the health of the agent's bot from its own view (every change, not samples: in peaceful
+// the health comes back within seconds). stop() resolves with { min, hurt: [{ t, health }] }.
+export function watchHealth(bot) {
+    const t0 = Date.now();
+    const hurt = [];
+    let min = bot.health ?? 20;
+    let last = bot.health ?? 20;
+    const on = () => {
+        const h = bot.health;
+        if (typeof h !== 'number') return;
+        if (h < last) hurt.push({ t: (Date.now() - t0) / 1000, health: h });
+        last = h;
+        min = Math.min(min, h);
+    };
+    bot.on('health', on);
+    return {
+        stop() { bot.removeListener('health', on); return { min, hurt }; },
+    };
+}
+
+// The largest drop of the feet between two samples of a trace of { pos } rows, and where it was.
+export function largestDrop(rows) {
+    let best = { drop: 0, from: null, to: null, t: 0 };
+    for (let i = 1; i < rows.length; i++) {
+        const a = rows[i - 1].pos, b = rows[i].pos;
+        if (!a || !b) continue;
+        const d = a.y - b.y;
+        if (d > best.drop) best = { drop: d, from: a, to: b, t: rows[i].t };
+    }
+    return best;
+}
+
+// The first turn of the agent's history that contains `part` (the result of a command that the
+// model gave, as the agent adds it), or ''.
+export function historyTurn(agent, part) {
+    const turns = (agent.history?.turns ?? []).map((t) => String(t.content));
+    return turns.find((t) => t.includes(part)) ?? '';
+}
 
 export function requireControl() {
     if (!haveControl()) throw new Error('this scenario runs only through tests/world/run.js (MCW_CONTROL is not set)');

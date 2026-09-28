@@ -15,6 +15,7 @@ export const env = {
     groundY: Number(process.env.MCW_GROUND_Y),
     run: Number(process.env.MCW_RUN || 1),
     region: Number(process.env.MCW_REGION || 0),
+    world: process.env.MCW_WORLD || 'flat', // the world type of the server (mc_server.js WORLD_TYPES)
 };
 
 export function haveControl() {
