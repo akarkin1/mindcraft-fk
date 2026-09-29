@@ -9,6 +9,22 @@ export class Examples {
         this.embeddings = {};
         // examples => the examples that may be shown, in the same order (v0.1.4.6, R5: no hidden commands)
         this.filter = null;
+        // v0.1.4.8, setting examples_by_last_request: compare the last request of a player, not the whole
+        // conversation. The results of commands in the conversation made the topic of the last minutes win.
+        this.by_last_request = false;
+    }
+
+    // The text of the last turn of a player, without the name; '' when no player spoke.
+    lastRequestText(turns) {
+        for (let i = turns.length - 1; i >= 0; i--) {
+            const turn = turns[i];
+            if (turn?.role === 'user' && typeof turn.content === 'string') {
+                const text = turn.content.substring(turn.content.indexOf(':') + 1).trim();
+                if (text !== '')
+                    return text;
+            }
+        }
+        return '';
     }
 
     turnsToText(turns) {
@@ -50,6 +66,11 @@ export class Examples {
             return [];
 
         let turn_text = this.turnsToText(turns);
+        if (this.by_last_request) {
+            const last = this.lastRequestText(turns);
+            if (last !== '')
+                turn_text = last;
+        }
         if (this.model !== null) {
             let embedding = await this.model.embed(turn_text);
             this.examples.sort((a, b) => 

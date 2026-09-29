@@ -317,6 +317,11 @@
         "description": "Whether to print the time [HH:MM:SS] before each line of the console",
         "default": false
     },
+    "examples_by_last_request": {
+        "type": "boolean",
+        "description": "Whether the prompt examples are chosen by the last request of the player instead of the whole conversation",
+        "default": false
+    },
     "code_timeout_mins": {
         "type": "number",
         "description": "Number of minutes to allow code execution. -1 for no timeout",

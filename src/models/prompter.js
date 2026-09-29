@@ -148,6 +148,8 @@ export class Prompter {
         try {
             this.convo_examples = new Examples(this.embedding_model, settings.num_examples);
             this.coding_examples = new Examples(this.embedding_model, settings.num_examples);
+            this.convo_examples.by_last_request = settings.examples_by_last_request === true;
+            this.coding_examples.by_last_request = settings.examples_by_last_request === true;
             
             // examples that use a hidden command are left out (v0.1.4.6, R5): a blocked command or one that does not exist
             const isHidden = (name) => (this.agent?.blocked_actions ?? []).includes(name) || !getCommand(name);
