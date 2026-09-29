@@ -4,7 +4,7 @@
 // Everything the glue needs is exported here. Importing this file has no side effects.
 //
 // Pure modules (no mineflayer, no src/agent/library): box_math, door_logic, night_logic,
-// creeper_logic, shelter_logic, sleep_logic, food_logic, texts, home_settings, context, area_kinds
+// creeper_logic, shelter_logic, sleep_logic, food_logic, texts, home_settings, context, area_kinds, stand_logic
 // (the one module that reads the table of the area types of src/agent/areas/area_store.js).
 // Executing modules (they move the bot and get `ctx` = { areas, places, settings, log, now, skills,
 // world }, and from v0.1.4.8 optionally say, whereAmI, chests, storage): doors, shelter, sleep, food,
@@ -38,7 +38,10 @@ export { OFFHAND_SLOT, eatBestFood, foodItems, hungerStep, knownFood, moveOffhan
 export { EAT_LOCK_WAIT_MS, acquireEatLock, eatLockOwner, pauseAutoEat, tryEatLock } from './eat_lock.js';
 export { WAKE_TRIES, WAKE_WAIT_MS, wakeUp } from './wake.js';
 export { FIGHT_SWORDS, TRIES_RESET_MS, canFightCreeper, creeperCheck, creeperMemory, inSight, readCreepers, runCreeperProcedure } from './creeper.js';
-export { gotoGoal, makeMovements, stopMoving, walkNear } from './motion.js';
+export { blockReader, gotoGoal, makeMovements, safeGoal, stopMoving, walkNear } from './motion.js';
+// fix round, X1: the blocks the bot never stands in or on
+export { NO_STAND_NAMES, goalAvoiding, isNoStandBlock, isNoStandCell } from './stand_logic.js';
+export { FARMLAND_BEHIND, farmBehind, freeFarCell, stepMovements } from './doors.js';
 
 /**
  * The night routine of the mode night_shelter: goToShelter, then sleepInBed when a bed is inside

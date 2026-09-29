@@ -2,7 +2,8 @@
 // "Collected 4 oak_fence." Never break more blocks than asked: the loop of skills.collectBlock ends when
 // the gain reached the number, or when the number of broken blocks reached it. The broken blocks are seen
 // in the block updates of mineflayer (also those that the path search of the collect plugin broke on its
-// way), and that path search may not break another block of the asked types than the one it collects.
+// way), and once the block it collects is broken, the walk to the drops may not break another block of the
+// asked types (on the way to the block it may: dirt and stone lie behind blocks of their kind).
 import { describe, test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { register } from 'node:module';
@@ -102,17 +103,20 @@ describe('X11: collectBlock never breaks more blocks than asked', () => {
         assert.equal(5 - fencesLeft(world), 2, 'two posts are gone: the one put back did not count');
     });
 
-    test('while it runs, the path search of the collect plugin may break only the post it collects', async () => {
+    test('once the post it collects is broken, the walk to the drops may break no other post; on the way to it the path search may', async () => {
         const { bot } = fenceScene();
         const seen = [];
         bot.collectBlock.collect = async (block) => {
             const rules = bot.collectBlock.movements.exclusionAreasBreak;
             const cost = (p) => rules.reduce((sum, rule) => sum + rule(bot.blockAt(p)), 0);
-            seen.push({ target: cost(block.position), other: cost(block.position.offset(1, 0, 0)), grass: cost(new Vec3(0, 63, 0)) });
+            const other = block.position.offset(1, 0, 0);
+            const before = { other: cost(other), grass: cost(new Vec3(0, 63, 0)) };
             bot.breakAt(block.position);
+            seen.push({ before, after: { other: cost(other), grass: cost(new Vec3(0, 63, 0)) } });
         };
         await skills.collectBlock(bot, 'oak_fence', 2);
-        assert.deepEqual(seen, [{ target: 0, other: 100, grass: 0 }, { target: 0, other: 100, grass: 0 }]);
+        const row = { before: { other: 0, grass: 0 }, after: { other: 100, grass: 0 } };
+        assert.deepEqual(seen, [row, row]);
         assert.deepEqual(bot.collectBlock.movements.exclusionAreasBreak, [], 'the rule is gone afterwards');
         assert.equal(bot.listenerCount('blockUpdate'), 0, 'the listener is gone afterwards');
     });

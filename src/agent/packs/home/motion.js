@@ -1,16 +1,75 @@
 // Moving the bot for the home pack: Movements that do not dig or place near protected areas, and
 // a goto with an upper time limit that ends on an interrupt and never throws.
 import pf from 'mineflayer-pathfinder';
+import { Vec3 } from 'vec3';
 import { containsPos, expandBox } from './box_math.js';
 import { botPos, clockOf } from './context.js';
+import { goalAvoiding, isNoStandBlock, isNoStandCell } from './stand_logic.js';
 
 /** Goals of mineflayer-pathfinder. */
 export const goals = pf.goals;
+
+const NO_STAND_IDS = new WeakMap();
+
+// The block ids of the blocks of isNoStandBlock, per registry (gates left out: the pathfinder opens and
+// closes them itself).
+function noStandIds(bot) {
+    const registry = bot?.registry;
+    if (!registry || !Array.isArray(registry.blocksArray)) {
+        return [];
+    }
+    let ids = NO_STAND_IDS.get(registry);
+    if (!ids) {
+        ids = registry.blocksArray.filter(b => typeof b?.name === 'string' && !b.name.endsWith('_fence_gate') && isNoStandBlock(b.name))
+            .map(b => b.id);
+        NO_STAND_IDS.set(registry, ids);
+    }
+    return ids;
+}
+
+/**
+ * Reads a block as { name, properties } for isNoStandCell, or null. Never throws.
+ * @param {object} bot
+ * @returns {(x: number, y: number, z: number) => ({name: string, properties: object|null}|null)}
+ */
+export function blockReader(bot) {
+    return (x, y, z) => {
+        try {
+            const b = bot.blockAt(new Vec3(x, y, z));
+            if (!b || typeof b.name !== 'string') {
+                return null;
+            }
+            const properties = typeof b.getProperties === 'function' ? b.getProperties() : (b._properties ?? null);
+            return { name: b.name, properties };
+        } catch {
+            return null;
+        }
+    };
+}
+
+/**
+ * The goal without the places in or on a composter, cauldron, hopper, chest, fence, wall or closed
+ * gate (fix round, X1): the path search never ends a walk there. The goal as it is for a bot that
+ * cannot read blocks, and a goal that is wrapped already.
+ * @param {object} bot
+ * @param {object} goal
+ * @returns {object}
+ */
+export function safeGoal(bot, goal) {
+    if (typeof bot?.blockAt !== 'function' || !goal || typeof goal !== 'object' || goal.inner) {
+        return goal;
+    }
+    const get = blockReader(bot);
+    return goalAvoiding(goal, node => isNoStandCell(get, node));
+}
 
 /**
  * Movements for the home pack. By default they never dig (`canDig = false`) and never place
  * (`allow1by1towers = false`, no scaffolding blocks). With `dig: true` digging is allowed except
  * in the given areas and within 2 blocks of them, for long ways far from home and to get out of a pit.
+ * Fix round (X1): a composter, cauldron, hopper, chest, fence or wall counts like a fence of the path
+ * search: no ground to stand on and nothing to walk through (the pathfinder took a composter for
+ * ground, and the bot fell into it).
  * @param {object} bot
  * @param {{dig?: boolean, doors?: boolean, sprint?: boolean, areas?: object[]}} [options]
  *   doors: the pathfinder may open doors and gates (default true); sprint: default true
@@ -18,6 +77,15 @@ export const goals = pf.goals;
  */
 export function makeMovements(bot, options = {}) {
     const m = new pf.Movements(bot);
+    try {
+        if (m.fences && typeof m.fences.add === 'function') {
+            for (const id of noStandIds(bot)) {
+                m.fences.add(id);
+            }
+        }
+    } catch (err) {
+        console.warn('Home pack: could not mark the blocks to avoid:', err?.message ?? err);
+    }
     m.canDig = options.dig === true;
     if (m.canDig) {
         m.digCost = 10;
@@ -64,6 +132,8 @@ function classify(err) {
 
 /**
  * Runs bot.pathfinder.goto(goal) with an upper time limit. Ends when bot.interrupt_code is set.
+ * Fix round (X1): the walk never ends in or on a composter, cauldron, hopper, chest, fence, wall or
+ * closed gate (safeGoal).
  * Note: a resolved goto does not prove the goal was reached; callers check the position.
  * @param {object} bot
  * @param {object} goal a pathfinder goal
@@ -81,7 +151,7 @@ export async function gotoGoal(bot, goal, options = {}) {
         if (options.movements) {
             bot.pathfinder.setMovements(options.movements);
         }
-        const promise = Promise.resolve(bot.pathfinder.goto(goal));
+        const promise = Promise.resolve(bot.pathfinder.goto(safeGoal(bot, goal)));
         promise.then(() => {
             settled = { ok: true, reason: null };
         }, err => {

@@ -9,10 +9,11 @@ import { isGatedArea } from './area_kinds.js';
 import { containsPos, expandBox, interiorBox, isBox } from './box_math.js';
 import { isInsideArea } from './shelter_logic.js';
 import { botPos, clockOf, dimensionOf, entitiesWhere, listAreas, logTo, otherPlayerPositions } from './context.js';
-import { DOOR_SERVICE_RULES, DoorWatch, doorCenter, doorSides, openableKind, sideOf } from './door_logic.js';
+import { DOOR_SERVICE_RULES, DoorWatch, doorAxis, doorCenter, doorSides, openableKind, sideOf } from './door_logic.js';
 import { reflexOn } from './home_settings.js';
 import { isHostileForShelter } from './night_logic.js';
-import { goals, gotoGoal, isNear, makeMovements, walkNear } from './motion.js';
+import { blockReader, goals, gotoGoal, isNear, makeMovements, walkNear } from './motion.js';
+import { isNoStandBlock, isNoStandCell } from './stand_logic.js';
 import { closeNearText, doorClosedLog } from './texts.js';
 
 /** How far a hostile mob may be from the door (16) and from the bot when it approaches (24). */
@@ -295,6 +296,134 @@ function outcome(ok, reason, text, extra = {}) {
     return { ok, reason, text, ...extra };
 }
 
+// ---- the step through (fix round, the last holes of X1) ----
+
+/** How far behind the gate farmland makes the step careful. */
+export const FARMLAND_BEHIND = 2;
+
+const LIQUID_NAMES = new Set(['water', 'lava', 'bubble_column']);
+
+function blockAtXYZ(bot, x, y, z) {
+    try {
+        return bot.blockAt(new Vec3(x, y, z));
+    } catch {
+        return null;
+    }
+}
+
+function isEmptyBlock(b) {
+    return Boolean(b) && (b.boundingBox === 'empty' || /^(cave_|void_)?air$/.test(b.name)) && !LIQUID_NAMES.has(b.name);
+}
+
+function isStandGround(b) {
+    const props = typeof b?.getProperties === 'function' ? b.getProperties() : (b?._properties ?? null);
+    return Boolean(b) && b.boundingBox === 'block' && !LIQUID_NAMES.has(b.name) && !isNoStandBlock(b.name, props);
+}
+
+/**
+ * True when the far side of the door lies in a farm: `inside` is a farm (an area of type farm, or a box
+ * without a type as the farming pack gives it), or farmland lies within 2 blocks behind the door, down to 2
+ * blocks below the feet. Never throws.
+ * @param {object} bot
+ * @param {object} state the door as readOpenable gives it
+ * @param {-1|1} farSign
+ * @param {object} [inside]
+ * @returns {boolean}
+ */
+export function farmBehind(bot, state, farSign, inside = null) {
+    try {
+        if (isBox(inside) && (inside.type === undefined || inside.type === null || inside.type === 'farm')) {
+            return true;
+        }
+        const axis = doorAxis(state.facing);
+        if (!axis) {
+            return false;
+        }
+        for (let a = 1; a <= FARMLAND_BEHIND; a++) {
+            for (let l = -FARMLAND_BEHIND; l <= FARMLAND_BEHIND; l++) {
+                const x = state.x + axis.x * farSign * a + axis.z * l;
+                const z = state.z + axis.z * farSign * a + axis.x * l;
+                for (let dy = -2; dy <= 0; dy++) {
+                    if (blockAtXYZ(bot, x, state.y + dy, z)?.name === 'farmland') {
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
+    } catch {
+        return false;
+    }
+}
+
+/**
+ * The movements of the step through a door: without digging and without opening doors. Careful ones (into
+ * a farm) also without sprint (a sprint jump), without parkour and without any step up, which needs a jump
+ * (a jump onto farmland makes it dirt): the path search gets no neighbour higher than the node.
+ * @param {object} bot
+ * @param {boolean} careful
+ * @returns {object} a Movements object
+ */
+export function stepMovements(bot, careful) {
+    const m = makeMovements(bot, { dig: false, doors: false });
+    if (careful) {
+        m.allowSprinting = false;
+        m.allowParkour = false;
+        m.getMoveJumpUp = () => {};
+        const neighbors = m.getNeighbors;
+        if (typeof neighbors === 'function') {
+            m.getNeighbors = function (node) {
+                const list = neighbors.call(this, node);
+                return Array.isArray(list) ? list.filter(n => n.y <= node.y) : list;
+            };
+        }
+    }
+    return m;
+}
+
+function throughMovements(bot, state, farSign, inside) {
+    return stepMovements(bot, farmBehind(bot, state, farSign, inside));
+}
+
+/**
+ * The cell of the far side where the step through ends: `far` itself, or when it is in or on a block of
+ * isNoStandBlock (a composter, chest, fence ... behind the door), the nearest free cell beside it on the
+ * far side: feet and head free, solid ground under them that is no such block, within 2 blocks. null when
+ * there is none. Never throws.
+ * @param {object} bot
+ * @param {object} state the door
+ * @param {{x,y,z}} far
+ * @param {-1|1} farSign
+ * @returns {{x: number, y: number, z: number}|null}
+ */
+export function freeFarCell(bot, state, far, farSign) {
+    try {
+        const get = blockReader(bot);
+        if (!isNoStandCell(get, far)) {
+            return far;
+        }
+        const found = [];
+        for (let dx = -2; dx <= 2; dx++) {
+            for (let dz = -2; dz <= 2; dz++) {
+                for (const dy of [0, 1, -1]) {
+                    const c = { x: far.x + dx, y: far.y + dy, z: far.z + dz };
+                    if ((dx === 0 && dz === 0) || sideOf(state, { x: c.x + 0.5, y: c.y, z: c.z + 0.5 }) !== farSign || isNoStandCell(get, c)) {
+                        continue;
+                    }
+                    if (isEmptyBlock(blockAtXYZ(bot, c.x, c.y, c.z)) && isEmptyBlock(blockAtXYZ(bot, c.x, c.y + 1, c.z))
+                        && isStandGround(blockAtXYZ(bot, c.x, c.y - 1, c.z))) {
+                        found.push({ c, d: Math.hypot(dx, dy, dz) + Math.abs(dy) * 0.5 });
+                    }
+                }
+            }
+        }
+        found.sort((a, b) => a.d - b.d || a.c.x - b.c.x || a.c.z - b.c.z || a.c.y - b.c.y);
+        return found.length > 0 ? found[0].c : null;
+    } catch {
+        return null;
+    }
+}
+
 // The word for an openable in a text (X13): door, gate or trapdoor.
 function kindName(state) {
     return state?.kind === 'gate' || state?.kind === 'trapdoor' ? state.kind : 'door';
@@ -309,8 +438,10 @@ function kindName(state) {
  * @param {object} bot
  * @param {{x,y,z}} door the lower block of a door, or a fence gate
  * @param {object} [ctx] { areas, log, now, ... }
- * @param {{inside?: object, toward?: {x,y,z}, timeoutMs?: number, allowDig?: boolean, areas?: object[], checkMs?: number, now?: Function, wait?: Function}} [options]
- *   allowDig (default true): the walk to the door may dig as its last try, never within 2 blocks of an area
+ * @param {{inside?: object, toward?: {x,y,z}, movements?: object, timeoutMs?: number, allowDig?: boolean, areas?: object[], checkMs?: number, now?: Function, wait?: Function}} [options]
+ *   allowDig (default true): the walk to the door may dig as its last try, never within 2 blocks of an area;
+ *   movements (fix round): the movements of the step through, else careful ones into a farm (no sprint,
+ *   parkour or jump). The step ends on a free cell of the far side, never in or on a composter, chest, fence.
  * @returns {Promise<{ok: boolean, reason: string|null, text: string, mob?: object}>}
  *   reasons: no_path, blocked, could_not_close, monster_near, interrupted, error
  */
@@ -415,13 +546,16 @@ async function passInner(bot, door, ctx, options) {
         return outcome(false, 'interrupted', `I stopped at the ${kind}.`);
     }
 
-    const through = await gotoGoal(bot, new goals.GoalBlock(far.x, far.y, far.z), {
-        movements: makeMovements(bot, { dig: false, doors: false }),
+    // fix round (X1): the step ends on a free cell of the far side, never in or on a composter, chest,
+    // fence ...; into a farm without sprint, parkour or jump (a jump onto farmland makes it dirt)
+    const target = freeFarCell(bot, state, far, farSign) ?? far;
+    const through = await gotoGoal(bot, new goals.GoalBlock(target.x, target.y, target.z), {
+        movements: options.movements ?? throughMovements(bot, state, farSign, options.inside),
         timeoutMs: isFiniteNumber(options.throughMs) ? options.throughMs : 8000,
         clock,
     });
     const pos = botPos(bot);
-    const arrived = sideOf(state, pos) === farSign && isNear(bot, { x: far.x + 0.5, y: far.y, z: far.z + 0.5 }, 1.8);
+    const arrived = sideOf(state, pos) === farSign && isNear(bot, { x: target.x + 0.5, y: target.y, z: target.z + 0.5 }, 1.8);
     if (!arrived) {
         await closeAgain();
         if (through.reason === 'interrupted' || bot.interrupt_code) {

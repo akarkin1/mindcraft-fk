@@ -464,10 +464,12 @@ export async function collectBlock(bot, blockType, num=1, exclude=null) {
 
     // v0.1.4.8, fix round (X11): never more blocks than asked. !collectBlocks("oak_fence", 3) broke 4
     // posts: the path search of the collect plugin dug through a post on its way to a dropped item. The
-    // blocks of the asked types that break are counted from the block updates, and the path search of the
-    // collect plugin may not break another block of these types than the one it collects.
-    const breaks = watchBreaks(bot, blocktypes);
-    const target = { pos: null };
+    // blocks of the asked types that break are counted from the block updates, and once the block it
+    // collects is broken, the path search of the collect plugin (the walk to the drops) may not break
+    // another block of these types. On the way to the block it may, as before: dirt, stone and ore lie
+    // behind blocks of their own kind (the rule for the whole walk made !collectBlocks("dirt") slow).
+    const target = { pos: null, broken: false };
+    const breaks = watchBreaks(bot, blocktypes, target);
     const releaseTargets = keepOtherTargets(bot, blocktypes, target);
     try {
         return await collectBlocks(bot, blockType, num, exclude, blocktypes, breaks, target);
@@ -583,7 +585,8 @@ async function collectBlocks(bot, blockType, num, exclude, blocktypes, breaks, t
             break;
         }
         const block = blocks[0];
-        target.pos = block.position; // X11: the one block of the asked types that the path search may break
+        target.pos = block.position; // X11: after this block broke, the walk to its drops breaks no block of these types
+        target.broken = false;
         await bot.tool.equipForBlock(block);
         if (isLiquid) {
             const bucket = bot.inventory.findInventoryItem('bucket');
@@ -649,7 +652,7 @@ async function collectBlocks(bot, blockType, num, exclude, blocktypes, breaks, t
 // path search on its way. A block that comes back (the server refused the dig) is taken off again.
 const BREAK_WATCH_RANGE = 8;
 
-function watchBreaks(bot, blocktypes) {
+function watchBreaks(bot, blocktypes, target = {}) {
     const broken = new Map(); // "x,y,z" -> name
     const onUpdate = (oldBlock, newBlock) => {
         try {
@@ -659,8 +662,12 @@ function watchBreaks(bot, blocktypes) {
             const key = `${p.x},${p.y},${p.z}`;
             if (newBlock && blocktypes.includes(newBlock.name))
                 broken.delete(key);
-            else if (oldBlock && blocktypes.includes(oldBlock.name) && bot.entity.position.distanceTo(p) <= BREAK_WATCH_RANGE)
+            else if (oldBlock && blocktypes.includes(oldBlock.name) && bot.entity.position.distanceTo(p) <= BREAK_WATCH_RANGE) {
                 broken.set(key, oldBlock.name);
+                const t = target.pos;
+                if (t && t.x === p.x && t.y === p.y && t.z === p.z)
+                    target.broken = true;
+            }
         } catch (err) {
             // not counted
         }
@@ -695,19 +702,15 @@ function watchBreaks(bot, blocktypes) {
     };
 }
 
-// X11: the path search of the collect plugin (its own Movements) gets cost 100 for every block of the
-// asked types but the one in target.pos. Returns the function that takes the rule away again.
+// X11: once the block in target.pos is broken, the path search of the collect plugin (its own Movements,
+// the walk to the drops) gets cost 100 for every block of the asked types. Returns the function that takes
+// the rule away again.
 function keepOtherTargets(bot, blocktypes, target) {
     try {
         const list = bot.collectBlock?.movements?.exclusionAreasBreak;
         if (!Array.isArray(list))
             return () => {};
-        const rule = (block) => {
-            if (!block || !blocktypes.includes(block.name) || !block.position)
-                return 0;
-            const t = target.pos;
-            return t && block.position.x === t.x && block.position.y === t.y && block.position.z === t.z ? 0 : 100;
-        };
+        const rule = (block) => (target.broken === true && block && blocktypes.includes(block.name) ? 100 : 0);
         list.push(rule);
         return () => {
             const at = list.indexOf(rule);

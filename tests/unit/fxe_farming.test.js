@@ -190,7 +190,9 @@ describe('X1, X2 the path search of mineflayer-pathfinder over the farm of the b
     test('the cause: the walk to a bone meal on the rim (v0.1.4.8 before the fix) ended on top of the composter', () => {
         const w = baseFarm();
         const bot = pathBot(w);
-        const old = M.makeMovements(bot, { dig: false });
+        // the plain path search: makeMovements of the home pack avoids the composter since the fix round (X1)
+        const old = new (require('mineflayer-pathfinder').Movements)(bot);
+        old.canDig = false;
         const res = search(old, new goals.GoalNear(5, 62, 0, 1), { x: 4, y: 61, z: 0 });
         assert.equal(res.status, 'success');
         const end = res.path[res.path.length - 1];

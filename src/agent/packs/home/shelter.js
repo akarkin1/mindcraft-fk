@@ -12,6 +12,7 @@ import { isNight } from './night_logic.js';
 import { chooseCoverBlock, chooseShelter, chooseStandingPlace, isBuildingArea, isFallingBlockName, isInsideArea, isShelterArea, orderEntrances,
     roomCenter } from './shelter_logic.js';
 import { isBedName } from './sleep_logic.js';
+import { isNoStandBlock } from './stand_logic.js';
 import { TEXTS, creeperAtShelterText, dugInText, inShelterText, shelterText } from './texts.js';
 
 // Amendment 2, F3: an entrance at least this far from every creeper that stands; at night the bot
@@ -89,7 +90,9 @@ function passable(block) {
 }
 
 function solidFloor(block) {
-    return Boolean(block) && !isEmpty(block) && !LIQUID_OR_AIR.has(block.name) && !BAD_FLOOR.has(block.name) && !isBedName(block.name);
+    const props = typeof block?.getProperties === 'function' ? block.getProperties() : (block?._properties ?? null);
+    return Boolean(block) && !isEmpty(block) && !LIQUID_OR_AIR.has(block.name) && !BAD_FLOOR.has(block.name) && !isBedName(block.name)
+        && !isNoStandBlock(block.name, props); // fix round (X1): never a place on a chest, composter, fence
 }
 
 /**
