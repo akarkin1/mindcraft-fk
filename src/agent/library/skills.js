@@ -3,7 +3,7 @@ import * as world from "./world.js";
 import pf from 'mineflayer-pathfinder';
 import Vec3 from 'vec3';
 import settings from "../../../settings.js";
-import { findOpenables, passThrough } from "../packs/home/doors.js";
+import { findOpenables, openDoor, passThrough } from "../packs/home/doors.js";
 import { sideOf } from "../packs/home/door_logic.js";
 
 const blockPlaceDelay = settings.block_place_delay == null ? 0 : settings.block_place_delay;
@@ -236,6 +236,13 @@ export async function smeltItem(bot, itemName, num=1) {
         log(bot, `Added ${put_fuel} ${mc.getItemName(fuel.type)} to furnace fuel.`);
         console.log(`Added ${put_fuel} ${mc.getItemName(fuel.type)} to furnace fuel.`)
     }
+    // v0.1.4.8 (B6, T6): what lay in the output slot before is taken out first, so the count below is
+    // what this smelt made (it said "got 4 charcoal" for charcoal of an earlier smelt)
+    if (furnace.outputItem()) {
+        const earlier = await furnace.takeOutput();
+        if (earlier)
+            log(bot, `Took ${earlier.count} ${mc.getItemName(earlier.type)} that was already in the furnace.`);
+    }
     // put the items in the furnace
     await furnace.putInput(mc.getItemId(itemName), null, num);
     // wait for the items to smelt
@@ -455,6 +462,8 @@ export async function collectBlock(bot, blockType, num=1, exclude=null) {
     const isLiquid = blockType === 'lava' || blockType === 'water';
 
     let collected = 0;
+    const brokenNames = {}; // v0.1.4.8 (B1, F4): the broken blocks by name
+    const invBefore = inventoryCounts(bot);
 
     const movements = new pf.Movements(bot);
     movements.dontMineUnderFallingBlock = false;
@@ -467,10 +476,25 @@ export async function collectBlock(bot, blockType, num=1, exclude=null) {
     const guard = bot.areaGuard;
     let range = 64;
     let refused = 0;
+    let refusedBuilt = 0;
+    let refusal = null; // the first refusal of the last search: its text is the answer when every candidate is refused
+    let refusedAll = false;
     const guardAllows = (block) => {
         let allowed = true;
         try {
-            allowed = !guard || guard.canBreak(block) !== false;
+            // v0.1.4.8 (B1, P1): the guard of v0.1.4.8 tells the reason, also for a block that players
+            // build with outside of every area. The guard of v0.1.4.7 has canBreak only.
+            if (guard && typeof guard.refusal === 'function') {
+                const r = guard.refusal(block.position, 'break');
+                if (r) {
+                    allowed = false;
+                    refusal = refusal ?? r;
+                    if (r.reason === 'built_block')
+                        refusedBuilt++;
+                }
+            }
+            else
+                allowed = !guard || guard.canBreak(block) !== false;
             // Nor is a block with a block of a building above it, such as the ground under the floor of
             // a house: the way to it leads through the floor (v0.1.4.6, Amendment 2 F4). Only blocks that
             // are not air and lie in an area of type building count (v0.1.4.7, Amendment 2 I5): the air
@@ -496,6 +520,8 @@ export async function collectBlock(bot, blockType, num=1, exclude=null) {
 
     for (let i=0; i<num; i++) {
         refused = 0;
+        refusedBuilt = 0;
+        refusal = null;
         let blocks = world.getNearestBlocksWhere(bot, block => {
             if (!blocktypes.includes(block.name)) {
                 return false;
@@ -515,14 +541,20 @@ export async function collectBlock(bot, blockType, num=1, exclude=null) {
             return (movements.safeToBreak(block) || unsafeBlocks.includes(block.name)) && guardAllows(block);
         }, range, 1);
 
-        if (blocks.length === 0 && refused > 0 && range === 64) {
+        // Blocks that players build with are refused everywhere: a wider search does not help (v0.1.4.8)
+        if (blocks.length === 0 && refused > 0 && refusedBuilt === 0 && range === 64) {
             log(bot, `All ${blockType} blocks nearby belong to a protected area. I look for others farther away.`);
             range *= 2; // once
             i--;
             continue;
         }
         if (blocks.length === 0) {
-            if (collected === 0)
+            if (refused > 0 && refusal) {
+                // v0.1.4.8 (B1): every candidate was refused, the text of the guard says why
+                log(bot, refusalText(refusal, `I may not break the ${blockType} nearby.`));
+                refusedAll = true;
+            }
+            else if (collected === 0)
                 log(bot, `No ${blockType} nearby to collect.`);
             else
                 log(bot, `No more ${blockType} nearby to collect.`);
@@ -550,6 +582,8 @@ export async function collectBlock(bot, blockType, num=1, exclude=null) {
             }
             else if (mc.mustCollectManually(blockType)) {
                 await goToPosition(bot, block.position.x, block.position.y, block.position.z, 2);
+                if (bot.interrupt_code)
+                    break; // v0.1.4.8 (B3): the walk was stopped, no dig from afar
                 await bot.dig(block);
                 await pickupNearbyItems(bot);
                 success = true;
@@ -558,8 +592,10 @@ export async function collectBlock(bot, blockType, num=1, exclude=null) {
                 await bot.collectBlock.collect(block);
                 success = true;
             }
-            if (success)
+            if (success) {
                 collected++;
+                brokenNames[block.name] = (brokenNames[block.name] ?? 0) + 1;
+            }
             await autoLight(bot);
         }
         catch (err) {
@@ -569,6 +605,8 @@ export async function collectBlock(bot, blockType, num=1, exclude=null) {
             }
             else {
                 log(bot, `Failed to collect ${blockType}: ${err}.`);
+                if (bot.interrupt_code)
+                    break; // v0.1.4.8 (B3): a stopped action does not go on with the next block
                 continue;
             }
         }
@@ -576,8 +614,83 @@ export async function collectBlock(bot, blockType, num=1, exclude=null) {
         if (bot.interrupt_code)
             break;  
     }
-    log(bot, `Collected ${collected} ${blockType}.`);
-    return collected > 0;
+    if (refusedAll && collected === 0)
+        return false; // v0.1.4.8 (B1): the text of the guard is the whole answer
+    const result = await collectResult(bot, blockType, brokenNames, collected, invBefore);
+    log(bot, result.text);
+    return result.got;
+}
+
+// v0.1.4.8 (B1, F4): the result of collectBlock names what the inventory gained, not what was broken
+// (tall_grass broken by hand drops nothing). Without a readable inventory the count is what was
+// broken, as in v0.1.4.7.
+const GAIN_SETTLE_MS = 500; // a picked up item reaches the inventory a moment after the block broke
+const NEEDS_SHEARS = new Set(['short_grass', 'grass', 'tall_grass', 'fern', 'large_fern', 'seagrass', 'tall_seagrass',
+    'vine', 'glow_lichen', 'hanging_roots', 'nether_sprouts']);
+
+// The counts of the inventory, the off-hand included, or null when the inventory cannot be read.
+function inventoryCounts(bot) {
+    try {
+        return Array.isArray(bot.inventory?.slots) ? world.getInventoryCounts(bot) : null;
+    } catch (err) {
+        return null;
+    }
+}
+
+function itemList(items) {
+    return items.map(item => `${item.count} ${item.name}`).join(', ');
+}
+
+// The text of collectBlock. broken: {name: count} of the broken blocks; got: sumItemCounts of the gain.
+function collectedText(blockType, broken, got, hasShears) {
+    const brokenList = world.sumItemCounts(broken);
+    const brokenCount = brokenList.reduce((n, b) => n + b.count, 0);
+    if (got.length > 0) {
+        const liquid = blockType === 'water' || blockType === 'lava'; // a bucket is filled, nothing breaks
+        if (brokenCount === 0 || liquid || got.some(item => item.name === blockType))
+            return `Collected ${itemList(got)}.`;
+        return `I broke ${itemList(brokenList)} and got ${itemList(got)}.`;
+    }
+    if (brokenCount === 0)
+        return `Collected 0 ${blockType}.`;
+    let text = `I broke ${itemList(brokenList)} and got nothing.`;
+    const names = brokenList.map(b => b.name);
+    if (!hasShears && names.every(name => NEEDS_SHEARS.has(name)))
+        text += ` ${names.join(' and ')} ${names.length === 1 ? 'drops' : 'drop'} nothing without shears.`;
+    return text;
+}
+
+async function collectResult(bot, blockType, broken, collected, before) {
+    if (!before)
+        return { text: `Collected ${collected} ${blockType}.`, got: collected > 0 };
+    let after = inventoryCounts(bot) ?? before;
+    let gained = world.getInventoryGain(before, after);
+    const total = () => Object.values(gained).reduce((n, count) => n + count, 0);
+    for (let waited = 0; total() < collected && waited < GAIN_SETTLE_MS && !bot.interrupt_code; waited += 100) {
+        await new Promise(resolve => setTimeout(resolve, 100));
+        after = inventoryCounts(bot) ?? before;
+        gained = world.getInventoryGain(before, after);
+    }
+    const got = world.sumItemCounts(gained);
+    return { text: collectedText(blockType, broken, got, (after.shears ?? 0) > 0), got: got.length > 0 };
+}
+
+// v0.1.4.8 (B1): the refusal of the guard for a position, or null. Only the guard of v0.1.4.8 has
+// refusal(); without it the wrapped bot.dig and bot.placeBlock refuse as in v0.1.4.7.
+function guardRefusal(bot, pos, action, details) {
+    const guard = bot.areaGuard;
+    if (!guard || typeof guard.refusal !== 'function')
+        return null;
+    try {
+        const refusal = details ? guard.refusal(pos, action, details) : guard.refusal(pos, action);
+        return refusal && typeof refusal === 'object' ? refusal : null;
+    } catch (err) {
+        return null; // the wrapped bot.dig and bot.placeBlock still ask the guard
+    }
+}
+
+function refusalText(refusal, fallback) {
+    return typeof refusal?.text === 'string' && refusal.text.trim() !== '' ? refusal.text : fallback;
 }
 
 export async function pickupNearbyItems(bot) {
@@ -609,6 +722,110 @@ export async function pickupNearbyItems(bot) {
     return true;
 }
 
+// v0.1.4.8 (B4, P2): pickUpItems
+const PICK_UP_LIMIT_MS = 60000; // for all items together
+const PICK_UP_WAIT_MS = 2500;   // a thrown item cannot be picked up for 2 s
+const PICK_UP_REACH = 2;        // the bot waits for an item this near
+const PICK_UP_TRIES = 2;        // per item
+
+export async function pickUpItems(bot, name='', range=16) {
+    /**
+     * Walk to the items that lie on the ground within range, nearest first, and pick them up. Waits for the pick-up delay of thrown items and stops after 60 seconds. Never digs.
+     * @param {MinecraftBot} bot, reference to the minecraft bot.
+     * @param {string} name, the name of the item to pick up. Defaults to '', which picks up every item.
+     * @param {number} range, the distance to look for items. Defaults to 16.
+     * @returns {Promise<boolean>} true if the inventory gained something, false otherwise.
+     * @example
+     * await skills.pickUpItems(bot, "oak_fence", 16);
+     **/
+    const start = Date.now();
+    const before = inventoryCounts(bot);
+    const targets = world.getNearbyItems(bot, name, range);
+    if (targets.length === 0) {
+        log(bot, `I see no ${name || 'items'} on the ground within ${range} blocks.`);
+        return false;
+    }
+    const tries = new Map();
+    while (!bot.interrupt_code && Date.now() - start < PICK_UP_LIMIT_MS) {
+        const next = nextItemToPickUp(bot, targets, tries);
+        if (!next)
+            break;
+        tries.set(next.id, (tries.get(next.id) ?? 0) + 1);
+        if (next.position.distanceTo(bot.entity.position) > 1) {
+            try {
+                const movements = new pf.Movements(bot);
+                movements.canDig = false;
+                await walkWith(bot, new pf.goals.GoalFollow(next, 1), movements, Math.max(1, PICK_UP_LIMIT_MS - (Date.now() - start)));
+            } catch (err) {
+                // no way to this item now: it is tried again later
+            }
+        }
+        if (!isGone(bot, next) && next.position.distanceTo(bot.entity.position) <= PICK_UP_REACH)
+            await waitUntilGone(bot, next, Math.min(PICK_UP_WAIT_MS, PICK_UP_LIMIT_MS - (Date.now() - start)));
+    }
+    // the inventory can change a moment after the item left the ground
+    const gone = targets.filter(item => isGone(bot, item)).map(droppedStack).reduce((n, stack) => n + stack.count, 0);
+    let after = inventoryCounts(bot);
+    const gainedCount = () => Object.values(world.getInventoryGain(before, after)).reduce((n, count) => n + count, 0);
+    for (let waited = 0; before && after && gainedCount() < gone && waited < GAIN_SETTLE_MS && !bot.interrupt_code; waited += 100) {
+        await new Promise(resolve => setTimeout(resolve, 100));
+        after = inventoryCounts(bot);
+    }
+    const got = before && after ? world.sumItemCounts(world.getInventoryGain(before, after)) : [];
+    const rest = targets.filter(item => !isGone(bot, item)).map(droppedStack);
+    log(bot, pickUpText(got, rest, Boolean(bot.interrupt_code)));
+    return got.length > 0;
+}
+
+function isGone(bot, entity) {
+    return entity.isValid === false || bot.entities[entity.id] !== entity;
+}
+
+// The nearest item of the list that is still there and was not tried too often.
+function nextItemToPickUp(bot, items, tries) {
+    const me = bot.entity.position;
+    let best = null;
+    for (const item of items) {
+        if (isGone(bot, item) || (tries.get(item.id) ?? 0) >= PICK_UP_TRIES)
+            continue;
+        if (!best || item.position.distanceTo(me) < best.position.distanceTo(me))
+            best = item;
+    }
+    return best;
+}
+
+async function waitUntilGone(bot, entity, ms) {
+    const start = Date.now();
+    while (!isGone(bot, entity) && !bot.interrupt_code && Date.now() - start < ms)
+        await new Promise(resolve => setTimeout(resolve, 100));
+}
+
+function droppedStack(entity) {
+    try {
+        const item = typeof entity.getDroppedItem === 'function' ? entity.getDroppedItem() : null;
+        if (item && item.name)
+            return { name: item.name, count: item.count > 0 ? item.count : 1 };
+    } catch (err) {
+        // the name is not known yet
+    }
+    return { name: 'item', count: 1 };
+}
+
+function pickUpText(got, rest, stopped) {
+    const parts = [];
+    if (got.length > 0)
+        parts.push(`I picked up ${itemList(got)}.`);
+    if (rest.length > 0) {
+        const left = world.sumItemCounts(rest);
+        const count = left.reduce((n, item) => n + item.count, 0);
+        const what = `${count} ${count === 1 ? 'item' : 'items'}: ${left.map(item => item.name).join(', ')}.`;
+        parts.push(stopped ? `I was stopped before I picked up ${what}` : `I could not pick up ${what}`);
+    }
+    if (parts.length === 0)
+        parts.push('I picked up nothing. The items are no longer there.');
+    return parts.join(' ');
+}
+
 
 export async function breakBlockAt(bot, x, y, z) {
     /**
@@ -633,6 +850,13 @@ export async function breakBlockAt(bot, x, y, z) {
             return true;
         }
 
+        // v0.1.4.8 (B1): a refusal of the guard names its reason in the output
+        const refusal = guardRefusal(bot, block.position, 'break');
+        if (refusal) {
+            log(bot, refusalText(refusal, `I may not break the ${block.name} at ${block.position}.`));
+            return false;
+        }
+
         if (bot.entity.position.distanceTo(block.position) > 4.5) {
             let pos = block.position;
             let movements = new pf.Movements(bot);
@@ -640,6 +864,8 @@ export async function breakBlockAt(bot, x, y, z) {
             movements.allow1by1towers = false;
             bot.pathfinder.setMovements(movements);
             await goToGoal(bot, new pf.goals.GoalNear(pos.x, pos.y, pos.z, 4));
+            if (bot.interrupt_code)
+                return false; // v0.1.4.8 (B3): the walk was stopped
         }
         if (bot.game.gameMode !== 'creative') {
             await bot.tool.equipForBlock(block);
@@ -649,7 +875,14 @@ export async function breakBlockAt(bot, x, y, z) {
                 return false;
             }
         }
-        await bot.dig(block, true);
+        try {
+            await bot.dig(block, true);
+        } catch (err) {
+            if (err?.name !== 'ProtectedAreaError')
+                throw err;
+            log(bot, err.message); // v0.1.4.8 (B1): the text of the guard instead of an exception
+            return false;
+        }
         log(bot, `Broke ${block.name} at x:${x.toFixed(1)}, y:${y.toFixed(1)}, z:${z.toFixed(1)}.`);
     }
     else {
@@ -750,6 +983,14 @@ export async function placeBlock(bot, blockType, x, y, z, placeOn='bottom', dont
         return false;
     }
 
+    // v0.1.4.8 (B1): a refusal of the guard names its reason in the output. The guard judges the item
+    // that will be placed, not the item in the hand: seeds in a farm are allowed while the hand holds a hoe.
+    const refusal = guardRefusal(bot, target_dest, 'place', { item: item_name });
+    if (refusal) {
+        log(bot, refusalText(refusal, `I may not place ${blockType} at ${target_dest}.`));
+        return false;
+    }
+
     const targetBlock = bot.blockAt(target_dest);
     if (targetBlock.name === blockType || (targetBlock.name === 'grass_block' && blockType === 'dirt')) {
         log(bot, `${blockType} already at ${targetBlock.position}.`);
@@ -819,6 +1060,8 @@ export async function placeBlock(bot, blockType, x, y, z, placeOn='bottom', dont
         let movements = new pf.Movements(bot);
         bot.pathfinder.setMovements(movements);
         await goToGoal(bot, new pf.goals.GoalNear(pos.x, pos.y, pos.z, 4));
+        if (bot.interrupt_code)
+            return false; // v0.1.4.8 (B3): the walk was stopped
     }
 
     // will throw error if an entity is in the way, and sometimes even if the block was placed
@@ -835,6 +1078,8 @@ export async function placeBlock(bot, blockType, x, y, z, placeOn='bottom', dont
             return true;
         }
     } catch (err) {
+        if (err?.name === 'ProtectedAreaError')
+            log(bot, err.message); // v0.1.4.8 (B1): the reason of the guard reaches the output
         log(bot, `Failed to place ${blockType} at ${target_dest}.`);
         return false;
     }
@@ -887,21 +1132,32 @@ export async function equip(bot, itemName) {
     return true;
 }
 
-export async function discard(bot, itemName, num=-1) {
+export async function discard(bot, itemName, num=-1, walkAway=0) {
     /**
      * Discard the given item.
      * @param {MinecraftBot} bot, reference to the minecraft bot.
      * @param {string} itemName, the item or block name to discard.
      * @param {number} num, the number of items to discard. Defaults to -1, which discards all items.
+     * @param {number} walkAway, blocks to walk away before the items are tossed, for at most 3 seconds. Defaults to 0, which tosses where the bot stands.
      * @returns {Promise<boolean>} true if the item was discarded, false otherwise.
      * @example
      * await skills.discard(bot, "oak_log");
      **/
+    // v0.1.4.8 (B6, S14): the walk away has a limit of 3 s; when it fails the items are tossed where the bot stands
+    if (walkAway > 0 && world.getInventoryItem(bot, itemName))
+        await walkAwayWithin(bot, walkAway, DISCARD_WALK_MS);
     let discarded = 0;
+    let fromOffhand = false;
     while (true) {
         let item = bot.inventory.findInventoryItem(itemName);
         if (!item) {
-            break;
+            // v0.1.4.8 (B2, E1): toss() sees slots 9 to 44 only, a stack of the off-hand goes to the hand first
+            const offhand = world.getOffhandItem(bot);
+            if (fromOffhand || !offhand || offhand.name !== itemName)
+                break;
+            fromOffhand = true;
+            await bot.equip(offhand, 'hand');
+            continue;
         }
         let to_discard = num === -1 ? item.count : Math.min(num - discarded, item.count);
         await bot.toss(item.type, null, to_discard);
@@ -1009,17 +1265,19 @@ export async function viewChest(bot) {
     await goToPosition(bot, chest.position.x, chest.position.y, chest.position.z, 2);
     const chestContainer = await bot.openContainer(chest);
     let items = chestContainer.containerItems();
-    if (items.length === 0) {
-        log(bot, `The chest is empty.`);
-    }
-    else {
-        log(bot, `The chest contains:`);
-        for (let item of items) {
-            log(bot, `${item.count} ${item.name}`);
-        }
-    }
+    log(bot, chestText(chest.position, items));
     await chestContainer.close();
     return true;
+}
+
+// v0.1.4.8 (B5, C3): one line, the same items added up, the largest count first. The output of an
+// action is cut in the middle when it is long; a list of one line per stack lost its middle part.
+function chestText(pos, items) {
+    const at = `(${pos.x}, ${pos.y}, ${pos.z})`;
+    const content = world.sumItemCounts(items);
+    if (content.length === 0)
+        return `The chest at ${at} is empty.`;
+    return `The chest at ${at} contains: ${content.map(item => `${item.name} ${item.count}`).join(', ')}.`;
 }
 
 export async function consume(bot, itemName="") {
@@ -1033,7 +1291,7 @@ export async function consume(bot, itemName="") {
      **/
     let item, name;
     if (itemName) {
-        item = bot.inventory.findInventoryItem(itemName);
+        item = world.getInventoryItem(bot, itemName); // v0.1.4.8 (B2, E1): the off-hand too; equip below moves it to the hand
         name = itemName;
     }
     if (!item) {
@@ -1124,7 +1382,10 @@ export async function goToGoal(bot, goal) {
      * Navigate to the given goal. Use doors and attempt minimally destructive movements.
      * @param {MinecraftBot} bot, reference to the minecraft bot.
      * @param {pf.goals.Goal} goal, the goal to navigate to.
+     * @returns {Promise<boolean>} true when the walk ended, false when it was interrupted.
      **/
+    if (bot.interrupt_code)
+        return false; // v0.1.4.8 (B3): a stopped action starts no walk
 
     const nonDestructiveMovements = new pf.Movements(bot);
     const dontBreakBlocks = ['glass', 'glass_pane'];
@@ -1150,21 +1411,79 @@ export async function goToGoal(bot, goal) {
         log(bot, `Path not found, but attempting to navigate anyway using destructive movements.`);
     }
 
+    if (bot.interrupt_code)
+        return false;
+
+    return (await walkWith(bot, goal, final_movements)) === 'arrived';
+}
+
+// The walk of goToGoal with the chosen movements: with the old door timer, or through doors while the
+// door reflex is on. Resolves as untilStopped; rejects with the error of the walk.
+async function walkWith(bot, goal, movements, limitMs = 0) {
     const doorCheckInterval = startDoorInterval(bot);
 
-    bot.pathfinder.setMovements(final_movements);
+    bot.pathfinder.setMovements(movements);
     try {
+        let walk;
         if (doorCheckInterval === null)
-            await gotoThroughDoors(bot, goal, final_movements); // the door reflex is on (v0.1.4.6, F1)
+            walk = gotoThroughDoors(bot, goal, movements); // the door reflex is on (v0.1.4.6, F1)
         else
-            await bot.pathfinder.goto(goal);
+            walk = bot.pathfinder.goto(goal);
+        return await untilStopped(bot, walk, limitMs);
+    } finally {
+        // also when the walk throws: the door check interval is cleaned up, the error goes on
         clearInterval(doorCheckInterval);
-        return true;
-    } catch (err) {
-        clearInterval(doorCheckInterval);
-        // we need to catch so we can clean up the door check interval, then rethrow the error
-        throw err;
     }
+}
+
+// v0.1.4.8 (B3, S9): pathfinder.stop() is read only when the bot arrives at a node, so a walk went on
+// after !stop. Like gotoGoal of the home pack, the interrupt is watched every 250 ms and the path
+// search is ended with setGoal(null). Resolves 'arrived', 'interrupted' or (with limitMs) 'timeout';
+// rejects with the error of the walk. A walk that fails because it was stopped counts as interrupted.
+const WALK_WATCH_MS = 250;
+
+function stopWalking(bot) {
+    try {
+        bot.pathfinder.setGoal(null);
+    } catch (err) {
+        // nothing to stop
+    }
+    try {
+        if (typeof bot.clearControlStates === 'function')
+            bot.clearControlStates();
+    } catch (err) {
+        // nothing to release
+    }
+}
+
+function untilStopped(bot, walk, limitMs = 0) {
+    return new Promise((resolve, reject) => {
+        const start = Date.now();
+        let done = false;
+        let watch = null;
+        const finish = (settle, value) => {
+            if (done)
+                return;
+            done = true;
+            clearInterval(watch);
+            settle(value);
+        };
+        watch = setInterval(() => {
+            const late = limitMs > 0 && Date.now() - start >= limitMs;
+            if (!bot.interrupt_code && !late)
+                return;
+            stopWalking(bot);
+            finish(resolve, bot.interrupt_code ? 'interrupted' : 'timeout');
+        }, WALK_WATCH_MS);
+        Promise.resolve(walk).then(
+            () => finish(resolve, bot.interrupt_code ? 'interrupted' : 'arrived'),
+            (err) => {
+                if (bot.interrupt_code)
+                    finish(resolve, 'interrupted');
+                else
+                    finish(reject, err);
+            });
+    });
 }
 
 // v0.1.4.6 (Amendment 2, F1): while the reflex door_closing of the home pack exists and is on, the
@@ -1207,6 +1526,49 @@ async function passStuckDoor(bot, door) {
     return result.ok === true;
 }
 
+// v0.1.4.8 (B3, S11): a goal away from a point (GoalInvert, as in moveAway) has no side to walk to,
+// so goalPoint() is null for it. The door or gate next to the stuck bot is the way out.
+function isAwayGoal(goal) {
+    return goal instanceof pf.goals.GoalInvert;
+}
+
+function doorNextTo(bot) {
+    return findOpenables(bot, 2).find(door => door.kind !== 'trapdoor') ?? null;
+}
+
+function isAway(bot, goal) {
+    try {
+        return goal.isEnd(bot.entity.position.floored());
+    } catch (err) {
+        return true; // no help without a position
+    }
+}
+
+// The nearest two doors, gates or trapdoors within 3 blocks: a door or gate is passed with passThrough
+// of the home pack (open, walk through, close); a closed trapdoor is opened, the door service closes
+// it later. true when the way out changed.
+async function openWayOut(bot) {
+    const me = bot.entity.position;
+    const doors = findOpenables(bot, 3)
+        .map(door => ({ door, d: Math.hypot(door.x + 0.5 - me.x, door.y - me.y, door.z + 0.5 - me.z) }))
+        .sort((a, b) => a.d - b.d)
+        .slice(0, 2)
+        .map(entry => entry.door);
+    for (const door of doors) {
+        if (bot.interrupt_code)
+            return false;
+        if (door.kind === 'trapdoor') {
+            if (door.open || !(await openDoor(bot, door)))
+                continue;
+            log(bot, `I opened the ${door.name} at (${door.x}, ${door.y}, ${door.z}).`);
+            return true;
+        }
+        if (await passStuckDoor(bot, door))
+            return true;
+    }
+    return false;
+}
+
 async function gotoThroughDoors(bot, goal, movements) {
     for (let tries = 0; ; tries++) {
         let stuckAt = null;
@@ -1220,7 +1582,7 @@ async function gotoThroughDoors(bot, goal, movements) {
                     since = Date.now();
                 }
                 else if (stuckAt === null && !bot.interrupt_code && Date.now() - since >= 3000) {
-                    stuckAt = doorInTheWay(bot, goalPoint(goal));
+                    stuckAt = isAwayGoal(goal) ? doorNextTo(bot) : doorInTheWay(bot, goalPoint(goal));
                     if (stuckAt)
                         bot.pathfinder.setGoal(null); // goto rejects with GoalChanged
                 }
@@ -1337,6 +1699,8 @@ export async function goToPosition(bot, x, y, z, min_distance=2) {
         return true;
     }
     
+    const target = new Vec3(x, y, z);
+    let nearest = bot.entity.position.distanceTo(target);
     const checkDigProgress = () => {
         if (bot.targetDigBlock) {
             const targetBlock = bot.targetDigBlock;
@@ -1347,6 +1711,21 @@ export async function goToPosition(bot, x, y, z, min_distance=2) {
                 bot.stopDigging();
             }
         }
+        noteWalkProgress();
+    };
+    // v0.1.4.8 (B3, I1): progress for the reflex unstuck while the path search walks the bot nearer to
+    // the goal. A bot that the path search pushes against a wall comes no nearer and notes nothing.
+    const noteWalkProgress = () => {
+        try {
+            const d = bot.entity.position.distanceTo(target);
+            if (d <= nearest - WALK_PROGRESS_STEP) {
+                nearest = d;
+                if (bot.pathfinder.isMoving?.())
+                    bot.modes?.noteProgress?.('path');
+            }
+        } catch (err) {
+            // no progress noted
+        }
     };
     
     const progressInterval = setInterval(checkDigProgress, 1000);
@@ -1354,20 +1733,29 @@ export async function goToPosition(bot, x, y, z, min_distance=2) {
     try {
         await goToGoal(bot, new pf.goals.GoalNear(x, y, z, min_distance));
         clearInterval(progressInterval);
-        const distance = bot.entity.position.distanceTo(new Vec3(x, y, z));
+        // v0.1.4.8 (B3, P5): the text names where the bot is, not the goal again
+        const distance = bot.entity.position.distanceTo(target);
         if (distance <= min_distance+1) {
-            log(bot, `You have reached at ${x}, ${y}, ${z}.`);
+            log(bot, `You have reached ${positionText(bot)}.`);
             return true;
         }
         else {
-            log(bot, `Unable to reach ${x}, ${y}, ${z}, you are ${Math.round(distance)} blocks away.`);
+            log(bot, `I stopped at ${positionText(bot)}, ${Math.round(distance)} blocks from the goal.`);
             return false;
         }
     } catch (err) {
         log(bot, `Pathfinding stopped: ${err.message}.`);
         clearInterval(progressInterval);
+        log(bot, `I stopped at ${positionText(bot)}, ${Math.round(bot.entity.position.distanceTo(target))} blocks from the goal.`);
         return false;
     }
+}
+
+const WALK_PROGRESS_STEP = 0.5; // blocks nearer to the goal than before
+
+function positionText(bot) {
+    const p = bot.entity.position;
+    return `(${Math.floor(p.x)}, ${Math.floor(p.y)}, ${Math.floor(p.z)})`;
 }
 
 export async function goToNearestBlock(bot, blockType,  min_distance=2, range=64) {
@@ -1582,10 +1970,50 @@ export async function moveAway(bot, distance) {
         }
     }
 
-    await goToGoal(bot, inverted_goal);
+    // v0.1.4.8 (B3, S11): with the door reflex on, the old door timer does not run, and in a closed
+    // room the path search finds no way at all (NoPath). A bot that is not away yet opens the door,
+    // gate or trapdoor next to it and walks again. The door service of the home pack closes it
+    // afterwards. Without that help a failed walk throws as before.
+    let failure = null;
+    try {
+        await goToGoal(bot, inverted_goal);
+    } catch (err) {
+        failure = err;
+    }
+    for (let tries = 0; tries < 2 && !bot.interrupt_code && doorReflexOn(bot) && !isAway(bot, inverted_goal); tries++) {
+        if (!(await openWayOut(bot)))
+            break;
+        try {
+            failure = null;
+            await goToGoal(bot, inverted_goal);
+        } catch (err) {
+            failure = err;
+        }
+    }
+    if (failure && !isAway(bot, inverted_goal))
+        throw failure;
     let new_pos = bot.entity.position;
     log(bot, `Moved away from ${pos.floored()} to ${new_pos.floored()}.`);
     return true;
+}
+
+// v0.1.4.8 (B6, S14): the walk of discard. It never digs and ends after limitMs.
+const DISCARD_WALK_MS = 3000;
+
+async function walkAwayWithin(bot, distance, limitMs) {
+    if (bot.interrupt_code)
+        return false;
+    try {
+        const pos = bot.entity.position.clone();
+        const goal = new pf.goals.GoalInvert(new pf.goals.GoalNear(pos.x, pos.y, pos.z, distance));
+        const movements = new pf.Movements(bot);
+        movements.canDig = false;
+        movements.allow1by1towers = false;
+        bot.pathfinder.setMovements(movements);
+        return (await untilStopped(bot, bot.pathfinder.goto(goal), limitMs)) === 'arrived';
+    } catch (err) {
+        return false; // no way away: the items are tossed where the bot stands
+    }
 }
 
 export async function moveAwayFromEntity(bot, entity, distance=16) {

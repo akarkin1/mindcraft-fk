@@ -134,11 +134,21 @@ describe('collectBlock with the area guard', () => {
     });
 
     test('nothing allowed even farther away: the text once, then as before', async () => {
-        const { world, house, store } = scene(null);
+        const { world, house, store, houseLogs } = scene(null);
         const bot = makeBot(world, inside(house));
         AG.installAreaGuard(bot, { store, log() {} });
         assert.equal(await skills.collectBlock(bot, 'oak_log', 1), false);
-        assert.equal(bot.output, `${MESSAGE}\nNo oak_log nearby to collect.\nCollected 0 oak_log.\n`);
+        if (typeof bot.areaGuard.refusal === 'function') {
+            // v0.1.4.8 (B1): the guard tells the reason; when every candidate is refused, the text of
+            // the refusal of a log of the house is the answer after the text of v0.1.4.6
+            const texts = houseLogs.map((p) => bot.areaGuard.refusal(p, 'break')?.text).filter(Boolean);
+            const lines = bot.output.trimEnd().split('\n');
+            assert.equal(lines.length, 2, bot.output);
+            assert.equal(lines[0], MESSAGE);
+            assert.ok(texts.includes(lines[1]), bot.output);
+        }
+        else
+            assert.equal(bot.output, `${MESSAGE}\nNo oak_log nearby to collect.\nCollected 0 oak_log.\n`);
         assert.deepEqual(bot.collected, []);
     });
 

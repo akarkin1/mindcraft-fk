@@ -315,6 +315,126 @@ export function getInventoryCounts(bot) {
 }
 
 
+// v0.1.4.8 (B2, E1): auto-eat can move food into the off-hand, which bot.inventory.items() and
+// bot.inventory.findInventoryItem() do not see (they read slots 9 to 44).
+const OFFHAND_SLOT = 45;
+
+export function getOffhandItem(bot) {
+    /**
+     * Get the item in the off-hand (inventory slot 45). bot.inventory.items() and bot.inventory.findInventoryItem() do not see this slot.
+     * @param {Bot} bot - The bot to get the item for.
+     * @returns {Item} - The item in the off-hand, or null if the off-hand is empty.
+     * @example
+     * let offhand = world.getOffhandItem(bot);
+     * if (offhand) skills.log(bot, `In the off-hand: ${offhand.name}`);
+     **/
+    const item = bot.inventory?.slots?.[OFFHAND_SLOT];
+    return item && item.name ? item : null;
+}
+
+
+export function getOffhandText(bot) {
+    /**
+     * Get one line about the off-hand for the inventory text, for example "In the off-hand: bread 6".
+     * @param {Bot} bot - The bot to describe.
+     * @returns {string} - The line, or an empty string when the off-hand is empty.
+     * @example
+     * let line = world.getOffhandText(bot);
+     **/
+    const item = getOffhandItem(bot);
+    return item ? `In the off-hand: ${item.name} ${item.count}` : '';
+}
+
+
+export function getInventoryItem(bot, itemName) {
+    /**
+     * Get the first stack of the given item in the inventory, the off-hand included. The main inventory is searched first.
+     * @param {Bot} bot - The bot to search.
+     * @param {string} itemName - The name of the item.
+     * @returns {Item} - The stack, or null if the bot has none.
+     * @example
+     * let bread = world.getInventoryItem(bot, 'bread');
+     **/
+    const item = bot.inventory.findInventoryItem(itemName);
+    if (item) return item;
+    const offhand = getOffhandItem(bot);
+    return offhand && offhand.name === itemName ? offhand : null;
+}
+
+
+export function sumItemCounts(items) {
+    /**
+     * Add up item stacks by name. The largest count comes first, equal counts are ordered by name.
+     * @param {Item[]|object} items - A list of stacks with name and count, or an object of counts like the one of getInventoryCounts.
+     * @returns {{name: string, count: number}[]} - One entry per item name, only counts above 0.
+     * @example
+     * let content = world.sumItemCounts(container.containerItems()); // [{name: 'cobblestone', count: 81}, ...]
+     **/
+    const list = Array.isArray(items) ? items : Object.entries(items ?? {}).map(([name, count]) => ({ name, count }));
+    const sums = new Map();
+    for (const item of list) {
+        if (!item || !item.name || !(item.count > 0)) continue;
+        sums.set(item.name, (sums.get(item.name) ?? 0) + item.count);
+    }
+    return [...sums].map(([name, count]) => ({ name, count }))
+        .sort((a, b) => b.count - a.count || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+}
+
+
+export function getInventoryGain(before, after) {
+    /**
+     * Compare two results of getInventoryCounts and return what the inventory gained. Items that became fewer are left out.
+     * @param {object} before - The counts before, from getInventoryCounts.
+     * @param {object} after - The counts after, from getInventoryCounts.
+     * @returns {object} - An object with item names as keys and the gained counts as values.
+     * @example
+     * let before = world.getInventoryCounts(bot);
+     * await skills.pickUpItems(bot, 'oak_log');
+     * let gained = world.getInventoryGain(before, world.getInventoryCounts(bot));
+     **/
+    const gained = {};
+    for (const [name, count] of Object.entries(after ?? {})) {
+        const more = count - ((before ?? {})[name] ?? 0);
+        if (more > 0) gained[name] = more;
+    }
+    return gained;
+}
+
+
+// The item stack of an item entity on the ground, or null while its metadata is unknown.
+function droppedItemOf(entity) {
+    try {
+        const item = typeof entity.getDroppedItem === 'function' ? entity.getDroppedItem() : null;
+        return item && item.name ? item : null;
+    } catch (err) {
+        return null;
+    }
+}
+
+export function getNearbyItems(bot, itemName='', maxDistance=16) {
+    /**
+     * Get the items that lie on the ground within the given distance, nearest first. entity.getDroppedItem() tells the name and count of each.
+     * @param {Bot} bot - The bot to search around.
+     * @param {string} itemName - Only items with this name. Defaults to '' for all items.
+     * @param {number} maxDistance - The maximum distance to search, default 16.
+     * @returns {Entity[]} - The item entities, nearest first.
+     * @example
+     * let logs = world.getNearbyItems(bot, 'oak_log', 16);
+     **/
+    const me = bot.entity.position;
+    const found = [];
+    for (const entity of Object.values(bot.entities)) {
+        if (!entity || entity.name !== 'item' || entity === bot.entity || !entity.position) continue;
+        const distance = entity.position.distanceTo(me);
+        if (distance > maxDistance) continue;
+        if (itemName && droppedItemOf(entity)?.name !== itemName) continue;
+        found.push({ entity, distance });
+    }
+    found.sort((a, b) => a.distance - b.distance);
+    return found.map(f => f.entity);
+}
+
+
 export function getCraftableItems(bot) {
     /**
      * Get a list of all items that can be crafted with the bot's current inventory.
