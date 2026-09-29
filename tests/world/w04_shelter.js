@@ -1,5 +1,6 @@
 // W04 shelter (spec section 8 "Shelter", H3, section 6): home_pack and protected_areas on,
-// world_memory on. The bot saves the house around it with !rememberArea("home", "building"), is
+// world_memory on. The bot saves the house around it with !rememberArea("home", "home") (v0.1.4.8: only an
+// area of type home is a shelter, spec C4 and D2), is
 // teleported 40 blocks away (south-east, so the way in leads around the house to the door on the
 // north side) and runs !goToShelter. It must end inside the house with the door closed, through
 // the door (not through a wall), and the house must be untouched. A second !goToShelter answers
@@ -30,9 +31,9 @@ await scenarioMain({
             agent = s.agent;
             await resetBot(NAME);
             await placeBot(agent, h.inside, 0);
-            const saved = await command_(agent, '!rememberArea("home", "building")', 30000);
+            const saved = await command_(agent, '!rememberArea("home", "home")', 30000);
             note(`!rememberArea: ${JSON.stringify(saved)}`);
-            check(/Area "home" \(building\) saved: .*\b1 door\b/.test(saved), 'precondition: !rememberArea saved the house as "home" with its door', JSON.stringify(saved.slice(0, 200)));
+            check(/Area "home" \(home\) saved: .*\b1 door\b/.test(saved), 'precondition: !rememberArea saved the house as "home" with its door', JSON.stringify(saved.slice(0, 200)));
 
             // 32 blocks south-east of the middle of the room: 40.3 blocks from the house (spec section 8, F5)
             const far = { x: h.inside.x + 32, y: g + 1, z: h.inside.z + 32 };

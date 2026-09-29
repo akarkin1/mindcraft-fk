@@ -3,11 +3,13 @@
 // is lowered with the effect hunger (a console command) and read from the server.
 //   1. The auto-eat options of the real agent keep the defaults of the plugin (eatingTimeout) and have
 //      priority foodPoints, startAt 14 and the banned list of H4.
-//   2. Food level 6 or lower and no food: !eat answers "I have no food.".
+//   2. Food level 6 or lower and no food: !eat answers "I carry no food and know no chest with food."
+//      (v0.1.4.8, C1; the storage pack is off, so the bot knows no chest).
 //   3. Food level 6 or lower, 5 bread arrive: the bot eats (by the reflex of the plugin or by !eat):
 //      the food level reaches 18 or more, bread is used, the reply of !eat is a text of H4.
 //   4. Food level 15 or 16 (above startAt 14, so the plugin does not eat), 3 bread:
-//      !eat answers "I ate 1 bread." and the food level is 20.
+//      !eat answers "I ate 1 bread. Food 20 of 20, health 20 of 20." and the food level is 20 (v0.1.4.8, C1:
+//      the texts of !eat end with the food level and the health).
 import {
     scenarioMain, check, note, exitSoon, startAgent, stopRealAgent, NEW_FLAGS_OFF, placeBot, resetBot, command_,
     waitFor, sleep, command, commands,
@@ -55,7 +57,7 @@ await scenarioMain({
             check(st.ok, '2: precondition: the food level is 6 or lower (hunger effect)', String(st.level));
             const r2 = await command_(agent, '!eat', 30000);
             note(`2: ${JSON.stringify(r2)}`);
-            check(r2.includes('I have no food.'), '2: without food !eat answers "I have no food."', JSON.stringify(r2.slice(0, 200)));
+            check(r2.includes('I carry no food and know no chest with food.'), '2: without food !eat answers "I carry no food and know no chest with food." (C1)', JSON.stringify(r2.slice(0, 200)));
 
             // ---------------------------------------------------------- 3. low food level and bread
             const before = await food();
@@ -68,7 +70,8 @@ await scenarioMain({
             note(`3: food ${before} -> ${after}, bread left ${bread(agent)} of 5, !eat answered ${JSON.stringify(r3)}`);
             check(full.ok, '3: with bread and a low food level the bot eats: the food level reaches 18 or more (server)', `${before} -> ${after}`);
             check(bread(agent) < 5, '3: bread was eaten', `${bread(agent)} left`);
-            check(/I ate \d+ bread\.|I am not hungry\./.test(r3), '3: the reply of !eat is "I ate <n> bread." (or "I am not hungry." when the reflex was faster)', JSON.stringify(r3.slice(0, 200)));
+            check(/(I ate \d+ bread|I am not hungry)\. Food \d+ of 20, health \d+ of 20\./.test(r3),
+                '3: the reply of !eat is "I ate <n> bread. Food N of 20, health M of 20." (or "I am not hungry. ..." when a reflex was faster; C1)', JSON.stringify(r3.slice(0, 200)));
 
             // ---------------------------------------------------------- 4. above startAt: only !eat eats
             await command(`clear ${NAME} minecraft:bread`);
@@ -82,7 +85,7 @@ await scenarioMain({
             const after4 = await food();
             note(`4: food ${st4.level} -> ${after4}, bread ${bread(agent)} of 3, !eat answered ${JSON.stringify(r4)}`);
             check(untouched, '4: above startAt the plugin did not eat by itself');
-            check(r4.includes('I ate 1 bread.'), '4: !eat answers "I ate 1 bread."', JSON.stringify(r4.slice(0, 200)));
+            check(r4.includes('I ate 1 bread. Food 20 of 20, health 20 of 20.'), '4: !eat answers "I ate 1 bread. Food 20 of 20, health 20 of 20." (C1)', JSON.stringify(r4.slice(0, 200)));
             check(after4 === 20 && bread(agent) === 2, '4: the food level is 20 and 2 bread are left', `food ${after4}, bread ${bread(agent)}`);
 
             check(s.realCalls.length === 0, 'no request reached a real model class', JSON.stringify(s.realCalls));

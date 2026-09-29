@@ -8,8 +8,10 @@
 // read. Without server or Java: "World tests skipped: no test server found.", exit 0.
 // World types (mc_server.js): `flat`, the default flat world with the ground at y -61, for the
 // scenarios of v0.1.4.6 and the work above ground; `deep`, bedrock, 120 layers of stone, 3 of dirt and
-// grass at y 60, for the mining scenarios. The scenarios of each type run with their own server, the
-// flat ones first; a type none of the selected scenarios needs starts no server.
+// grass at y 60, for the mining scenarios; `base` (v0.1.4.8), the layers of `deep` with a base like the
+// owner's that each scenario builds in its region (base_world.js). The scenarios of each type run with
+// their own server, flat, deep, base; a type none of the selected scenarios needs starts no server.
+// A word that names a group (GROUPS, for example all_modes_on) selects the scenarios of the group.
 //
 // Every scenario runs in its own node process with its own temp directory as working directory
 // (bots/ lands there), in its own region of the world (200 blocks from the others). It sends
@@ -69,19 +71,53 @@ const SCENARIOS = [
     ['tall_tree', 'w22_tall_tree.js', 420, false],
     ['tools', 'w23_tools.js', 480, false],
     ['flags_off_0147', 'w29_flags_off_0147.js', 300, false],
+    // v0.1.4.8 "Stability": one defect of the play test of v0.1.4.7 per scenario, the modes of the owner on
+    ['stuck_gives_up', 'w31_stuck_gives_up.js', 660, false],
+    ['skill_stands_still', 'w32_skill_stands_still.js', 900, false],
+    ['stop_is_hard', 'w34_stop_is_hard.js', 300, false],
+    ['offhand_food', 'w41_offhand_food.js', 300, false],
+    ['reflex_switch', 'w55_reflex_switch.js', 240, false],
+    ['flags_off_0148', 'w57_flags_off_0148.js', 480, false],
     // the mining scenarios run in the deep world, with a server of their own
     ['mine_basics', 'w24_mine_basics.js', 600, false, 'deep'],
     ['shaft', 'w25_shaft.js', 900, false, 'deep'],
     ['tunnel', 'w26_tunnel.js', 600, false, 'deep'],
     ['mining_trip', 'w27_mining_trip.js', 900, false, 'deep'],
     ['mine_house', 'w28_mine_house.js', 600, false, 'deep'],
+    // v0.1.4.8: the world `base`, a base like the owner's (base_world.js), with a server of its own
+    ['base_world', 'w58_base_world.js', 300, false, 'base'],
+    ['stopped_command_reports', 'w33_stopped_command.js', 480, false, 'base'],
+    ['resume_ends', 'w35_resume_ends.js', 360, false, 'base'],
+    ['hunger_reflex', 'w42_hunger_reflex.js', 420, false, 'base'],
+    ['fence_is_safe', 'w43_fence_is_safe.js', 420, false, 'base'],
+    ['pick_up_dropped', 'w44_pick_up_dropped.js', 300, false, 'base'],
+    ['shaft_is_underground', 'w45_shaft_underground.js', 300, false, 'base'],
+    ['creeper_above', 'w46_creeper_above.js', 300, false, 'base'],
+    ['creeper_in_sight', 'w47_creeper_in_sight.js', 300, true, 'base'],
+    ['shelter_is_home', 'w48_shelter_is_home.js', 360, false, 'base'],
+    ['doors_after_reflex', 'w49_doors_after_reflex.js', 360, false, 'base'],
+    ['auto_home', 'w50_auto_home.js', 300, false, 'base'],
+    ['chest_at_fence', 'w51_chest_at_fence.js', 300, false, 'base'],
+    ['farm_cycle_whole', 'w52_farm_cycle_whole.js', 900, false, 'base'],
+    ['trees_with_axe', 'w53_trees_with_axe.js', 600, false, 'base'],
+    ['mine_asks', 'w54_mine_asks.js', 300, false, 'base'],
+    ['farm_scan', 'w56_farm_scan.js', 300, false, 'base'],
+    ['long_run', 'w60_long_run.js', 2700, false, 'base'],
 ];
+
+// Words that select a group of scenarios (spec v0.1.4.8, W30: the work scenarios of v0.1.4.7, which run
+// with the modes of the owner since v0.1.4.8).
+const GROUPS = {
+    all_modes_on: ['storage', 'harvest', 'plant', 'bone_meal', 'farm_cycle', 'farm_old_command', 'trees', 'tall_tree', 'tools',
+        'mine_basics', 'shaft', 'tunnel', 'mining_trip', 'mine_house'],
+};
 
 const args = process.argv.slice(2);
 const verbose = args.includes('--verbose');
 const showServer = args.includes('--server-log');
 const words = args.filter((a) => !a.startsWith('-'));
-const selected = SCENARIOS.filter(([name]) => words.length === 0 || words.some((w) => name.includes(w)));
+const selected = SCENARIOS.filter(([name]) => words.length === 0
+    || words.some((w) => (GROUPS[w] ? GROUPS[w].includes(name) : name.includes(w))));
 const logDir = process.env.MCW_LOG_DIR ? path.resolve(process.env.MCW_LOG_DIR) : null;
 
 const loc = locateServer();
@@ -288,6 +324,8 @@ function runScenarioOnce(name, file, timeoutS, run) {
                 cleanup = await server.commands([
                     `kill @e[type=!minecraft:player,x=${ox - 120},y=-64,z=${oz - 120},dx=240,dy=400,dz=240]`,
                     `forceload remove ${ox - 120} ${oz - 120} ${ox + 120} ${oz + 120}`,
+                    // v0.1.4.8: the copies of snapshots lie 100 to 300 blocks south of the region (world.js)
+                    `forceload remove ${ox - 120} ${oz + 121} ${ox + 120} ${oz + 330}`,
                     ...WORLD_DEFAULTS,
                 ]);
             } catch (e) { lines.push('runner cleanup error: ' + e.message); }
@@ -304,8 +342,14 @@ function runScenarioOnce(name, file, timeoutS, run) {
     });
 }
 
+// A line of a scenario, or of one of its phases ("  [phase] "); with log_timestamps on (v0.1.4.8, the long
+// run) the console of the agent puts "[HH:MM:SS] " before it.
+const LINE_HEAD = String.raw`^(\[\d\d:\d\d:\d\d\] )?(\s*\[\w+\] )?`;
+const CHECK_FAIL = new RegExp(LINE_HEAD + 'CHECK FAIL ');
+const CHECK_OR_NOTE = new RegExp(LINE_HEAD + '(CHECK|NOTE) ');
+
 function judge(r, timeoutS) {
-    const failedChecks = r.lines.filter((l) => /^(\s*\[\w+\] )?CHECK FAIL /.test(l));
+    const failedChecks = r.lines.filter((l) => CHECK_FAIL.test(l));
     const pass = !r.timedOut && r.code === 0 && failedChecks.length === 0 && r.removed;
     let reason = '';
     if (r.timedOut) reason = `timeout after ${timeoutS} s, process killed`;
@@ -317,7 +361,7 @@ function judge(r, timeoutS) {
 
 function report(r, timeoutS, label) {
     const j = judge(r, timeoutS);
-    const checkLines = r.lines.filter((l) => /^(\s*\[\w+\] )?(CHECK|NOTE) /.test(l));
+    const checkLines = r.lines.filter((l) => CHECK_OR_NOTE.test(l));
     if (!verbose) for (const l of checkLines) console.log(`    ${l}`);
     if (!j.pass && !verbose) {
         console.log('    --- last output lines of the scenario ---');
@@ -342,7 +386,7 @@ function report(r, timeoutS, label) {
 const tStart = Date.now();
 const outcomes = [];
 let hygieneProblems = [];
-console.log(`world tests v0.1.4.7: node ${process.version}, repository ${ROOT}, ${selected.length} scenario(s)`);
+console.log(`world tests v0.1.4.8: node ${process.version}, repository ${ROOT}, ${selected.length} scenario(s)`);
 console.log(`server ${loc.jar}\njava ${loc.java}`);
 
 async function runScenario([name, file, timeoutS, monsters]) {

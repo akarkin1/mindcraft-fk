@@ -6,9 +6,11 @@
 //   2. The bot gets 64 oak_leaves (30 % each; 7 successes are needed for one bone meal, 64 leaves
 //      miss that with a chance of about 1 in 2000). !makeBoneMeal(1): the bot has bone meal and
 //      still every seed, the text of F2 names the bone meal and the items used.
+// v0.1.4.8 (W30): the modes of the owner are on (MODES_PROFILE, with the home reflexes) and !makeBoneMeal is
+// typed by the player in the chat.
 import {
     scenarioMain, check, note, exitSoon, startAgent, stopRealAgent, NEW_FLAGS_OFF, placeBot, resetBot, command_,
-    giveItems,
+    giveItems, withModes, orderChannel,
 } from './helpers.js';
 import { region, prepareRegion, releaseRegion, buildComposter, composterLevel, stableInventory, itemsText } from './world.js';
 
@@ -22,17 +24,18 @@ await scenarioMain({
         const composter = { x: r.ox + 3, y: g + 1, z: r.oz };
         await buildComposter(composter, 0);
 
-        let agent = null;
+        let agent = null, orders = null;
         try {
-            const s = await startAgent(NAME, { ...NEW_FLAGS_OFF, protected_areas: true, world_memory: true, farming_pack: true });
+            const s = await startAgent(NAME, withModes({ ...NEW_FLAGS_OFF, protected_areas: true, world_memory: true, farming_pack: true }));
             agent = s.agent;
+            orders = await orderChannel(s, { at: { x: r.ox - 12, y: g + 1, z: r.oz + 12 } });
             await resetBot(NAME);
             await placeBot(agent, { x: r.ox, y: g + 1, z: r.oz }, -90);
             check(await composterLevel(composter) === 0, 'precondition: an empty composter stands 3 blocks from the bot');
 
             // ---------------------------------------------------------- 1. only seeds
             await giveItems(NAME, [['wheat_seeds', 20]], agent.bot);
-            const r1 = await command_(agent, '!makeBoneMeal(1)', 120000);
+            const r1 = await orders.order('!makeBoneMeal(1)', 120000);
             note(`1: !makeBoneMeal answered ${JSON.stringify(r1)}`);
             const inv1 = await stableInventory(NAME);
             const level1 = await composterLevel(composter);
@@ -43,7 +46,7 @@ await scenarioMain({
 
             // ---------------------------------------------------------- 2. leaves and seeds
             await giveItems(NAME, [['oak_leaves', 64]], agent.bot);
-            const r2 = await command_(agent, '!makeBoneMeal(1)', 180000);
+            const r2 = await orders.order('!makeBoneMeal(1)', 180000);
             note(`2: !makeBoneMeal answered ${JSON.stringify(r2)}`);
             const inv2 = await stableInventory(NAME);
             const level2 = await composterLevel(composter);
@@ -57,6 +60,7 @@ await scenarioMain({
             check(level2 !== null, '2: the composter is still there');
             check(s.realCalls.length === 0, 'no request reached a real model class', JSON.stringify(s.realCalls));
         } finally {
+            if (orders) await orders.quit();
             await stopRealAgent(agent);
             await releaseRegion(r);
         }

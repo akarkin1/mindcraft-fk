@@ -6,9 +6,12 @@
 //   !leaveMine: up the ladders to the surface; !goToMine: down again to the base; !leaveMine: up again.
 //   Each ends where it should (the surface next to the entrance, the level of the mine next to the
 //   base) within 120 s, the bot is never hurt and never falls; the times are noted.
+// v0.1.4.8 (W30): the modes of the owner are on (MODES_PROFILE, with the home reflexes). !leaveMine and !goToMine are
+// typed by the player in the chat; descendToLevel and setupMineBase have no command and run through runSkill,
+// which pauses unstuck as the glue does for a pack command (I1).
 import {
     scenarioMain, check, note, exitSoon, startAgent, stopRealAgent, placeBot, resetBot, command_, giveItems,
-    entityPos, fmt, startTrace, printTrace, runSkill, MINING_SETTINGS, MINING_KIT, watchHealth, largestDrop, env,
+    entityPos, fmt, startTrace, printTrace, runSkill, MINING_SETTINGS, MINING_KIT, watchHealth, largestDrop, env, withModes, orderChannel,
 } from './helpers.js';
 import { region, prepareRegion, releaseRegion, blockIs, blockNames, hdist, itemsText, stableInventory } from './world.js';
 
@@ -24,10 +27,11 @@ await scenarioMain({
         check(await blockIs({ x: r.ox, y: g - 40, z: r.oz }, 'stone'), `precondition: deep stone under the region (stone at y ${g - 40})`);
         const level = g + 1 - DEPTH;
 
-        let agent = null;
+        let agent = null, orders = null;
         try {
-            const s = await startAgent(NAME, MINING_SETTINGS);
+            const s = await startAgent(NAME, withModes(MINING_SETTINGS));
             agent = s.agent;
+            orders = await orderChannel(s, { at: { x: r.ox + 20, y: g + 1, z: r.oz + 20 } });
             await resetBot(NAME);
             await placeBot(agent, { x: r.ox, y: g + 1, z: r.oz }, 0);
             await giveItems(NAME, MINING_KIT, agent.bot);
@@ -62,7 +66,7 @@ await scenarioMain({
             ];
             for (const [cmd, way, where, words] of legs) {
                 const t0 = Date.now();
-                const reply = await command_(agent, cmd, 180000);
+                const reply = await orders.order(cmd, 180000);
                 const secs = (Date.now() - t0) / 1000;
                 const p = await entityPos(NAME);
                 note(`${cmd} (${way} ${DEPTH} blocks) took ${secs.toFixed(1)} s and answered ${JSON.stringify(reply)}; the bot is at ${fmt(p)}`);
@@ -80,6 +84,7 @@ await scenarioMain({
             note(`the bot carries ${itemsText(inv.items)}`);
             check(s.realCalls.length === 0, 'no request reached a real model class', JSON.stringify(s.realCalls));
         } finally {
+            if (orders) await orders.quit();
             await stopRealAgent(agent);
             await releaseRegion(r);
         }

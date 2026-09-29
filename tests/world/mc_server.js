@@ -66,13 +66,16 @@ export const DEEP_LAYERS = Object.freeze([
     { block: 'minecraft:dirt', height: 3 },
     { block: 'minecraft:grass_block', height: 1 },
 ]);
-export const WORLD_TYPES = Object.freeze(['flat', 'deep']);
+//   base  (v0.1.4.8) the layers of `deep`; the scenarios build a base like the owner's in their region
+//         with console commands (base_world.js: a house, a mine under it, a farm, a pen). Its own server,
+//         so that `env.world` tells a scenario that it runs there.
+export const WORLD_TYPES = Object.freeze(['flat', 'deep', 'base']);
 export const MIN_Y = -64;
 
 // The extra server properties of a world type.
 export function worldProperties(type = 'flat') {
     if (type === 'flat') return {};
-    if (type === 'deep') {
+    if (type === 'deep' || type === 'base') {
         return {
             'generator-settings': JSON.stringify({ layers: DEEP_LAYERS, biome: 'minecraft:plains', lakes: false, features: false }),
         };
@@ -84,7 +87,7 @@ export function worldProperties(type = 'flat') {
 // highest block of every layer, and y 0 (deep in the stone of the deep world). The runner tests
 // each with `execute if block`.
 export function worldProbes(type = 'flat') {
-    const layers = type === 'deep' ? DEEP_LAYERS : [
+    const layers = type === 'deep' || type === 'base' ? DEEP_LAYERS : [
         { block: 'minecraft:bedrock', height: 1 }, { block: 'minecraft:dirt', height: 2 }, { block: 'minecraft:grass_block', height: 1 },
     ];
     const probes = [];

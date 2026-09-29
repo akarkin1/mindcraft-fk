@@ -3,7 +3,8 @@
 //   1. inside a built house: !rememberArea("home", "building") saves a box that covers the house and
 //      is at most 2 blocks bigger on every side, and the door is found;
 //   2. inside a fenced field: !rememberArea("wheat_farm", "farm") finds the farm and its gate;
-//   3. on an open field: !rememberArea("field", "farm") saves nothing;
+//   3. on an open field: !rememberArea("field", "farm") saves nothing and says that no fence is near (v0.1.4.8,
+//      D5: the text of the reason no_fence_near);
 //   4. on an open field, type building: the fallback box of section 6 is saved with its text
 //      (section 8 says "nothing is saved" only for the farm; section 6 defines the building case);
 //   5. !areas lists the areas.
@@ -88,7 +89,9 @@ await scenarioMain({
             await placeBot(agent, open, 0);
             const r3 = await command_(agent, '!rememberArea("field", "farm")', 30000);
             note(`3: ${JSON.stringify(r3)}`);
-            check(r3.includes('I found no fenced ground here. Stand inside the fence and try again.'), '3: open field, farm: the reply is "I found no fenced ground here. Stand inside the fence and try again."',
+            // v0.1.4.8, D5: every failure of a scan has its own text that says what to do; here the reason is
+            // no_fence_near: "I see no fence within 6 blocks of me. Stand inside the fence or next to its gate ..."
+            check(/^I see no fence within \d+ blocks of me\. .*try again\.$/.test(r3), '3: open field, farm: the reply says that no fence is near and what to do (D5, reason no_fence_near)',
                 JSON.stringify(r3.slice(0, 200)));
             const after3 = readAreas(agent).areas || {};
             check(!('field' in after3) && Object.keys(after3).length === 2, '3: open field, farm: nothing is saved', JSON.stringify(Object.keys(after3)));

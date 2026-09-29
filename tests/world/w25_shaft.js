@@ -9,9 +9,11 @@
 //   B  20 blocks away, with 10 ladders only, down to a level 25 blocks below: the first blocks have
 //      the 10 ladders, the rest is a staircase (the way goes forward as it goes down), the bot is at
 //      the level, and it comes up again.
+// v0.1.4.8 (W30): the modes of the owner are on (MODES_PROFILE, with the home reflexes). descendToLevel and climbToSurface have
+// no command and run through runSkill, which pauses unstuck as the glue does for a pack command (I1).
 import {
     scenarioMain, check, note, exitSoon, startAgent, stopRealAgent, placeBot, resetBot, giveItems, entityPos, fmt,
-    startTrace, printTrace, runSkill, MINING_SETTINGS, MINING_KIT, watchHealth, largestDrop, env, waitFor,
+    startTrace, printTrace, runSkill, MINING_SETTINGS, MINING_KIT, watchHealth, largestDrop, env, waitFor, withModes,
 } from './helpers.js';
 import {
     region, prepareRegion, releaseRegion, blockNames, findBlocks, hdist, lavaPocket, carve, caveBox, stableInventory,
@@ -38,7 +40,7 @@ await scenarioMain({
 
         let agent = null;
         try {
-            const s = await startAgent(NAME, MINING_SETTINGS);
+            const s = await startAgent(NAME, withModes(MINING_SETTINGS));
             agent = s.agent;
             const mining = agent.work_packs?.mining;
             check(Boolean(mining), 'precondition: the mining pack is loaded');

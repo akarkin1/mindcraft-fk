@@ -9,11 +9,14 @@ fake with canned replies; nothing leaves 127.0.0.1.
 ## Running
 
 ```
-npm run test:world                       all scenarios (about 30 minutes)
+npm run test:world                       all scenarios (about 70 minutes since v0.1.4.8: the long run alone takes 30)
 node tests/world/run.js doors shelter    only scenarios whose name contains one of the words
+node tests/world/run.js all_modes_on     a group: the work scenarios w15 to w28 (W30 of v0.1.4.8)
 node tests/world/run.js --verbose        the whole output of every scenario while it runs
 node tests/world/run.js --server-log     also the server lines of every scenario
 ```
+
+The shell of the owner's machine has Node 24; the tests need Node 20: `fnm exec --using=v20.20.2 -- node tests/world/run.js ...`.
 
 Node 20 is required, as for the other tests. The exit code is 0 only if every selected scenario
 passed and nothing was left behind (see "Hygiene").
@@ -39,6 +42,7 @@ the other, the flat one first; each in its own folder of the run directory.
 |---|---|---|---|
 | `flat` | bedrock, 2 dirt, grass (the default flat world) | y -61 | the scenarios of v0.1.4.6 and the work above ground of v0.1.4.7 |
 | `deep` | bedrock, 120 stone, 3 dirt, grass | y 60 | the mining scenarios of v0.1.4.7 |
+| `base` | as `deep` | y 60 | v0.1.4.8: every scenario builds a base like the owner's in its region (`base_world.js`, below) |
 
 The deep world comes from the server property `generator-settings` with the JSON of the flat
 generator: `{"layers":[{"block":"minecraft:bedrock","height":1},{"block":"minecraft:stone","height":120},{"block":"minecraft:dirt","height":3},{"block":"minecraft:grass_block","height":1}],"biome":"minecraft:plains","lakes":false,"features":false}`
@@ -140,9 +144,13 @@ exitSoon();
   state, the position or the chat until it holds or the time is up.
 - Read results from the server, not from the bot's view: `entityPos(name)`, `blockIs(p, name)`,
   `isOpen(door)`, `entityNumber(name, 'foodLevel')`.
-- `snapshotBox(box)` clones a box (the house) to y 280 above it on the server;
-  `compareSnapshot(snap, bot)` compares on the server with `execute if blocks`, lists the changed
-  blocks with their names, and treats a door that is only open or closed as a state difference.
+- `snapshotBox(box)` clones a box (the house) on the server to a place 100 blocks and more south of it,
+  at the same height, force-loaded while it lives (v0.1.4.8; before, copies lay at y 280 over the same
+  columns, and the new depth check of the bot, which reads each column from the top of the world down, took
+  copies of natural blocks for the ground: "I am underground" on the surface in w28); `compareSnapshot(snap)`
+  compares on the server with `execute if blocks`, lists the changed blocks with their names (read from the
+  server) and treats a door that is only open or closed as a state difference; `dropSnapshot` removes the
+  copy and releases its chunks.
 - A scenario that needs a restart runs phases: `runPhase(SELF, 'second')` starts the same file
   again with `--phase=second` (see `w12_rules.js`).
 - A scenario cleans up what it made: its agent, its player, its mobs (`kill`), difficulty and time.
@@ -172,6 +180,62 @@ the result of a command that the fake model gave; `watchHealth(bot)` sees every 
 peaceful the health comes back within seconds, a sample can miss a hit); `largestDrop(rows)` finds a
 fall in a trace. `NEW_FLAGS_OFF` has the four switches of v0.1.4.7 off, `WORK_COMMANDS` their
 commands, `MINING_SETTINGS` and `MINING_KIT` what the mining scenarios start from.
+
+### Helpers of v0.1.4.8
+
+The play test of v0.1.4.7 failed where the scenarios had not looked: they ran with the modes of the bot off,
+gave their orders straight to the command parser, and built test worlds that did not look like the owner's
+base. Since v0.1.4.8 (spec section 12, T2):
+
+- **`MODES_PROFILE`** (`helpers.js`): the modes of `profiles/defaults/assistant.json`, the owner's base profile
+  (self_preservation, unstuck, self_defense, item_collecting, torch_placing, elbow_room, idle_staring on;
+  cowardice, hunting, cheat off), plus the home reflexes door_closing, night_shelter, creeper_safety, hunger.
+  `withModes(settings, modes)` returns the settings with `home_pack` on, every home reflex on and these modes as
+  the modes of the profile. Every scenario that tests a skill uses it. `MODES_OFF` stays only for scenarios
+  that test a switch that is off (w29, w57, the phases "off" and "saved" of w20, the scenarios of v0.1.4.6).
+  `startAgent` checks that the modes of the agent are as the profile of the scenario sets them.
+- **`OWNER_SWITCHES`**: the switches of v0.1.4.6 and v0.1.4.7 as the owner plays (every pack on, protected areas,
+  rules, world memory). `FLAGS_0148_OFF` has the new settings of v0.1.4.8 at their defaults (the behaviour of
+  v0.1.4.7), `FLAGS_0148_ON` has them all on (the long run).
+- **Orders in the chat**: `orderChannel(s, { name, at, gamemode })` connects the player (creative by default,
+  so monsters leave it alone) at `at`. `ch.order(text, ms)` types a command in the chat and resolves with the
+  text the agent answered in the chat (`''` for none, `'(timeout)'`, `'(not received)'`); the agent runs it
+  through its real path (respondFunc, handleMessage, the branch of a command typed by a player: `last_order`
+  is set, the model is not asked, the result goes to the chat, not into the history). `ch.orderInfo` gives the
+  details, among them the history lines "Command !x was stopped by ..." (I5) added while it ran. `ch.say(text)`
+  writes a message for the model.
+- **What the agent did** (`recordAgent`, installed by `startAgent`): `s.messages` (every handleMessage),
+  `s.routes`, `s.chats` (everything the bot said, also the texts of the modes), `s.behavior` (every line of the
+  behaviour log: "I'm stuck!", "I am stuck at ..."), `s.added` (every line added to the history), `s.logs`
+  (every console line, for example "Door service: closed ..."), `s.killed` (the text of cleanKill).
+  `saidSince(s, part, t)` searches the behaviour log and the chat. Nothing is changed: every wrapper calls the
+  original. A cleanKill prints `CHECK FAIL the agent process was ended by cleanKill: <text>` before the
+  process ends, unless the scenario expects it (`s.killExpected = true`).
+- `runSkill` pauses the mode unstuck at the start, as the glue does for every pack command (spec I1), so a
+  pack function without a command (descendToLevel, setupMineBase, digTunnel) runs as inside its command.
+
+### The world `base` (`base_world.js`)
+
+`basePlan(region(BASE_RADIUS))` gives the coordinates, `buildBase(plan)` builds it (about 0.6 s),
+`verifyBase(plan)` reads every part back from the server, `saveHomePlace(agent, plan)` saves the place "home"
+in the memory of the bot (a place, never an area: the owner's house was a place only, finding M5). The
+offsets are named constants of the module, from the origin of the region (x east, z south); `g` = 60 is the
+grass:
+
+| Part | Where (offsets from the origin) |
+|---|---|
+| house | planks, x -4..4, z -5..5, floor g, walls g+1..g+4, roof g+5 (9 x 6 x 11 blocks), oak_log posts, glass at (-4, g+2, 0), (4, g+2, 0), (0, g+2, 5); oak door (0, g+1, -5) in the north wall; red bed foot (-3, g+1, 3), head (-3, g+1, 4); chest (3, g+1, 4) with 12 bread and 64 leaf_litter; torches (-3, g+1, -4), (3, g+1, -4); the place "home" at (0, g+1, 1) |
+| shaft | oak trapdoor (2, g, -2) in the floor, closed, facing south (climbable when open, over the ladders); ladders facing south at (2, 41..59, -2) on the north wall |
+| room | air x 0..4, y 41..43, z -2..2 (stone floor at y 40), under the house; chest (0, 41, 2) with 64 cobblestone and 16 torches; crafting table (4, 41, 2); torch (4, 41, -2) |
+| descent | 16 steps of loose blocks along z 0: step k at x 4+k, feet y 41-k, 3 high, cobblestone under each step; from x 5 (feet 40) to x 20 (feet 25) |
+| landing | air x 21..23, y 25..27, z -1..1; torch (23, 25, -1) |
+| tunnel | 1 wide, 2 high, 12 long: x 22, y 25..26, z 2..13; stone around it, grass 34 blocks above |
+| farm | fenced field of 9 x 9, x -26..-18, z -4..4 (`fieldPlan`): oak fence at g+1, gate (-22, g+1, -4) facing south, water (-22, g, 0), farmland with wheat (the row z -2 ripe, age 7; the rest age 3; a scenario chooses the crops), composter (-20, g+1, -3) inside, chest (-26, g+1, 0) in the west fence line (a post replaced) with 4 wheat and a fence post on it (the owner's build as finding C4 describes it) |
+| pen | oak fence of 9 x 9, x 8..16, z 4..12, gate (12, g+1, 4) facing south, grass inside, a cow at (14, g+1, 8) and a chicken at (12, g+1, 10) (tags `mcw_pen_cow`, `mcw_pen_chicken`, persistent) |
+| mine box | x 0..23, y 24..59, z -2..13: room, descent, landing, tunnel (for an area of type mine; W46 to W48 save it up to 6 blocks under the surface, as the owner's box) |
+
+`penFence(plan)`, `farmFence(plan)` and `penAnimalsWhere(plan)` read the fences and the animals back.
+`w58_base_world.js` proves the build (every part read back) and that the agent can stand in every part.
 
 ## Reading a failing scenario
 
@@ -216,6 +280,41 @@ health of the bot. Set `MCW_LOG_DIR` to keep the full output of each run and the
 | `w28_mine_house.js` | M (deep): a protected house 5 blocks from the bot: the entrance of the mine is at least 8 blocks from it, nothing under or beside the house changed |
 | `w29_flags_off_0147.js` | the four switches of v0.1.4.7 off: none of their 14 commands exists for the model, no pack object, no `chests.json` or `mines.json`, `!collectBlocks` for logs and ore as in v0.1.4.6 |
 
+Release v0.1.4.8 "Stability" (spec section 12, T2): one defect of the play test of v0.1.4.7 per scenario
+(the ids of `FINDINGS_PLAYTEST_0147.md` in brackets), the modes of the owner on, the orders typed by the
+player in the chat. The comment at the top of each file says how it would have failed against v0.1.4.7.
+
+| Id | File | World | What it proves |
+|---|---|---|---|
+| W30 | `w15` to `w28` (group `all_modes_on`) | flat, deep | the work scenarios of v0.1.4.7 with `MODES_PROFILE` and their orders in the chat; `!mineOre(..., true)` for a new mine (E4), the entrance 16 blocks from a house (E4), `I tilled N blocks and planted ...` (E2), `N plants are not ripe.` (E2) |
+| W31 | `w31_stuck_gives_up.js` | flat | [S1, S2] in a room of obsidian with `stuck_restart_after` 3: the reflex gives up twice ("I am stuck at (x, y, z) and could not walk away."), the model is told the position, the process lives; the third failure in a row ends it |
+| W32 | `w32_skill_stands_still.js` | flat | [S15] `!goToBed` at dusk waits 40 s at the bed without "I'm stuck!"; `!makeBoneMeal`, `!storeItems` into 24 chests with a free slot each, `!getTool` from a known chest: no "I'm stuck!", their result in the world (they are too quick to stand 25 s, which is noted) |
+| W33 | `w33_stopped_command.js` | base | [S3, T1] `!chopTrees(20, "oak")` stopped by `!stop`: the history holds "Command !chopTrees was stopped by !stop. Done so far: I cut N oak_log and picked up M." |
+| W34 | `w34_stop_is_hard.js` | flat | [S9] `!goToCoordinates` 70 blocks, `!stop` after 6, 14, 22 blocks: the bot stands within 1 s, no kill |
+| W35 | `w35_resume_ends.js` | base | [S5] `!followPlayer`, then `!storeItems`: afterwards the bot does not follow again |
+| W41 | `w41_offhand_food.js` | flat | [E1] bread in slot 45: `!inventory` says "In the off-hand: bread 6", `!eat` eats it |
+| W42 | `w42_hunger_reflex.js` | base | [E3] food 6, no food carried, bread in the known chest of the house: the bot fetches and eats without an order and without the model |
+| W43 | `w43_fence_is_safe.js` | base | [P1] the model's `!collectBlocks("oak_fence", 20)` in the pen with `protect_built_blocks`: every fence stands, the animals are inside, the text of B1 |
+| W44 | `w44_pick_up_dropped.js` | base | [P2] a second bot drops 8 fences and a gate 12 blocks away: `!pickUpItems` gets them |
+| W45 | `w45_shaft_underground.js` | base | [R1, M8] at dusk in the room at y 41 and at the landing at y 25 `night_shelter` does nothing; on the surface it runs (control) |
+| W46 | `w46_creeper_above.js` | base | [R3] creepers on the surface above the mine (area of type mine): no reaction in 30 s, at y 41 and at y 25 |
+| W47 | `w47_creeper_in_sight.js` | base | [R3] a creeper 8 blocks away in the same tunnel: the reflex reacts (monsters: 2 of 3 runs) |
+| W48 | `w48_shelter_is_home.js` | base | [R2, M5] areas mine and pen nearer than the house: at dusk the bot goes into the house (the place "home") |
+| W49 | `w49_doors_after_reflex.js` | base | [R5, R9] the night reflex walks the bot from the farm into the house: gate and door are closed afterwards, "Door service: closed ..." |
+| W50 | `w50_auto_home.js` | base | [M5] a restart with the place "home" and no area: the area "home" (type home, source auto) exists, the bot says so |
+| W51 | `w51_chest_at_fence.js` | base | [C4] `!storeItems` at the farm: the chest in the fence line opens and is in the index |
+| W52 | `w52_farm_cycle_whole.js` | base | [F1, F2, F3] unripe wheat, leaf litter in the known chest: one `!farmCycle` makes bone meal, uses it and ends with harvested wheat |
+| W53 | `w53_trees_with_axe.js` | base | [T4, T1] `!chopTrees(6)` with a pickaxe in the hand: an axe is made and held for every log, 6 logs or more |
+| W54 | `w54_mine_asks.js` | base | [M1, M3, M5] `!mineOre("iron", 8)` with no mine: the text asks, nothing dug or crafted, the proposed entrance 16 blocks from home |
+| W55 | `w55_reflex_switch.js` | flat | [R4] `!setMode` of the five safety reflexes from the model is refused; typed by the player it works |
+| W56 | `w56_farm_scan.js` | base | [P5] `!rememberArea("farm", "farm")` from outside the gate saves the farm with its gate |
+| W57 | `w57_flags_off_0148.js` | flat | every new setting of v0.1.4.8 at its default: the behaviour of v0.1.4.7 (the escape that returns says "I'm free.", no give-up; free fences can be collected, no knowledge block, no repeat guard, no text to the chat, no time stamps, no `last_exit.json`) |
+| W58 | `w58_base_world.js` | base | the harness of the base world: every part read back from the server, the agent stands in every part, a typed order answers in the chat |
+| W60 | `w60_long_run.js` | base | [all 20 ends of the process] 60 orders in a fixed order over 30 minutes (at least 15 s apart), every part and setting on, the daylight cycle on: the process never ends, every order has a result text (the endless `!followPlayer` is answered by the `!stop` after it), the bot is alive at the end |
+
+The chat kick of the play test (S12) cannot happen on the test server, which does not sign chat: no world
+scenario for it (spec 12, T2.4).
+
 ## Hygiene
 
 The runner checks at the end and fails the run otherwise: the java process it started has ended,
@@ -247,6 +346,26 @@ not start, and it never connects to port 55916.
 - Leaves never decay while the random tick speed is 0, so no sapling comes from them; a scenario
   that needs a sapling gives one. A ripe wheat drops 0 to 3 seeds; a scenario that plants again at
   once gives a few seeds, or the result would depend on luck.
+- A command typed by a player (the orders of `orderChannel`) answers only in the chat; its result does not go
+  into the history and asks no model. A command the model gives puts its result into the history as a
+  system line. Scenarios that test what the model is told (W31, W43, W55) let the fake model give the order.
+- In a closed room of 1 x 1 x 2 (obsidian, W31 and W57) the path search finds no way out and the escape of
+  unstuck returns at once without moving ("Moved away from (x, y, z) to (x, y, z)."): with
+  `stuck_restart_after` 1 (v0.1.4.7) that is "I'm free.", no kill; above 1 it is a failed escape. The kill of
+  v0.1.4.7 came only from an escape that did not return within 10 s.
+- A chest alone in a fence line is a way through the fence: it is 0.875 blocks high and the path search jumps
+  onto it and down (seen in W49: the night reflex left the farm over the chest, not through the gate), and the
+  farm scan calls such a fence "not closed" (W56). The chest of the farm of the base has a fence post on it.
+- A trapdoor above a ladder is climbable when it is open and faces the same way as the ladder (both `facing=south`
+  in the base).
+- The daylight cycle is stopped by the runner; a scenario that needs dusk sets `time set 12500` (W45, W48, W49).
+  The long run switches the cycle on: dusk comes about 9 minutes after `time set 1000`.
+- The mode torch_placing puts a torch at the feet of an idle bot that carries torches when no torch is within
+  6 blocks, also by day in the open (upstream). A scenario that compares the inventory or the blocks around
+  the bot before and after an order either gives no torches (W54) or takes the numbers right before the order
+  (w15).
+- A player in creative mode is ignored by monsters; the player of `orderChannel` is in creative unless a
+  scenario needs it to drop items (W44: survival).
 - The old `!collectBlocks` of v0.1.4.6 took no crop inside a saved farm (the air above a crop was
   a block of the farm for its guard; fixed in v0.1.4.7, Amendment 2 I5, phase `saved` of `w20`), and
   at a closed fenced field that is not saved it did nothing for 210 s (known, not fixed): `w20`

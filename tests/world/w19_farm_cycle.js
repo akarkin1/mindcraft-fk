@@ -7,9 +7,14 @@
 //   the wheat is in the chest (7 wheat), the ripe cells are planted again, the empty cells are planted,
 //   the young wheat stands, no farmland became dirt, the fence is whole, the gate is closed, and the
 //   text of F2 goes back to the model in the order harvest, store, plant, gate.
+// v0.1.4.8 (W30): the modes of the owner are on (MODES_PROFILE, with the home reflexes). The cycle has the step
+// with bone meal by default (spec v0.1.4.8 E2, options.fertilize true): here it finds nothing to compost (the bot
+// carries only seeds, which are never composted, and there is no composter), so sentences about it stand between
+// the planting and "The gate is closed." (seen: "I found no composter at the farm or within 32 blocks. 48 plants
+// are growing. Nothing to do now."); the numbers of the unripe plants may stand there instead of after the harvest.
 import {
     scenarioMain, check, note, exitSoon, startAgent, stopRealAgent, NEW_FLAGS_OFF, placeBot, resetBot, command_,
-    giveItems, connectPlayer, quitPlayer, waitFor, waitIdle, historyTurn,
+    giveItems, connectPlayer, quitPlayer, waitFor, waitIdle, historyTurn, withModes,
 } from './helpers.js';
 import {
     region, prepareRegion, releaseRegion, fieldPlan, buildField, buildChest, chestItems, cropAges, blockNames, isOpen,
@@ -34,7 +39,7 @@ await scenarioMain({
 
         let agent = null, player = null;
         try {
-            const s = await startAgent(NAME, { ...NEW_FLAGS_OFF, protected_areas: true, world_memory: true, farming_pack: true, storage_pack: true });
+            const s = await startAgent(NAME, withModes({ ...NEW_FLAGS_OFF, protected_areas: true, world_memory: true, farming_pack: true, storage_pack: true }));
             agent = s.agent;
             await resetBot(NAME);
             await placeBot(agent, f.inside, 0);
@@ -80,7 +85,7 @@ await scenarioMain({
 
             const at = `(${chest.x}, ${chest.y}, ${chest.z})`;
             const parts = [
-                'Farm "wheat_farm": I harvested 7 wheat and planted 7 again. 35 plants are not ripe yet.',
+                'Farm "wheat_farm": I harvested 7 wheat and planted 7 again.',
                 `I stored 7 wheat in the chest at ${at}.`,
                 'I planted 6 wheat_seeds.',
                 'The gate is closed.',
@@ -89,6 +94,10 @@ await scenarioMain({
             check(idx.every((i) => i >= 0) && idx.every((i, k) => k === 0 || i > idx[k - 1]),
                 'the text of F2 for the cycle: harvest, stored in the chest, planted, "The gate is closed." in this order', `${JSON.stringify(text)}; positions ${JSON.stringify(idx)}`);
             check(text.startsWith(parts[0]) && text.trimEnd().endsWith(parts[3]), 'the text starts with Farm "wheat_farm": and ends with "The gate is closed."', JSON.stringify(text));
+            // v0.1.4.8, E2: the text names the plants that are not ripe ("N plants are not ripe." after the harvest,
+            // or "N plants are growing. Nothing to do now." when there is nothing to make bone meal from)
+            const growing = /(\d+) plants are (not ripe( yet)?|growing)\./.exec(text);
+            check(Boolean(growing), 'the text names the plants that are not ripe or growing (E2)', JSON.stringify(text));
             check(s.realCalls.length === 0, 'no request reached a real model class', JSON.stringify(s.realCalls));
         } finally {
             await quitPlayer(player);

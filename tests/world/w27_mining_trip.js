@@ -8,9 +8,12 @@
 //      the mine holds cobblestone, the mine is in the store (level 16), the text of M4.
 //   2. !mineOre("iron", 6) again: the same mine (one mine, the same entrance), the bot goes down the
 //      same shaft, the tunnel goes on at its end (it is longer), the bot comes back with 6 more.
+// v0.1.4.8 (W30): the modes of the owner are on (MODES_PROFILE, with the home reflexes) and the orders are typed by the player
+// in the chat. The first trip is ordered with new_mine true: since v0.1.4.8 (E4) the bot asks and digs nothing
+// when it knows no mine for the ore. The second trip uses the known mine without it.
 import {
     scenarioMain, check, note, exitSoon, startAgent, stopRealAgent, placeBot, resetBot, command_, giveItems, entityPos,
-    fmt, startTrace, printTrace, MINING_SETTINGS, MINING_KIT, watchHealth, env, commands,
+    fmt, startTrace, printTrace, MINING_SETTINGS, MINING_KIT, watchHealth, env, commands, withModes, orderChannel,
 } from './helpers.js';
 import { region, prepareRegion, releaseRegion, chestItems, stableInventory, itemsText, hdist } from './world.js';
 
@@ -37,10 +40,11 @@ await scenarioMain({
         await commands(ore, 120000);
         note(`${ore.length} blocks of iron_ore in a grid at y ${LEVEL} and ${LEVEL + 1}`);
 
-        let agent = null;
+        let agent = null, orders = null;
         try {
-            const s = await startAgent(NAME, MINING_SETTINGS);
+            const s = await startAgent(NAME, withModes(MINING_SETTINGS));
             agent = s.agent;
+            orders = await orderChannel(s, { at: { x: r.ox - 40, y: g + 1, z: r.oz - 40 } });
             await resetBot(NAME);
             await placeBot(agent, { x: r.ox + 1, y: g + 1, z: r.oz + 1 }, 0);
             await giveItems(NAME, MINING_KIT, agent.bot);
@@ -49,10 +53,10 @@ await scenarioMain({
             // ---------------------------------------------------------- 1. the first trip
             const trace1 = startTrace(async () => ({ pos: await entityPos(NAME) }), 500);
             const t1 = Date.now();
-            const reply1 = await command_(agent, '!mineOre("iron", 6)', 900000);
+            const reply1 = await orders.order('!mineOre("iron", 6, true)', 900000);
             const rows1 = await trace1.stop();
-            printTrace('1: !mineOre("iron", 6)', rows1, { pos: (x) => fmt(x.pos) }, 50);
-            note(`1: !mineOre("iron", 6) answered after ${((Date.now() - t1) / 1000).toFixed(1)} s: ${JSON.stringify(reply1)}`);
+            printTrace('1: !mineOre("iron", 6, true)', rows1, { pos: (x) => fmt(x.pos) }, 50);
+            note(`1: !mineOre("iron", 6, true) answered after ${((Date.now() - t1) / 1000).toFixed(1)} s: ${JSON.stringify(reply1)}`);
             const mine1 = agent.packContext().mines?.get('iron') ?? null;
             note(`1: the mine in the store: ${JSON.stringify(mine1 && { entrance: mine1.entrance, level: mine1.level, chest: mine1.chest, direction: mine1.direction, length: mine1.length, end: mine1.end })}`);
             const end1 = await entityPos(NAME);
@@ -75,7 +79,7 @@ await scenarioMain({
             const ironBefore = (inv1.items.raw_iron || 0) + (chest1?.raw_iron || 0);
             const trace2 = startTrace(async () => ({ pos: await entityPos(NAME) }), 500);
             const t2 = Date.now();
-            const reply2 = await command_(agent, '!mineOre("iron", 6)', 900000);
+            const reply2 = await orders.order('!mineOre("iron", 6)', 900000);
             const rows2 = await trace2.stop();
             printTrace('2: !mineOre("iron", 6) again', rows2, { pos: (x) => fmt(x.pos) }, 50);
             note(`2: !mineOre("iron", 6) answered after ${((Date.now() - t2) / 1000).toFixed(1)} s: ${JSON.stringify(reply2)}`);
@@ -98,6 +102,7 @@ await scenarioMain({
             check(hp.min >= 20, 'the bot was never hurt on both trips', JSON.stringify(hp.hurt.slice(0, 5)));
             check(s.realCalls.length === 0, 'no request reached a real model class', JSON.stringify(s.realCalls));
         } finally {
+            if (orders) await orders.quit();
             await stopRealAgent(agent);
             await releaseRegion(r);
         }
