@@ -118,9 +118,10 @@ describe('!rememberArea(name, type)', () => {
         assert.equal(area.source, 'radius');
     });
 
-    test('a farm without a fence: the text of the spec, nothing is saved', async () => {
+    // v0.1.4.8 (D5, part G): the farm is looked for with findFencedGroundNear, its reason gives the text
+    test('a farm without a fence: the text of the scan, nothing is saved', async () => {
         const agent = makeAgent({ at: { x: 100.5, y: 64, z: 100.5 } });
-        assert.equal(await command('!rememberArea').perform(agent, 'farm', 'farm'), 'I found no fenced ground here. Stand inside the fence and try again.');
+        assert.equal(await command('!rememberArea').perform(agent, 'farm', 'farm'), 'I see no fence within 6 blocks of me. Stand inside the fence or next to its gate and try again.');
         assert.equal(agent.area_store.size, 0);
     });
 
@@ -134,7 +135,7 @@ describe('!rememberArea(name, type)', () => {
 
     test('an unknown type, a bad name, no store', async () => {
         const agent = makeAgent({ at: { x: 100.5, y: 64, z: 100.5 } });
-        assert.equal(await command('!rememberArea').perform(agent, 'home', 'house'), 'The type of an area is "building" or "farm".');
+        assert.equal(await command('!rememberArea').perform(agent, 'home', 'house'), 'The type of an area is "home", "building", "farm", "pen" or "mine".'); // v0.1.4.8, I4
         assert.equal(await command('!rememberArea').perform(agent, '   ', 'building'), 'An area needs a name of 1 to 64 characters.');
         assert.equal(await command('!rememberArea').perform(makeAgent({ at: { x: 0, y: 64, z: 0 }, areas: false }), 'home', 'building'), 'Protected areas are off.');
     });
@@ -239,7 +240,10 @@ describe('!rememberHere with protected areas', () => {
         const agent = makeAgent({ at: { x: house.inside.x + 0.5, y: house.inside.y, z: house.inside.z + 0.5 }, world });
         const reply = await command('!rememberHere').perform(agent, 'home');
         assert.match(reply, /^Location saved as "home"\. I also saved the building around it as a protected area: \d+ x \d+ x \d+ blocks, 1 door\.$/);
-        assert.equal(agent.area_store.get('home').type, 'building');
+        // v0.1.4.8 (part G): the building of the place "home" is an area of the type home, the only shelter (C4)
+        assert.equal(agent.area_store.get('home').type, 'home');
+        assert.match(await command('!rememberHere').perform(agent, 'barn'), /^Location saved as "barn"\. I also saved the building around it/);
+        assert.equal(agent.area_store.get('barn').type, 'building', 'another name: a building');
     });
 
     test('an area of that name exists already, or no building, or no store: as before', async () => {
@@ -275,8 +279,9 @@ describe('the commands of the home pack (H7): the text of the pack is the reply,
     function homeAgent() {
         const { world, house } = makeWorld();
         const agent = makeAgent({ at: { x: house.inside.x + 0.5, y: house.inside.y, z: house.inside.z + 0.5 }, world });
-        agent.area_store.set({ name: 'home', type: 'building', min: house.min, max: house.max, source: 'manual' });
-        Object.assign(agent.bot, { time: { timeOfDay: 1000 }, thunderState: 0, rainState: 0, food: 20, entities: {}, players: {}, findBlocks: () => [] });
+        // v0.1.4.8, C4: only an area of type home is a shelter
+        agent.area_store.set({ name: 'home', type: 'home', min: house.min, max: house.max, source: 'manual' });
+        Object.assign(agent.bot, { time: { timeOfDay: 1000 }, thunderState: 0, rainState: 0, food: 20, health: 20, entities: {}, players: {}, findBlocks: () => [] });
         agent.labels = [];
         agent.actions = {
             async runAction(label, fn) {
@@ -295,8 +300,9 @@ describe('the commands of the home pack (H7): the text of the pack is the reply,
         try {
             const agent = homeAgent();
             assert.equal(await command('!goToShelter').perform(agent), 'I am in the shelter already.');
-            assert.equal(await command('!eat').perform(agent), 'I am not hungry.');
-            assert.equal(await command('!goToBed').perform(agent), 'I cannot sleep now, it is not night.');
+            // v0.1.4.8, C1 and C6: the texts name the food level, the health and the time until the night
+            assert.equal(await command('!eat').perform(agent), 'I am not hungry. Food 20 of 20, health 20 of 20.');
+            assert.equal(await command('!goToBed').perform(agent), 'I cannot sleep now, it is day. The night starts in about 9 minutes.');
             assert.deepEqual(agent.labels, ['action:goToShelter', 'action:eat', 'action:goToBed']);
         } finally {
             settingsModule.default.home_pack = false;
@@ -314,14 +320,16 @@ describe('the commands of the home pack (H7): the text of the pack is the reply,
 });
 
 describe('the descriptions of the spec', () => {
+    // v0.1.4.8 (part G): the descriptions say what the commands do now (five types, only a home as shelter,
+    // eat until full); the size of the prompt made them shorter (tests/routing/commands.js holds them too)
     test('!rememberArea and !allowChanges', () => {
-        assert.equal(command('!rememberArea').description, 'Remember the building or the fenced farm you are standing in as a protected area. In a building you will not break or place blocks. In a farm you will only plant and harvest. Use this when the player says "this is home", "this is our base", "this is the farm", or tells you not to damage a place.');
-        assert.equal(command('!allowChanges').description, 'Allow yourself to break and place blocks in a protected area for some minutes. Use this ONLY when the player tells you to build, repair or break something inside that area.');
+        assert.equal(command('!rememberArea').description, 'Save the place you stand in as a protected area: home (the house), building, farm (only plant and harvest), pen (animals) or mine (only natural blocks). Use this when the player says "this is home", "this is the farm" or "this is the mine".');
+        assert.equal(command('!allowChanges').description, 'Allow yourself to break and place blocks in a protected area for some minutes. ONLY when the player tells you to build, repair or break something there.');
     });
 
     test('!goToShelter and !eat, and !goToBed with and without the home pack', () => {
-        assert.equal(command('!goToShelter').description, 'Go to your shelter, get in through the door and close it. Use this when night comes, when monsters are near, when the player says "get to shelter", "go home" or "go inside".');
-        assert.equal(command('!eat').description, 'Eat the best food you have. Use this when you are hungry or hurt, or when the player tells you to eat.');
+        assert.equal(command('!goToShelter').description, 'Go into your home and close the door. Use this when night comes, when monsters are near, when the player says "get to shelter", "go home" or "go inside".');
+        assert.equal(command('!eat').description, 'Eat until you are full, and until your health is full while you have food. Use this when the player tells you to eat, or when you are hungry or hurt.');
         assert.equal(command('!goToBed').description, 'Go to the nearest bed and sleep.');
         settingsModule.default.home_pack = true;
         try {

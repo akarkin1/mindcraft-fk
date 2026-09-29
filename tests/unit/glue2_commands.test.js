@@ -135,10 +135,12 @@ describe('the commands of v0.1.4.7: names, descriptions and parameters of the sp
 
     test('the parser fills the defaults', () => {
         const cases = [
-            ['!storeItems', []], ['!fetchItem("bread")', ['bread', 1]], ['!chests', []], ['!farmCycle', ['']], ['!harvest("wheat_farm")', ['wheat_farm']],
+            // v0.1.4.8 (part G): !chests has an item, !mineOre new_mine, !chopTrees takes a word first too
+            ['!storeItems', []], ['!fetchItem("bread")', ['bread', 1]], ['!chests', ['']], ['!farmCycle', ['']], ['!harvest("wheat_farm")', ['wheat_farm']],
             ['!plant', ['wheat_seeds', '']], ['!plant("carrot")', ['carrot', '']], ['!makeBoneMeal', [1]], ['!fertilize', ['']], ['!chopTrees', [8, '']],
-            ['!chopTrees(4, "birch")', [4, 'birch']], ['!getTool("pickaxe")', ['pickaxe', '']], ['!craftSupplies("ladder")', ['ladder', 1]],
-            ['!mineOre("iron")', ['iron', 8]], ['!goToMine', ['']], ['!leaveMine', []],
+            ['!chopTrees(4, "birch")', [4, 'birch']], ['!chopTrees("birch", 4)', ['birch', '4']], ['!chopTrees("", 8)', ['', '8']],
+            ['!getTool("pickaxe")', ['pickaxe', '']], ['!craftSupplies("ladder")', ['ladder', 1]],
+            ['!mineOre("iron")', ['iron', 8, false]], ['!mineOre("iron", 8, true)', ['iron', 8, true]], ['!goToMine', ['']], ['!leaveMine', []],
         ];
         for (const [message, args] of cases) assert.deepEqual(M.index.parseCommandMessage(message).args, args, message);
         assert.equal(M.index.parseCommandMessage('!fetchItem("not_an_item", 2)'), 'Invalid item type: not_an_item.');
@@ -158,7 +160,8 @@ describe('each command calls its pack and answers with the text of the result', 
         ['!chopTrees', [8, 'oak'], 'wood', 'chopTrees', [8, 'oak']],
         ['!getTool', ['pickaxe', 'stone'], 'wood', 'ensureTool', ['pickaxe', 'stone']],
         ['!craftSupplies', ['ladder', 9], 'wood', 'craftSupplies', ['ladder', 9]],
-        ['!mineOre', ['iron', 6], 'mining', 'mineOre', ['iron', 6]],
+        // v0.1.4.8 (E4): new_mine reaches the pack as options.newMine, false without it
+        ['!mineOre', ['iron', 6], 'mining', 'mineOre', ['iron', 6, { newMine: false }]],
         ['!leaveMine', [], 'mining', 'climbToSurface', []],
     ];
     for (const [name, args, pack, fn, expected] of CASES) {
@@ -323,8 +326,17 @@ describe('storage: the old chest commands and !chests', () => {
         assert.deepEqual(agent.work_packs.storage.calls, []);
     });
 
+    // v0.1.4.8 (C2): chestsText(ctx, item, dimension), the item empty for the list of all chests
     test('!chests: chestsText of the pack for the dimension of the bot', () => {
-        assert.equal(command('!chests').perform(makeAgent()), 'chests of overworld ctx');
+        const packs = makePacks();
+        const seen = [];
+        packs.storage.chestsText = (ctx, item, dimension) => {
+            seen.push([ctx.marker, item, dimension]);
+            return `chests of ${dimension} ${ctx.marker}`;
+        };
+        assert.equal(command('!chests').perform(makeAgent({ packs })), 'chests of overworld ctx');
+        assert.equal(command('!chests').perform(makeAgent({ packs }), 'wheat'), 'chests of overworld ctx');
+        assert.deepEqual(seen, [['ctx', '', 'overworld'], ['ctx', 'wheat', 'overworld']]);
     });
 
     test('!chests with the real storage pack and an index in memory', () => {

@@ -4,7 +4,7 @@ import { VisionInterpreter } from './vision/vision_interpreter.js';
 import { Prompter } from '../models/prompter.js';
 import { initModes } from './modes.js';
 import { initBot } from '../utils/mcdata.js';
-import { containsCommand, commandExists, executeCommand, truncCommandMessage, isAction, blacklistCommands } from './commands/index.js';
+import { containsCommand, commandExists, executeCommand, truncCommandMessage, isAction, blacklistCommands, commandCallText } from './commands/index.js';
 import { ActionManager } from './action_manager.js';
 import { NPCContoller } from './npc/controller.js';
 import { MemoryBank } from './memory_bank.js';
@@ -28,8 +28,18 @@ import { setUsageSink } from './cost/usage_context.js';
 import { CostMeter } from './cost/cost_meter.js';
 import { AreaStore } from './areas/area_store.js';
 import { installAreaGuard } from './areas/area_guard.js';
+import { PlacedStore } from './areas/placed_store.js';
+import { autoHome } from './areas/auto_home.js';
 import { RuleStore } from './rules/rule_store.js';
-import { autoEatOptions, passThrough, enterBuilding, doorIsSafe } from './packs/home/index.js';
+import { autoEatOptions, passThrough, enterBuilding, doorIsSafe, foodItems, moveOffhandBack, createDoorService } from './packs/home/index.js';
+import { whereAmI as whereAmIOf } from './reflex/where_am_i.js';
+import { knowledgeText } from './knowledge/knowledge_text.js';
+import { writeExit, readExit, restartNote } from './restart_context.js';
+import { RepeatGuard } from './repeat_guard.js';
+import { withTimeLimit } from '../utils/kill_timer.js';
+
+// v0.1.4.8: the longest wait of a step at spawn that talks to the server (the move out of the off-hand)
+const SPAWN_STEP_MS = 5000;
 
 // A number setting of v0.1.4.6: a value that is not finite or is below 0 counts as the default.
 export function numberSetting(value, fallback) {
@@ -44,6 +54,27 @@ export function shortenCommandResult(text, max) {
     const head = text.slice(0, Math.floor(max * 0.7));
     const tail = text.slice(text.length - Math.floor(max * 0.2));
     return `${head}\n... (shortened, ${text.length - head.length - tail.length} characters left out) ...\n${tail}`;
+}
+
+// v0.1.4.8 (F3): the init message with the note about the restart after it; the note alone without one.
+export function withRestartNote(init_message, note) {
+    if (typeof note !== 'string' || note === '')
+        return init_message;
+    if (typeof init_message !== 'string' || init_message.trim() === '')
+        return note;
+    return `${init_message}\n${note}`;
+}
+
+// v0.1.4.8 (F3): the running action as the restart note names it: '!mineOre' for a command, 'the reflex
+// unstuck' for a mode, null when nothing runs.
+function actionName(label) {
+    if (typeof label !== 'string' || label === '')
+        return null;
+    if (label.startsWith('action:'))
+        return `!${label.slice('action:'.length)}`;
+    if (label.startsWith('mode:'))
+        return `the reflex ${label.slice('mode:'.length)}`;
+    return label;
 }
 
 // v0.1.4.6, G1: prints the cost of the session and saves it, right before the process exits. Never throws.
@@ -68,6 +99,8 @@ export class Agent {
         initSandbox(settings);
         this.last_sender = null;
         this.last_order = null; // the command that a player ordered and that still runs (v0.1.4.6, G3)
+        this.running_commands = []; // v0.1.4.8: the commands that run now, see executeCommand
+        this.last_pack_text = null; // v0.1.4.8: the text of the last pack command, for say_results
         this.count_id = count_id;
         this.is_restart = is_restart;
         this._disconnectHandled = false;
@@ -114,6 +147,16 @@ export class Agent {
             }
         }
         
+        // v0.1.4.8 (F5): with repeat_guard, a command of the model that keeps giving the same result is refused
+        this.repeat_guard = null;
+        if (numberSetting(settings.repeat_guard, 0) > 0) {
+            try {
+                this.repeat_guard = new RepeatGuard({ limit: settings.repeat_guard });
+            } catch (error) {
+                console.warn('Could not start the repeat guard:', error);
+            }
+        }
+
         if (settings.world_memory)
             this.history = new History(this, { defer_storage: true }); // storage is set when the world is known
         else
@@ -192,7 +235,7 @@ export class Agent {
         if (!areas_on)
             this.blocked_actions.push('!rememberArea', '!setArea', '!forgetArea', '!areas', '!allowChanges');
         if (!settings.home_pack)
-            this.blocked_actions.push('!goToShelter', '!eat');
+            this.blocked_actions.push('!goToShelter', '!eat', '!closeDoor');
         // the parts of v0.1.4.7: a pack is imported only while a switch needs it; the commands of a part
         // that is off, or whose pack could not be loaded, are hidden
         if (settings.storage_pack || settings.farming_pack || settings.wood_pack || settings.mining_pack) {
@@ -220,8 +263,8 @@ export class Agent {
                 console.warn('Could not start world memory:', error);
             }
         }
-        if (areas_on)
-            this._startAreaGuard(); // once, on the bot; it reads the areas of the current world
+        if (areas_on || settings.protect_built_blocks)
+            this._startAreaGuard(); // once, on the bot; it reads the areas of the current world (v0.1.4.8: also for built blocks)
         
         // Connection Handler
         const onDisconnect = (event, reason) => {
@@ -233,6 +276,7 @@ export class Agent {
             const { type, msg } = handleDisconnection(this.name, reason);
      
             console.log(`Agent process ends with exit code 1: ${msg}`);
+            this._atExit(msg); // v0.1.4.8: the exit file, the door service, the placed blocks
             reportCostAtExit(this.cost_meter);
             process.exit(1);
         };
@@ -285,8 +329,9 @@ export class Agent {
                     this._areaStore(); // the protected areas of this world
                 if (this.work_packs)
                     this._workStores(); // the chest index and the mine store of this world (v0.1.4.7)
+                const restart_note = await this._atSpawn(); // v0.1.4.8: off-hand, house, doors, restart note
               
-                this._setupEventHandlers(save_data, init_message);
+                this._setupEventHandlers(save_data, withRestartNote(init_message, restart_note));
                 this.startEvents();
               
                 if (!load_mem) {
@@ -353,9 +398,16 @@ export class Agent {
         }
     }
 
+    _guardWanted() {
+        // v0.1.4.6: the saved areas (protected_areas with world_memory); v0.1.4.8 (D3): or the built blocks
+        return (Boolean(settings.protected_areas) && Boolean(settings.world_memory)) || Boolean(settings.protect_built_blocks);
+    }
+
     _startAreaGuard() {
         // v0.1.4.6, G5: installed once; the guard asks for the store of the current world. Never throws.
-        if (!settings.protected_areas || !settings.world_memory)
+        // v0.1.4.8 (D3, D4, I3): also for protect_built_blocks alone (then the store is null); it knows the
+        // blocks that the bot placed and whether the running command was typed by the player.
+        if (!this._guardWanted())
             return;
         try {
             // the full guard with permit and revoke stays here; bot.areaGuard has no permits (Amendment 2, F2)
@@ -363,10 +415,60 @@ export class Agent {
                 store: () => this._areaStore(),
                 getDimension: () => this.bot.game?.dimension,
                 log: (text) => console.log(text),
+                protectBuiltBlocks: () => settings.protect_built_blocks === true,
+                placed: () => this._placedStore(),
+                getCommand: () => this._runningCommandText(),
             });
+            this.area_guard.setPlayerOrder?.(() => this._typedOrderRuns(), () => this._runningCommandText());
         } catch (error) {
             console.warn('Could not protect the saved areas:', error);
         }
+    }
+
+    _typedOrderRuns() {
+        // v0.1.4.8 (I3): true while the running action is the command that a player typed in the chat
+        // (agent.last_order with typed: true, and its action runs). Never throws.
+        try {
+            const order = this.last_order;
+            if (!order || order.typed !== true || typeof order.command !== 'string')
+                return false;
+            return this.actions?.executing === true && this.actions.currentActionLabel === `action:${order.command.slice(1)}`;
+        } catch (error) {
+            return false;
+        }
+    }
+
+    _runningCommandText() {
+        // v0.1.4.8: the text of the newest running command, for example '!collectBlocks("oak_fence", 20)', or null
+        const list = Array.isArray(this.running_commands) ? this.running_commands : [];
+        const text = list[list.length - 1]?.text;
+        return typeof text === 'string' && text !== '' ? text : null;
+    }
+
+    _placedStore() {
+        // v0.1.4.8 (D4): the blocks that the bot placed, per world in <world folder>/placed.json, in memory
+        // only without world_memory. null before the world is known. The store of the world that is left
+        // is written first. Never throws.
+        const dir = settings.world_memory ? (this.world_memory?.worldDir ?? null) : ''; // '': in memory only
+        if (!this._placed || this._placed.dir !== dir) {
+            try {
+                this._placed?.store?.flush?.();
+            } catch (error) {
+                console.warn('Could not save the blocks that the bot placed:', error);
+            }
+            let store = null;
+            if (dir !== null) {
+                try {
+                    store = new PlacedStore(dir ? `${dir}/placed.json` : null);
+                    store.load();
+                } catch (error) {
+                    store = null;
+                    console.warn('Could not open placed.json of this world:', error);
+                }
+            }
+            this._placed = { dir, store };
+        }
+        return this._placed.store;
     }
 
     _areaStore() {
@@ -376,6 +478,15 @@ export class Agent {
             return null;
         const dir = this.world_memory?.worldDir ?? null;
         if (dir !== this._area_dir) {
+            // v0.1.4.8: another world: the door service of the old one stops, the mode makes a new one
+            if (this._area_dir && this.door_service) {
+                try {
+                    this.door_service.stop?.();
+                } catch (error) {
+                    console.warn('Could not stop the door service:', error);
+                }
+                this.door_service = undefined;
+            }
             this._area_dir = dir;
             this.area_store = undefined;
             if (dir) {
@@ -392,7 +503,7 @@ export class Agent {
     }
 
     homeContext() {
-        // what the modules of the home pack get (spec v0.1.4.6, section 5)
+        // what the modules of the home pack get (spec v0.1.4.6, section 5); v0.1.4.8: say (C2) and whereAmI (I2)
         return {
             areas: this.area_store ?? null,
             places: this.memory_bank,
@@ -401,7 +512,61 @@ export class Agent {
             now: () => Date.now(),
             skills,
             world,
+            say: (text) => this.sayText(text),
+            whereAmI: () => this.whereAmI(),
         };
+    }
+
+    whereAmI() {
+        // v0.1.4.8 (I2): { area: { name, type } | null, depth, underground } of reflex/where_am_i.js. Never throws.
+        return whereAmIOf(this.bot);
+    }
+
+    sayText(text) {
+        // v0.1.4.8 (C2): a text of a pack or a reflex into the chat and into the history, without a call of
+        // the model. Never throws.
+        if (typeof text !== 'string' || text.trim() === '')
+            return;
+        try {
+            Promise.resolve(this.history?.add(this.name, text)).catch((error) => console.warn('Could not note what the bot said:', error));
+        } catch (error) {
+            console.warn('Could not note what the bot said:', error);
+        }
+        if (this.shut_up)
+            return;
+        try {
+            Promise.resolve(this.openChat(text)).catch((error) => console.warn('Could not say a text:', error));
+        } catch (error) {
+            console.warn('Could not say a text:', error);
+        }
+    }
+
+    knowledgeBlock() {
+        // v0.1.4.8 (C1, I9): what the bot knows, for the chat prompt, with knowledge_in_prompt; '' without it
+        // or before the bot is in a world. The chests and the mines of this dimension, the saved areas and
+        // places, where the bot is. Never throws.
+        if (!settings.knowledge_in_prompt)
+            return '';
+        try {
+            const bot = this.bot;
+            const pos = bot?.entity?.position;
+            if (!pos)
+                return '';
+            const dimension = bot.game?.dimension;
+            const plain = (d) => (typeof d === 'string' && d !== '' ? d.replace(/^minecraft:/, '') : 'overworld');
+            const stores = this._workStores();
+            const areas = (this.area_store?.list?.() ?? []).filter((area) => plain(area?.dimension) === plain(dimension));
+            return knowledgeText({
+                chests: stores.chests?.list?.(dimension) ?? [],
+                areas,
+                mines: stores.mines?.list?.(dimension) ?? [],
+                places: this.memory_bank ?? null,
+                where: { ...this.whereAmI(), pos: { x: pos.x, y: pos.y, z: pos.z } },
+            }, numberSetting(settings.knowledge_max_chars, 600));
+        } catch (error) {
+            console.warn('Could not tell what the bot knows:', error);
+            return '';
+        }
     }
 
     async _loadWorkPacks(loaders = {}) {
@@ -485,7 +650,7 @@ export class Agent {
             storage: null,
             tools: null,
             wood: null,
-            home: { passThrough, enterBuilding, doorIsSafe }, // as they are, not bound (Amendment 1, part F)
+            home: { passThrough, enterBuilding, doorIsSafe, foodItems }, // as they are, not bound (Amendment 1, part F; v0.1.4.8, I7)
         };
         const packs = this.work_packs;
         if (!packs)
@@ -497,6 +662,82 @@ export class Agent {
             ctx.wood = packs.wood.WOOD_API ?? null; // chopTrees, not bound
         }
         return ctx;
+    }
+
+    async _atSpawn() {
+        // v0.1.4.8 (part G, 6): at spawn, in this order, each step in its own try so that one failure does not
+        // stop the others: the food of the off-hand back into the inventory (home_pack, E1); the house as the
+        // area "home" (protected_areas, D6), its text is said; the door service (home_pack, I8); the note
+        // about the restart (restart_context, F3). Returns the note, '' without one. Never throws.
+        const bot = this.bot;
+        if (settings.home_pack) {
+            try {
+                // a click in the inventory that the server never answers must not stop the start
+                const moved = await withTimeLimit(SPAWN_STEP_MS, () => moveOffhandBack(bot));
+                if (!moved.done)
+                    console.warn('Could not move the food out of the off-hand:', moved.error ?? 'no answer in time');
+            } catch (error) {
+                console.warn('Could not move the food out of the off-hand:', error);
+            }
+        }
+        if (settings.protected_areas && settings.world_memory) {
+            try {
+                const getBlock = (x, y, z) => bot.blockAt(new Vec3(x, y, z))?.name ?? null;
+                const result = autoHome(getBlock, this.memory_bank, this._areaStore(), bot.entity?.position ?? null, { dimension: bot.game?.dimension });
+                if (result?.text)
+                    this.sayText(result.text);
+            } catch (error) {
+                console.warn('Could not save the house as the area "home":', error);
+            }
+        }
+        if (settings.home_pack) {
+            try {
+                this.door_service = createDoorService(bot, { ...this.homeContext(), log: (text) => console.log(text) }) ?? null;
+            } catch (error) {
+                this.door_service = null;
+                console.warn('Could not start the door service:', error);
+            }
+        }
+        let note = '';
+        if (settings.restart_context) {
+            try {
+                note = restartNote(readExit(`./bots/${this.name}`));
+                if (note)
+                    console.log(note);
+            } catch (error) {
+                note = '';
+                console.warn('Could not read why the last process ended:', error);
+            }
+        }
+        return note;
+    }
+
+    _atExit(reason) {
+        // v0.1.4.8: right before the process exits (cleanKill, a disconnect): the exit file with restart_context
+        // (F3), the door service stops, the blocks that the bot placed are written (D4). Never throws.
+        if (settings.restart_context) {
+            try {
+                writeExit(`./bots/${this.name}`, {
+                    reason: typeof reason === 'string' ? reason : null,
+                    order: this.last_order ?? null,
+                    action: actionName(this.actions?.currentActionLabel),
+                    position: this.bot?.entity?.position ?? null,
+                    time: Date.now(),
+                });
+            } catch (error) {
+                console.warn('Could not save why the process ends:', error);
+            }
+        }
+        try {
+            this.door_service?.stop?.();
+        } catch (error) {
+            console.warn('Could not stop the door service:', error);
+        }
+        try {
+            this._placed?.store?.flush?.();
+        } catch (error) {
+            console.warn('Could not save the blocks that the bot placed:', error);
+        }
     }
 
     async _resolveWorld(load_mem) {
@@ -661,11 +902,20 @@ export class Agent {
         }
     }
 
-    requestInterrupt() {
-        this.bot.interrupt_code = true;
+    requestInterrupt(by = null) {
+        // v0.1.4.8 (I5): who stops, for the result of the action (the first one counts)
+        this.actions?.noteStop?.(by);
+        this.bot.interrupt_code = true; // first, so a walk that gets GoalChanged sees the interrupt and ends quietly
+        // v0.1.4.8 (S9): stop() alone is read only when the bot arrives at a node; setGoal(null) after it ends
+        // the walk now and clears the flag of stop()
+        try {
+            this.bot.pathfinder.stop();
+            this.bot.pathfinder.setGoal(null);
+        } catch (error) {
+            console.warn('Could not end the path search:', error);
+        }
         this.bot.stopDigging();
         this.bot.collectBlock.cancelTask();
-        this.bot.pathfinder.stop();
         this.bot.pvp.stop();
     }
 
@@ -716,9 +966,11 @@ export class Agent {
                     // add the preceding message to the history to give context for newAction
                     this.history.add(source, message);
                 }
-                const order = { by: source, ...order_time, command: user_command_name };
+                // v0.1.4.8: text is the whole command (for the restart context and the guard), typed marks an
+                // order that the player typed in the chat (the guard, !setMode, the repeat guard)
+                const order = { by: source, ...order_time, command: user_command_name, text: commandCallText(message), typed: true };
                 this.last_order = order;
-                let execute_res = await executeCommand(this, message);
+                let execute_res = await executeCommand(this, message, { typed: true });
                 if (this.last_order === order)
                     this.last_order = null; // the ordered command ended
                 if (execute_res) 
@@ -752,6 +1004,7 @@ export class Agent {
 
         if (!self_prompt && this.self_prompter.isActive()) // message is from user during self-prompting
             max_responses = 1; // force only respond to this message, then let self-prompting take over
+        let pack_text = null; // v0.1.4.8: the text of the pack command that ran last, for say_results
         for (let i=0; i<max_responses; i++) {
             if (checkInterrupt()) break;
             let history = this.history.getHistory();
@@ -761,8 +1014,12 @@ export class Agent {
 
             if (res.trim().length === 0) {
                 console.warn('no response')
+                // v0.1.4.8: the model said nothing (or a tab) after a work skill; with say_results its text goes to the chat
+                if (settings.say_results && pack_text !== null)
+                    this.routeResponse(source, pack_text);
                 break; // empty response ends loop
             }
+            pack_text = null;
 
             let command_name = containsCommand(res);
 
@@ -797,12 +1054,15 @@ export class Agent {
                         this.routeResponse(source, pre_message);
                 }
 
-                const order = from_player ? { by: source, ...order_time, command: command_name } : null;
+                const order = from_player ? { by: source, ...order_time, command: command_name, text: commandCallText(res), typed: false } : null;
                 if (order)
                     this.last_order = order;
-                let execute_res = await executeCommand(this, res);
+                this.last_pack_text = null;
+                let execute_res = await executeCommand(this, res, { typed: false });
                 if (order && this.last_order === order)
                     this.last_order = null; // the ordered command ended
+                if (typeof execute_res === 'string' && execute_res !== '' && execute_res === this.last_pack_text)
+                    pack_text = execute_res; // the text of a work skill (runPack, the home pack)
 
                 console.log('Agent executed:', command_name, 'and got:', execute_res);
                 used_command = true;
@@ -977,6 +1237,7 @@ export class Agent {
         try { this.history.add('system', msg); } catch (_) { /* no history */ }
         try { this.bot.chat(code > 1 ? 'Restarting.': 'Exiting.'); } catch (_) { /* no bot */ }
         try { this.history.save(); } catch (_) { /* no history */ }
+        try { this._atExit(msg); } catch (_) { /* a fake agent of a test */ }
         reportCostAtExit(this.cost_meter);
         process.exit(code);
     }

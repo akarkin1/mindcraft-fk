@@ -4,10 +4,48 @@ import settings from '../settings.js';
 import convoManager from '../conversation.js';
 import { Vec3 } from 'vec3';
 import { normalizeBox, contains, boxSize } from '../areas/area_geometry.js';
-import { scanBuilding, scanFarm } from '../areas/area_scan.js';
-import { goToShelter, sleepInBed, eatBestFood, enterBuilding } from '../packs/home/index.js';
+import { scanBuilding, findFencedGroundNear } from '../areas/area_scan.js';
+import { AREA_TYPES, normalizeAreaName, replaceRefusal } from '../areas/area_store.js';
+import { goToShelter, sleepInBed, eatBestFood, enterBuilding, passThrough, closeNear } from '../packs/home/index.js';
 import { REMEMBER_RULE_DESCRIPTION, rememberRuleReply, forgetRuleReply } from '../rules/rule_commands.js';
 
+
+// v0.1.4.8, I5 (S3, S4): a command that was stopped starts no turn of the model. What it did so far goes
+// into the history as a system message: `Command !mineOre was stopped by the reflex unstuck. Done so far:
+// <text>`, without the second sentence when there is no text. text: the text of a pack (I6), else the
+// output of the action. Never throws.
+function reportStopped(agent, label, code_return, text = null) {
+    // an action that comes back by itself (!followPlayer, stopped by a reflex) is not worth a line in the history
+    if (agent?.actions?.resume_func && String(code_return?.stopped_by ?? '').startsWith('the reflex '))
+        return;
+    const by = typeof code_return?.stopped_by === 'string' && code_return.stopped_by.trim() !== '' ? code_return.stopped_by : 'an interrupt';
+    const done = doneText(text) ?? doneText(code_return?.message);
+    const line = `Command !${label} was stopped by ${by}.` + (done ? ` Done so far: ${done}` : '');
+    console.log(line);
+    try {
+        const added = agent?.history?.add?.('system', line);
+        Promise.resolve(added).catch((error) => console.warn('Could not note the stopped command:', error));
+    } catch (error) {
+        console.warn('Could not note the stopped command:', error);
+    }
+}
+
+// What a stopped command did, without the heading "Action output:" of the output; null for nothing.
+function doneText(text) {
+    if (typeof text !== 'string')
+        return null;
+    const clean = text.replace(/^Action output:\s*/, '').trim();
+    return clean === '' ? null : clean;
+}
+
+// v0.1.4.8, I1: a pack command pauses the reflex unstuck from its start until the bot is idle again. Never throws.
+function pauseUnstuck(agent) {
+    try {
+        agent.bot?.modes?.pause?.('unstuck');
+    } catch (error) {
+        console.warn('Could not pause the mode unstuck:', error);
+    }
+}
 
 function runAsAction (actionFn, resume = false, timeout = -1) {
     let actionLabel = null;  // Will be set on first use
@@ -23,8 +61,10 @@ function runAsAction (actionFn, resume = false, timeout = -1) {
             await actionFn(agent, ...args);
         };
         const code_return = await agent.actions.runAction(`action:${actionLabel}`, actionFnWithAgent, { timeout, resume });
-        if (code_return.interrupted && !code_return.timedout)
+        if (code_return.interrupted && !code_return.timedout) {
+            reportStopped(agent, actionLabel, code_return); // v0.1.4.8, I5
             return;
+        }
         return code_return.message;
     }
 
@@ -85,35 +125,64 @@ function costAllows(agent, what) {
 
 // Runs fn as the action `action:<label>`, like runAsAction, and returns the text that fn returns
 // (the replies of the home pack, v0.1.4.6). Without a text: the output of the action. Nothing when
-// the action was interrupted. timeout in minutes, -1 for none.
-async function runForText(agent, label, fn, timeout = -1) {
+// the action was interrupted: then what it did goes into the history (v0.1.4.8, I5). timeout in
+// minutes, -1 for none. options.pack (v0.1.4.8): a command of a pack, fn returns the result of the
+// pack ({ ok, reason, text }); it pauses unstuck at its start, a result with the reason 'interrupted'
+// counts as stopped (I6), its text is noted as agent.last_pack_text for the setting say_results, and
+// the result goes to the entry of the command in agent.running_commands for the repeat guard.
+async function runForText(agent, label, fn, timeout = -1, options = {}) {
     let text = null;
+    let result = null;
+    const pack = options?.pack === true;
+    const entry = pack && Array.isArray(agent.running_commands) ? agent.running_commands[agent.running_commands.length - 1] ?? null : null;
     const code_return = await agent.actions.runAction(`action:${label}`, async () => {
-        text = await fn();
+        if (pack)
+            pauseUnstuck(agent);
+        const value = await fn();
+        if (pack && value !== null && typeof value === 'object') {
+            result = value;
+            text = typeof value.text === 'string' ? value.text : null;
+        } else {
+            text = value;
+        }
     }, { timeout, resume: false });
-    if (code_return.interrupted && !code_return.timedout)
+    const stopped = !code_return.timedout && (code_return.interrupted || result?.reason === 'interrupted');
+    if (entry)
+        entry.pack = { ok: result ? result.ok : undefined, reason: stopped ? 'interrupted' : (result?.reason ?? null), text };
+    if (stopped) {
+        reportStopped(agent, label, code_return, typeof text === 'string' ? text : null);
         return;
-    if (code_return.success && typeof text === 'string' && text !== '')
+    }
+    if (code_return.success && typeof text === 'string' && text !== '') {
+        if (pack)
+            agent.last_pack_text = text;
         return text;
+    }
     return code_return.message;
 }
 
-// The protected areas of v0.1.4.6 (section 6).
+// v0.1.4.8: runs a command of the home pack (fn returns the result of the pack) as a pack command.
+async function runHome(agent, label, fn) {
+    return await runForText(agent, label, fn, -1, { pack: true });
+}
+
+// The protected areas of v0.1.4.6 (section 6); the five types of v0.1.4.8 (I4) come from the area store.
 const AREAS_OFF = 'Protected areas are off.';
-const AREA_TYPES = ['building', 'farm'];
-const AREA_TYPE_TEXT = 'The type of an area is "building" or "farm".';
+const AREA_TYPE_TEXT = 'The type of an area is "home", "building", "farm", "pen" or "mine".';
 const pointText = (p) => `(${p.x}, ${p.y}, ${p.z})`;
 const countText = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+const GATED_TYPES = ['farm', 'pen']; // areas with a fence: their gates are counted first
 
-// "1 door" for a building, "1 gate" for a farm; the other kind only when there is one.
+// "1 door" for a house, "1 gate" for a farm or a pen; the other kind only when there is one.
 function entrancesText(area) {
     const entrances = Array.isArray(area.entrances) ? area.entrances : [];
     const doors = entrances.filter(e => e.kind !== 'gate').length;
     const gates = entrances.length - doors;
-    const parts = area.type === 'farm' ? [countText(gates, 'gate')] : [countText(doors, 'door')];
-    if (area.type === 'farm' && doors > 0)
+    const gated = GATED_TYPES.includes(area.type);
+    const parts = gated ? [countText(gates, 'gate')] : [countText(doors, 'door')];
+    if (gated && doors > 0)
         parts.push(countText(doors, 'door'));
-    if (area.type !== 'farm' && gates > 0)
+    if (!gated && gates > 0)
         parts.push(countText(gates, 'gate'));
     return parts.join(', ');
 }
@@ -176,7 +245,9 @@ function saveBuildingAround(agent, name) {
         const scan = scanBuilding(blockNameOf(bot), bot.entity.position);
         if (!scan?.found)
             return null;
-        const area = store.set({ name, type: 'building', min: scan.min, max: scan.max, dimension: bot.game?.dimension,
+        // v0.1.4.8: the place "home" is the house, so its building is an area of the type home (D6)
+        const type = normalizeAreaName(name) === 'home' ? 'home' : 'building';
+        const area = store.set({ name, type, min: scan.min, max: scan.max, dimension: bot.game?.dimension,
             entrances: scan.entrances ?? [], source: 'scan' });
         return `I also saved the building around it as a protected area: ${sizeText(area)}, ${entrancesText(area)}.`;
     } catch (error) {
@@ -187,13 +258,14 @@ function saveBuildingAround(agent, name) {
 
 // v0.1.4.6, H7: with the home pack and protected areas, a place inside a building area is entered
 // with enterBuilding of the home pack: through the entrance nearest to the bot with passThrough,
-// which closes the door behind it. Never throws.
+// which closes the door behind it. v0.1.4.8: also a home and a pen. Never throws.
+const ENTERED_TYPES = ['building', 'home', 'pen'];
 async function enterBuildingAround(agent, pos, dimension) {
     if (!settings.home_pack || !agent.area_store)
         return;
     try {
         const bot = agent.bot;
-        const area = agent.area_store.areasAt({ x: pos[0], y: pos[1], z: pos[2] }, dimension).find(a => a.type === 'building');
+        const area = agent.area_store.areasAt({ x: pos[0], y: pos[1], z: pos[2] }, dimension).find(a => ENTERED_TYPES.includes(a.type));
         if (!area)
             return;
         const result = await enterBuilding(bot, area, agent.homeContext());
@@ -213,11 +285,12 @@ const MINING_OFF = 'The mining pack is off.';
 const UNKNOWN_ORE = (ore) => `I do not know the ore "${ore}". I know coal, copper, iron, lapis, gold, redstone and diamond.`;
 
 // Runs fn(pack, bot, ctx) of a work pack as the action `action:<label>` and returns the text of its
-// result word for word, like the commands of the home pack. Nothing when the action was interrupted.
+// result word for word, like the commands of the home pack. Nothing when the action was interrupted:
+// then the text of the pack goes into the history (v0.1.4.8, I5, I6). It pauses unstuck at its start (I1).
 async function runPack(agent, label, pack, name, fn) {
     if (!pack)
         return `The ${name} pack could not be loaded.`;
-    return await runForText(agent, label, async () => (await fn(pack, agent.bot, agent.packContext()))?.text);
+    return await runForText(agent, label, async () => await fn(pack, agent.bot, agent.packContext()), -1, { pack: true });
 }
 
 // S4: the position of the chest that !putInChest, !takeFromChest and !viewChest will use, the nearest
@@ -297,6 +370,75 @@ async function goToMine(pack, bot, ctx, ore) {
     return await pack.descendToLevel(bot, ctx, mine.level, { mine });
 }
 
+// v0.1.4.8: true while the command `name` runs as the order that a player typed in the chat (the newest
+// entry of agent.running_commands, see executeCommand, or agent.last_order). A call of the model is false.
+function typedByPlayer(agent, name) {
+    const running = Array.isArray(agent?.running_commands) ? agent.running_commands[agent.running_commands.length - 1] : null;
+    if (running && running.name === name)
+        return running.typed === true;
+    const order = agent?.last_order;
+    return order !== null && typeof order === 'object' && order.typed === true && order.command === name;
+}
+
+// v0.1.4.8 (R4, decision of the owner): the reflexes that keep the bot alive. The model may not switch
+// them off; the player may, by typing !setMode in the chat. Switching one on is always allowed.
+const SAFETY_REFLEXES = ['self_preservation', 'creeper_safety', 'night_shelter', 'door_closing', 'hunger'];
+
+// v0.1.4.8 (T5): !chopTrees takes the number of logs and the kind in either order: chopTrees(8, "oak"),
+// chopTrees("oak", 8), chopTrees("", 8). Returns { num, kind } with num a number.
+function logsAndKind(num, kind) {
+    const isCount = (v) => (typeof v === 'number' && Number.isFinite(v)) || (typeof v === 'string' && /^\s*\d+\s*$/.test(v));
+    if (!isCount(num) && isCount(kind))
+        [num, kind] = [kind, num];
+    const count = typeof num === 'string' ? Number.parseInt(num, 10) : num;
+    return { num: Number.isInteger(count) && count > 0 ? count : 8, kind: typeof kind === 'string' ? kind : '' };
+}
+
+// v0.1.4.8 (C6): !givePlayer first fetches from a known chest what the bot does not carry, with the
+// storage pack. Its text goes into the output of the action. Never throws.
+async function fetchToGive(agent, item_name, num) {
+    if (!settings.storage_pack || !agent.work_packs?.storage)
+        return;
+    try {
+        const carried = world.getInventoryCounts(agent.bot)[item_name] ?? 0;
+        if (carried >= num)
+            return;
+        pauseUnstuck(agent); // the walk to the chest is progress, not being stuck
+        const ctx = agent.packContext();
+        const result = await ctx.storage?.fetchItem?.(item_name, num - carried);
+        if (result?.text)
+            skills.log(agent.bot, result.text);
+    } catch (error) {
+        console.warn('Could not fetch the item to give from a chest:', error);
+    }
+}
+
+// v0.1.4.8 (D5, P5): !rememberArea for a farm or a pen: the fenced ground at or near the bot. From
+// outside the fence the ground behind the gate is saved, and with the home pack the bot walks in through
+// the gate with passThrough. Returns the reply.
+async function rememberFenced(agent, store, name, type) {
+    if (!store)
+        return AREAS_OFF;
+    const bot = agent.bot;
+    const scan = findFencedGroundNear(blockNameOf(bot), bot.entity.position, 6, { type });
+    if (!scan?.found)
+        return scan?.text || `I found no fenced ground here. Stand inside the fence and try again.`;
+    const area = store.set({ name, type, min: scan.min, max: scan.max, dimension: bot.game?.dimension, entrances: scan.entrances ?? [], source: 'scan' });
+    const saved = `${areaSavedText(area)} Tell me if that is wrong.`;
+    if (scan.inside)
+        return saved;
+    // outside, on the fence or in the gate: the ground behind it is saved; then in through the gate
+    const outside = (scan.text || '').replace(/\s*I can save the ground behind it\.$/, '');
+    if (!settings.home_pack || !scan.gate)
+        return `${outside} ${saved}`.trim();
+    // stopped on the way: nothing, what it did goes into the history (I5); the area is saved all the same
+    return await runForText(agent, 'rememberArea', async () => {
+        pauseUnstuck(agent);
+        const walk = await passThrough(bot, { ...scan.gate, kind: 'gate' }, agent.homeContext(), { inside: area });
+        return walk?.ok ? `I went in through the gate at ${pointText(scan.gate)}. ${saved}` : `${outside} ${saved} I could not go in: ${walk?.text ?? 'the walk failed.'}`;
+    });
+}
+
 export const actionsList = [
     {
         name: '!newAction',
@@ -320,7 +462,7 @@ export const actionsList = [
                     result = 'Error generating code: ' + e.toString();
                 }
             };
-            await agent.actions.runAction('action:newAction', actionFn, {timeout: settings.code_timeout_mins});
+            const code_return = await agent.actions.runAction('action:newAction', actionFn, {timeout: settings.code_timeout_mins});
             if (agent.skill_manager && agent.coder.last_run != null) {
                 try {
                     const capture = await agent.skill_manager.captureFromRun(agent.coder.last_run);
@@ -330,6 +472,11 @@ export const actionsList = [
                     console.warn('Could not save the code as a skill:', error);
                 }
             }
+            // v0.1.4.8 (S4): the late result of a stopped !newAction starts no second turn of the model
+            if (code_return?.interrupted && !code_return.timedout) {
+                reportStopped(agent, 'newAction', code_return, typeof result === 'string' ? result : null);
+                return;
+            }
             return withSkillNotices(agent, result);
         }
     },
@@ -337,7 +484,7 @@ export const actionsList = [
         name: '!stop',
         description: 'Force stop all actions and commands that are currently executing.',
         perform: async function (agent) {
-            await agent.actions.stop();
+            await agent.actions.stop('!stop'); // v0.1.4.8, I5: who stopped the action
             agent.clearBotLogs();
             agent.actions.cancelResume();
             agent.last_order = null; // v0.1.4.6, G3
@@ -510,10 +657,10 @@ export const actionsList = [
     },
     {
         name: '!rememberArea',
-        description: 'Remember the building or the fenced farm you are standing in as a protected area. In a building you will not break or place blocks. In a farm you will only plant and harvest. Use this when the player says "this is home", "this is our base", "this is the farm", or tells you not to damage a place.',
+        description: 'Save the place you stand in as a protected area: home (the house), building, farm (only plant and harvest), pen (animals) or mine (only natural blocks). Use this when the player says "this is home", "this is the farm" or "this is the mine".',
         params: {
             'name': { type: 'string', description: 'The name of the area, for example "home".' },
-            'type': { type: 'string', description: 'The type of the area: "building" or "farm".', default: 'building' }
+            'type': { type: 'string', description: 'home, building, farm, pen or mine.', default: 'building' }
         },
         perform: async function (agent, name, type) {
             const store = agent.area_store;
@@ -522,20 +669,23 @@ export const actionsList = [
             if (!AREA_TYPES.includes(type))
                 return AREA_TYPE_TEXT;
             try {
+                // v0.1.4.8 (D5): a farm or a pen is the fenced ground at or near the bot, also from outside the gate
+                if (type === 'farm' || type === 'pen')
+                    return await rememberFenced(agent, store, name, type);
                 const bot = agent.bot;
                 const origin = bot.entity.position;
                 const dimension = bot.game?.dimension;
-                const scan = type === 'farm' ? scanFarm(blockNameOf(bot), origin) : scanBuilding(blockNameOf(bot), origin);
+                const scan = scanBuilding(blockNameOf(bot), origin);
                 if (scan?.found) {
                     const area = store.set({ name, type, min: scan.min, max: scan.max, dimension, entrances: scan.entrances ?? [], source: 'scan' });
                     return `${areaSavedText(area)} Tell me if that is wrong.`;
                 }
-                if (type === 'farm')
-                    return 'I found no fenced ground here. Stand inside the fence and try again.';
                 // no building found: a box around the bot, 12 blocks in x and z, 4 below and 8 above
                 const x = Math.floor(origin.x), y = Math.floor(origin.y), z = Math.floor(origin.z);
                 const box = normalizeBox({ x: x - 12, y: y - 4, z: z - 12 }, { x: x + 12, y: y + 8, z: z + 12 });
                 const area = store.set({ name, type, min: box.min, max: box.max, dimension, entrances: [], source: 'radius' });
+                if (type === 'mine')
+                    return `I saved a box of ${sizeText(area)} around this place as the mine "${area.name}". Use !setArea to correct it.`;
                 return `I found no building here. I saved a box of ${sizeText(area)} around this place as "${area.name}". Use !setArea to correct it.`;
             } catch (error) {
                 return areaErrorText(error, name);
@@ -547,13 +697,13 @@ export const actionsList = [
         description: 'Save a protected area with the given corners, or correct a saved one.',
         params: {
             'name': { type: 'string', description: 'The name of the area.' },
-            'type': { type: 'string', description: 'The type of the area: "building" or "farm".' },
-            'x1': { type: 'float', description: 'The x coordinate of one corner.', domain: [-Infinity, Infinity] },
-            'y1': { type: 'float', description: 'The y coordinate of one corner.', domain: [-64, 320] },
-            'z1': { type: 'float', description: 'The z coordinate of one corner.', domain: [-Infinity, Infinity] },
-            'x2': { type: 'float', description: 'The x coordinate of the opposite corner.', domain: [-Infinity, Infinity] },
-            'y2': { type: 'float', description: 'The y coordinate of the opposite corner.', domain: [-64, 320] },
-            'z2': { type: 'float', description: 'The z coordinate of the opposite corner.', domain: [-Infinity, Infinity] }
+            'type': { type: 'string', description: 'home, building, farm, pen or mine.' },
+            'x1': { type: 'float', description: 'Corner 1, x.', domain: [-Infinity, Infinity] },
+            'y1': { type: 'float', description: 'Corner 1, y.', domain: [-64, 320] },
+            'z1': { type: 'float', description: 'Corner 1, z.', domain: [-Infinity, Infinity] },
+            'x2': { type: 'float', description: 'The opposite corner, x.', domain: [-Infinity, Infinity] },
+            'y2': { type: 'float', description: 'The opposite corner, y.', domain: [-64, 320] },
+            'z2': { type: 'float', description: 'The opposite corner, z.', domain: [-Infinity, Infinity] }
         },
         perform: async function (agent, name, type, x1, y1, z1, x2, y2, z2) {
             const store = agent.area_store;
@@ -563,6 +713,10 @@ export const actionsList = [
                 return AREA_TYPE_TEXT;
             try {
                 const box = normalizeBox({ x: x1, y: y1, z: z1 }, { x: x2, y: y2, z: z2 });
+                // v0.1.4.8 (D7, P4): the model may not save a thin box or shrink an area; the player may, by typing it
+                const refusal = replaceRefusal(store.get(name), box, typedByPlayer(agent, '!setArea'));
+                if (refusal)
+                    return refusal.text;
                 // the doors of a saved area of that name stay when they are inside the new box
                 const entrances = (store.get(name)?.entrances ?? []).filter(e => contains(box, e));
                 const dimension = agent.bot.game?.dimension;
@@ -599,7 +753,7 @@ export const actionsList = [
     },
     {
         name: '!allowChanges',
-        description: 'Allow yourself to break and place blocks in a protected area for some minutes. Use this ONLY when the player tells you to build, repair or break something inside that area.',
+        description: 'Allow yourself to break and place blocks in a protected area for some minutes. ONLY when the player tells you to build, repair or break something there.',
         params: {
             'name': { type: 'string', description: 'The name of the area.' },
             'minutes': { type: 'int', description: 'For how many minutes, at most 60.', domain: [1, 60, '[]'], default: 10 }
@@ -638,13 +792,21 @@ export const actionsList = [
     },
     {
         name: '!givePlayer',
-        description: 'Give the specified item to the given player.',
-        params: { 
-            'player_name': { type: 'string', description: 'The name of the player to give the item to.' }, 
+        // v0.1.4.8 (C6): with the storage pack the bot first fetches from a known chest what it does not carry
+        get description() {
+            if (settings.storage_pack)
+                return 'Give an item to a player. What you do not carry you first fetch from a chest you know.';
+            return 'Give the specified item to the given player.';
+        },
+        params: {
+            'player_name': { type: 'string', description: 'The name of the player to give the item to.' },
             'item_name': { type: 'ItemName', description: 'The name of the item to give.' },
             'num': { type: 'int', description: 'The number of items to give.', domain: [1, Number.MAX_SAFE_INTEGER], default: 1 }
         },
         perform: runAsAction(async (agent, player_name, item_name, num) => {
+            await fetchToGive(agent, item_name, num);
+            if (agent.bot.interrupt_code)
+                return;
             await skills.giveToPlayer(agent.bot, item_name, player_name, num);
         })
     },
@@ -708,10 +870,13 @@ export const actionsList = [
             'num': { type: 'int', description: 'The number of items to discard.', domain: [1, Number.MAX_SAFE_INTEGER] }
         },
         perform: runAsAction(async (agent, item_name, num) => {
-            const start_loc = agent.bot.entity.position;
-            await skills.moveAway(agent.bot, 5);
-            await skills.discard(agent.bot, item_name, num);
-            await skills.goToPosition(agent.bot, start_loc.x, start_loc.y, start_loc.z, 0);
+            // v0.1.4.8 (S14): the walk away before the toss has a limit and never digs; the walk back only when the bot moved
+            const pos = agent.bot.entity.position;
+            const start = { x: pos.x, y: pos.y, z: pos.z };
+            await skills.discard(agent.bot, item_name, num, 5);
+            const now = agent.bot.entity.position;
+            if (!agent.bot.interrupt_code && Math.hypot(now.x - start.x, now.y - start.y, now.z - start.z) >= 1)
+                await skills.goToPosition(agent.bot, start.x, start.y, start.z, 0);
         })
     },
     {
@@ -730,6 +895,17 @@ export const actionsList = [
                 await skills.collectBlock(agent.bot, type, num);
             }, 10); // 10 minute timeout
         }
+    },
+    {
+        name: '!pickUpItems',
+        description: 'Pick up items that lie on the ground near you. Use this when the player says "pick up what I dropped".',
+        params: {
+            'item': { type: 'string', description: 'The item to pick up, empty for all.', default: '' },
+            'range': { type: 'int', description: 'How far to look, in blocks.', domain: [1, 65], default: 16 }
+        },
+        perform: runAsAction(async (agent, item, range) => {
+            await skills.pickUpItems(agent.bot, item ?? '', range ?? 16);
+        })
     },
     {
         name: '!craftRecipe',
@@ -806,7 +982,7 @@ export const actionsList = [
         },
         perform: async function (agent) {
             if (settings.home_pack)
-                return await runForText(agent, 'goToBed', async () => (await sleepInBed(agent.bot, agent.homeContext()))?.text);
+                return await runHome(agent, 'goToBed', async () => await sleepInBed(agent.bot, agent.homeContext()));
             return await runForText(agent, 'goToBed', async () => {
                 await skills.goToBed(agent.bot);
             });
@@ -814,25 +990,42 @@ export const actionsList = [
     },
     {
         name: '!goToShelter',
-        description: 'Go to your shelter, get in through the door and close it. Use this when night comes, when monsters are near, when the player says "get to shelter", "go home" or "go inside".',
+        description: 'Go into your home and close the door. Use this when night comes, when monsters are near, when the player says "get to shelter", "go home" or "go inside".',
         perform: async function (agent) {
             if (!settings.home_pack)
                 return 'The home pack is off.';
-            return await runForText(agent, 'goToShelter', async () => (await goToShelter(agent.bot, agent.homeContext()))?.text);
+            return await runHome(agent, 'goToShelter', async () => await goToShelter(agent.bot, agent.homeContext()));
         }
     },
     {
         name: '!eat',
-        description: 'Eat the best food you have. Use this when you are hungry or hurt, or when the player tells you to eat.',
+        description: 'Eat until you are full, and until your health is full while you have food. Use this when the player tells you to eat, or when you are hungry or hurt.',
         perform: async function (agent) {
             if (!settings.home_pack)
                 return 'The home pack is off.';
-            return await runForText(agent, 'eat', async () => (await eatBestFood(agent.bot, agent.homeContext()))?.text);
+            // v0.1.4.8 (C1): with the chest index of the storage pack the text can name a chest with food
+            const ctx = settings.storage_pack ? agent.packContext() : agent.homeContext();
+            return await runHome(agent, 'eat', async () => await eatBestFood(agent.bot, ctx));
+        }
+    },
+    {
+        name: '!closeDoor',
+        description: 'Close the open doors, gates and trapdoors within 6 blocks of you.',
+        perform: async function (agent) {
+            if (!settings.home_pack)
+                return 'The home pack is off.';
+            // v0.1.4.8 (C5, R7): the door service of the agent, else closeNear of the home pack
+            return await runHome(agent, 'closeDoor', async () => {
+                const service = agent.door_service;
+                if (typeof service?.closeNear === 'function')
+                    return await service.closeNear(6);
+                return await closeNear(agent.bot, { ...agent.homeContext(), log: (text) => console.log(text) }, 6);
+            });
         }
     },
     {
         name: '!storeItems',
-        description: 'Put what you carry into a chest. You keep your tools, food and torches. Use this when your inventory is full, when you come back with things, or when the player says "store", "stash" or "put it in the chest".',
+        description: 'Put what you carry into a chest. You keep your tools, food and torches. Use this when your inventory is full, or when the player says "store", "stash" or "put it in the chest".',
         perform: async function (agent) {
             if (!settings.storage_pack)
                 return STORAGE_OFF;
@@ -841,7 +1034,7 @@ export const actionsList = [
     },
     {
         name: '!fetchItem',
-        description: 'Get an item out of a chest you know. Use this when you need something you do not carry, or when the player says "take", "get" or "fetch" something from the chest.',
+        description: 'Get an item out of a chest you know. Use this when you need something you do not carry, or when the player says "get" or "fetch" something from the chest.',
         params: {
             'item_name': { type: 'ItemName', description: 'The name of the item to get.' },
             'num': { type: 'int', description: 'The number of items to get.', domain: [1, Number.MAX_SAFE_INTEGER], default: 1 }
@@ -854,7 +1047,7 @@ export const actionsList = [
     },
     {
         name: '!farmCycle',
-        description: 'Do the farm work: harvest what is ripe, store it, plant again. Use this when the player says "farm", "get back to farming", "do the farm work" or "take care of the wheat".',
+        description: 'Do the whole farm round: harvest, store, plant, make bone meal in the composter and use it, close the gate. Use this when the player says "farm" or "take care of the wheat".',
         params: {'area': { type: 'string', description: 'The name of the farm, empty for the nearest.', default: '' }},
         perform: async function (agent, area) {
             if (!settings.farming_pack)
@@ -864,7 +1057,7 @@ export const actionsList = [
     },
     {
         name: '!harvest',
-        description: 'Harvest the ripe plants of a farm and plant them again. Unripe plants stay. Use this when the player says "harvest" or "collect the wheat".',
+        description: 'Harvest the ripe plants of a farm and plant them again. Use this when the player says "harvest" or "collect the wheat".',
         params: {'area': { type: 'string', description: 'The name of the farm, empty for the nearest.', default: '' }},
         perform: async function (agent, area) {
             if (!settings.farming_pack)
@@ -887,7 +1080,7 @@ export const actionsList = [
     },
     {
         name: '!makeBoneMeal',
-        description: 'Make bone meal in a composter from leaves, grass and flowers. Never from seeds. Use this when the player asks for fertilizer.',
+        description: 'Make bone meal in the composter from compost items you carry, fetch from the chests you know or pick near the farm. Never seeds or food.',
         params: {'num': { type: 'int', description: 'The number of bone meal to make.', domain: [1, Number.MAX_SAFE_INTEGER], default: 1 }},
         perform: async function (agent, num) {
             if (!settings.farming_pack)
@@ -907,23 +1100,25 @@ export const actionsList = [
     },
     {
         name: '!chopTrees',
-        description: 'Cut trees and collect the logs. Only real trees, never the logs of a building. Use this when the player asks for wood or logs.',
+        description: 'Cut whole trees and pick up the logs until you have that many, with an axe if you can get one. Only real trees. Use this when the player asks for wood.',
         params: {
-            'num': { type: 'int', description: 'The number of logs to get.', domain: [1, Number.MAX_SAFE_INTEGER], default: 8 },
+            // v0.1.4.8 (T5): either order of the arguments, !chopTrees("oak", 8) too
+            'num': { type: 'IntOrString', description: 'The number of logs to get.', domain: [1, Number.MAX_SAFE_INTEGER], default: 8 },
             'kind': { type: 'string', description: 'The kind of wood, for example "oak", empty for any.', default: '' }
         },
         perform: async function (agent, num, kind) {
             if (!settings.wood_pack)
                 return WOOD_OFF;
-            return await runPack(agent, 'chopTrees', agent.work_packs?.wood, 'wood', (pack, bot, ctx) => pack.chopTrees(bot, ctx, num, kind));
+            const logs = logsAndKind(num, kind);
+            return await runPack(agent, 'chopTrees', agent.work_packs?.wood, 'wood', (pack, bot, ctx) => pack.chopTrees(bot, ctx, logs.num, logs.kind));
         }
     },
     {
         name: '!getTool',
-        description: 'Make sure you have a tool: pickaxe, axe, shovel, hoe or sword. You craft it if you have none, with everything that needs. Use this before work that needs a tool.',
+        description: 'Make sure you have a tool. You take it from a chest you know or craft it, with everything that needs.',
         params: {
             'kind': { type: 'string', description: 'The tool: pickaxe, axe, shovel, hoe or sword.' },
-            'material': { type: 'string', description: 'The weakest material that is good enough: wooden, stone, iron or diamond. Empty for any.', default: '' }
+            'material': { type: 'string', description: 'The weakest material that is good enough: wooden, stone, iron or diamond. Empty: the best you can make, up to stone.', default: '' }
         },
         perform: async function (agent, kind, material) {
             if (!settings.wood_pack)
@@ -946,20 +1141,22 @@ export const actionsList = [
     },
     {
         name: '!mineOre',
-        description: 'Go mining for an ore: coal, copper, iron, lapis, gold, redstone or diamond. You go down to the right level, dig a tunnel, collect the ore and come back. Use this when the player asks for an ore or for mining.',
+        description: 'Mine an ore and come back. Without a known mine you first ask the player. Use this when the player asks for an ore or for mining.',
         params: {
             'ore': { type: 'string', description: 'The ore: coal, copper, iron, lapis, gold, redstone or diamond.' },
-            'num': { type: 'int', description: 'The number of ore items to bring.', domain: [1, Number.MAX_SAFE_INTEGER], default: 8 }
+            'num': { type: 'int', description: 'The number of ore items to bring.', domain: [1, Number.MAX_SAFE_INTEGER], default: 8 },
+            'new_mine': { type: 'boolean', description: 'true only after the player said yes to a new mine.', default: false }
         },
-        perform: async function (agent, ore, num) {
+        perform: async function (agent, ore, num, new_mine) {
             if (!settings.mining_pack)
                 return MINING_OFF;
-            return await runPack(agent, 'mineOre', agent.work_packs?.mining, 'mining', (pack, bot, ctx) => pack.mineOre(bot, ctx, ore, num));
+            // v0.1.4.8 (E4): without a known mine the pack asks; with new_mine it digs a new one
+            return await runPack(agent, 'mineOre', agent.work_packs?.mining, 'mining', (pack, bot, ctx) => pack.mineOre(bot, ctx, ore, num, { newMine: new_mine === true }));
         }
     },
     {
         name: '!goToMine',
-        description: 'Go down into your mine. Without an ore, the nearest mine.',
+        description: 'Go down into your mine.',
         params: {'ore': { type: 'string', description: 'The ore of the mine, empty for the nearest mine.', default: '' }},
         perform: async function (agent, ore) {
             if (!settings.mining_pack)
@@ -986,7 +1183,7 @@ export const actionsList = [
     },
     {
         name: '!setMode',
-        description: 'Set a mode to on or off. A mode is an automatic behavior that constantly checks and responds to the environment.',
+        description: 'Set a mode to on or off. A mode is an automatic behavior that constantly checks and responds to the environment. Only the player switches a safety reflex off.',
         params: {
             'mode_name': { type: 'string', description: 'The name of the mode to enable.' },
             'on': { type: 'boolean', description: 'Whether to enable or disable the mode.' }
@@ -995,6 +1192,9 @@ export const actionsList = [
             const modes = agent.bot.modes;
             if (!modes.exists(mode_name))
             return `Mode ${mode_name} does not exist.` + modes.getDocs();
+            // v0.1.4.8 (R4, decision of the owner): the model may not switch a safety reflex off, the player may
+            if (on === false && SAFETY_REFLEXES.includes(mode_name) && !typedByPlayer(agent, '!setMode'))
+                return `Only the player switches the reflex ${mode_name}. The player can type !setMode("${mode_name}", false) in the chat.`;
             if (modes.isOn(mode_name) === on)
             return `Mode ${mode_name} is already ${on ? 'on' : 'off'}.`;
             modes.setOn(mode_name, on);

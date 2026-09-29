@@ -234,8 +234,8 @@
     },
     "home_reflexes": {
         "type": "object",
-        "description": "With home_pack on: which reflexes run. door_closing closes doors behind the bot, night_shelter goes to the shelter at night, creeper_safety leads creepers away from the base",
-        "default": { "door_closing": true, "night_shelter": true, "creeper_safety": true }
+        "description": "With home_pack on: which reflexes run. door_closing closes doors behind the bot, night_shelter goes to the shelter at night, creeper_safety leads creepers away from the base, hunger eats and fetches food from a known chest",
+        "default": { "door_closing": true, "night_shelter": true, "creeper_safety": true, "hunger": true }
     },
     "creeper_fighting": {
         "type": "boolean",
@@ -271,6 +271,51 @@
         "type": "object",
         "description": "Items the bot keeps when it stores into chests, with the count to keep, -1 for all, e.g. {\"wheat_seeds\": 32}",
         "default": {}
+    },
+    "stuck_restart_after": {
+        "type": "number",
+        "description": "Failed escapes of the unstuck reflex in a row before the process restarts. 1 is the behaviour of v0.1.4.7: the process restarts when the first escape runs out of time. 0 for never: the bot gives up the escape and tells the model where it is stuck",
+        "default": 1
+    },
+    "protect_built_blocks": {
+        "type": "boolean",
+        "description": "Whether the bot never breaks blocks that players build with (fences, doors, planks, beds ...), also outside the saved areas. A command that the player types in the chat may still do it",
+        "default": false
+    },
+    "knowledge_in_prompt": {
+        "type": "boolean",
+        "description": "Whether to put what the bot knows (where it is, the chests and what is in them, the areas, the mines, the places) into the chat prompt, so the model need not look again",
+        "default": false
+    },
+    "knowledge_max_chars": {
+        "type": "number",
+        "description": "With knowledge_in_prompt on: the longest the block of what the bot knows may be, in characters. The nearest chests are kept first",
+        "default": 600
+    },
+    "repeat_guard": {
+        "type": "number",
+        "description": "Refuse the Nth try in a row of a command of the model that gave the same result each time, and tell the model to ask the player. Commands that the player types are never refused. 0 for off",
+        "default": 0
+    },
+    "restart_context": {
+        "type": "boolean",
+        "description": "Whether to tell the model after a restart what the player had ordered, why the process ended and where the bot is. Saved in bots/<name>/last_exit.json",
+        "default": false
+    },
+    "say_results": {
+        "type": "boolean",
+        "description": "Whether to say the text of a work skill in the chat when the model answers nothing after it",
+        "default": false
+    },
+    "flee_below_health": {
+        "type": "number",
+        "description": "Below this health (0 to 20) the bot does not fight, it retreats to a player or the shelter. 0 for off",
+        "default": 0
+    },
+    "log_timestamps": {
+        "type": "boolean",
+        "description": "Whether to print the time [HH:MM:SS] before each line of the console",
+        "default": false
     },
     "code_timeout_mins": {
         "type": "number",

@@ -10,7 +10,7 @@
 //      queries.js is guarded by a switch: the analyser of glue_flags_off.test.js, with work_packs in the
 //      place of skill_manager;
 //    - agent.js names the commands of each part for blocked_actions;
-//    - modes.js: the depth check of night_shelter is behind mining_pack.
+//    - modes.js: the depth check of night_shelter is no longer behind mining_pack (v0.1.4.8, A7).
 // 2. The runtime with the switches off: the command docs, the examples, the old commands.
 import { describe, test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -193,10 +193,20 @@ describe('source text: the packs of v0.1.4.7 are reached only behind their switc
         assert.deepEqual(result.unguarded.map((u) => u.line), [2]);
     });
 
-    test('packContext() is called only in the command files', () => {
+    // v0.1.4.8, A11: also by the mode hunger of modes.js (a mode of the home pack, it exists only with
+    // home_pack): hungerStep fetches food through ctx.storage, which is null while the packs are off.
+    test('packContext() is called only in the command files and in the mode hunger', () => {
         for (const rel of BOT_FILES) {
             const calls = [...readRepoFile(rel).matchAll(/\.packContext\(/g)].length;
-            if (!['src/agent/commands/actions.js', 'src/agent/commands/queries.js'].includes(rel)) assert.equal(calls, 0, rel);
+            if (rel === 'src/agent/modes.js') assert.ok(calls <= 1, `${rel}: ${calls} calls`);
+            else if (!['src/agent/commands/actions.js', 'src/agent/commands/queries.js'].includes(rel)) assert.equal(calls, 0, rel);
+        }
+        const text = readRepoFile('src/agent/modes.js');
+        const { nodes, parents } = walk(parseModule(text));
+        for (const call of nodes.filter((n) => n.type === 'CallExpression' && n.callee.type === 'MemberExpression' && n.callee.property.name === 'packContext')) {
+            const owner = ancestors(call, parents).find(({ parent }) => parent.type === 'ObjectExpression'
+                && parent.properties.some((p) => p.key?.name === 'name' && p.value?.value === 'hunger'));
+            assert.ok(owner, 'the call is inside the mode hunger');
         }
     });
 
@@ -215,15 +225,18 @@ describe('source text: the packs of v0.1.4.7 are reached only behind their switc
         }
     });
 
-    test('modes.js: the depth of night_shelter is measured only while mining_pack is on', () => {
+    // v0.1.4.8, A7 (a correction): night_shelter waits underground with or without mining_pack. The
+    // depth is measured by whereOf (agent.whereAmI or reflex/where_am_i.js), never behind mining_pack.
+    test('modes.js: night_shelter asks where the bot is, not behind mining_pack (v0.1.4.8, A7)', () => {
         const text = readRepoFile('src/agent/modes.js');
         const { nodes, parents } = walk(parseModule(text));
-        const calls = nodes.filter((n) => n.type === 'CallExpression' && n.callee.type === 'Identifier' && ['depthOfBot', 'nightShelterWaits'].includes(n.callee.name));
-        assert.ok(calls.length >= 2, `${calls.length} calls`);
+        assert.ok(!/\b(depthOfBot|nightShelterWaits|depthUnderSurface)\b/.test(text), 'the checks of v0.1.4.7 are gone');
+        const calls = nodes.filter((n) => n.type === 'CallExpression' && n.callee.type === 'Identifier' && n.callee.name === 'whereOf');
+        assert.ok(calls.length >= 1, `${calls.length} calls`);
         for (const call of calls) {
-            const guarded = ancestors(call, parents).some(({ parent, child }) => parent.type === 'LogicalExpression' && parent.operator === '&&' && child === parent.right
-                && text.slice(parent.left.range[0], parent.left.range[1]) === 'settings.mining_pack');
-            assert.ok(guarded, text.slice(call.range[0], call.range[1]));
+            const guarded = ancestors(call, parents).some(({ parent }) => (parent.type === 'LogicalExpression' || parent.type === 'IfStatement')
+                && /mining_pack/.test(text.slice((parent.left ?? parent.test).range[0], (parent.left ?? parent.test).range[1])));
+            assert.ok(!guarded, text.slice(call.range[0], call.range[1]));
         }
     });
 });
@@ -290,10 +303,14 @@ describe('runtime with the four switches off', () => {
         }
     });
 
-    test('the examples: with the new commands hidden, exactly the examples of v0.1.4.6, for every choice of the parts of v0.1.4.6', () => {
+    // v0.1.4.8 (part G): the examples of v0.1.4.8 come after the 14 of v0.1.4.7; those without a command of
+    // v0.1.4.7 (the commands that had no example, !pickUpItems, the new types) stay with the switches off
+    test('the examples: with the new commands hidden, exactly the examples of v0.1.4.6 and those of v0.1.4.8 without them, for every choice of the parts of v0.1.4.6', () => {
         const old = PROFILE.conversation_examples.filter((e) => !F.exampleCommands(e).some((n) => NEW_COMMANDS.includes(n)));
-        assert.equal(old.length, 36, 'the 36 examples of v0.1.4.6');
-        assert.deepEqual(PROFILE.conversation_examples.slice(0, 36), old, 'unchanged and first');
+        const of0148 = PROFILE.conversation_examples.slice(36 + 14);
+        assert.ok(PROFILE.conversation_examples.slice(36, 36 + 14).every((e) => F.exampleCommands(e).some((n) => NEW_COMMANDS.includes(n))), 'the 14 examples of v0.1.4.7');
+        assert.deepEqual(old, [...PROFILE.conversation_examples.slice(0, 36), ...of0148.filter((e) => !F.exampleCommands(e).some((n) => NEW_COMMANDS.includes(n)))],
+            'the 36 examples of v0.1.4.6 unchanged and first, then those of v0.1.4.8');
         for (let mask = 0; mask < 16; mask++) {
             const hidden = new Set([...NEW_COMMANDS, ...COMMANDS_0146.filter((_, i) => mask & (1 << (i % 4)))]);
             const isHidden = (name) => hidden.has(name);

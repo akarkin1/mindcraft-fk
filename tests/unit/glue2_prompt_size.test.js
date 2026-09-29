@@ -3,7 +3,9 @@
 // settings of settings.js with the part switches set, the blocked commands of blockedFor, the fixed
 // fake state for $STATS and $INVENTORY), with an empty memory and no conversation.
 //   - every part of v0.1.4.6 and v0.1.4.7 on: at most 17,000 characters;
-//   - every part off: at most 11,000 characters, and none of the commands of v0.1.4.7 in it.
+//   - every part off: at most 11,000 characters, and none of the commands of v0.1.4.7 in it;
+//   - v0.1.4.8 (part G): every switch of the fork on, with a block "what you know" of knowledge_max_chars
+//     (600) characters: at most 17,000 characters.
 // The sizes are printed with the test names. Nothing is sent: the chat model is a stand-in, and the
 // Claude adapter gets a placeholder key when the environment has none. The Prompter reads
 // ./profiles/defaults and writes ./bots/<name>, so it runs in a temp directory with a copy of the
@@ -80,8 +82,9 @@ after(() => {
     removeTmpDir(workDir);
 });
 
-// The conversing prompt for the settings of settings.js with the given switches.
-async function conversingPrompt(switches) {
+// The conversing prompt for the settings of settings.js with the given switches. knowledge: the block
+// that agent.knowledgeBlock() gives (v0.1.4.8), used only with knowledge_in_prompt.
+async function conversingPrompt(switches, knowledge = '') {
     const profile = JSON.parse(fs.readFileSync(repoPath('profiles/claude.json'), 'utf8'));
     const settings = { ...S.runSettings(M.fileSettings, profile, false), ...switches };
     M.settingsModule.setSettings(settings);
@@ -90,6 +93,7 @@ async function conversingPrompt(switches) {
         name: profile.name, blocked_actions: blocked, history: { memory: '' },
         self_prompter: { isStopped: () => true, isActive: () => false, isPaused: () => false, prompt: '' },
         actions: { currentActionLabel: '' }, task: { task_id: null }, npc: {},
+        knowledgeBlock: () => knowledge,
     };
     const cap = captureConsole();
     try {
@@ -141,6 +145,24 @@ describe('the size of the conversing prompt (spec v0.1.4.7, section 7)', () => {
         const prompt = await conversingPrompt(switchesOf(true, false));
         t.diagnostic(`parts of v0.1.4.6 on: ${prompt.length} characters`);
         for (const name of NEW_COMMANDS) assert.ok(!prompt.includes(`${name}:`), name);
+        assert.ok(prompt.length <= LIMIT_ALL_ON, `${prompt.length} characters`);
+    });
+
+    // v0.1.4.8: the switches of section 2 that change the prompt; the others are on too
+    const SWITCHES_0148 = { knowledge_in_prompt: true, knowledge_max_chars: 600, protect_built_blocks: true, repeat_guard: 3,
+        restart_context: true, say_results: true, flee_below_health: 8, stuck_restart_after: 3, log_timestamps: true };
+    const block = (max) => {
+        const lines = ['WHAT YOU KNOW (from memory, no need to check):', 'You are in the area "farm" (farm), on the surface.'];
+        for (let i = 0; lines.join('\n').length < max; i++) lines.push(`Chest (${i}, 67, ${i}): leaf_litter 104, cobblestone 81, raw_copper 52, wheat_seeds 52.`);
+        return lines.join('\n').slice(0, max);
+    };
+
+    test('every switch of the fork on (v0.1.4.8), with a block of 600 characters: at most 17,000 characters', async (t) => {
+        const knowledge = block(600);
+        const prompt = await conversingPrompt({ ...switchesOf(true, true), ...SWITCHES_0148 }, knowledge);
+        t.diagnostic(`every switch on (v0.1.4.8): ${prompt.length} characters`);
+        assert.ok(prompt.includes(`${knowledge}\nConversation Begin:`), 'the block is in the prompt');
+        for (const name of ['!pickUpItems', '!closeDoor', ...NEW_COMMANDS]) assert.ok(prompt.includes(`\n${name}: `), name);
         assert.ok(prompt.length <= LIMIT_ALL_ON, `${prompt.length} characters`);
     });
 
