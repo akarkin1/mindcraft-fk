@@ -1,15 +1,19 @@
 // Doors, fence gates and trapdoors for the home pack (spec v0.1.4.6 H2): find them, open and close
-// them and CHECK the new state, pass through a door and close it behind the bot.
+// them and CHECK the new state, pass through a door and close it behind the bot. The door service of
+// v0.1.4.8 (C5) closes what the bot opened or passed, beside every action.
 //
 // After bot.activateBlock the new state arrives with a block update from the server. Nothing here
 // assumes the click worked: every change is read back from the world.
 import { Vec3 } from 'vec3';
-import { containsPos, interiorBox, isBox } from './box_math.js';
+import { isGatedArea } from './area_kinds.js';
+import { containsPos, expandBox, interiorBox, isBox } from './box_math.js';
 import { isInsideArea } from './shelter_logic.js';
 import { botPos, clockOf, dimensionOf, entitiesWhere, listAreas, logTo, otherPlayerPositions } from './context.js';
-import { doorCenter, doorSides, openableKind, sideOf } from './door_logic.js';
+import { DOOR_SERVICE_RULES, DoorWatch, doorCenter, doorSides, openableKind, sideOf } from './door_logic.js';
+import { reflexOn } from './home_settings.js';
 import { isHostileForShelter } from './night_logic.js';
 import { goals, gotoGoal, isNear, makeMovements, walkNear } from './motion.js';
+import { closeNearText, doorClosedLog } from './texts.js';
 
 /** How far a hostile mob may be from the door (16) and from the bot when it approaches (24). */
 export const DOOR_SAFETY = Object.freeze({ nearDoor: 16, nearBot: 24 });
@@ -70,6 +74,22 @@ function readOpenable(bot, pos) {
 }
 
 /**
+ * The state of the door, gate or trapdoor at a position as { x, y, z, kind, open, name, facing }, read
+ * from the world now (the upper half of a door is read as its lower half). undefined: the block is
+ * not loaded; null: no openable there. Never throws.
+ * @param {object} bot
+ * @param {{x,y,z}} pos
+ * @returns {object|null|undefined}
+ */
+export function doorState(bot, pos) {
+    try {
+        return readOpenable(bot, pos);
+    } catch {
+        return undefined;
+    }
+}
+
+/**
  * Doors, fence gates and trapdoors that a hand can open (no iron) within range, as
  * { x, y, z, kind, open, name, facing }. Of a door only the lower block. Never throws.
  * @param {object} bot
@@ -107,13 +127,17 @@ export function findOpenables(bot, range = 6) {
 
 async function waitForState(bot, pos, wantOpen, ms, clock) {
     const start = clock.now();
+    // also bounded by the number of looks, so a clock that does not advance cannot keep it waiting
+    const looks = Math.ceil(Math.max(ms, 1) / 25) + 1;
+    let n = 0;
     do {
         await clock.wait(Math.min(25, ms));
         const state = readOpenable(bot, pos);
         if (state && state.open === wantOpen) {
             return true;
         }
-    } while (clock.now() - start < ms);
+        n++;
+    } while (clock.now() - start < ms && n < looks);
     return false;
 }
 
@@ -432,5 +456,229 @@ export async function closeDoorsBehind(bot, tracker, ctx = {}, options = {}) {
         return [];
     } finally {
         closing.delete(bot);
+    }
+}
+
+// ---- the door service (v0.1.4.8, C5) ----
+
+// Entities that do not stand in a door: items, orbs and projectiles.
+const NOT_STANDING = new Set(['item', 'experience_orb', 'arrow', 'spectral_arrow', 'trident', 'snowball', 'egg', 'ender_pearl',
+    'fishing_bobber', 'potion', 'experience_bottle', 'falling_block', 'painting', 'item_frame', 'glow_item_frame']);
+
+/**
+ * True when an entity other than the bot stands in the openable: its box overlaps the block of a
+ * gate or trapdoor, or the two blocks of a door. Items, orbs and projectiles do not count. Never throws.
+ * @param {object} bot
+ * @param {{x,y,z,kind}} door
+ * @returns {boolean}
+ */
+export function somebodyInDoor(bot, door) {
+    try {
+        const cx = door.x + 0.5;
+        const cz = door.z + 0.5;
+        const top = door.y + (door.kind === 'door' ? 2 : 1);
+        for (const entity of Object.values(bot?.entities ?? {})) {
+            if (!entity || entity === bot.entity || !entity.position || NOT_STANDING.has(entity.name) || entity.type === 'projectile') {
+                continue;
+            }
+            const p = entity.position;
+            const reach = (isFiniteNumber(entity.width) ? entity.width : 0.6) / 2 + 0.5;
+            const height = isFiniteNumber(entity.height) ? entity.height : 1.8;
+            if (Math.abs(p.x - cx) < reach && Math.abs(p.z - cz) < reach && p.y < top && p.y + height > door.y) {
+                return true;
+            }
+        }
+        return false;
+    } catch {
+        return true; // when in doubt, leave the door open
+    }
+}
+
+function botStandsIn(bot, door) {
+    const me = botPos(bot);
+    return Boolean(me) && Math.abs(me.x - (door.x + 0.5)) < 0.8 && Math.abs(me.z - (door.z + 0.5)) < 0.8
+        && me.y < door.y + (door.kind === 'door' ? 2 : 1) && me.y + 1.8 > door.y;
+}
+
+function where3(door) {
+    return `(${door.x}, ${door.y}, ${door.z})`;
+}
+
+/**
+ * The door service of the bot (spec v0.1.4.8, I8 and C5). It follows doors, fence gates and trapdoors
+ * (see DoorWatch of door_logic.js) and closes what the bot opened or passed, beside every action.
+ * - `tick()`: for the background mode door_closing, called on every tick of the modes. It reads the
+ *   openables within 6 blocks at most every 250 ms, starts at most one closing at a time without
+ *   waiting for it, never touches the path search, never throws. Nothing while home_pack or
+ *   home_reflexes.door_closing is off, while passThrough runs, while the bot eats, sleeps or has a
+ *   window open.
+ * - `closeNear(range = 6)`: the function of !closeDoor. Closes every open openable within range and
+ *   reads its state back. Text: `I closed oak_door at (x, y, z) and oak_fence_gate at (x, y, z).` or
+ *   `All doors near me are closed.`
+ * - `stop()`: the service does nothing more.
+ * Each closing prints `Door service: closed <name> at (x, y, z).` to the console.
+ * @param {object} bot
+ * @param {object} ctx { areas, settings, now, log }
+ * @param {{now?: Function, wait?: Function, scanMs?: number, checkMs?: number}} [options] for tests
+ * @returns {{tick: () => void, stop: () => void, closeNear: (range?: number) => Promise<object>}}
+ */
+export function createDoorService(bot, ctx = {}, options = {}) {
+    const clock = clockOf(ctx, options);
+    const watch = new DoorWatch();
+    const scanMs = isFiniteNumber(options?.scanMs) ? options.scanMs : 250;
+    const checkMs = isFiniteNumber(options?.checkMs) ? options.checkMs : 300;
+    let stopped = false;
+    let busy = false;
+    let lastScan = -Infinity;
+    let lastPos = null;
+    let movedAt = -Infinity;
+
+    const read = (me, now) => {
+        const areas = listAreas(ctx, dimensionOf(bot)).map(a => ({ area: a, box: expandBox(a, 1) }));
+        const doors = findOpenables(bot, DOOR_SERVICE_RULES.scanRange).map(door => ({
+            ...door,
+            inArea: areas.some(({ box }) => containsPos(box, door)),
+            gated: door.kind === 'gate' && areas.some(({ area, box }) => isGatedArea(area) && containsPos(box, door)),
+            occupied: somebodyInDoor(bot, door),
+        }));
+        const moving = now - movedAt <= DOOR_SERVICE_RULES.movedWithinMs || bot.pathfinder?.isMoving?.() === true;
+        return watch.observe({ now, botPos: me, moving, doors, players: otherPlayerPositions(bot, 16) });
+    };
+
+    const closeOne = async (door) => {
+        let outcome = 'unknown';
+        try {
+            const before = readOpenable(bot, door);
+            if (!before || !before.open) {
+                // closed meanwhile; after an attempt of the service the late block update shows its click
+                if (before && (watch.noted(door)?.tries ?? 0) > 0) {
+                    console.log(doorClosedLog(before));
+                }
+                watch.forget(door);
+                return;
+            }
+            if (somebodyInDoor(bot, door) || botStandsIn(bot, door)) {
+                return; // tried again on a later look
+            }
+            const closed = await closeDoor(bot, before, { tries: 1, checkMs, respectInterrupt: false, ctx, now: options?.now, wait: options?.wait });
+            outcome = watch.attempt(door, closed, clock.now());
+            if (closed) {
+                console.log(doorClosedLog(before));
+            } else if (outcome === 'gave_up') {
+                console.log(`Door service: could not close ${before.name} at ${where3(before)}.`);
+            }
+        } catch (err) {
+            console.warn('Door service: closing failed:', err?.message ?? err);
+            watch.attempt(door, false, clock.now());
+        }
+    };
+
+    return {
+        tick() {
+            if (stopped) {
+                return;
+            }
+            try {
+                if (!reflexOn(ctx?.settings, 'door_closing')) {
+                    return;
+                }
+                const me = botPos(bot);
+                if (!me) {
+                    return;
+                }
+                const now = clock.now();
+                if (lastPos && Math.hypot(me.x - lastPos.x, me.y - lastPos.y, me.z - lastPos.z) >= 0.1) {
+                    movedAt = now;
+                }
+                lastPos = me;
+                if (now - lastScan < scanMs) {
+                    return;
+                }
+                lastScan = now;
+                const toClose = read(me, now);
+                for (const door of watch.takeClosedLate()) {
+                    console.log(doorClosedLog(door));
+                }
+                if (busy || toClose.length === 0 || isPassingThrough(bot) || bot.usingHeldItem === true || bot.currentWindow
+                    || bot.isSleeping === true) {
+                    return;
+                }
+                busy = true;
+                closeOne(toClose[0]).finally(() => {
+                    busy = false;
+                });
+            } catch (err) {
+                console.warn('Door service: the look failed:', err?.message ?? err);
+            }
+        },
+
+        stop() {
+            stopped = true;
+            watch.reset();
+        },
+
+        async closeNear(range = DOOR_SERVICE_RULES.scanRange) {
+            return await closeNear(bot, ctx, range, { ...options, checkMs });
+        },
+    };
+}
+
+/**
+ * Closes every open door, gate and trapdoor within range and reads its state back (v0.1.4.8, C5; the
+ * command !closeDoor). One farther than 4.5 blocks is walked to first, without opening or digging.
+ * An openable in which somebody stands stays open. Texts: `I closed oak_door at (x, y, z) and
+ * oak_fence_gate at (x, y, z).`, `All doors near me are closed.`, plus `I could not close ...` and
+ * `I left ... open, because somebody stands in it.` Never throws.
+ * @param {object} bot
+ * @param {object} ctx
+ * @param {number} [range]
+ * @param {{now?: Function, wait?: Function, checkMs?: number}} [options]
+ * @returns {Promise<{ok: boolean, reason: string|null, closed: object[], failed: object[], occupied: object[], text: string}>}
+ */
+export async function closeNear(bot, ctx = {}, range = DOOR_SERVICE_RULES.scanRange, options = {}) {
+    const closed = [];
+    const failed = [];
+    const occupied = [];
+    try {
+        const clock = clockOf(ctx, options);
+        const r = isFiniteNumber(range) && range > 0 ? Math.min(range, 16) : DOOR_SERVICE_RULES.scanRange;
+        const me = botPos(bot);
+        const open = findOpenables(bot, r).filter(d => d.open)
+            .sort((a, b) => (me ? Math.hypot(a.x + 0.5 - me.x, a.y - me.y, a.z + 0.5 - me.z) - Math.hypot(b.x + 0.5 - me.x, b.y - me.y, b.z + 0.5 - me.z) : 0));
+        let interrupted = false;
+        for (const door of open) {
+            if (bot.interrupt_code) {
+                interrupted = true;
+                break;
+            }
+            if (somebodyInDoor(bot, door) || botStandsIn(bot, door)) {
+                occupied.push(door);
+                continue;
+            }
+            if (!isNear(bot, doorCenter(door), 4.5)) {
+                await walkNear(bot, door, 3, { clock, timeoutMs: 8000, allowDoors: false });
+                if (readOpenable(bot, door)?.open !== true) {
+                    continue; // somebody else closed it meanwhile, or it is gone
+                }
+            }
+            const ok = await closeDoor(bot, door, { tries: 3, checkMs: isFiniteNumber(options.checkMs) ? options.checkMs : 300,
+                respectInterrupt: false, ctx, now: options.now, wait: options.wait });
+            if (ok) {
+                closed.push(door);
+                console.log(doorClosedLog(door));
+            } else {
+                failed.push(door);
+            }
+        }
+        let text = closeNearText({ closed, failed, occupied });
+        if (interrupted) {
+            text = `${closed.length > 0 ? text : 'I closed no door.'} I was stopped before I closed the rest.`;
+        }
+        const reason = interrupted ? 'interrupted' : (failed.length > 0 ? 'could_not_close' : (occupied.length > 0 ? 'occupied' : null));
+        logTo(ctx, text);
+        return { ok: reason === null, reason, closed, failed, occupied, text };
+    } catch (err) {
+        console.warn('Home pack: closing the doors near me failed:', err?.message ?? err);
+        return { ok: false, reason: 'error', closed, failed, occupied, text: `I could not close the doors: ${err?.message ?? err}` };
     }
 }

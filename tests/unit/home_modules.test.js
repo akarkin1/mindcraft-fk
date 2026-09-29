@@ -9,16 +9,23 @@ import { assertImportRules, assertCleanImport } from '../helpers/module_rules.js
 
 const DIR = 'src/agent/packs/home/';
 const PURE = ['box_math', 'door_logic', 'night_logic', 'creeper_logic', 'shelter_logic', 'sleep_logic', 'food_logic',
-    'texts', 'home_settings', 'context'];
+    'texts', 'home_settings', 'context', 'area_kinds'];
 const EXECUTING = ['motion', 'doors', 'shelter', 'sleep', 'food', 'creeper', 'index'];
 const PACKAGES = ['vec3', 'mineflayer-pathfinder'];
+// v0.1.4.8: area_kinds.js is the one module of the pack that reads the table of the area types (part D)
+const FOREIGN = { area_kinds: ['area_store.js'] };
 
 describe('import rules', () => {
     for (const name of PURE) {
         test(`${name}.js is pure: only pure siblings, no packages`, () => {
-            assertImportRules(`${DIR}${name}.js`, { allowBuiltins: [], allowedRelative: PURE.map(n => `${n}.js`) });
+            assertImportRules(`${DIR}${name}.js`, { allowBuiltins: [], allowedRelative: [...PURE.map(n => `${n}.js`), ...(FOREIGN[name] ?? [])] });
         });
     }
+
+    test('area_kinds.js reads the area types of src/agent/areas/area_store.js and nothing else of it', () => {
+        const { static: specs } = importsOf(`${DIR}area_kinds.js`);
+        assert.deepEqual(specs.filter(s => !s.startsWith('./')), ['../../areas/area_store.js']);
+    });
 
     for (const name of EXECUTING) {
         test(`${name}.js imports no library, no models, no mineflayer itself`, () => {
@@ -50,6 +57,8 @@ describe('index.js', () => {
             'isNight', 'isHostileForShelter', 'shouldShelter', 'decide', 'runCreeperProcedure',
             'isPassingThrough', 'closeDoorsBehind', 'bedInShelter', 'creeperCheck', 'canFightCreeper',
             'readCreepers', 'nightShelterRoutine', 'enterBuilding', 'readHomeSettings', 'reflexOn', 'TEXTS',
+            // v0.1.4.8, I7 and I8, C2
+            'foodItems', 'moveOffhandBack', 'knownFood', 'createDoorService', 'hungerStep', 'hungerDecision',
         ];
         for (const n of names) {
             assert.ok(n in H, `index.js exports ${n}`);

@@ -1,12 +1,12 @@
-// Sleeping in a bed (spec v0.1.4.6 H4).
+// Sleeping in a bed (spec v0.1.4.6 H4, v0.1.4.8 C6).
 import { Vec3 } from 'vec3';
 import { containsPos } from './box_math.js';
-import { botPos, clockOf, dimensionOf, listAreas, logTo, pauseMode } from './context.js';
+import { botPos, clockOf, dimensionOf, listAreas, logTo, noteProgress, pauseMode } from './context.js';
 import { walkNear } from './motion.js';
 import { goToShelter } from './shelter.js';
 import { isBuildingArea, isInsideArea } from './shelter_logic.js';
-import { isBedName, orderBeds, sleepErrorKind, sleepTimeState } from './sleep_logic.js';
-import { TEXTS, couldNotSleepText } from './texts.js';
+import { isBedName, minutesUntilNight, orderBeds, sleepErrorKind, sleepTimeState } from './sleep_logic.js';
+import { TEXTS, couldNotSleepText, dayText } from './texts.js';
 
 /** The bot lies in bed at most this long; on a server where the night does not pass it gets up. */
 export const MAX_SLEEP_MS = 10 * 60 * 1000;
@@ -49,6 +49,7 @@ async function waitForSleepTime(bot, clock, ms) {
         if (sleepTimeState({ timeOfDay: bot.time?.timeOfDay, thunder: thunderNow(bot) }) === 'now') {
             return true;
         }
+        noteProgress(bot, 'sleep'); // waiting at the bed is no being stuck
         await clock.wait(500);
     }
     return sleepTimeState({ timeOfDay: bot.time?.timeOfDay, thunder: thunderNow(bot) }) === 'now';
@@ -72,9 +73,11 @@ function isMorning(timeOfDay) {
 /**
  * Sleeps in the nearest free bed within 32 blocks until the morning. A bed inside a building area is
  * entered through goToShelter first when the bot is outside. After sunset but before mineflayer
- * lets it sleep (12541) it waits at the bed up to 40 s. Texts of the spec: `I slept. It is morning.`,
- * `I cannot sleep now, it is not night.`, `I found no bed nearby.`, `I cannot sleep, monsters are
- * nearby.`, `All beds nearby are taken.`, `I could not sleep: <error text>`. Never throws.
+ * lets it sleep (12541) it waits at the bed up to 40 s. The mode `unstuck` is paused from the start
+ * (v0.1.4.8, C6). Texts of the spec: `I slept. It is morning.`, `I cannot sleep now, it is day. The
+ * night starts in about N minutes.` (by day), `I cannot sleep now, it is not night.`, `I found no bed
+ * nearby.`, `I cannot sleep, monsters are nearby.`, `All beds nearby are taken.`, `I could not sleep:
+ * <error text>`. Never throws.
  * @param {object} bot
  * @param {object} ctx
  * @param {{maxSleepMs?: number, now?: Function, wait?: Function}} [options]
@@ -83,8 +86,11 @@ function isMorning(timeOfDay) {
 export async function sleepInBed(bot, ctx = {}, options = {}) {
     try {
         const clock = clockOf(ctx, options);
+        pauseMode(bot, 'unstuck'); // C6: the walk to the bed and the wait there are no being stuck
+        noteProgress(bot, 'sleep');
         if (sleepTimeState({ timeOfDay: bot.time?.timeOfDay, thunder: thunderNow(bot) }) === 'no') {
-            return { ok: false, reason: 'not_night', text: TEXTS.notNight };
+            const minutes = minutesUntilNight(bot.time?.timeOfDay);
+            return { ok: false, reason: 'not_night', text: minutes === null ? TEXTS.notNight : dayText(minutes) };
         }
         const beds = findBeds(bot, 32);
         if (beds.length === 0) {

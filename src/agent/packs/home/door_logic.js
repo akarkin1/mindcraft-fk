@@ -254,3 +254,199 @@ export class DoorTracker {
         }
     }
 }
+
+/** Numbers of the door service of v0.1.4.8 (spec C5). */
+export const DOOR_SERVICE_RULES = Object.freeze({
+    scanRange: 6,         // the openables within this distance are read on each look
+    noteRange: 3,         // an openable that opens within this distance of the bot is noted
+    playerOpenRange: 3,   // ... unless the bot stands still and a player is this close to it (the player opened it)
+    movedWithinMs: 1500,  // the bot moves when it moved during this time
+    nearDistance: 1.5,    // the bot passed an openable when it came this close to its centre
+    pastDistance: 2,      // a passed openable is closed when the bot is this far from it
+    leftDistance: 4,      // one the bot opened and did not pass: when it is this far
+    reach: 5,             // farther away the bot cannot click it
+    playerClearance: 2,   // no other player this close to it when it is closed
+    tries: 3,             // attempts per openable
+    retryMs: 1000,        // between two attempts
+    forgetMs: 60000,      // a noted openable is forgotten after this time ...
+    forgetDistance: 16,   // ... or when the bot is this far from it
+    startMs: 5000,        // the look at the start lasts this long (chunks arrive late) ...
+    startPlayerRange: 3,  // ... and closes open openables of saved areas with no player this close
+});
+
+/**
+ * Which openables the door service closes (spec v0.1.4.8 C5). Pure: the executing part reads the
+ * world and passes it in, with the time.
+ * - Noted: a door, gate or trapdoor that goes from closed to open within 3 blocks of the bot while the
+ *   bot moves, or while no other player is within 3 blocks of it (then the bot opened it itself).
+ * - Noted: an open gate of an area of type pen or farm (`gated`) when the bot passes it (within 1.5
+ *   blocks), also when it was open before.
+ * - Noted: during the first 5 s, an open openable of a saved area (`inArea`) with no player within 3
+ *   blocks.
+ * - A noted openable is returned to close when it is open, nobody stands in it (`occupied`), no other
+ *   player is within 2 blocks, it is within 5 blocks of the bot, and the bot passed it (came within 1.5)
+ *   and is now 2 blocks or more from it, or did not pass and is 4 blocks or more away. A noted one of
+ *   the start is returned without passing, when the bot does not stand in it.
+ * - Up to 3 attempts, 1 s apart; forgotten after 60 s, 16 blocks away, or when seen closed.
+ */
+export class DoorWatch {
+    constructor() {
+        this.reset();
+    }
+
+    /** Forgets everything; the next observe starts the look at the start again. */
+    reset() {
+        this._seen = new Map();   // key -> open, as read last
+        this._noted = new Map();  // key -> { door, why, notedAt, passed, tries, nextTryAt }
+        this._startUntil = null;
+        this._startDone = new Set();
+        this._late = [];
+    }
+
+    /**
+     * The openables that were seen closed after an attempt that did not see it (the block update came
+     * late). The list is emptied.
+     * @returns {object[]}
+     */
+    takeClosedLate() {
+        const out = this._late;
+        this._late = [];
+        return out;
+    }
+
+    /** Number of noted openables. */
+    get size() {
+        return this._noted.size;
+    }
+
+    /**
+     * The noted openable of a key, as a copy, or null.
+     * @param {{x,y,z}} door
+     * @returns {object|null}
+     */
+    noted(door) {
+        const entry = isPoint(door) ? this._noted.get(doorKey(door)) : null;
+        return entry ? { ...entry, door: { ...entry.door } } : null;
+    }
+
+    /**
+     * Called on each look.
+     * @param {{now: number, botPos: {x,y,z}, moving: boolean, doors: object[], players: {x,y,z}[]}} input
+     *   doors: the openables within 6 blocks as { x, y, z, kind, open, name, facing, inArea, gated, occupied }
+     * @returns {object[]} copies of the openables to close now, nearest first, each with `why`
+     */
+    observe(input = {}) {
+        const now = isFiniteNumber(input?.now) ? input.now : Date.now();
+        const botPos = input?.botPos;
+        if (!isPoint(botPos)) {
+            return [];
+        }
+        if (this._startUntil === null) {
+            this._startUntil = now + DOOR_SERVICE_RULES.startMs;
+        }
+        const doors = (Array.isArray(input.doors) ? input.doors : []).filter(isPoint);
+        const players = (Array.isArray(input.players) ? input.players : []).filter(isPoint);
+        const playerWithin = (door, range) => players.some(p => dist3(p, doorCenter(door)) <= range);
+        const visible = new Map();
+        for (const door of doors) {
+            const key = doorKey(door);
+            visible.set(key, door);
+            const before = this._seen.get(key);
+            this._seen.set(key, door.open === true);
+            if (isIronDoorRecord(door)) {
+                continue;
+            }
+            const d = dist3(botPos, doorCenter(door));
+            if (door.open !== true) {
+                const entry = this._noted.get(key);
+                if (entry && entry.tries > 0) {
+                    this._late.push({ ...door }); // the block update of an attempt came late
+                }
+                this._noted.delete(key); // closed by anybody: nothing to do
+                continue;
+            }
+            if (!this._noted.has(key)) {
+                if (before === false && d <= DOOR_SERVICE_RULES.noteRange
+                    && (input.moving === true || !playerWithin(door, DOOR_SERVICE_RULES.playerOpenRange))) {
+                    this._note(key, door, 'opened', now);
+                } else if (door.gated === true && d <= DOOR_SERVICE_RULES.nearDistance) {
+                    this._note(key, door, 'gate', now);
+                } else if (now <= this._startUntil && door.inArea === true && !this._startDone.has(key)
+                    && !playerWithin(door, DOOR_SERVICE_RULES.startPlayerRange)) {
+                    this._note(key, door, 'start', now);
+                }
+                this._startDone.add(key);
+            }
+            const entry = this._noted.get(key);
+            if (entry) {
+                entry.door = { ...door };
+                if (d <= DOOR_SERVICE_RULES.nearDistance) {
+                    entry.passed = true;
+                }
+            }
+        }
+        const out = [];
+        for (const [key, entry] of this._noted) {
+            const d = dist3(botPos, doorCenter(entry.door));
+            if (now - entry.notedAt > DOOR_SERVICE_RULES.forgetMs || d > DOOR_SERVICE_RULES.forgetDistance) {
+                this._noted.delete(key);
+                continue;
+            }
+            const door = visible.get(key);
+            if (!door || entry.tries >= DOOR_SERVICE_RULES.tries || now < entry.nextTryAt) {
+                continue;
+            }
+            if (door.occupied === true || playerWithin(door, DOOR_SERVICE_RULES.playerClearance) || d > DOOR_SERVICE_RULES.reach) {
+                continue;
+            }
+            const away = entry.why === 'start'
+                ? d > 0.8
+                : (entry.passed && d >= DOOR_SERVICE_RULES.pastDistance) || (!entry.passed && d >= DOOR_SERVICE_RULES.leftDistance);
+            if (away) {
+                out.push({ ...door, why: entry.why, distance: d });
+            }
+        }
+        return out.sort((a, b) => a.distance - b.distance);
+    }
+
+    /**
+     * The outcome of an attempt to close an openable. Closed: it is forgotten. Not closed: one more
+     * attempt counted; after 3 it is forgotten.
+     * @param {{x,y,z}} door
+     * @param {boolean} closed
+     * @param {number} now
+     * @returns {'closed'|'retry'|'gave_up'|'unknown'}
+     */
+    attempt(door, closed, now) {
+        const key = isPoint(door) ? doorKey(door) : null;
+        const entry = key === null ? null : this._noted.get(key);
+        if (!entry) {
+            return 'unknown';
+        }
+        if (closed === true) {
+            this._noted.delete(key);
+            return 'closed';
+        }
+        entry.tries += 1;
+        entry.nextTryAt = (isFiniteNumber(now) ? now : Date.now()) + DOOR_SERVICE_RULES.retryMs;
+        if (entry.tries >= DOOR_SERVICE_RULES.tries) {
+            this._noted.delete(key);
+            return 'gave_up';
+        }
+        return 'retry';
+    }
+
+    /**
+     * Forgets a noted openable (it was found closed).
+     * @param {{x,y,z}} door
+     */
+    forget(door) {
+        if (isPoint(door)) {
+            this._noted.delete(doorKey(door));
+        }
+    }
+
+    _note(key, door, why, now) {
+        this._noted.set(key, { door: { ...door }, why, notedAt: now, passed: false, tries: 0, nextTryAt: now });
+    }
+}

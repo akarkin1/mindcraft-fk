@@ -1,8 +1,24 @@
 // Sleep choices of the home pack (spec v0.1.4.6 H4), pure.
-import { NIGHT_START, normalizeTimeOfDay } from './night_logic.js';
+import { DAY_TICKS, NIGHT_START, normalizeTimeOfDay } from './night_logic.js';
 
 /** mineflayer's bot.sleep accepts these times of day (lib/plugins/bed.js). */
 export const SLEEP_WINDOW = Object.freeze({ start: 12541, end: 23458 });
+
+/** Ticks of one minute of real time (20 ticks per second). */
+export const TICKS_PER_MINUTE = 1200;
+
+/**
+ * Minutes of real time until the night starts (sunset, 12000), for the text by day (v0.1.4.8, C6).
+ * @param {number} timeOfDay bot.time.timeOfDay
+ * @returns {number|null} null when the time is not a number
+ */
+export function minutesUntilNight(timeOfDay) {
+    const t = normalizeTimeOfDay(timeOfDay);
+    if (t === null) {
+        return null;
+    }
+    return ((NIGHT_START - t + DAY_TICKS) % DAY_TICKS) / TICKS_PER_MINUTE;
+}
 
 const FACING_OFFSET = Object.freeze({
     north: { x: 0, z: -1 },

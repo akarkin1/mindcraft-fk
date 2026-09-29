@@ -1,9 +1,10 @@
 // The creeper procedure on the real bot (spec v0.1.4.6 H6). decide() of creeper_logic.js says what
 // to do, this module reads the surroundings and moves the bot. It never uses bot.pvp for a
 // creeper, because that walks up to the target and stays there.
+import { Vec3 } from 'vec3';
 import { distanceToBox } from './box_math.js';
-import { botPos, clockOf, dimensionOf, entitiesWhere, listAreas, logTo, pauseMode } from './context.js';
-import { CREEPER_RULES, CreeperWatch, decide } from './creeper_logic.js';
+import { botPos, clockOf, dimensionOf, entitiesWhere, isUnderground, listAreas, logTo, pauseMode } from './context.js';
+import { CREEPER_RULES, CreeperWatch, decide, lineOfSight } from './creeper_logic.js';
 import { readHomeSettings } from './home_settings.js';
 import { goals, makeMovements, stopMoving } from './motion.js';
 import { isHostileForShelter } from './night_logic.js';
@@ -40,19 +41,59 @@ export function creeperMemory(bot) {
     return memory;
 }
 
+/** The eyes of the bot are this high above its feet. */
+const EYE_HEIGHT = 1.62;
+
+// true for a solid block, false for a free one, null for a block that is not loaded
+function solidReader(bot) {
+    return (x, y, z) => {
+        const block = bot.blockAt(new Vec3(x, y, z));
+        if (!block) {
+            return null;
+        }
+        return block.boundingBox === 'block';
+    };
+}
+
 /**
- * The creepers within range of the bot, nearest first, as { id, pos, fuse, entity }. The fuse burns
- * while metadata[16] is 1. Never throws.
+ * True when no solid block lies between the eyes of the bot and the middle of the entity (v0.1.4.8,
+ * C3). A block that is not loaded blocks the sight. Never throws.
+ * @param {object} bot
+ * @param {object} entity
+ * @returns {boolean}
+ */
+export function inSight(bot, entity) {
+    try {
+        const me = botPos(bot);
+        const p = entity?.position;
+        if (!me || !p) {
+            return false;
+        }
+        const height = typeof entity.height === 'number' && Number.isFinite(entity.height) ? entity.height : 1.7;
+        return lineOfSight({ x: me.x, y: me.y + EYE_HEIGHT, z: me.z }, { x: p.x, y: p.y + height / 2, z: p.z }, solidReader(bot));
+    } catch {
+        return false;
+    }
+}
+
+/**
+ * The creepers within range of the bot, nearest first, as { id, pos, fuse, dBot, dy, sight, entity }
+ * (v0.1.4.8, C3: dBot the distance to the bot, dy the creeper y minus the bot y, sight see inSight).
+ * The fuse burns while metadata[16] is 1. Never throws.
  * @param {object} bot
  * @param {number} [range]
- * @returns {{id: *, pos: {x,y,z}, fuse: boolean, entity: object}[]}
+ * @returns {{id: *, pos: {x,y,z}, fuse: boolean, dBot: number, dy: number, sight: boolean, entity: object}[]}
  */
 export function readCreepers(bot, range = 24) {
     try {
+        const me = botPos(bot);
         return entitiesWhere(bot, range, e => e.name === 'creeper').map(e => ({
             id: e.id,
             pos: { x: e.position.x, y: e.position.y, z: e.position.z },
             fuse: e.metadata?.[16] === 1 || e.metadata?.[16] === true,
+            dBot: dist(me, e.position),
+            dy: e.position.y - me.y,
+            sight: inSight(bot, e),
             entity: e,
         }));
     } catch {
@@ -112,13 +153,15 @@ function buildState(bot, ctx, now, memory) {
         attention: facts.attention,
         attending: facts.attending,
         standing: facts.standing,
+        underground: creepers.length > 0 && isUnderground(ctx), // C3: ctx.whereAmI of the glue; without it the surface
     };
 }
 
 /**
- * decide() on the real surroundings of the bot: creepers within 24 blocks, areas within 48,
- * the setting creeper_fighting, canFightCreeper and the lure attempts of creeperMemory. For the
- * mode creeper_safety: a step other than 'none' means runCreeperProcedure should run. Never throws.
+ * decide() on the real surroundings of the bot: creepers within 24 blocks with their height and sight,
+ * areas within 48, whether the bot is underground (ctx.whereAmI), the setting creeper_fighting,
+ * canFightCreeper and the lure attempts of creeperMemory. For the mode creeper_safety: a step other
+ * than 'none' means runCreeperProcedure should run. Never throws.
  * @param {object} bot
  * @param {object} ctx
  * @returns {object} the result of decide

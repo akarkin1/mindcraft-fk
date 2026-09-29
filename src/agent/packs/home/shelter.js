@@ -1,16 +1,18 @@
-// The shelter of the bot (spec v0.1.4.6 H3): go there, get in through the door and close it; dig
-// in when there is no shelter at all.
+// The shelter of the bot (spec v0.1.4.6 H3, v0.1.4.8 C4): go there, get in through the door and
+// close it. Only an area of type home or the place home is a shelter. Digging in (the emergency
+// shelter) is left for a creeper that stands at every entrance at night.
 import { Vec3 } from 'vec3';
 import { containsPos, distance, distanceToBox, expandBox, floorPos } from './box_math.js';
 import { botPos, clockOf, dimensionOf, listAreas, logTo, recallHome } from './context.js';
-import { creeperMemory, readCreepers, runCreeperProcedure } from './creeper.js';
+import { creeperCheck, creeperMemory, readCreepers, runCreeperProcedure } from './creeper.js';
 import { doorCenter } from './door_logic.js';
-import { closeDoor, findOpenables, passThrough } from './doors.js';
+import { closeDoor, doorState, findOpenables, passThrough } from './doors.js';
 import { goals, gotoGoal, makeMovements, walkNear } from './motion.js';
 import { isNight } from './night_logic.js';
-import { chooseCoverBlock, chooseShelter, chooseStandingPlace, isBuildingArea, isFallingBlockName, isInsideArea, orderEntrances, roomCenter } from './shelter_logic.js';
+import { chooseCoverBlock, chooseShelter, chooseStandingPlace, isBuildingArea, isFallingBlockName, isInsideArea, isShelterArea, orderEntrances,
+    roomCenter } from './shelter_logic.js';
 import { isBedName } from './sleep_logic.js';
-import { TEXTS, creeperAtShelterText, dugInText, shelterText } from './texts.js';
+import { TEXTS, creeperAtShelterText, dugInText, inShelterText, shelterText } from './texts.js';
 
 // Amendment 2, F3: an entrance at least this far from every creeper that stands; at night the bot
 // digs in at least this far from it.
@@ -45,7 +47,8 @@ function coords(p) {
 }
 
 /**
- * True when the bot stands inside the walls of a building area of its dimension.
+ * True when the bot stands inside the walls of a shelter of its dimension: an area of type home
+ * (v0.1.4.8, C4).
  * @param {object} bot
  * @param {object} ctx
  * @returns {boolean}
@@ -53,14 +56,15 @@ function coords(p) {
 export function isInShelter(bot, ctx) {
     try {
         const pos = botPos(bot);
-        return Boolean(pos) && listAreas(ctx, dimensionOf(bot)).some(area => isBuildingArea(area) && isInsideArea(area, pos));
+        return Boolean(pos) && listAreas(ctx, dimensionOf(bot)).some(area => isShelterArea(area) && isInsideArea(area, pos));
     } catch {
         return false;
     }
 }
 
 /**
- * The shelter of the bot by the order of H3 (see chooseShelter). Never throws.
+ * The shelter of the bot by the order of C4 (see chooseShelter). The kind `emergency` means that the
+ * bot knows no home. Never throws.
  * @param {object} bot
  * @param {object} ctx
  * @returns {{kind: 'area'|'place'|'emergency', area?: object, place?: object, why: string}}
@@ -121,7 +125,8 @@ export function bedInShelter(bot, ctx) {
 }
 
 async function creeperFirst(bot, ctx, options) {
-    if (readCreepers(bot, 16).length === 0) {
+    // v0.1.4.8, C3: only a creeper that counts (its height, its sight, underground) starts the procedure
+    if (readCreepers(bot, 16).length === 0 || creeperCheck(bot, ctx).step === 'none') {
         return null;
     }
     logTo(ctx, 'A creeper is near. I lead it away before I go in.');
@@ -145,16 +150,33 @@ async function escapeMonster(bot, mob, ctx, options, clock) {
     });
 }
 
+// Closes the open doors, gates and trapdoors of the area within 16 blocks and reads their state back.
+// The counts: doors of the area found, doors still open.
 async function closeOpenDoorsOf(bot, area, options) {
+    let found = 0;
     let open = 0;
-    for (const door of findOpenables(bot, 6)) {
-        if (door.open && containsPos(area, door)) {
-            if (!(await closeDoor(bot, door, { ...options, respectInterrupt: false }))) {
-                open++;
-            }
+    for (const door of findOpenables(bot, 16)) {
+        if (!containsPos(area, door)) {
+            continue;
+        }
+        found++;
+        if (door.open && !(await closeDoor(bot, door, { ...options, respectInterrupt: false }))) {
+            open++;
         }
     }
-    return open;
+    return { found, open };
+}
+
+// The reply once the bot is inside: `The door is closed.` only when the state of a door was read
+// (v0.1.4.8, C4).
+function insideText(name, doors) {
+    if (doors.open > 0) {
+        return { ok: true, where: name, reason: 'door_open', text: `I am in the shelter "${name}", but a door is still open.` };
+    }
+    if (doors.found === 0) {
+        return { ok: true, where: name, reason: 'no_door', text: inShelterText(name) };
+    }
+    return { ok: true, where: name, reason: null, text: shelterText(name) };
 }
 
 async function walkToRoom(bot, area, ctx, options, clock) {
@@ -168,11 +190,7 @@ async function walkToRoom(bot, area, ctx, options, clock) {
         }
         return { ok: false, where: name, reason: 'no_path', text: `I cannot get into the shelter "${name}".` };
     }
-    const stillOpen = await closeOpenDoorsOf(bot, area, options);
-    if (stillOpen > 0) {
-        return { ok: true, where: name, reason: 'door_open', text: `I am in the shelter "${name}", but a door is still open.` };
-    }
-    return { ok: true, where: name, reason: null, text: shelterText(name) };
+    return insideText(name, await closeOpenDoorsOf(bot, area, options));
 }
 
 /**
@@ -253,16 +271,23 @@ export async function enterBuilding(bot, area, ctx = {}, options = {}) {
     if (!isInsideArea(area, botPos(bot))) {
         return { ok: false, where: name, reason: 'not_inside', text: `I cannot get into the shelter "${name}".` };
     }
-    return { ok: true, where: name, reason: null, text: shelterText(name) };
+    // passThrough closed the entrance and read it back; it is read once more, now that the bot stands inside
+    let state = doorState(bot, entrance);
+    if (state?.open === true) {
+        await closeDoor(bot, entrance, { ...options, ctx, respectInterrupt: false });
+        state = doorState(bot, entrance);
+    }
+    return insideText(name, { found: state ? 1 : 0, open: state?.open === true ? 1 : 0 });
 }
 
 /**
- * Goes to the shelter (spec H3): 1. the building area that contains the place home, 2. the building
- * area named home, 3. the nearest building area within 128 blocks, 4. the place home without an
- * area, 5. an emergency shelter. With a creeper within 16 blocks the creeper procedure runs first.
- * A creeper that stands (F3) keeps the bot from the entrances within 16 blocks of it; without another
- * entrance the bot does not go in, and at night it digs in at least 24 blocks from the creeper.
- * `options.area` forces an area (used by sleepInBed). Never throws.
+ * Goes to the shelter (v0.1.4.8, C4): 1. the area of type home that holds the place home, 2. the
+ * nearest area of type home within 96 blocks, 3. the place home without an area. With no home at all
+ * nothing happens: `I know no home. Tell me where home is.` (reason no_home). With a creeper within 16
+ * blocks the creeper procedure runs first. A creeper that stands (F3) keeps the bot from the entrances
+ * within 16 blocks of it; without another entrance the bot does not go in, and at night it digs in at
+ * least 24 blocks from the creeper. `The door is closed.` is said only after the state of the door was
+ * read. `options.area` forces an area (used by sleepInBed). Never throws.
  * @param {object} bot
  * @param {object} ctx { areas, places, settings, log, now }
  * @param {object} [options]
@@ -301,7 +326,7 @@ export async function goToShelter(bot, ctx = {}, options = {}) {
             }
             return { ok: true, where: 'home', reason: 'no_area', text: 'I am at the place "home". I know no building around it.' };
         }
-        return await emergencyShelter(bot, ctx, options);
+        return { ok: false, where: null, reason: 'no_home', text: TEXTS.noHome };
     } catch (err) {
         console.warn('Home pack: going to the shelter failed:', err?.message ?? err);
         return { ok: false, where: null, reason: 'error', text: `I could not get to the shelter: ${err?.message ?? err}` };

@@ -7,6 +7,8 @@
 // - settings: the settings object;
 // - log(text): progress text for the action output;
 // - now(): milliseconds (or a Date).
+// v0.1.4.8 adds, all optional: say(text) (chat and history, no call of the model), whereAmI() (I2),
+// and from the pack context chests (the chest index) and storage (fetchItem of the storage pack).
 import { isBox } from './box_math.js';
 
 /**
@@ -237,4 +239,64 @@ export function pauseMode(bot, name) {
     } catch {
         // modes are optional
     }
+}
+
+/**
+ * Tells the mode `unstuck` that the bot makes progress (v0.1.4.8, I1: bot.modes.noteProgress of
+ * part A, when it exists). Never throws.
+ * @param {object} bot
+ * @param {string} reason
+ */
+export function noteProgress(bot, reason) {
+    try {
+        bot?.modes?.noteProgress?.(reason);
+    } catch {
+        // modes are optional
+    }
+}
+
+/**
+ * True when ctx.whereAmI() (v0.1.4.8, I2, bound by the glue) says that the bot is underground or in
+ * a mine. Without ctx.whereAmI, or when it fails, the bot counts as on the surface. Never throws.
+ * @param {object} ctx
+ * @returns {boolean}
+ */
+export function isUnderground(ctx) {
+    try {
+        return typeof ctx?.whereAmI === 'function' && ctx.whereAmI()?.underground === true;
+    } catch {
+        return false;
+    }
+}
+
+/**
+ * Says a text without a call of the model (v0.1.4.8, C2): through ctx.say of the glue, which puts it
+ * into the chat and into the history. Without ctx.say the text goes into the behaviour log of the
+ * modes (the model reads it with the next message) and to the console. Never throws.
+ * @param {object} bot
+ * @param {object} ctx
+ * @param {string} text
+ * @returns {'say'|'log'} the way the text went
+ */
+export function sayTo(bot, ctx, text) {
+    if (typeof text !== 'string' || text.length === 0) {
+        return 'log';
+    }
+    try {
+        if (typeof ctx?.say === 'function') {
+            ctx.say(text);
+            return 'say';
+        }
+    } catch (err) {
+        console.warn('Home pack: could not say a text:', err?.message ?? err);
+    }
+    try {
+        if (bot?.modes && typeof bot.modes.behavior_log === 'string') {
+            bot.modes.behavior_log += text + '\n';
+        }
+    } catch {
+        // the console line is enough
+    }
+    console.log(text);
+    return 'log';
 }
