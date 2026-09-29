@@ -8,7 +8,7 @@
 // (the one module that reads the table of the area types of src/agent/areas/area_store.js).
 // Executing modules (they move the bot and get `ctx` = { areas, places, settings, log, now, skills,
 // world }, and from v0.1.4.8 optionally say, whereAmI, chests, storage): doors, shelter, sleep, food,
-// creeper, motion.
+// creeper, motion, and the small eat_lock and wake (the library imports them too).
 import { shelterAndSleep } from './shelter.js';
 import { sleepInBed } from './sleep.js';
 
@@ -33,6 +33,10 @@ export { DOOR_SAFETY, closeDoor, closeDoorsBehind, closeNear, createDoorService,
 export { bedInShelter, emergencyShelter, enterBuilding, findShelter, goToShelter, isInShelter, standingTest } from './shelter.js';
 export { MAX_SLEEP_MS, findBeds, sleepInBed } from './sleep.js';
 export { OFFHAND_SLOT, eatBestFood, foodItems, hungerStep, knownFood, moveOffhandBack } from './food.js';
+// v0.1.4.8, fix round: one lock for eating (X10) and getting out of bed (X5, the glue calls wakeUp before a
+// command that moves the bot)
+export { EAT_LOCK_WAIT_MS, acquireEatLock, eatLockOwner, pauseAutoEat, tryEatLock } from './eat_lock.js';
+export { WAKE_TRIES, WAKE_WAIT_MS, wakeUp } from './wake.js';
 export { FIGHT_SWORDS, TRIES_RESET_MS, canFightCreeper, creeperCheck, creeperMemory, inSight, readCreepers, runCreeperProcedure } from './creeper.js';
 export { gotoGoal, makeMovements, stopMoving, walkNear } from './motion.js';
 

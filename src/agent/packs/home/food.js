@@ -1,6 +1,8 @@
 // Eating (spec v0.1.4.6 H4), the food of the off-hand and of the known chests, and the hunger reflex
-// (spec v0.1.4.8 C1, C2, I7).
+// (spec v0.1.4.8 C1, C2, I7). One lock for eating (eat_lock.js, fix round X10): !eat and the reflex
+// never call bot.consume() at the same time, and auto-eat is paused while a command eats.
 import { botPos, clockOf, dimensionOf, entitiesWhere, logTo, sayTo } from './context.js';
+import { acquireEatLock, eatLockOwner, pauseAutoEat, tryEatLock } from './eat_lock.js';
 import { BANNED_FOOD, HUNGER_RULES, VANILLA_FOODS, autoEatOptions, chooseFood, chooseKnownFood, hungerDecision, isEdibleFood,
     listKnownFood, wantsFood } from './food_logic.js';
 import { reflexOn } from './home_settings.js';
@@ -177,45 +179,78 @@ async function restoreHand(bot, before) {
     }
 }
 
+// The food the bot carries by name, the off-hand and banned food included: { bread: 5 }. Never throws.
+function foodCounts(bot) {
+    const out = {};
+    for (const item of foodItems(bot, { all: true })) {
+        out[item.name] = (out[item.name] ?? 0) + (isFiniteNumber(item.count) ? item.count : 1);
+    }
+    return out;
+}
+
+// What went from the food counts `before` to `after`, by name: { bread: 2 }.
+function foodGone(before, after) {
+    const out = {};
+    for (const [name, n] of Object.entries(before ?? {})) {
+        const d = n - (after?.[name] ?? 0);
+        if (d > 0) {
+            out[name] = d;
+        }
+    }
+    return out;
+}
+
 /**
  * Eats the food with the most food points that is not banned, the off-hand included, until the food
  * level is eatTarget(health): 18, and 20 while health is below 20 (v0.1.4.8, C1). Returns also a
- * `reason`: null, not_hungry, no_food, interrupted, error. Never throws.
+ * `reason`: null, not_hungry, no_food, interrupted, busy, error, and `eaten` (by name). Never throws.
  * @param {object} bot
  * @param {object} ctx
  * @param {{now?: Function, wait?: Function}} options
- * @param {{pickUp: boolean, restoreHand: boolean, log: boolean}} how pickUp: first pick up food within
- *   8 blocks (walks); restoreHand: the item held before goes back into the hand; log: the text to ctx.log
- * @returns {Promise<{ok: boolean, ate: number, reason: string|null, text: string}>}
+ * @param {{pickUp: boolean, restoreHand: boolean, log: boolean, lease?: object}} how pickUp: first pick up
+ *   food within 8 blocks (walks); restoreHand: the item held before goes back into the hand; log: the
+ *   text to ctx.log; lease: the lease of the lock for eating (eat_lock.js), the bot eats only while it is held
+ * @returns {Promise<{ok: boolean, ate: number, reason: string|null, text: string, eaten: Object<string, number>}>}
  */
 async function eatFood(bot, ctx, options, how) {
     const autoEat = bot?.autoEat;
-    const wasDisabled = autoEat?.disabled === true;
-    let paused = false;
+    let resume = null;
     const held = how.restoreHand ? (bot?.heldItem ?? null) : null;
+    const lease = how.lease ?? null;
     let ate = 0;
+    const eaten = {};
     try {
         const clock = clockOf(ctx, options);
         if (!wantsFood(bot.food, bot.health)) {
-            return { ok: true, ate: 0, reason: 'not_hungry', text: notHungryText(bot.food, bot.health) };
+            return { ok: true, ate: 0, reason: 'not_hungry', text: notHungryText(bot.food, bot.health), eaten };
         }
         const foods = foodsOf(bot);
         if (!chooseFood(foodItems(bot), foods) && how.pickUp) {
+            const had = foodCounts(bot);
             await pickUpFood(bot, foods, clock);
+            how.picked = foodGone(foodCounts(bot), had); // X10: what it picked up counts as carried from the start
         }
         const noFood = () => noFoodText(knownFood(ctx, { foods, from: botPos(bot), dimension: dimensionOf(bot) }));
         if (!chooseFood(foodItems(bot), foods)) {
-            return { ok: false, ate: 0, reason: 'no_food', text: noFood() };
+            return { ok: false, ate: 0, reason: 'no_food', text: noFood(), eaten };
         }
-        if (autoEat && !wasDisabled) {
-            autoEat.disabled = true;
-            paused = true;
-            await waitFor(clock, () => autoEat.isEating !== true, 4000);
+        if (autoEat) {
+            // nested pauses: the plugin comes back after the last one, and stays off when the owner switched it off
+            resume = pauseAutoEat(bot);
+            if (!lease) {
+                await waitFor(clock, () => autoEat.isEating !== true, 4000); // with a lease the lock waited already
+            }
         }
-        const eaten = {};
         let lastError = null;
+        let lost = false;
+        let cancelled = 0;
+        const startCounts = foodCounts(bot);
         const start = clock.now();
         while (!bot.interrupt_code && clock.now() - start < 60000 && wantsFood(bot.food, bot.health)) {
+            if (lease && !lease.held()) {
+                lost = true; // X10: a command took the lock; it eats now
+                break;
+            }
             const items = foodItems(bot);
             const name = chooseFood(items, foods);
             if (!name) {
@@ -227,9 +262,18 @@ async function eatFood(bot, ctx, options, how) {
                 lastError = err;
                 break;
             }
+            if (lease && !lease.held()) {
+                lost = true; // taken while the food went into the hand
+                break;
+            }
             const before = bot.food;
             const res = await consumeWithin(bot, clock, 5000);
             if (!res.ok) {
+                // X10: a bite that another eater cancelled is tried once more while the lock is still ours
+                if (/cancelled/i.test(`${res.err?.message ?? res.err}`) && cancelled === 0 && (!lease || lease.held())) {
+                    cancelled++;
+                    continue;
+                }
                 lastError = res.err;
                 break;
             }
@@ -240,31 +284,91 @@ async function eatFood(bot, ctx, options, how) {
         }
         if (ate === 0) {
             if (lastError) {
-                return { ok: false, ate: 0, reason: 'error', text: `I could not eat: ${lastError?.message ?? lastError}` };
+                return { ok: false, ate: 0, reason: 'error', text: `I could not eat: ${lastError?.message ?? lastError}`, eaten };
             }
             if (bot.interrupt_code) {
-                return { ok: false, ate: 0, reason: 'interrupted', text: 'I stopped eating.' };
+                return { ok: false, ate: 0, reason: 'interrupted', text: 'I stopped eating.', eaten };
             }
-            return { ok: false, ate: 0, reason: 'no_food', text: noFood() };
+            if (lost) {
+                return { ok: true, ate: 0, reason: 'busy', text: '', eaten };
+            }
+            return { ok: false, ate: 0, reason: 'no_food', text: noFood(), eaten };
         }
+        // X10: the bites read from the inventory (a bite can end early without eating), at most the own bites
+        const counted = await countEaten(bot, startCounts, eaten, clock, true);
+        const n = countSum(counted);
         // I6: stopped before the bot had enough: the text still names what it ate
         const stopped = Boolean(bot.interrupt_code) && wantsFood(bot.food, bot.health);
-        const status = ateStatusText(eaten, bot.food, bot.health);
-        const text = stopped ? `${status} I was stopped before I had eaten enough.` : status;
+        const status = ateStatusText(counted, bot.food, bot.health);
+        const text = stopped ? `${status} ${STOPPED_EATING}` : status;
         if (how.log) {
             logTo(ctx, text);
         }
-        return stopped ? { ok: false, ate, reason: 'interrupted', text } : { ok: true, ate, reason: null, text };
+        return stopped ? { ok: false, ate: n, reason: 'interrupted', text, eaten: counted } : { ok: true, ate: n, reason: null, text, eaten: counted };
     } catch (err) {
         console.warn('Home pack: eating failed:', err?.message ?? err);
-        return { ok: false, ate, reason: 'error', text: `I could not eat: ${err?.message ?? err}` };
+        return { ok: false, ate, reason: 'error', text: `I could not eat: ${err?.message ?? err}`, eaten };
     } finally {
-        if (held) {
+        // X10: a reflex that lost the lock leaves the hand alone; a new item in the hand would end the
+        // bite of the command that eats now
+        if (held && (!lease || lease.held())) {
             await restoreHand(bot, held);
         }
-        if (paused) {
-            autoEat.disabled = false;
+        if (resume) {
+            resume();
         }
+    }
+}
+
+const STOPPED_EATING = 'I was stopped before I had eaten enough.';
+const SLOT_SETTLE_MS = 600; // the slot of the last bite can come a moment after the new food level
+
+function countSum(counts) {
+    return Object.values(counts ?? {}).reduce((sum, n) => sum + n, 0);
+}
+
+// X10: the food that went from the inventory since `base`, by name in the order of the own bites
+// `own`, once the slot of the last bite arrived (at most 600 ms). On the real server the slot update
+// of one bite ended the next bite early (mineflayer ends a bite when the item in the hand changes), and
+// "I ate 5 bread" was said for 3: the bites alone count too many. With `cap` a name counts at most its own
+// bites (another eater may have eaten beside); the own bites count alone when the inventory shows nothing.
+async function countEaten(bot, base, own, clock, cap) {
+    let gone = foodGone(base, foodCounts(bot));
+    for (let waited = 0; countSum(gone) < countSum(own) && waited < SLOT_SETTLE_MS; waited += 50) {
+        await clock.wait(50);
+        gone = foodGone(base, foodCounts(bot));
+    }
+    const counted = countSum(gone) > 0 ? gone : own;
+    const out = {};
+    for (const name of [...Object.keys(own), ...Object.keys(counted)]) {
+        const n = cap ? Math.min(counted[name] ?? 0, own[name] ?? 0) : (counted[name] ?? 0);
+        if (n > 0) {
+            out[name] = n;
+        }
+    }
+    return countSum(out) > 0 ? out : { ...own };
+}
+
+// X10: the text of !eat counts what the bot ate in all since the command started, read from the
+// inventory before and after: also what the reflex or auto-eat ate while the command waited for them.
+// Food that the command picked up counts as carried from the start.
+async function withAllEaten(bot, res, before, picked, clock) {
+    try {
+        const base = { ...before };
+        for (const [name, n] of Object.entries(picked ?? {})) {
+            base[name] = (base[name] ?? 0) + n;
+        }
+        const all = await countEaten(bot, base, res.eaten ?? {}, clock, false);
+        const total = countSum(all);
+        if (total === 0) {
+            return res; // nothing was eaten: the text of eatFood (not hungry, no food, an error)
+        }
+        const stopped = res.reason === 'interrupted' || (Boolean(bot.interrupt_code) && wantsFood(bot.food, bot.health));
+        const status = ateStatusText(all, bot.food, bot.health);
+        const text = stopped ? `${status} ${STOPPED_EATING}` : status;
+        return stopped ? { ok: false, ate: total, reason: 'interrupted', text, eaten: all } : { ok: true, ate: total, reason: null, text, eaten: all };
+    } catch {
+        return res;
     }
 }
 
@@ -274,28 +378,57 @@ async function eatFood(bot, ctx, options, how) {
  * long as it has food. With no food it first picks up food items that lie within 8 blocks. Texts:
  * `I ate 2 bread. Food 19 of 20, health 12 of 20.`, `I am not hungry. Food 19 of 20, health 20 of 20.`,
  * `I carry no food. The chest at (11, 67, 53) has 5 apple.` or `I carry no food and know no chest with
- * food.` (the chests of ctx.chests). The auto-eat plugin is paused meanwhile. Never throws.
+ * food.` (the chests of ctx.chests). Fix round X10: it takes the lock for eating (eat_lock.js). While it
+ * runs, the hunger reflex does not eat and auto-eat is paused; when the reflex or auto-eat is eating as
+ * it starts, it waits for them, at most 4 s, and then goes on. Its text counts what the bot ate in all
+ * since the command started (the inventory before and after). Never throws.
  * @param {object} bot
  * @param {object} ctx
- * @param {{now?: Function, wait?: Function}} [options]
+ * @param {{now?: Function, wait?: Function, waitMs?: number}} [options] waitMs: the wait for the other eaters
  * When it is stopped: `{ ok: false, reason: 'interrupted', text }`, the text names what it ate (I6).
  * @returns {Promise<{ok: boolean, ate: number, reason: string|null, text: string}>}
  */
 export async function eatBestFood(bot, ctx = {}, options = {}) {
-    const res = await eatFood(bot, ctx ?? {}, options ?? {}, { pickUp: true, restoreHand: false, log: true });
-    return { ok: res.ok, ate: res.ate, reason: res.reason ?? null, text: res.text };
+    const c = ctx ?? {};
+    const o = options ?? {};
+    const before = foodCounts(bot);
+    const lease = await acquireEatLock(bot, 'command', { ...o, ctx: c });
+    try {
+        const how = { pickUp: true, restoreHand: false, log: false, lease };
+        const own = await eatFood(bot, c, o, how);
+        const res = await withAllEaten(bot, own, before, how.picked, clockOf(c, o));
+        if (res.ate > 0) {
+            logTo(c, res.text);
+        }
+        return { ok: res.ok, ate: res.ate, reason: res.reason ?? null, text: res.text };
+    } finally {
+        lease.release();
+    }
 }
 
 // The eating of the reflex runs beside the action: no walking, the item of the hand comes back, and
-// nothing while the bot digs (unless it starves), sleeps, has a window open or auto-eat eats.
+// nothing while the bot digs (unless it starves), sleeps, has a window open, auto-eat eats or a command
+// holds the lock for eating (X10).
 async function reflexEat(bot, ctx) {
+    if (eatLockOwner(bot) !== null) {
+        return { ok: true, ate: 0, reason: 'busy', text: '' };
+    }
     if (bot.autoEat?.isEating === true) {
         return { ok: true, ate: 0, reason: 'auto_eat', text: '' };
     }
     if (bot.isSleeping === true || bot.currentWindow || (bot.targetDigBlock && bot.food > 6)) {
         return { ok: true, ate: 0, reason: 'busy', text: '' };
     }
-    const res = await eatFood(bot, ctx, {}, { pickUp: false, restoreHand: true, log: false });
+    const lease = tryEatLock(bot, 'reflex');
+    if (!lease) {
+        return { ok: true, ate: 0, reason: 'busy', text: '' };
+    }
+    let res;
+    try {
+        res = await eatFood(bot, ctx, {}, { pickUp: false, restoreHand: true, log: false, lease });
+    } finally {
+        lease.release();
+    }
     if (res.ate > 0) {
         console.log(`Hunger reflex: ${res.text}`);
     }
@@ -325,7 +458,18 @@ async function fetchAndEat(bot, ctx, s, known, foods, now) {
         return { ok: false, taken, reason: res?.reason ?? 'not_found', text: res?.text ?? '' };
     }
     s.fetchFailedAt = null;
-    const eaten = await eatFood(bot, ctx, {}, { pickUp: false, restoreHand: false, log: true });
+    // X10: a command that eats now holds the lock; the reflex leaves the eating to it
+    const lease = tryEatLock(bot, 'reflex');
+    if (!lease) {
+        console.log(`Hunger reflex: I took ${taken} ${name} from the chests. I do not eat now, a command eats.`);
+        return { ok: true, taken, reason: 'busy', text: '' };
+    }
+    let eaten;
+    try {
+        eaten = await eatFood(bot, ctx, {}, { pickUp: false, restoreHand: false, log: true, lease });
+    } finally {
+        lease.release();
+    }
     console.log(`Hunger reflex: I took ${taken} ${name} from the chests. ${eaten.text}`);
     return { ok: eaten.ok, taken, reason: eaten.reason, text: eaten.text };
 }

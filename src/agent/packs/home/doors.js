@@ -94,15 +94,20 @@ export function doorState(bot, pos) {
  * { x, y, z, kind, open, name, facing }. Of a door only the lower block. Never throws.
  * @param {object} bot
  * @param {number} [range]
+ * @param {{x,y,z}|null} [from] measure the range from this point instead of the bot (fix round X6)
  * @returns {object[]}
  */
-export function findOpenables(bot, range = 6) {
+export function findOpenables(bot, range = 6, from = null) {
     try {
-        const positions = bot.findBlocks({
+        const query = {
             matching: block => block !== null && block !== undefined && openableKind(block.name) !== null,
             maxDistance: range,
             count: 64,
-        });
+        };
+        if (isPoint(from)) {
+            query.point = new Vec3(from.x, from.y, from.z);
+        }
+        const positions = bot.findBlocks(query);
         const out = [];
         const seen = new Set();
         for (const pos of positions) {
@@ -260,8 +265,15 @@ export function doorIsSafe(bot, door, ctx = {}) {
     }
 }
 
-// Which side of the door is the goal: the inner side of `inside`, or the side away from the bot.
-function chooseSides(state, sides, bot, inside) {
+// Which side of the door is the goal: the inner side of `inside`, the side of the point `toward`
+// (fix round X6: the place "home" when there is no area), or the side away from the bot.
+function chooseSides(state, sides, bot, inside, toward = null) {
+    if (isPoint(toward) && !isBox(inside)) {
+        const goal = sideOf(state, toward);
+        if (goal !== 0) {
+            return goal === 1 ? { near: sides[0], far: sides[1], farSign: 1 } : { near: sides[1], far: sides[0], farSign: -1 };
+        }
+    }
     if (isBox(inside)) {
         const room = interiorBox(inside);
         const inA = containsPos(room, { x: sides[0].x + 0.5, y: sides[0].y, z: sides[0].z + 0.5 });
@@ -283,15 +295,21 @@ function outcome(ok, reason, text, extra = {}) {
     return { ok, reason, text, ...extra };
 }
 
+// The word for an openable in a text (X13): door, gate or trapdoor.
+function kindName(state) {
+    return state?.kind === 'gate' || state?.kind === 'trapdoor' ? state.kind : 'door';
+}
+
 /**
  * Walks to the door, opens it, walks through to the other side, closes it and checks that it is
- * closed. The other side is the side inside `options.inside` (an area) when given, otherwise the
- * side away from the bot. Refuses with `monster_near` when doorIsSafe says no, before walking and
- * again at the door. A door it opened but could not pass is closed again.
+ * closed. The other side is the side inside `options.inside` (an area) when given, else the side of
+ * the point `options.toward` (fix round X6), otherwise the side away from the bot. Refuses with
+ * `monster_near` when doorIsSafe says no, before walking and again at the door. A door it opened but
+ * could not pass is closed again. The texts name what it is: door, gate or trapdoor (X13).
  * @param {object} bot
  * @param {{x,y,z}} door the lower block of a door, or a fence gate
  * @param {object} [ctx] { areas, log, now, ... }
- * @param {{inside?: object, timeoutMs?: number, allowDig?: boolean, areas?: object[], checkMs?: number, now?: Function, wait?: Function}} [options]
+ * @param {{inside?: object, toward?: {x,y,z}, timeoutMs?: number, allowDig?: boolean, areas?: object[], checkMs?: number, now?: Function, wait?: Function}} [options]
  *   allowDig (default true): the walk to the door may dig as its last try, never within 2 blocks of an area
  * @returns {Promise<{ok: boolean, reason: string|null, text: string, mob?: object}>}
  *   reasons: no_path, blocked, could_not_close, monster_near, interrupted, error
@@ -330,8 +348,9 @@ async function passInner(bot, door, ctx, options) {
     if (!sides) {
         return outcome(false, 'blocked', `I cannot walk through the ${state.kind} at ${where(state)}.`);
     }
-    const { near, far, farSign } = chooseSides(state, sides, bot, options.inside);
-    const monster = (danger) => outcome(false, 'monster_near', `A monster is near the door at ${where(state)}. I do not open it.`, { mob: danger.entity });
+    const { near, far, farSign } = chooseSides(state, sides, bot, options.inside, options.toward);
+    const kind = kindName(state); // X13: the texts name what it is: door, gate or trapdoor
+    const monster = (danger) => outcome(false, 'monster_near', `A monster is near the ${kind} at ${where(state)}. I do not open it.`, { mob: danger.entity });
 
     // Already through: inside the area when one is given, otherwise just behind the door. The side of
     // the door's plane alone is not enough: a bot behind the opposite wall is on that side too.
@@ -341,9 +360,9 @@ async function passInner(bot, door, ctx, options) {
         : sideOf(state, botPos(bot)) === farSign && isNear(bot, farCenter, 2.5);
     if (alreadyThrough) {
         if (state.open && !(await closeDoor(bot, state, { ...doorOpts, respectInterrupt: false }))) {
-            return outcome(false, 'could_not_close', `I could not close the door at ${where(state)}.`);
+            return outcome(false, 'could_not_close', `I could not close the ${kind} at ${where(state)}.`);
         }
-        return outcome(true, null, `I am on the other side of the door at ${where(state)}. It is closed.`);
+        return outcome(true, null, `I am on the other side of the ${kind} at ${where(state)}. It is closed.`);
     }
 
     let danger = doorDanger(bot, state, ctx);
@@ -359,13 +378,13 @@ async function passInner(bot, door, ctx, options) {
         const walk = await walkNear(bot, near, 1, { timeoutMs: walkMs, clock, allowDig: options.allowDig !== false, areas });
         if (!walk.ok) {
             if (walk.reason === 'interrupted') {
-                return outcome(false, 'interrupted', 'I stopped on my way to the door.');
+                return outcome(false, 'interrupted', `I stopped on my way to the ${kind}.`);
             }
-            return outcome(false, 'no_path', `I found no way to the door at ${where(state)}.`);
+            return outcome(false, 'no_path', `I found no way to the ${kind} at ${where(state)}.`);
         }
     }
     if (bot.interrupt_code) {
-        return outcome(false, 'interrupted', 'I stopped at the door.');
+        return outcome(false, 'interrupted', `I stopped at the ${kind}.`);
     }
     danger = doorDanger(bot, state, ctx);
     if (danger) {
@@ -387,13 +406,13 @@ async function passInner(bot, door, ctx, options) {
     if (!(await openDoor(bot, state, doorOpts))) {
         await closeAgain();
         if (bot.interrupt_code) {
-            return outcome(false, 'interrupted', 'I stopped at the door.');
+            return outcome(false, 'interrupted', `I stopped at the ${kind}.`);
         }
-        return outcome(false, 'blocked', `The door at ${where(state)} does not open.`);
+        return outcome(false, 'blocked', `The ${kind} at ${where(state)} does not open.`);
     }
     if (bot.interrupt_code) {
         await closeAgain();
-        return outcome(false, 'interrupted', 'I stopped at the door.');
+        return outcome(false, 'interrupted', `I stopped at the ${kind}.`);
     }
 
     const through = await gotoGoal(bot, new goals.GoalBlock(far.x, far.y, far.z), {
@@ -406,15 +425,15 @@ async function passInner(bot, door, ctx, options) {
     if (!arrived) {
         await closeAgain();
         if (through.reason === 'interrupted' || bot.interrupt_code) {
-            return outcome(false, 'interrupted', 'I stopped in the doorway.');
+            return outcome(false, 'interrupted', `I stopped in the ${kind === 'gate' ? 'gateway' : 'doorway'}.`);
         }
-        return outcome(false, 'blocked', `I could not get through the door at ${where(state)}.`);
+        return outcome(false, 'blocked', `I could not get through the ${kind} at ${where(state)}.`);
     }
     if (!(await closeDoor(bot, state, { ...doorOpts, respectInterrupt: false }))) {
-        return outcome(false, 'could_not_close', `I went through the door at ${where(state)}, but I could not close it.`);
+        return outcome(false, 'could_not_close', `I went through the ${kind} at ${where(state)}, but I could not close it.`);
     }
-    logTo(ctx, `I went through the door at ${where(state)} and closed it.`);
-    return outcome(true, null, `I went through the door at ${where(state)} and closed it.`);
+    logTo(ctx, `I went through the ${kind} at ${where(state)} and closed it.`);
+    return outcome(true, null, `I went through the ${kind} at ${where(state)} and closed it.`);
 }
 
 /**

@@ -5,6 +5,8 @@ import Vec3 from 'vec3';
 import settings from "../../../settings.js";
 import { findOpenables, openDoor, passThrough } from "../packs/home/doors.js";
 import { sideOf } from "../packs/home/door_logic.js";
+import { acquireEatLock } from "../packs/home/eat_lock.js";
+import { wakeUp } from "../packs/home/wake.js";
 
 const blockPlaceDelay = settings.block_place_delay == null ? 0 : settings.block_place_delay;
 const useDelay = blockPlaceDelay > 0;
@@ -459,6 +461,23 @@ export async function collectBlock(bot, blockType, num=1, exclude=null) {
         blocktypes.push('grass_block');
     if (blockType === 'cobblestone')
         blocktypes.push('stone');
+
+    // v0.1.4.8, fix round (X11): never more blocks than asked. !collectBlocks("oak_fence", 3) broke 4
+    // posts: the path search of the collect plugin dug through a post on its way to a dropped item. The
+    // blocks of the asked types that break are counted from the block updates, and the path search of the
+    // collect plugin may not break another block of these types than the one it collects.
+    const breaks = watchBreaks(bot, blocktypes);
+    const target = { pos: null };
+    const releaseTargets = keepOtherTargets(bot, blocktypes, target);
+    try {
+        return await collectBlocks(bot, blockType, num, exclude, blocktypes, breaks, target);
+    } finally {
+        releaseTargets();
+        breaks.stop();
+    }
+}
+
+async function collectBlocks(bot, blockType, num, exclude, blocktypes, breaks, target) {
     const isLiquid = blockType === 'lava' || blockType === 'water';
 
     let collected = 0;
@@ -519,6 +538,9 @@ export async function collectBlock(bot, blockType, num=1, exclude=null) {
     };
 
     for (let i=0; i<num; i++) {
+        // X11: the loop ends when the gain reached the number or the number of broken blocks reached it
+        if (Math.max(collected, breaks.count()) >= num || gainOf(invBefore, inventoryCounts(bot), [blockType, ...blocktypes]) >= num)
+            break;
         refused = 0;
         refusedBuilt = 0;
         refusal = null;
@@ -561,6 +583,7 @@ export async function collectBlock(bot, blockType, num=1, exclude=null) {
             break;
         }
         const block = blocks[0];
+        target.pos = block.position; // X11: the one block of the asked types that the path search may break
         await bot.tool.equipForBlock(block);
         if (isLiquid) {
             const bucket = bot.inventory.findInventoryItem('bucket');
@@ -616,9 +639,100 @@ export async function collectBlock(bot, blockType, num=1, exclude=null) {
     }
     if (refusedAll && collected === 0)
         return false; // v0.1.4.8 (B1): the text of the guard is the whole answer
-    const result = await collectResult(bot, blockType, brokenNames, collected, invBefore);
+    const result = await collectResult(bot, blockType, mostBroken(brokenNames, breaks.names()), collected, invBefore);
     log(bot, result.text);
     return result.got;
+}
+
+// v0.1.4.8, fix round (X11): the blocks of the given types that break within 8 blocks of the bot while
+// collectBlock runs, seen in the block updates of mineflayer: the digs of collectBlock and those of the
+// path search on its way. A block that comes back (the server refused the dig) is taken off again.
+const BREAK_WATCH_RANGE = 8;
+
+function watchBreaks(bot, blocktypes) {
+    const broken = new Map(); // "x,y,z" -> name
+    const onUpdate = (oldBlock, newBlock) => {
+        try {
+            const p = newBlock?.position ?? oldBlock?.position;
+            if (!p)
+                return;
+            const key = `${p.x},${p.y},${p.z}`;
+            if (newBlock && blocktypes.includes(newBlock.name))
+                broken.delete(key);
+            else if (oldBlock && blocktypes.includes(oldBlock.name) && bot.entity.position.distanceTo(p) <= BREAK_WATCH_RANGE)
+                broken.set(key, oldBlock.name);
+        } catch (err) {
+            // not counted
+        }
+    };
+    let listening = false;
+    try {
+        if (typeof bot.on === 'function' && typeof bot.removeListener === 'function') {
+            bot.on('blockUpdate', onUpdate);
+            listening = true;
+        }
+    } catch (err) {
+        listening = false; // the own count of collectBlock decides alone
+    }
+    return {
+        count: () => broken.size,
+        names: () => {
+            const out = {};
+            for (const name of broken.values())
+                out[name] = (out[name] ?? 0) + 1;
+            return out;
+        },
+        stop: () => {
+            if (!listening)
+                return;
+            listening = false;
+            try {
+                bot.removeListener('blockUpdate', onUpdate);
+            } catch (err) {
+                // gone with the bot
+            }
+        },
+    };
+}
+
+// X11: the path search of the collect plugin (its own Movements) gets cost 100 for every block of the
+// asked types but the one in target.pos. Returns the function that takes the rule away again.
+function keepOtherTargets(bot, blocktypes, target) {
+    try {
+        const list = bot.collectBlock?.movements?.exclusionAreasBreak;
+        if (!Array.isArray(list))
+            return () => {};
+        const rule = (block) => {
+            if (!block || !blocktypes.includes(block.name) || !block.position)
+                return 0;
+            const t = target.pos;
+            return t && block.position.x === t.x && block.position.y === t.y && block.position.z === t.z ? 0 : 100;
+        };
+        list.push(rule);
+        return () => {
+            const at = list.indexOf(rule);
+            if (at >= 0)
+                list.splice(at, 1);
+        };
+    } catch (err) {
+        return () => {};
+    }
+}
+
+// X11: what the inventory gained of the given item names.
+function gainOf(before, after, names) {
+    if (!before || !after)
+        return 0;
+    const gain = world.getInventoryGain(before, after);
+    return [...new Set(names)].reduce((n, name) => n + (gain[name] ?? 0), 0);
+}
+
+// X11: per name the larger count of the own count and the watched count.
+function mostBroken(own, watched) {
+    const out = { ...own };
+    for (const [name, n] of Object.entries(watched))
+        out[name] = Math.max(out[name] ?? 0, n);
+    return out;
 }
 
 // v0.1.4.8 (B1, F4): the result of collectBlock names what the inventory gained, not what was broken
@@ -1298,10 +1412,28 @@ export async function consume(bot, itemName="") {
         log(bot, `You do not have any ${name} to eat.`);
         return false;
     }
-    await bot.equip(item, 'hand');
-    await bot.consume();
+    // v0.1.4.8, fix round (X10): the lock for eating of the home pack; the hunger reflex and auto-eat do
+    // not eat while it is held
+    const lease = await acquireEatLock(bot, 'command');
+    try {
+        await bot.equip(item, 'hand');
+        await bot.consume();
+    } catch (err) {
+        // X12: mineflayer refuses to eat with a full food level ("Food is full"): an answer, no exception
+        if (/food is full/i.test(`${err?.message ?? err}`))
+            log(bot, notHungryText(bot));
+        else
+            log(bot, `I could not eat the ${item.name}: ${err?.message ?? err}`);
+        return false;
+    } finally {
+        lease.release();
+    }
     log(bot, `Consumed ${item.name}.`);
     return true;
+}
+
+function notHungryText(bot) {
+    return `I am not hungry. Food ${Math.round(bot.food ?? 20)} of 20.`;
 }
 
 
@@ -1327,7 +1459,6 @@ export async function giveToPlayer(bot, itemType, username, num=1) {
     }
     await goToPlayer(bot, username, 3);
     // if we are 2 below the player
-    log(bot, bot.entity.position.y, player.position.y);
     if (bot.entity.position.y < player.position.y - 1) {
         await goToPlayer(bot, username, 1);
     }
@@ -1521,7 +1652,9 @@ function doorInTheWay(bot, target) {
 }
 
 async function passStuckDoor(bot, door) {
-    log(bot, `I am stuck at the door at (${door.x}, ${door.y}, ${door.z}). I walk through it.`);
+    // v0.1.4.8, fix round (X13): the text names what it is: door, gate or trapdoor
+    const kind = door.kind === 'gate' || door.kind === 'trapdoor' ? door.kind : 'door';
+    log(bot, `I am stuck at the ${kind} at (${door.x}, ${door.y}, ${door.z}). I walk through it.`);
     const result = await passThrough(bot, door, { log: (text) => log(bot, text) }, { allowDig: false });
     return result.ok === true;
 }
@@ -1606,6 +1739,22 @@ async function gotoThroughDoors(bot, goal, movements) {
     }
 }
 
+// v0.1.4.8, fix round (X7): the timer only opens. The path search of mineflayer-pathfinder (patched)
+// opens a closed door itself and then heads for the corner of the door block, because it does not
+// centre the points of the path behind a door it opens; the bot stands still at the door frame. The
+// timer toggled every door next to a bot that stood still for 1.2 s, so it closed the door that the path
+// search had just opened; the next path went through a closed door again, and the two swung the door for
+// 60 s in 1 of 4 runs of the world test flags_off (the timer and the path search are those of v0.1.4.7).
+// A door that stays open lets the path search plan through the open door, and the bot walks through it.
+function isOpenBlock(block) {
+    try {
+        const props = typeof block.getProperties === 'function' ? block.getProperties() : block._properties;
+        return props?.open === true || props?.open === 'true';
+    } catch (err) {
+        return false;
+    }
+}
+
 let _doorInterval = null;
 function startDoorInterval(bot) {
     /**
@@ -1661,7 +1810,8 @@ function startDoorInterval(bot) {
                     !block.name.includes('iron') &&
                     (block.name.includes('door') ||
                      block.name.includes('fence_gate') ||
-                     block.name.includes('trapdoor'))) 
+                     block.name.includes('trapdoor')) &&
+                    !isOpenBlock(block))
                 {
                     bot.activateBlock(block);
                     break;
@@ -2155,6 +2305,12 @@ export async function goToBed(bot) {
     log(bot, `You are in bed.`);
     bot.modes.pause('unstuck');
     while (bot.isSleeping) {
+        if (bot.interrupt_code) {
+            // v0.1.4.8, fix round (X5): a stopped sleep gets up; bot.wake() of mineflayer does not on 1.21.8
+            const up = await wakeUp(bot);
+            log(bot, up.ok ? `You got up before the morning.` : up.text);
+            return true;
+        }
         await new Promise(resolve => setTimeout(resolve, 500));
     }
     log(bot, `You have woken up.`);

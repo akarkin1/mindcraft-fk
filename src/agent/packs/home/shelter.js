@@ -5,9 +5,9 @@ import { Vec3 } from 'vec3';
 import { containsPos, distance, distanceToBox, expandBox, floorPos } from './box_math.js';
 import { botPos, clockOf, dimensionOf, listAreas, logTo, recallHome } from './context.js';
 import { creeperCheck, creeperMemory, readCreepers, runCreeperProcedure } from './creeper.js';
-import { doorCenter } from './door_logic.js';
+import { doorCenter, sideOf } from './door_logic.js';
 import { closeDoor, doorState, findOpenables, passThrough } from './doors.js';
-import { goals, gotoGoal, makeMovements, walkNear } from './motion.js';
+import { goals, gotoGoal, isNear, makeMovements, walkNear } from './motion.js';
 import { isNight } from './night_logic.js';
 import { chooseCoverBlock, chooseShelter, chooseStandingPlace, isBuildingArea, isFallingBlockName, isInsideArea, isShelterArea, orderEntrances,
     roomCenter } from './shelter_logic.js';
@@ -317,20 +317,86 @@ export async function goToShelter(bot, ctx = {}, options = {}) {
             if (creeper && !creeper.ok) {
                 return { ok: false, where: 'home', reason: 'creeper', text: creeper.text };
             }
-            const place = floorPos(choice.place);
-            const walk = await walkNear(bot, place, 1, {
-                clock, timeoutMs: options.timeoutMs ?? 120000, allowDig: true, areas: listAreas(ctx, dimensionOf(bot)),
-            });
+            const walk = await walkToHomePlace(bot, floorPos(choice.place), ctx, options, clock);
             if (!walk.ok) {
                 return { ok: false, where: 'home', reason: walk.reason, text: 'I could not get to the place "home".' };
             }
-            return { ok: true, where: 'home', reason: 'no_area', text: 'I am at the place "home". I know no building around it.' };
+            const text = 'I am at the place "home". I know no building around it.';
+            return { ok: true, where: 'home', reason: 'no_area', text: walk.door ? `${walk.door} ${text}` : text };
         }
         return { ok: false, where: null, reason: 'no_home', text: TEXTS.noHome };
     } catch (err) {
         console.warn('Home pack: going to the shelter failed:', err?.message ?? err);
         return { ok: false, where: null, reason: 'error', text: `I could not get to the shelter: ${err?.message ?? err}` };
     }
+}
+
+/** Fix round X6: doors and gates within this many blocks of the place "home" belong to its building. */
+export const PLACE_DOOR_RANGE = 12;
+
+// The walk to the place "home" without an area (fix round X6). The direct walk (without digging, first
+// without and then with opening doors) can end at a wall of the house: the path search saw no way in
+// within its time and led the bot to the point nearest to the place. Then the bot goes through the
+// nearest door or gate within 12 blocks of the place with passThrough, towards the place, and walks on.
+// Digging (outside the areas) comes last, as before. Returns { ok, reason, door } where door is the
+// text of passThrough when the bot went through a door.
+async function walkToHomePlace(bot, place, ctx, options, clock) {
+    const areas = listAreas(ctx, dimensionOf(bot));
+    const timeoutMs = options.timeoutMs ?? 120000;
+    const direct = await walkNear(bot, place, 1, { clock, timeoutMs, allowDig: false });
+    if (direct.ok || direct.reason === 'interrupted') {
+        return direct;
+    }
+    const through = await throughDoorToPlace(bot, place, ctx, options, clock, areas);
+    if (through.ok || through.reason === 'interrupted') {
+        return through;
+    }
+    if (bot.interrupt_code) {
+        return { ok: false, reason: 'interrupted' };
+    }
+    const center = { x: place.x + 0.5, y: place.y, z: place.z + 0.5 };
+    const dig = await gotoGoal(bot, new goals.GoalNear(place.x, place.y, place.z, 1), {
+        movements: makeMovements(bot, { dig: true, doors: true, areas }),
+        timeoutMs,
+        clock,
+    });
+    if (isNear(bot, center, 2)) {
+        return { ok: true, reason: null };
+    }
+    return { ok: false, reason: dig.reason === 'interrupted' ? 'interrupted' : (dig.reason === 'timeout' ? 'timeout' : 'no_path') };
+}
+
+async function throughDoorToPlace(bot, place, ctx, options, clock, areas) {
+    const center = { x: place.x + 0.5, y: place.y, z: place.z + 0.5 };
+    const me = botPos(bot);
+    const doors = findOpenables(bot, PLACE_DOOR_RANGE, center)
+        .filter(d => d.kind !== 'trapdoor' && sideOf(d, center) !== 0)
+        .map(d => ({ d, far: me ? distance(doorCenter(d), me) : 0 }))
+        .sort((a, b) => a.far - b.far)
+        .map(e => e.d);
+    let last = { ok: false, reason: 'no_path' };
+    for (const door of doors.slice(0, 2)) {
+        if (bot.interrupt_code) {
+            return { ok: false, reason: 'interrupted' };
+        }
+        const pass = await passThrough(bot, door, ctx, { ...options, toward: center, allowDig: false, areas });
+        if (pass.reason === 'interrupted') {
+            return { ok: false, reason: 'interrupted' };
+        }
+        if (!pass.ok && pass.reason !== 'could_not_close') {
+            last = { ok: false, reason: pass.reason === 'monster_near' ? 'monster_near' : 'no_path' };
+            continue;
+        }
+        const walk = await walkNear(bot, place, 1, { clock, timeoutMs: 30000 });
+        if (walk.ok) {
+            return { ok: true, reason: null, door: pass.text };
+        }
+        if (walk.reason === 'interrupted') {
+            return walk;
+        }
+        last = walk;
+    }
+    return doors.length === 0 ? { ok: false, reason: 'no_door' } : last;
 }
 
 /**

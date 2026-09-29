@@ -7,6 +7,7 @@ import { goToShelter } from './shelter.js';
 import { isBuildingArea, isInsideArea } from './shelter_logic.js';
 import { isBedName, minutesUntilNight, orderBeds, sleepErrorKind, sleepTimeState } from './sleep_logic.js';
 import { TEXTS, couldNotSleepText, dayText } from './texts.js';
+import { wakeUp } from './wake.js';
 
 /** The bot lies in bed at most this long; on a server where the night does not pass it gets up. */
 export const MAX_SLEEP_MS = 10 * 60 * 1000;
@@ -153,15 +154,16 @@ export async function sleepInBed(bot, ctx = {}, options = {}) {
             const limit = isFiniteNumber(options.maxSleepMs) ? options.maxSleepMs : MAX_SLEEP_MS;
             while (bot.isSleeping) {
                 if (bot.interrupt_code || clock.now() - start > limit) {
-                    try {
-                        await bot.wake();
-                    } catch {
-                        // already awake
-                    }
+                    // X5: it says that it got up only when bot.isSleeping is false (wakeUp checks it)
+                    const up = await wakeUp(bot, ctx, { now: options.now, wait: options.wait });
                     if (bot.interrupt_code) {
-                        return { ok: false, reason: 'interrupted', text: 'I got up before the morning.' };
+                        return up.ok
+                            ? { ok: false, reason: 'interrupted', text: 'I got up before the morning.' }
+                            : { ok: false, reason: 'interrupted', text: `I was stopped in bed. ${up.text}` };
                     }
-                    return { ok: false, reason: 'timeout', text: 'I lay in bed for a long time, but the night did not pass.' };
+                    return up.ok
+                        ? { ok: false, reason: 'timeout', text: 'I lay in bed for a long time, but the night did not pass.' }
+                        : { ok: false, reason: 'still_sleeping', text: `I lay in bed for a long time, but the night did not pass. ${up.text}` };
                 }
                 await clock.wait(500);
             }
