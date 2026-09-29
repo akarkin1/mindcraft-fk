@@ -26,6 +26,12 @@ export const FETCH_LOOK_RANGE = 16;
 export const FETCH_LOOK_LIMIT = 3;
 /** lookIntoChests opens at most this many containers. */
 export const LOOK_LIMIT = 12;
+/**
+ * storeItems uses at most this many containers within its range, the nearest first (v0.1.4.8, X8: with
+ * the 12 of lookIntoChests it said "The chests are full now" while 12 more chests with room stood 3
+ * blocks away).
+ */
+export const STORE_LIMIT = 27;
 /** Upper limit of time of lookIntoChests and lookIntoChest. */
 export const LOOK_TIMEOUT_MS = 120000;
 /** Upper limit of time of storeItems. */
@@ -324,8 +330,8 @@ async function withOpen(state, target, work) {
     return { ok: error === null, reason: error === null ? null : 'error', error, chest, key };
 }
 
-async function lookInto(state, targets) {
-    const pending = targets.slice(0, LOOK_LIMIT);
+async function lookInto(state, targets, limit = LOOK_LIMIT) {
+    const pending = targets.slice(0, limit);
     const chests = [];
     while (pending.length > 0 && !stopReason(state)) {
         const target = nearestFirst(botPos(state.bot), pending)[0];
@@ -497,6 +503,7 @@ async function storeLoop(state, job, opts) {
     const origin = botPos(bot);
     const range = isFiniteNumber(opts.range) && opts.range > 0 ? opts.range : STORE_RANGE;
     let single = null;
+    let allowed = null;
     if (opts.chest !== undefined && opts.chest !== null) {
         const info = isPoint(opts.chest) ? describeContainer(bot, opts.chest) : null;
         if (info === null) {
@@ -504,16 +511,25 @@ async function storeLoop(state, job, opts) {
         }
         single = info.loaded ? { x: info.x, y: info.y, z: info.z } : floored(opts.chest);
     } else {
+        // v0.1.4.8, X8: the containers of the job are the 27 nearest within the range, those the index
+        // knows and those found; when there are more, state.tried says how many were used.
         const found = scanContainers(state, range);
         prune(state, found, range);
-        const known = new Set(state.index.list(state.dimension).map(chestKey));
-        await lookInto(state, found.filter(f => !known.has(chestKey(f))));
+        const known = state.index.list(state.dimension).filter(c => distanceTo(origin, c) <= range + 1);
+        const knownKeys = new Set(known.map(chestKey));
+        const all = nearestFirst(origin, [...known, ...found.filter(f => !knownKeys.has(chestKey(f)))]);
+        const chosen = all.slice(0, STORE_LIMIT);
+        allowed = new Set(chosen.map(chestKey));
+        if (all.length > chosen.length) {
+            state.tried = chosen.length;
+        }
+        await lookInto(state, chosen.filter(f => !knownKeys.has(chestKey(f))), STORE_LIMIT);
     }
     const candidates = () => {
         if (single) {
             return [state.index.get(single) ?? { ...single, dimension: state.dimension, kind: 'chest', items: {}, free_slots: 1 }];
         }
-        return state.index.list(state.dimension).filter(c => distanceTo(origin, c) <= range + 1);
+        return state.index.list(state.dimension).filter(c => allowed.has(chestKey(c)));
     };
     const excluded = new Set();
     let full = false;
@@ -536,7 +552,7 @@ async function storeLoop(state, job, opts) {
             const unseen = pool.filter(c => !state.opened.has(chestKey(c)));
             if (!refreshed && unseen.length > 0) {
                 refreshed = true;
-                await lookInto(state, unseen);
+                await lookInto(state, unseen, STORE_LIMIT);
                 continue;
             }
             full = full || pool.length > 0;
@@ -579,7 +595,8 @@ async function storeLoop(state, job, opts) {
 /**
  * Stores what the bot carries by the keep plan (keepPlan with `options.only`, `options.keep` and
  * the setting keep_items). The chests come from the index within 32 blocks and from a look into the
- * containers within 32 blocks that the index does not know yet. Each item goes to a chest that
+ * containers within 32 blocks that the index does not know yet, at most the 27 nearest of both
+ * (v0.1.4.8, X8); with more, a text of `full` names the number tried. Each item goes to a chest that
  * already holds it, otherwise to the nearest with space. A chest that is full is left and the next
  * one takes the rest; when the index says all are full, they are looked into once more.
  * `options.chest` ({x, y, z}, either half of a double chest) stores into that container only,
@@ -610,7 +627,7 @@ export async function storeItems(bot, ctx = {}, options = {}) {
         const state = makeState(bot, ctx, opts, STORE_TIMEOUT_MS);
         const reason = stopReason(state) ?? await storeLoop(state, job, opts);
         const left = Object.fromEntries(job.remaining);
-        const text = storeText({ stored: job.stored, left, chests: job.used, reason });
+        const text = storeText({ stored: job.stored, left, chests: job.used, reason, tried: state.tried ?? null });
         return finish(ctx, { ok: reason === null, reason, stored: job.stored, left, chests: job.used, text });
     } catch (err) {
         console.warn('Storage pack: storing failed:', err?.message ?? err);

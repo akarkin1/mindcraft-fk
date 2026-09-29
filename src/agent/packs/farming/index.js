@@ -7,8 +7,9 @@ export { BONE_MEAL_PER_PLANT, BONE_MEAL_WANT_MAX, COMPOSTABLE, CROPS, FLOWERS, T
     chooseCompostItem, compostInChests, compostSource, compostSources, cropOf, harvestTarget, isAirName, isCompostable, isCropBlock, isRipe,
     seedFor, visitOrder } from './crop_logic.js';
 export { COMPOSTER_NEAR_FARM, COMPOSTER_RANGE, FARM_RANGE, PICK_RANGE, chooseComposter, chooseFarmArea, farmMiddle, fieldBox, fieldCells,
-    findGates, insideBox, isInField, stepPenalty } from './field_logic.js';
+    findGates, goalAvoiding, insideBox, isInField, isNoStandBlock, isNoStandCell, itemPlace, noStandBlocks, noStandPenalty, standSpots,
+    stepPenalty } from './field_logic.js';
 export { TEXTS, boneMealStepText, boneMealText, compostedText, countList, cycleText, fertilizeText, gateOpenText, growingText, harvestText,
-    noPlantsToFertilizeText, noSeedsText, notRipeText, nothingGrowsText, nothingRipeText, nothingToPlantText, plantText, ripenedText,
+    lostCropText, noPlantsToFertilizeText, noSeedsText, notRipeText, nothingGrowsText, nothingRipeText, nothingToPlantText, plantText, ripenedText,
     unknownFarmText, unknownSeedText, unreachedText, whereText } from './texts.js';
 export { FARM_LIMITS, farmCycle, fertilize, fieldMovements, findFarm, harvestCrops, makeBoneMeal, plantField } from './farming.js';

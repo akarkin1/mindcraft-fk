@@ -69,8 +69,10 @@ function placeText(chests, preposition) {
 
 /**
  * The text of storeItems. `reason` says why something is left: `no_chest`, `full`, `unreachable`,
- * `interrupted`, `timeout` or `error` (with `error`).
- * @param {{stored?: object, left?: object, chests?: object[], reason?: string|null, error?: Error|string}} result
+ * `interrupted`, `timeout` or `error` (with `error`). `tried` is the number of chests the bot used when
+ * there were more within the range (v0.1.4.8, X8): then `full` says `I tried the 27 nearest chests.`
+ * and not that the chests are full.
+ * @param {{stored?: object, left?: object, chests?: object[], reason?: string|null, error?: Error|string, tried?: number|null}} result
  * @returns {string}
  */
 export function storeText(result) {
@@ -88,6 +90,9 @@ export function storeText(result) {
     case 'no_chest':
         return then(TEXTS.noChest);
     case 'full':
+        if (typeof r.tried === 'number' && Number.isInteger(r.tried) && r.tried > 0) {
+            return then(`I tried the ${r.tried} nearest chests. I still carry ${carry}.`);
+        }
         return did ? `${did} The chests are full now, I still carry ${carry}.` : `All chests nearby are full. I still carry ${carry}.`;
     case 'unreachable':
         return did ? `${did} I could not get to another chest, I still carry ${carry}.`

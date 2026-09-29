@@ -12,8 +12,8 @@ export { ARROW_KEEP, CONTAINER_KINDS, DIMENSIONS, FOOD_KEEP, KEEP_LIMITS, MATERI
 export { CHESTS_MAX, CHEST_KINDS_MAX, LIST_MAX, TEXTS, chestLine, chestListText, countsText, fetchText, itemChestsText, notFoundText,
     posText, storeText } from './texts.js';
 export { CHEST_FILE, ChestIndex } from './chest_index.js';
-export { FETCH_LOOK_LIMIT, FETCH_LOOK_RANGE, FETCH_TIMEOUT_MS, LOOK_LIMIT, LOOK_RANGE, LOOK_TIMEOUT_MS, OPEN_TIMEOUT_MS, REACH, STORE_RANGE,
-    STORE_TIMEOUT_MS, chestsText, fetchItem, lookIntoChest, lookIntoChests, recordContainer, storeItems } from './storage.js';
+export { FETCH_LOOK_LIMIT, FETCH_LOOK_RANGE, FETCH_TIMEOUT_MS, LOOK_LIMIT, LOOK_RANGE, LOOK_TIMEOUT_MS, OPEN_TIMEOUT_MS, REACH, STORE_LIMIT,
+    STORE_RANGE, STORE_TIMEOUT_MS, chestsText, fetchItem, lookIntoChest, lookIntoChests, recordContainer, storeItems } from './storage.js';
 
 /**
  * `ctx.storage` of the pack context (spec section 2): storeItems and fetchItem bound to the bot.

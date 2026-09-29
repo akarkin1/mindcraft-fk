@@ -61,14 +61,32 @@ function farmWords(name) {
 }
 
 /**
+ * `I could not pick up the crop of 1 plant.` (v0.1.4.8, X14: a plant counts as harvested only when
+ * its crop came into the inventory.)
+ * @param {number} n
+ * @returns {string}
+ */
+export function lostCropText(n) {
+    return count(n) === 1 ? 'I could not pick up the crop of 1 plant.' : `I could not pick up the crop of ${count(n)} plants.`;
+}
+
+/**
  * `I harvested 9 wheat and planted 9 again. 6 plants are not ripe yet.` Plants are counted, not
- * items. Optional sentences: places left empty for want of seeds, unripe plants, and ripe plants
- * left because of the limit.
- * @param {{byCrop: Object<string, number>, replanted: number, unripe: number, unplanted?: number, ripeLeft?: number}} r
+ * items; since v0.1.4.8 (X14) a plant counts only when its crop came into the inventory, and `lost`
+ * plants whose crop the bot could not pick up get a sentence of their own. Optional sentences: places
+ * left empty for want of seeds, unripe plants, and ripe plants left because of the limit.
+ * @param {{byCrop: Object<string, number>, replanted: number, unripe: number, unplanted?: number, ripeLeft?: number, lost?: number}} r
  * @returns {string}
  */
 export function harvestText(r) {
-    const parts = [`I harvested ${countList(r.byCrop)} and planted ${count(r.replanted)} again.`];
+    const got = countList(r.byCrop);
+    const lost = count(r.lost);
+    const parts = [got.length > 0 || lost === 0
+        ? `I harvested ${got} and planted ${count(r.replanted)} again.`
+        : `I cut ${lost === 1 ? '1 ripe plant' : `${lost} ripe plants`} and planted ${count(r.replanted)} again.`];
+    if (lost > 0) {
+        parts.push(lostCropText(lost));
+    }
     if (count(r.unplanted) > 0) {
         parts.push(`${placesStay(r.unplanted)} empty, I have no more seeds.`);
     }
@@ -253,12 +271,20 @@ export function compostedText(compost, pos, level = null) {
 
 /**
  * `9 more plants got ripe and I harvested them.`, `1 more plant got ripe and I harvested it.`,
- * or with none `No plant got ripe yet.`
+ * or with none `No plant got ripe yet.` Since v0.1.4.8 (X14) `n` counts only the plants whose crop
+ * came into the inventory; with `lost` plants whose crop the bot could not pick up:
+ * `2 more plants got ripe and I cut them. I could not pick up the crop of 1 plant.`
  * @param {number} n
+ * @param {number} [lost]
  * @returns {string}
  */
-export function ripenedText(n) {
+export function ripenedText(n, lost = 0) {
     const k = count(n);
+    const l = count(lost);
+    if (l > 0) {
+        const all = k + l;
+        return `${all === 1 ? '1 more plant got ripe and I cut it.' : `${all} more plants got ripe and I cut them.`} ${lostCropText(l)}`;
+    }
     if (k === 0) {
         return 'No plant got ripe yet.';
     }
@@ -326,7 +352,7 @@ export function boneMealStepText(m) {
     if (used >= total) {
         use = total === 1 ? 'used it' : 'used them';
     } else {
-        use = used === 0 ? 'used none of it' : `used ${used} of them`;
+        use = used === 0 ? (total === 1 ? 'used none of it' : 'used none of them') : `used ${used} of them`;
     }
     return `${parts.join(', ')} and ${use}.`;
 }
