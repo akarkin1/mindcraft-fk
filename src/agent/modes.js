@@ -12,6 +12,8 @@ import { STUCK_RULES, STUCK_TEXT, FREE_TEXT, KILL_TEXT, newStuckState, stuckStep
 import { whereAmI, areaAt, blockNameReader } from './reflex/where_am_i.js';
 import { mayTryItem, afterItemTry, isOwnDropSpawn, isRecentOwnDrop } from './reflex/item_logic.js';
 import { STARVING_TEXT, STARVING_LOG_MS, HOSTILE_RANGE, PLAYER_RANGE, isHungerDamage, shouldRetreat, hurtText, retreatTarget } from './reflex/health_logic.js';
+import { HOLE_RULES, holeAt, escapeSides, walkControls, leftHole } from './reflex/hole_logic.js';
+import { sleepIsProgress } from './reflex/wake_logic.js';
 
 async function say(agent, message) {
     agent.bot.modes.behavior_log += message + '\n';
@@ -121,6 +123,7 @@ const modes_list = [
         failed_escapes: 0, // A2: failed escapes in a row
         failed_at: null, // where the last escape failed; 2 blocks away from it the row ends
         given_up: null, // { pos, serial }: the reflex gave up there, while the command number serial ran
+        action_serial: null, // v0.1.4.8, X3: the action (ActionManager.action_serial) the stuck time belongs to
         update: async function (agent) {
             const bot = agent.bot;
             const pos = bot.entity.position;
@@ -138,7 +141,14 @@ const modes_list = [
                 this.state = newStuckState();
                 return; // don't get stuck when idle
             }
-            const step = stuckStep(this.state, stuckSample(bot), Date.now());
+            // v0.1.4.8, X3: the stuck time starts from zero when a new action starts, so a new command always
+            // has its full 20 s (also after the reflex gave up)
+            const serial = actionSerial(agent);
+            if (serial !== this.action_serial) {
+                this.action_serial = serial;
+                this.state = newStuckState();
+            }
+            const step = stuckStep(this.state, stuckSample(bot, agent.actions?.currentActionLabel), Date.now());
             this.state = step.state;
             if (step.stuck) {
                 say(agent, STUCK_TEXT);
@@ -346,14 +356,16 @@ function torchAllowed(bot) {
 }
 
 // v0.1.4.8, A1: what the mode unstuck sees of the bot in one tick (see stuckStep of reflex/stuck_logic.js).
-function stuckSample(bot) {
+// X5: sleeping is progress only while !goToBed (or the night reflex) runs; a command that runs while the
+// bot still lies in bed is stuck (label: the running action).
+function stuckSample(bot, label = '') {
     const dig = bot.targetDigBlock;
     return {
         pos: bot.entity.position,
         digTarget: dig ? { name: dig.name, position: dig.position } : null,
         inventoryKey: inventoryKey(bot.inventory?.slots),
         windowOpen: Boolean(bot.currentWindow),
-        sleeping: Boolean(bot.isSleeping),
+        sleeping: Boolean(bot.isSleeping) && sleepIsProgress(label),
         usingItem: Boolean(bot.usingHeldItem),
         notedAt: bot.modes?.progress_at ?? 0,
     };
@@ -362,6 +374,13 @@ function stuckSample(bot) {
 // The number of the last command that started (ActionManager.command_serial).
 function commandSerial(agent) {
     return agent.actions?.command_serial ?? 0;
+}
+
+// v0.1.4.8, X3: the number of the last action that really started (ActionManager.action_serial), else the
+// label of the running action.
+function actionSerial(agent) {
+    const serial = agent.actions?.action_serial;
+    return Number.isFinite(serial) ? serial : (agent.actions?.currentActionLabel ?? '');
 }
 
 // The hard stop of the path search (a goto rejects at once). Never throws.
@@ -383,7 +402,8 @@ async function waitForMove(bot, from, ms) {
 // v0.1.4.8, A2: the escape of the mode unstuck, moveAway(5); an interrupt (!stop, a newer action) ends it
 // at once. With stuck_restart_after 1 it is judged as in v0.1.4.7 (legacyEscape). Otherwise: a time
 // limit of 20 s; free: 'I'm free.' and the row of failed escapes ends; a failure (time over, an error,
-// still within 2 blocks) either ends the process (stuck_restart_after reached, 0 never) or the reflex
+// still within 2 blocks) first gets the last step of X1 (out of a hole or a hollow block by hand, see
+// holeEscape), then either ends the process (stuck_restart_after reached, 0 never) or the reflex
 // gives up: it stops the path search, writes where the bot is stuck into the behaviour log (execute
 // tells the model) and pauses itself until a new command starts or the bot moved 2 blocks.
 async function escape(mode, agent, from) {
@@ -393,7 +413,8 @@ async function escape(mode, agent, from) {
         await legacyEscape(mode, agent);
         return;
     }
-    const result = await withTimeLimit(escapeLimitMs(limit), () => skills.moveAway(bot, STUCK_RULES.escapeDistance),
+    let walk = null; // the walk of moveAway, kept for the last step (X1): it may still run when the time is over
+    const result = await withTimeLimit(escapeLimitMs(limit), () => (walk = skills.moveAway(bot, STUCK_RULES.escapeDistance)),
         { until: () => bot.interrupt_code, pollMs: 250 });
     const threw = result.done && 'error' in result;
     if (!result.done)
@@ -411,6 +432,15 @@ async function escape(mode, agent, from) {
         say(agent, FREE_TEXT);
         return;
     }
+    // v0.1.4.8, X1: the last step before the reflex gives up, for a bot in a hole or a hollow block
+    if (await holeEscape(agent, result.done ? null : walk)) {
+        mode.failed_escapes = 0;
+        mode.failed_at = null;
+        say(agent, FREE_TEXT);
+        return;
+    }
+    if (bot.interrupt_code)
+        return; // a stop came during the last step: no failure
     const failure = failureStep(mode.failed_escapes, limit);
     const pos = bot.entity.position.clone();
     mode.failed_escapes = failure.count;
@@ -422,6 +452,91 @@ async function escape(mode, agent, from) {
     stopWalking(bot);
     mode.given_up = { pos, serial: commandSerial(agent) };
     note(agent, stuckText({ pos, area: areaAt(bot, pos), door: nearestOpenable(blockNameReader(bot), pos, STUCK_RULES.doorRange) }));
+}
+
+const pause = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+// True when somebody asked the action manager to stop the running action (the escape): someone noted
+// who stops it, or a new action or a stop from outside took a ticket since `ticket` (X3).
+function stopAsked(agent, ticket) {
+    const actions = agent.actions;
+    return (typeof actions?.stopped_by === 'string' && actions.stopped_by !== '') || actions?.start_ticket !== ticket;
+}
+
+// v0.1.4.8, X1: one try towards a side: look there, jump and walk forward about 1 s by the controls
+// (walkControls), then wait until the bot stands on the ground again. stopped() ends it at once.
+async function jumpTowards(bot, hole, side, stopped) {
+    try {
+        await bot.look(side.yaw, 0, true);
+    } catch (error) {
+        console.warn('Could not turn to the side:', error?.message ?? error);
+    }
+    const start = Date.now();
+    while (!stopped()) {
+        const controls = walkControls({ hole, pos: bot.entity.position, onGround: bot.entity.onGround, elapsedMs: Date.now() - start });
+        bot.setControlState('forward', controls.forward);
+        bot.setControlState('jump', controls.jump);
+        if (controls.done)
+            break;
+        await pause(HOLE_RULES.tickMs);
+    }
+    bot.setControlState('forward', false);
+    bot.setControlState('jump', false);
+    const landing = Date.now();
+    while (!stopped() && bot.entity.onGround === false && Date.now() - landing < HOLE_RULES.landMs)
+        await pause(HOLE_RULES.tickMs);
+}
+
+// v0.1.4.8, X1: the last step of the escape before the reflex gives up. A bot in a hole of one block or
+// inside a hollow block (a composter, a cauldron: the path search cannot plan from there) jumps and walks
+// towards each side in turn whose column is safe (no lava, fire, or drop of more than 3 blocks; see
+// escapeSides of reflex/hole_logic.js), and after each try looks whether it got out (leftHole). walk: the
+// walk of moveAway when it may still run (its time was over): the interrupt flag stays set during the
+// whole step, so that walk and its door help end and start no new walk while the bot is steered by hand;
+// the flag is given back afterwards, unless a real stop came. true when the bot got out. A stop (a new
+// action, !stop) ends it at once.
+async function holeEscape(agent, walk) {
+    const bot = agent.bot;
+    const read = blockNameReader(bot);
+    const from = bot.entity.position.clone();
+    const hole = holeAt(read, from);
+    if (!hole)
+        return false;
+    const sides = escapeSides(read, from);
+    console.log(`The escape: I am in ${hole.kind === 'hollow' ? `a ${hole.block}` : 'a hole'} at (${hole.x}, ${hole.y}, ${hole.z}); ${sides.length} safe sides to jump to.`);
+    if (sides.length === 0)
+        return false;
+    const was = Boolean(bot.interrupt_code);
+    const ticket = agent.actions?.start_ticket;
+    const stopped = () => stopAsked(agent, ticket) || (!walk && Boolean(bot.interrupt_code));
+    try {
+        if (walk) {
+            bot.interrupt_code = true; // goToGoal and the door help of moveAway end at once
+            stopWalking(bot);
+            await withTimeLimit(HOLE_RULES.endWalkMs, () => walk, { until: stopped, pollMs: 100 });
+            stopWalking(bot);
+        }
+        for (const side of sides) {
+            if (stopped())
+                return false;
+            await jumpTowards(bot, hole, side, stopped);
+            if (leftHole(read, hole, from, bot.entity.position, bot.entity.onGround)) {
+                console.log(`The escape: I jumped out towards (${side.x}, ${side.landY}, ${side.z}).`);
+                return true;
+            }
+        }
+    } catch (error) {
+        console.warn('The last step of the escape failed:', error?.message ?? error);
+    } finally {
+        try {
+            bot.clearControlStates();
+        } catch (error) {
+            // nothing to release
+        }
+        if (walk)
+            bot.interrupt_code = was || stopped();
+    }
+    return false;
 }
 
 // The escape of v0.1.4.7, for stuck_restart_after 1 (decision of the tech lead: "1: as today"). The

@@ -13,7 +13,9 @@ import { REMEMBER_RULE_DESCRIPTION, rememberRuleReply, forgetRuleReply } from '.
 // v0.1.4.8, I5 (S3, S4): a command that was stopped starts no turn of the model. What it did so far goes
 // into the history as a system message: `Command !mineOre was stopped by the reflex unstuck. Done so far:
 // <text>`, without the second sentence when there is no text. text: the text of a pack (I6), else the
-// output of the action. Never throws.
+// output of the action. X4: when a player typed the command in the chat, the line also goes to the chat of
+// that player (the way the agent answers a typed command); a command of the model stays in the history
+// only. Never throws.
 function reportStopped(agent, label, code_return, text = null) {
     // an action that comes back by itself (!followPlayer, stopped by a reflex) is not worth a line in the history
     if (agent?.actions?.resume_func && String(code_return?.stopped_by ?? '').startsWith('the reflex '))
@@ -28,6 +30,36 @@ function reportStopped(agent, label, code_return, text = null) {
     } catch (error) {
         console.warn('Could not note the stopped command:', error);
     }
+    const player = typedCommandPlayer(agent, `!${label}`);
+    if (player === null)
+        return;
+    try {
+        const said = agent.routeResponse?.(player, line);
+        Promise.resolve(said).catch((error) => console.warn('Could not tell the player about the stopped command:', error));
+    } catch (error) {
+        console.warn('Could not tell the player about the stopped command:', error);
+    }
+}
+
+// v0.1.4.8 (X4): the player who typed the command `name` that runs (its newest entry of agent.running_commands,
+// see executeCommand), or the player of agent.last_order when the order was typed and is that command; null
+// for a command of the model.
+function typedCommandPlayer(agent, name) {
+    const list = Array.isArray(agent?.running_commands) ? agent.running_commands : [];
+    for (let i = list.length - 1; i >= 0; i--) {
+        const entry = list[i];
+        if (entry?.name !== name)
+            continue;
+        if (entry.typed !== true)
+            return null;
+        if (typeof entry.by === 'string' && entry.by !== '')
+            return entry.by;
+        break;
+    }
+    const order = agent?.last_order;
+    if (order !== null && typeof order === 'object' && order.typed === true && order.command === name && typeof order.by === 'string' && order.by !== '')
+        return order.by;
+    return null;
 }
 
 // What a stopped command did, without the heading "Action output:" of the output; null for nothing.

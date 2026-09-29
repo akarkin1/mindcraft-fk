@@ -16,7 +16,7 @@ import { serverProxy, sendOutputToServer } from './mindserver_proxy.js';
 import settings from './settings.js';
 import { Task } from './tasks/tasks.js';
 import { speak } from './speak.js';
-import { log, validateNameFormat, handleDisconnection } from './connection_handler.js';
+import { log, validateNameFormat, handleDisconnection, createDisconnectWatcher } from './connection_handler.js';
 import { initSandbox, makeCompartment } from './library/lockdown.js';
 import { WorldMemory } from './world/world_memory.js';
 import { shouldResumeGoal, ResumeGuard } from './world/resume_policy.js';
@@ -32,7 +32,11 @@ import { PlacedStore } from './areas/placed_store.js';
 import { autoHome } from './areas/auto_home.js';
 import { RuleStore } from './rules/rule_store.js';
 import { autoEatOptions, passThrough, enterBuilding, doorIsSafe, foodItems, moveOffhandBack, createDoorService } from './packs/home/index.js';
+// v0.1.4.8 (X5): wakeUp of the home pack may not exist yet; always called with ?.
+import * as homePack from './packs/home/index.js';
 import { whereAmI as whereAmIOf } from './reflex/where_am_i.js';
+import { installChatLimit } from './reflex/chat_limit.js';
+import { WAKE_RULES, shouldWakeFor } from './reflex/wake_logic.js';
 import { knowledgeText } from './knowledge/knowledge_text.js';
 import { writeExit, readExit, restartNote } from './restart_context.js';
 import { RepeatGuard } from './repeat_guard.js';
@@ -40,6 +44,8 @@ import { withTimeLimit } from '../utils/kill_timer.js';
 
 // v0.1.4.8: the longest wait of a step at spawn that talks to the server (the move out of the off-hand)
 const SPAWN_STEP_MS = 5000;
+// v0.1.4.8 (X9): after the socket closed, the packet of a kick with its reason may still come this long
+const KICK_WAIT_MS = 1000;
 
 // A number setting of v0.1.4.6: a value that is not finite or is below 0 counts as the default.
 export function numberSetting(value, fallback) {
@@ -255,6 +261,7 @@ export class Agent {
 
         console.log(this.name, 'logging into minecraft...');
         this.bot = initBot(this.name);
+        this._limitChat(); // v0.1.4.8 (X9): every chat line of the bot through one queue
         if (settings.world_memory) {
             try {
                 this.world_memory = new WorldMemory({ name: this.name, settings, history: this.history, memoryBank: this.memory_bank });
@@ -273,20 +280,24 @@ export class Agent {
 
             // Log and Analyze
             // handleDisconnection handles logging to console and server
-            const { type, msg } = handleDisconnection(this.name, reason);
-     
+            // v0.1.4.8 (X9): with the words of the game for the reason of a kick
+            const { type, msg } = handleDisconnection(this.name, reason, { language: this.bot?.registry?.language ?? null, kicked: event === 'Kicked' });
+
             console.log(`Agent process ends with exit code 1: ${msg}`);
             this._atExit(msg); // v0.1.4.8: the exit file, the door service, the placed blocks
             reportCostAtExit(this.cost_meter);
             process.exit(1);
         };
-        
+        // v0.1.4.8 (X9): the socket can close before the packet of a kick is read; after an end the reason of
+        // a kick may still come for a moment, so a kick for spamming is not printed as a closed socket
+        this._disconnect = createDisconnectWatcher({ onFinal: onDisconnect, waitMs: KICK_WAIT_MS });
+
         // Bind events
-        this.bot.once('kicked', (reason) => onDisconnect('Kicked', reason));
-        this.bot.once('end', (reason) => onDisconnect('Disconnected', reason));
+        this.bot.once('kicked', (reason) => this._disconnect.kicked(reason));
+        this.bot.once('end', (reason) => this._disconnect.ended(reason));
         this.bot.on('error', (err) => {
             if (String(err).includes('Duplicate') || String(err).includes('ECONNREFUSED')) {
-                 onDisconnect('Error', err);
+                 this._disconnect.error(err);
             } else {
                  log(this.name, `[LoginGuard] Connection Error: ${String(err)}`);
             }
@@ -541,6 +552,55 @@ export class Agent {
         }
     }
 
+    _limitChat() {
+        // v0.1.4.8 (X9): bot.chat and bot.whisper behind one queue, 6 lines at once, then 1 line per 1.2 s. The
+        // chat plugin of mineflayer defines them when the plugins are injected (after the version is known);
+        // this runs right after. Never throws.
+        const bot = this.bot;
+        const install = () => {
+            try {
+                this.chat_limiter = installChatLimit(bot, { log: (...args) => console.warn(...args) });
+            } catch (error) {
+                console.warn('Could not limit the chat of the bot:', error);
+            }
+        };
+        try {
+            if (typeof bot?.chat === 'function')
+                install();
+            else
+                bot?.once?.('inject_allowed', install);
+        } catch (error) {
+            console.warn('Could not limit the chat of the bot:', error);
+        }
+    }
+
+    async wakeForAction(label) {
+        // v0.1.4.8 (X5): a command that is not !goToBed gets the bot out of bed first: with the wake function
+        // of the home pack when it has one (a correction for every setting, so also with home_pack off), else
+        // bot.wake(); then it waits until the bot is up, at most 3 s. The action manager calls it when an
+        // action starts. Returns true when the bot got up. Never throws.
+        const bot = this.bot;
+        if (!shouldWakeFor(label, bot?.isSleeping === true))
+            return false;
+        const start = Date.now();
+        try {
+            const wake = typeof homePack.wakeUp === 'function'
+                ? () => homePack.wakeUp(bot, this.homeContext())
+                : () => bot.wake();
+            await withTimeLimit(WAKE_RULES.waitMs, wake, { until: () => bot.interrupt_code || bot.isSleeping !== true });
+        } catch (error) {
+            console.warn('Could not get out of bed:', error?.message ?? error);
+        }
+        while (bot.isSleeping === true && !bot.interrupt_code && Date.now() - start < WAKE_RULES.waitMs)
+            await new Promise((resolve) => setTimeout(resolve, WAKE_RULES.pollMs));
+        if (bot.isSleeping === true) {
+            console.warn(`I am still in bed after ${WAKE_RULES.waitMs / 1000} s; ${label} starts all the same.`);
+            return false;
+        }
+        console.log(`I got out of bed for ${label}.`);
+        return true;
+    }
+
     knowledgeBlock() {
         // v0.1.4.8 (C1, I9): what the bot knows, for the chat prompt, with knowledge_in_prompt; '' without it
         // or before the bot is in a world. The chests and the mines of this dimension, the saved areas and
@@ -737,6 +797,11 @@ export class Agent {
             this._placed?.store?.flush?.();
         } catch (error) {
             console.warn('Could not save the blocks that the bot placed:', error);
+        }
+        try {
+            this.bot?.chatLimiter?.drop?.(); // v0.1.4.8 (X9): the chat lines that still wait are dropped
+        } catch (error) {
+            console.warn('Could not drop the waiting chat lines:', error);
         }
     }
 
@@ -970,7 +1035,7 @@ export class Agent {
                 // order that the player typed in the chat (the guard, !setMode, the repeat guard)
                 const order = { by: source, ...order_time, command: user_command_name, text: commandCallText(message), typed: true };
                 this.last_order = order;
-                let execute_res = await executeCommand(this, message, { typed: true });
+                let execute_res = await executeCommand(this, message, { typed: true, by: source });
                 if (this.last_order === order)
                     this.last_order = null; // the ordered command ended
                 if (execute_res) 
@@ -1159,8 +1224,9 @@ export class Agent {
             console.error('Error event!', err);
         });
         // Use connection handler for runtime disconnects
+        // v0.1.4.8 (X9): not while the watcher of the start waits for the reason of a kick
         this.bot.on('end', (reason) => {
-            if (!this._disconnectHandled) {
+            if (!this._disconnectHandled && !this._disconnect?.pending && !this._disconnect?.settled) {
                 const { msg } = handleDisconnection(this.name, reason);
                 this.cleanKill(msg);
             }
@@ -1170,8 +1236,8 @@ export class Agent {
             this.actions.stop();
         });
         this.bot.on('kicked', (reason) => {
-            if (!this._disconnectHandled) {
-                const { msg } = handleDisconnection(this.name, reason);
+            if (!this._disconnectHandled && !this._disconnect?.pending && !this._disconnect?.settled) {
+                const { msg } = handleDisconnection(this.name, reason, { language: this.bot?.registry?.language ?? null, kicked: true });
                 this.cleanKill(msg);
             }
         });

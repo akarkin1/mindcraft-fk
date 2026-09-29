@@ -285,14 +285,24 @@ function typedOrder(agent, name) {
     return order !== null && typeof order === 'object' && order.typed === true && order.command === name;
 }
 
+// v0.1.4.8 (X4): the player who typed the command: options.by, else the player of agent.last_order; null
+// when it is not known.
+function typedBy(agent, options) {
+    if (typeof options?.by === 'string' && options.by !== '')
+        return options.by;
+    const by = agent?.last_order?.by;
+    return typeof by === 'string' && by !== '' ? by : null;
+}
+
 /**
  * Runs the command in a message. v0.1.4.8: with the setting repeat_guard (agent.repeat_guard), a command
  * of the model that failed the same way again and again is refused before it runs; a command that the
  * player typed is recorded and never refused (see recordRepeat). While it runs, the command is on
- * agent.running_commands ({ name, args, text, typed, pack? }), the last one is the newest.
+ * agent.running_commands ({ name, args, text, typed, by?, pack? }), the last one is the newest. by (v0.1.4.8,
+ * X4): the player who typed it, options.by or the player of agent.last_order; a stopped command tells him.
  * @param {object} agent
  * @param {string} message
- * @param {{typed?: boolean}} [options] typed: the player typed the command in the chat; without it
+ * @param {{typed?: boolean, by?: string}} [options] typed: the player typed the command in the chat; without it
  *   agent.last_order decides (an order with typed: true and the same command)
  * @returns {Promise<string|undefined>}
  */
@@ -320,6 +330,9 @@ export async function executeCommand(agent, message, options = {}) {
                 }
             }
             const running = { name: command.name, args: parsed.args, text: commandText(command.name, parsed.args), typed };
+            const by = typed ? typedBy(agent, options) : null;
+            if (by)
+                running.by = by;
             const list = agent && typeof agent === 'object' ? (Array.isArray(agent.running_commands) ? agent.running_commands : (agent.running_commands = [])) : [];
             list.push(running);
             try {
