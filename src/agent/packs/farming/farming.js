@@ -5,21 +5,25 @@
 // ctx (every field optional): { areas, log, now, home: { passThrough }, storage: { storeItems, fetchItem } }.
 // Without ctx.home the gate is passed with doors.js of the home pack; without ctx.storage the chest
 // is skipped. Inside a field the bot walks without sprint, parkour, digging or placing, and never
-// steps where it would jump or drop onto farmland.
+// steps where it would jump or drop onto farmland. Since v0.1.4.8 (E2) also chests (the chest index:
+// which chests hold bone meal and compost items) and tools.ensureTool (the hoe).
 import { Vec3 } from 'vec3';
 import { scanFarm } from '../../areas/area_scan.js';
-import { containsPos } from '../home/box_math.js';
+import { containsPos, distanceToBox } from '../home/box_math.js';
 import { botPos, clockOf, dimensionOf, entitiesWhere, listAreas, logTo, otherPlayerPositions, pauseMode } from '../home/context.js';
 import { closeDoor, passThrough } from '../home/doors.js';
 import { goals, gotoGoal, makeMovements, walkNear } from '../home/motion.js';
 import {
-    CROPS, FLOWERS, TILLABLE, bestHoe, cellPlan, chooseCompostItem, compostSource, cropOf, isAirName, isCompostable, isCropBlock, isRipe,
-    seedFor, visitOrder,
+    CROPS, FLOWERS, TILLABLE, bestHoe, boneMealWant, cellPlan, chestsHold, chooseCompostItem, compostInChests, compostSource, compostSources,
+    cropOf, isAirName, isCompostable, isCropBlock, isRipe, seedFor, visitOrder,
 } from './crop_logic.js';
-import { chooseFarmArea, fieldBox, fieldCells, findGates, insideBox, isInField, stepPenalty } from './field_logic.js';
 import {
-    TEXTS, boneMealText, cycleText, fertilizeText, gateOpenText, harvestText, noPlantsToFertilizeText, noSeedsText, nothingGrowsText,
-    nothingRipeText, nothingToPlantText, plantText, unknownFarmText, unknownSeedText, unreachedText, whereText,
+    PICK_RANGE, chooseComposter, chooseFarmArea, farmMiddle, fieldBox, fieldCells, findGates, insideBox, isInField, stepPenalty,
+} from './field_logic.js';
+import {
+    TEXTS, boneMealStepText, boneMealText, compostedText, cycleText, fertilizeText, gateOpenText, growingText, harvestText, noPlantsToFertilizeText,
+    noSeedsText, notRipeText, nothingGrowsText, nothingRipeText, nothingToPlantText, plantText, ripenedText, unknownFarmText, unknownSeedText,
+    unreachedText, whereText,
 } from './texts.js';
 
 /** Limits of the farming work: time, ranges and counts. */
@@ -27,6 +31,7 @@ export const FARM_LIMITS = Object.freeze({
     baseMs: 60000,
     perCellMs: 4000,
     maxMs: 20 * 60000,
+    cycleMs: 10 * 60000,
     cellWalkMs: 15000,
     boneMealMs: 5 * 60000,
     composterRange: 32,
@@ -356,9 +361,31 @@ async function closeOpenGates(s) {
     return open;
 }
 
+// After a stop nothing moves; a gate of the farm that stands open within reach is still closed
+// (v0.1.4.8, E2: the gate is closed also when the work ends half way). Returns the gates it closed.
+async function closeGatesInReach(s) {
+    const closed = [];
+    for (const gate of s.gates) {
+        try {
+            const b = readBlock(s.bot, gate.x, gate.y, gate.z);
+            const player = otherPlayerPositions(s.bot, 16).some(p => Math.hypot(p.x - gate.x - 0.5, p.y - gate.y, p.z - gate.z - 0.5) <= 2);
+            if (!b || b.properties.open !== true || player || distanceTo(s.bot, gate.x + 0.5, gate.y + 0.5, gate.z + 0.5) > FARM_LIMITS.reach) {
+                continue;
+            }
+            if (await closeDoor(s.bot, gate, { ctx: s.ctx, now: s.options.now, wait: s.options.wait, respectInterrupt: false })) {
+                closed.push(gate);
+            }
+        } catch {
+            // the gate stays as it is
+        }
+    }
+    return closed;
+}
+
 // The end of every job: out through the gate and every gate closed. Nothing moves after a stop.
 async function finish(s) {
     if (s.stop === 'interrupted' || s.bot.interrupt_code) {
+        await closeGatesInReach(s);
         return { ok: true, text: '', open: [] };
     }
     const left = await leaveField(s);
@@ -595,13 +622,15 @@ async function plantWork(s, seed) {
     const free = s.cells.filter(c => c.ground === 'farmland' && isAirName(c.above));
     const tillable = s.cells.filter(c => TILLABLE.includes(c.ground) && isAirName(c.above));
     const targets = hoe ? free.concat(tillable) : free;
-    const r = { planted: 0, tilled: 0, emptyNoSeeds: 0, emptyUnreached: 0, noHoe: !hoe && tillable.length > 0, targets: targets.length, noSeeds: false, gateFail: null };
+    const r = { planted: 0, tilled: 0, emptyNoSeeds: 0, emptyUnreached: 0, noHoe: !hoe && tillable.length > 0, targets: targets.length, noSeeds: false, gateFail: null,
+        chestWalk: false };
     if (targets.length === 0 || stopped(s)) {
         return r;
     }
     if (countOf(bot, seed) < targets.length && typeof s.ctx.storage?.fetchItem === 'function') {
         const left = await leaveField(s);
         if (left.ok && !stopped(s)) {
+            r.chestWalk = true;
             await callStorage(s, 'fetchItem', [seed, targets.length - countOf(bot, seed)]);
         }
     }
@@ -663,7 +692,7 @@ function plantSummary(s, r, seed) {
     if (r.noSeeds) {
         return noSeedsText(seed);
     }
-    return plantText({ planted: r.planted, seed, emptyNoSeeds: r.emptyNoSeeds, emptyUnreached: r.emptyUnreached, noHoe: r.noHoe });
+    return plantText({ planted: r.planted, seed, tilled: r.tilled, emptyNoSeeds: r.emptyNoSeeds, emptyUnreached: r.emptyUnreached, noHoe: r.noHoe });
 }
 
 async function fertilizeWork(s) {
@@ -893,56 +922,222 @@ function storePlan(bot, r, fieldSeed) {
     return { only, keep };
 }
 
+function addHarvest(total, h) {
+    for (const [name, n] of Object.entries(h.byCrop)) {
+        total.byCrop[name] = (total.byCrop[name] ?? 0) + n;
+    }
+    total.harvested += h.harvested;
+    total.replanted += h.replanted;
+    total.unplanted += h.unplanted;
+    total.unreached += h.unreached;
+}
+
+// F6: after a walk to a chest the ripe plants are read again and harvested.
+async function harvestAgain(s, total) {
+    if (stopped(s)) {
+        return;
+    }
+    readField(s);
+    if (!s.cells.some(c => isCropBlock(c.above) && isRipe(c.above, c.age))) {
+        return;
+    }
+    const h = await harvestWork(s, 0);
+    if (!h.gateFail) {
+        addHarvest(total, h);
+    }
+}
+
+// The hoe for the ground to till (spec v0.1.4.8 E2): ctx.tools.ensureTool from what the bot carries
+// and the chests hold; the cycle cuts no tree and breaks no stone for it. null when not needed.
+async function getHoe(s) {
+    if (bestHoe(items(s.bot)) || typeof s.ctx.tools?.ensureTool !== 'function' || stopped(s)) {
+        return null;
+    }
+    if (!s.cells.some(c => TILLABLE.includes(c.ground) && isAirName(c.above))) {
+        return null;
+    }
+    if (s.box && insideFence(s)) {
+        await leaveField(s);
+    }
+    try {
+        const r = await s.ctx.tools.ensureTool(s.bot, s.ctx, 'hoe', '', { collect: false, now: s.options.now, wait: s.options.wait });
+        return r && typeof r === 'object' ? r : null;
+    } catch (err) {
+        console.warn('Farming pack: getting a hoe failed:', errorText(err));
+        return null;
+    }
+}
+
+// Bone meal for the unripe plants (spec v0.1.4.8 E2), in this order: what the bot carries; the known
+// chests (bone_meal); made in the composter of the farm.
+async function boneMealForCycle(s, unripe) {
+    const bot = s.bot;
+    const want = boneMealWant(unripe);
+    const m = { carried: countOf(bot, 'bone_meal'), taken: 0, takenFrom: [], made: 0, compost: {}, compostUsed: 0, sources: null, compostChests: [],
+        noComposter: false, composter: null, level: null };
+    if (m.carried >= want || stopped(s)) {
+        return m;
+    }
+    if (typeof s.ctx.storage?.fetchItem === 'function' && (!hasChestIndex(s) || chestsHold(knownChests(s), 'bone_meal'))) {
+        if (s.box && insideFence(s)) {
+            await leaveField(s);
+        }
+        s.chestWalk = true;
+        const before = countOf(bot, 'bone_meal');
+        const res = await callStorage(s, 'fetchItem', ['bone_meal', want - m.carried]);
+        m.taken = Math.max(0, countOf(bot, 'bone_meal') - before);
+        if (m.taken > 0) {
+            m.takenFrom = (Array.isArray(res?.chests) ? res.chests : []).filter(c => c && isFiniteNumber(c.x)).map(c => ({ x: c.x, y: c.y, z: c.z }));
+        }
+    }
+    if (m.carried + m.taken >= want || stopped(s)) {
+        return m;
+    }
+    const farmBox = s.farm?.box ?? s.box;
+    const pos = findComposter(bot, farmBox);
+    if (!pos) {
+        m.noComposter = true;
+        return m;
+    }
+    m.composter = pos;
+    const r = await composterWork(s, pos, want - m.carried - m.taken, farmMiddle(s.box ?? farmBox));
+    m.made = r.made;
+    m.compost = r.compost;
+    m.compostUsed = r.used;
+    m.sources = r.sources;
+    m.compostChests = r.chests;
+    m.level = composterLevel(bot, pos);
+    return m;
+}
+
+// The harvest of the cycle in words. While bone meal follows, the unripe plants are named there.
+function cycleHarvestPart(s, h, total, fertilizing, planted) {
+    if (h.plants === 0) {
+        return planted > 0 ? null : nothingGrowsText(s.farm.name);
+    }
+    const parts = [];
+    if (total.harvested === 0) {
+        if (!fertilizing) {
+            parts.push(nothingRipeText(h.unripe));
+        }
+    } else {
+        parts.push(harvestText({ byCrop: total.byCrop, replanted: total.replanted, unripe: fertilizing ? 0 : h.unripe, unplanted: total.unplanted }));
+    }
+    if (total.unreached > 0) {
+        parts.push(unreachedText(total.unreached));
+    }
+    return join(...parts);
+}
+
+// The bone meal of the cycle in words (spec v0.1.4.8 E2), with the next step when there is none.
+function boneMealPart(m, unripe, used, ripened) {
+    if (m.carried + m.taken + m.made === 0) {
+        if (m.noComposter) {
+            return join(TEXTS.noComposterFarm, growingText(unripe));
+        }
+        if (m.compostUsed > 0) {
+            return join(compostedText(m.compost, m.composter, m.level), growingText(unripe));
+        }
+        return join(TEXTS.nothingToCompostCycle, growingText(unripe));
+    }
+    return join(notRipeText(unripe), boneMealStepText({ ...m, used }), ripenedText(ripened));
+}
+
 /**
- * The farm work in one command, in this order: harvest, store the harvest and the seeds beyond 32
- * through ctx.storage.storeItems, plant, and fertilize when the bot carries bone meal. It does not
- * make bone meal. One text out of the parts, for example `Farm "wheat_farm": I harvested 9 wheat
- * and planted 9 again. 6 plants are not ripe yet. I stored 9 wheat in the chest at (-13, 63, 28).
- * The gate is closed.` Never throws.
+ * The whole farm round in one command (spec v0.1.4.8 E2), in this order:
+ * 1. harvest the ripe plants and plant them again;
+ * 2. store the harvest through ctx.storage.storeItems (seeds up to 32 stay with the bot);
+ * 3. plant the free ground; for ground to till without a hoe, ctx.tools.ensureTool(bot, ctx, 'hoe');
+ * 4. with `options.fertilize` (default true) and plants that are not ripe: get bone meal (carried,
+ *    the known chests, made in the composter of the farm from compost items that are carried, in
+ *    the known chests or picked near the farm), use it, and harvest what got ripe;
+ * 5. out of the field, the gate closed; also when the work fails half way.
+ * After every walk to a chest the ripe plants are read again. One cycle takes at most 10 minutes.
+ * One text out of the parts, with numbers and the next step, for example `Farm "farm": I harvested
+ * 10 wheat and planted 10 again. 48 plants are not ripe. I made 3 bone_meal from 21 leaf_litter of
+ * the chest at (11, 67, 53) and used them. 9 more plants got ripe and I harvested them. The gate
+ * is closed.` or `... I have nothing to compost and the chests I know have nothing. 48 plants are
+ * growing. Nothing to do now.` Never throws.
  * @param {object} bot
- * @param {object} [ctx]
+ * @param {object} [ctx] { areas, log, now, home?, storage?, chests?, tools? }
  * @param {string} [areaName]
- * @param {{timeoutMs?: number, now?: Function, wait?: Function}} [options]
- * @returns {Promise<{ok: boolean, reason: string|null, text: string, harvested: number, planted: number, fertilized: number}>}
+ * @param {{fertilize?: boolean, timeoutMs?: number, now?: Function, wait?: Function}} [options]
+ * @returns {Promise<{ok: boolean, reason: string|null, text: string, harvested: number, planted: number, fertilized: number, madeBoneMeal: number}>}
  */
 export async function farmCycle(bot, ctx = {}, areaName = '', options = {}) {
-    const zero = { harvested: 0, planted: 0, fertilized: 0 };
+    const zero = { harvested: 0, planted: 0, fertilized: 0, madeBoneMeal: 0 };
+    let s = null;
     try {
-        const { s, fail } = prepare(bot, ctx, areaName, options, zero);
-        if (fail) {
-            return fail;
+        const prep = prepare(bot, ctx, areaName, options, zero);
+        if (prep.fail) {
+            return prep.fail;
         }
-        setDeadline(s, 3 * s.cells.length);
+        s = prep.s;
+        const limit = FARM_LIMITS.cycleMs;
+        s.deadline = s.started + (isFiniteNumber(s.options.timeoutMs) ? Math.min(s.options.timeoutMs, limit) : limit);
+        const fertilizeOn = s.options.fertilize !== false;
         const seed = mainSeed(s.cells);
+        // 1. harvest and plant again
         const h = await harvestWork(s, 0);
         if (h.gateFail) {
-            return outcome(false, h.gateFail.reason ?? 'error', cycleText(s.farm.name, [h.gateFail.text]), zero);
+            const fin = await finish(s);
+            return outcome(false, h.gateFail.reason ?? 'error', cycleText(s.farm.name, [h.gateFail.text, fin.text]), zero);
         }
+        const total = { byCrop: { ...h.byCrop }, harvested: h.harvested, replanted: h.replanted, unplanted: h.unplanted, unreached: h.unreached };
+        // 2. store the harvest
         let stored = null;
         const plan = storePlan(bot, h, seed);
         if (plan && !stopped(s) && typeof s.ctx.storage?.storeItems === 'function') {
             const left = await leaveField(s);
             if (left.ok && !stopped(s)) {
                 stored = await callStorage(s, 'storeItems', [plan]);
+                await harvestAgain(s, total);
             }
         }
+        // 3. plant, with a hoe for the ground to till
+        let hoe = null;
         let p = null;
         if (!stopped(s)) {
             readField(s);
+            hoe = await getHoe(s);
             p = await plantWork(s, seed);
+            if (p.chestWalk) {
+                await harvestAgain(s, total);
+            }
         }
+        // 4. bone meal for what is not ripe, and the harvest of what got ripe
+        let m = null;
         let f = null;
-        if (!stopped(s) && countOf(bot, 'bone_meal') > 0) {
+        let h2 = null;
+        let unripe = 0;
+        if (fertilizeOn && !stopped(s)) {
             readField(s);
-            f = await fertilizeWork(s);
+            unripe = s.cells.filter(c => isCropBlock(c.above) && !isRipe(c.above, c.age)).length;
+            if (unripe > 0) {
+                s.chestWalk = false;
+                m = await boneMealForCycle(s, unripe);
+                if (s.chestWalk) {
+                    await harvestAgain(s, total);
+                }
+                if (countOf(bot, 'bone_meal') > 0 && !stopped(s)) {
+                    readField(s);
+                    f = await fertilizeWork(s);
+                    if (!stopped(s) && !f.gateFail) {
+                        h2 = await harvestWork(s, 0);
+                    }
+                }
+            }
         }
+        // 5. out of the field, the gate closed
         const fin = await finish(s);
         const planted = p?.planted ?? 0;
         const parts = [
-            h.plants === 0 && planted > 0 ? null : harvestSummary(s, h),
+            cycleHarvestPart(s, h, total, m !== null, planted),
             stored?.text ?? null,
+            hoe?.ok && Array.isArray(hoe.crafted) && hoe.crafted.length > 0 ? hoe.text : null,
             p && (p.targets > 0 || p.noHoe || p.gateFail) ? plantSummary(s, p, seed) : null,
-            f ? fertilizeSummary(f) : null,
+            m ? boneMealPart(m, unripe, f?.used ?? 0, h2?.harvested ?? 0) : null,
+            f?.gateFail ? f.gateFail.text : null,
             fin.text,
             s.gates.length > 0 && fin.open.length === 0 && !s.stop ? TEXTS.gateClosed : null,
             stopText(s),
@@ -950,9 +1145,18 @@ export async function farmCycle(bot, ctx = {}, areaName = '', options = {}) {
         const text = cycleText(s.farm.name, parts);
         logTo(ctx, text);
         const end = ending(s, fin);
-        return outcome(end.ok, end.reason, text, { harvested: h.harvested, planted, fertilized: f?.used ?? 0 });
+        return outcome(end.ok, end.reason, text, {
+            harvested: total.harvested + (h2?.harvested ?? 0), planted, fertilized: f?.used ?? 0, madeBoneMeal: m?.made ?? 0,
+        });
     } catch (err) {
         console.warn('Farming pack: the farm cycle failed:', errorText(err));
+        if (s) {
+            try {
+                await finish(s);
+            } catch {
+                // the gate stays as it is
+            }
+        }
         return outcome(false, 'error', `I could not do the farm work: ${errorText(err)}`, zero);
     }
 }
@@ -968,18 +1172,103 @@ function composterLevel(bot, pos) {
     return Number.isFinite(level) ? level : 0;
 }
 
-function findComposter(bot) {
+// The composter (spec v0.1.4.8 E2, chooseComposter): the one in the farm area or within 8 blocks of
+// it, else the nearest within 32 blocks of the bot. `farmBox` null: only the second.
+function findComposter(bot, farmBox = null) {
+    const me = botPos(bot);
+    let range = FARM_LIMITS.composterRange;
+    if (farmBox && me) {
+        const d = distanceToBox(farmBox, me);
+        const side = Math.hypot(farmBox.max.x - farmBox.min.x + 1, farmBox.max.z - farmBox.min.z + 1);
+        range = Math.max(range, Math.min(96, Math.ceil(d + side + 10)));
+    }
     let found = [];
     try {
-        found = bot.findBlocks({ matching: b => b?.name === 'composter', maxDistance: FARM_LIMITS.composterRange, count: 8 }) ?? [];
+        found = bot.findBlocks({ matching: b => b?.name === 'composter', maxDistance: range, count: 16 }) ?? [];
     } catch (err) {
         console.warn('Farming pack: could not look for a composter:', errorText(err));
         return null;
     }
-    const near = found.map(p => ({ p, d: distanceTo(bot, p.x + 0.5, p.y + 0.5, p.z + 0.5) }))
-        .filter(e => e.d <= FARM_LIMITS.composterRange + 1)
-        .sort((a, b) => a.d - b.d);
-    return near.length > 0 ? { x: near[0].p.x, y: near[0].p.y, z: near[0].p.z } : null;
+    return chooseComposter(found.map(p => ({ x: p.x, y: p.y, z: p.z })), farmBox, me);
+}
+
+// The box of the nearest farm area within 64 blocks, for the composter and the picking of the
+// command !makeBoneMeal. null without one.
+function nearestFarmBox(bot, ctx) {
+    try {
+        const choice = chooseFarmArea(listAreas(ctx, dimensionOf(bot) ?? 'overworld'), { pos: botPos(bot), dimension: dimensionOf(bot) ?? 'overworld' });
+        return choice.area ? { min: { ...choice.area.min }, max: { ...choice.area.max } } : null;
+    } catch {
+        return null;
+    }
+}
+
+// The chests of the chest index in the dimension of the bot, [] without one.
+function knownChests(s) {
+    try {
+        const list = typeof s.ctx.chests?.list === 'function' ? s.ctx.chests.list(dimensionOf(s.bot) ?? undefined) : [];
+        return Array.isArray(list) ? list : [];
+    } catch {
+        return [];
+    }
+}
+
+function hasChestIndex(s) {
+    return typeof s.ctx.chests?.list === 'function';
+}
+
+// Walks within reach of the composter: into the field through the gate when it stands in the field,
+// otherwise out of the field and there with doors.
+async function walkToComposter(s, pos) {
+    if (distanceTo(s.bot, pos.x + 0.5, pos.y, pos.z + 0.5) <= FARM_LIMITS.reach) {
+        return { ok: true };
+    }
+    const b = s.box;
+    const inField = b && pos.x >= b.min.x && pos.x <= b.max.x && pos.z >= b.min.z && pos.z <= b.max.z;
+    if (inField) {
+        const entered = await enterField(s);
+        if (!entered.ok) {
+            return entered;
+        }
+        s.movements ??= fieldMovements(s.bot, s.cells);
+        await gotoGoal(s.bot, new goals.GoalNear(pos.x, pos.y, pos.z, 2), { movements: s.movements, timeoutMs: 30000, clock: s.clock });
+        return { ok: distanceTo(s.bot, pos.x + 0.5, pos.y, pos.z + 0.5) <= FARM_LIMITS.reach + 0.5, reason: 'no_path' };
+    }
+    if (s.box && insideFence(s)) {
+        await leaveField(s);
+    }
+    return walkNear(s.bot, pos, 2, { allowDig: false, allowDoors: true, clock: s.clock, timeoutMs: 30000 });
+}
+
+// Compost items from the known chests, the kind the chests hold most of first (spec v0.1.4.8 E2).
+// Adds what it took to r.fetched and the chests to r.chests. Returns the items it got.
+async function fetchCompost(s, need, r) {
+    if (need <= 0 || typeof s.ctx.storage?.fetchItem !== 'function') {
+        return 0;
+    }
+    let got = 0;
+    for (const { name } of compostInChests(knownChests(s))) {
+        if (got >= need || stopped(s)) {
+            break;
+        }
+        if (s.box && insideFence(s)) {
+            await leaveField(s);
+        }
+        s.chestWalk = true;
+        const before = countOf(s.bot, name);
+        const res = await callStorage(s, 'fetchItem', [name, need - got]);
+        const n = Math.max(0, countOf(s.bot, name) - before);
+        got += n;
+        if (n > 0) {
+            for (const c of Array.isArray(res?.chests) ? res.chests : []) {
+                if (c && !r.chests.some(o => o.x === c.x && o.y === c.y && o.z === c.z)) {
+                    r.chests.push({ x: c.x, y: c.y, z: c.z });
+                }
+            }
+        }
+    }
+    r.fetched += got;
+    return got;
 }
 
 function compostCount(bot) {
@@ -1056,21 +1345,24 @@ function droppedName(entity) {
     }
 }
 
-// Picks flowers (and with shears grass, ferns and natural leaves) within 32 blocks, outside of every
-// protected area, until about `need` items are in the inventory. Returns the items it got.
-async function collectCompostables(s, need) {
+// Picks leaf litter and flowers (and with shears grass, ferns and natural leaves) within 32 blocks of
+// `center` (the middle of the farm, v0.1.4.8 E2; the bot without a farm), outside of every protected
+// area, until about `need` items are in the inventory. Returns the items it got.
+async function collectCompostables(s, need, center = null) {
     const bot = s.bot;
     const me = botPos(bot);
     if (!me || need <= 0) {
         return 0;
     }
+    const from = center ?? me;
     const shears = findItem(bot, 'shears');
     const areas = listAreas(s.ctx, dimensionOf(bot));
+    const range = Math.min(96, Math.ceil(Math.hypot(me.x - from.x, me.z - from.z) + PICK_RANGE));
     let found = [];
     try {
         found = bot.findBlocks({
             matching: b => Boolean(b) && compostSource(b.name, propsOf(b), Boolean(shears)),
-            maxDistance: FARM_LIMITS.collectRange,
+            maxDistance: range,
             count: 128,
         }) ?? [];
     } catch (err) {
@@ -1078,9 +1370,13 @@ async function collectCompostables(s, need) {
         return 0;
     }
     const targets = found
-        .filter(p => Math.abs(p.y - me.y) <= 4 && !areas.some(a => containsPos(a, p)))
+        .filter(p => Math.abs(p.y - from.y) <= 5 && Math.hypot(p.x + 0.5 - from.x, p.z + 0.5 - from.z) <= PICK_RANGE
+            && !areas.some(a => containsPos(a, p)))
         .sort((a, b) => distanceTo(bot, a.x + 0.5, a.y, a.z + 0.5) - distanceTo(bot, b.x + 0.5, b.y, b.z + 0.5))
         .slice(0, 24);
+    if (targets.length > 0 && s.box && insideFence(s)) {
+        await leaveField(s);
+    }
     let got = 0;
     for (const p of targets) {
         if (stopped(s) || got >= need) {
@@ -1091,7 +1387,7 @@ async function collectCompostables(s, need) {
         if (!walk.ok || !b || !compostSource(b.name, b.properties, Boolean(shears))) {
             continue;
         }
-        if (!FLOWERS.includes(b.name) && !(await equipItem(bot, shears))) {
+        if (!FLOWERS.includes(b.name) && b.name !== 'leaf_litter' && !(await equipItem(bot, shears))) {
             continue;
         }
         const before = compostCount(bot);
@@ -1110,15 +1406,98 @@ async function collectCompostables(s, need) {
     return got;
 }
 
+// The work at the composter (spec v0.1.4.8 E2): fills it until `want` bone meal are made. Compost
+// items in this order: what the bot carries; the known chests (ctx.storage.fetchItem); leaf litter
+// and flowers picked within 32 blocks of `center`. Never seeds, crops or food. Stops after 64 items.
+// Returns the numbers for the texts; `short` says why it made less: limit, no_items, no_path, error.
+async function composterWork(s, pos, want, center) {
+    const bot = s.bot;
+    const r = { pos, made: 0, used: 0, compost: {}, carried: compostCount(bot), fetched: 0, picked: 0, chests: [], short: null, sources: null };
+    let fails = 0;
+    let trips = 0;
+    let chestsAsked = false;
+    while (!stopped(s)) {
+        const level = composterLevel(bot, pos);
+        if (level === null) {
+            r.short = 'error';
+            break;
+        }
+        if (level >= 8) {
+            if (r.made >= want) {
+                break;
+            }
+            await walkToComposter(s, pos);
+            if (await takeBoneMeal(s, pos)) {
+                r.made++;
+            } else if (++fails >= 3) {
+                r.short = 'error';
+                break;
+            }
+            continue;
+        }
+        if (r.made >= want) {
+            break;
+        }
+        if (level === 7) {
+            if (!(await waitUntil(s, () => (composterLevel(bot, pos) ?? 0) >= 8, 2500))) {
+                r.short = 'error';
+                break;
+            }
+            continue;
+        }
+        if (r.used >= FARM_LIMITS.compostItems) {
+            r.short = 'limit';
+            break;
+        }
+        const name = chooseCompostItem(items(bot));
+        if (!name) {
+            // About a third of the items raise the level: get three times the levels still missing.
+            const need = Math.min(FARM_LIMITS.compostItems - r.used, 3 * (7 - level + 7 * (want - r.made - 1)));
+            if (!chestsAsked) {
+                chestsAsked = true;
+                if ((await fetchCompost(s, need, r)) > 0) {
+                    continue;
+                }
+            }
+            trips++;
+            const got = trips > FARM_LIMITS.collectTrips ? 0 : await collectCompostables(s, need, center);
+            r.picked += got;
+            if (got === 0) {
+                r.short = 'no_items';
+                break;
+            }
+            continue;
+        }
+        const walk = await walkToComposter(s, pos);
+        if (!walk.ok) {
+            r.short = walk.reason === 'interrupted' ? null : 'no_path';
+            break;
+        }
+        if (await putIntoComposter(s, pos, name)) {
+            r.used++;
+            r.compost[name] = (r.compost[name] ?? 0) + 1;
+            fails = 0;
+        } else if (++fails >= 3) {
+            r.short = 'error';
+            break;
+        }
+    }
+    r.sources = compostSources({ carried: r.carried, fetched: r.fetched, picked: r.picked, used: r.used });
+    return r;
+}
+
 /**
- * Makes bone meal in the nearest composter within 32 blocks. Uses compostable items of the
- * inventory (never seeds, crops, food, bone meal or hay blocks; weeds first); without
- * enough of them it picks flowers, and with shears grass, ferns and natural leaves, within 32
- * blocks outside of every protected area. Takes the bone meal out of the full composter. Stops
- * after 64 items. Texts: `I made 2 bone_meal from 15 items.`, `I found no composter within 32
- * blocks.`, `I found nothing to compost. I do not use seeds for that.` Never throws.
+ * Makes bone meal in a composter. The composter (spec v0.1.4.8 E2): the one in the nearest farm area
+ * within 64 blocks or within 8 blocks of it, else the nearest within 32 blocks of the bot. Compost
+ * items, in this order: what the bot carries (never seeds, crops, food, bone meal or hay blocks;
+ * weeds first); the known chests through ctx.storage.fetchItem (leaf_litter of a chest counts);
+ * leaf litter and flowers picked, and with shears grass, ferns and natural leaves, within 32 blocks
+ * of the middle of the farm (of the bot without a farm), outside of every protected area. Takes the
+ * bone meal out of the full composter. Stops after 64 items. Texts: `I made 2 bone_meal from 15
+ * items.`, `I found no composter within 32 blocks.`, `I found nothing to compost. I do not use
+ * seeds for that.` Never throws.
  * @param {object} bot
- * @param {object} [ctx] { areas, log, now }
+ * @param {object} [ctx] { areas, log, now, storage?, chests? }
  * @param {number} [count] bone meal wished, 1 to 64
  * @param {{timeoutMs?: number, now?: Function, wait?: Function}} [options]
  * @returns {Promise<{ok: boolean, reason: string|null, text: string, made: number, used: number}>}
@@ -1134,90 +1513,26 @@ export async function makeBoneMeal(bot, ctx = {}, count = 1, options = {}) {
         if (stopped(s)) {
             return outcome(false, s.stop, TEXTS.stopped, { made: 0, used: 0 });
         }
-        const pos = findComposter(bot);
+        const farmBox = nearestFarmBox(bot, ctx);
+        const pos = findComposter(bot, farmBox);
         if (!pos) {
-            return outcome(false, 'no_composter', TEXTS.noComposter, { made: 0, used: 0 });
+            return outcome(false, 'no_composter', farmBox ? TEXTS.noComposterFarm : TEXTS.noComposter, { made: 0, used: 0 });
         }
-        let made = 0;
-        let used = 0;
-        let fails = 0;
-        let trips = 0;
-        let short = null;
-        while (!stopped(s)) {
-            const level = composterLevel(bot, pos);
-            if (level === null) {
-                short = 'error';
-                break;
-            }
-            if (level >= 8) {
-                if (made >= want) {
-                    break;
-                }
-                if (distanceTo(bot, pos.x + 0.5, pos.y, pos.z + 0.5) > FARM_LIMITS.reach) {
-                    await walkNear(bot, pos, 2, { allowDig: false, allowDoors: true, clock: s.clock, timeoutMs: 30000 });
-                }
-                if (await takeBoneMeal(s, pos)) {
-                    made++;
-                } else if (++fails >= 3) {
-                    short = 'error';
-                    break;
-                }
-                continue;
-            }
-            if (made >= want) {
-                break;
-            }
-            if (level === 7) {
-                if (!(await waitUntil(s, () => (composterLevel(bot, pos) ?? 0) >= 8, 2500))) {
-                    short = 'error';
-                    break;
-                }
-                continue;
-            }
-            if (used >= FARM_LIMITS.compostItems) {
-                short = 'limit';
-                break;
-            }
-            const name = chooseCompostItem(items(bot));
-            if (!name) {
-                // About half of the items raise the level: collect twice the levels still missing.
-                const need = Math.min(FARM_LIMITS.compostItems - used, 2 * (7 - level + 7 * (want - made - 1)));
-                trips++;
-                if (trips > FARM_LIMITS.collectTrips || (await collectCompostables(s, need)) === 0) {
-                    short = 'no_items';
-                    break;
-                }
-                continue;
-            }
-            if (distanceTo(bot, pos.x + 0.5, pos.y, pos.z + 0.5) > FARM_LIMITS.reach) {
-                const walk = await walkNear(bot, pos, 2, { allowDig: false, allowDoors: true, clock: s.clock, timeoutMs: 30000 });
-                if (!walk.ok) {
-                    return outcome(false, walk.reason ?? 'no_path', join(`I found no way to the composter at ${whereText(pos)}.`,
-                        used > 0 || made > 0 ? boneMealText(made, used) : ''), { made, used });
-                }
-            }
-            if (await putIntoComposter(s, pos, name)) {
-                used++;
-                fails = 0;
-            } else if (++fails >= 3) {
-                short = 'error';
-                break;
-            }
+        const r = await composterWork(s, pos, want, farmMiddle(farmBox));
+        const { made, used } = r;
+        if (r.short === 'no_path') {
+            return outcome(false, 'no_path', join(`I found no way to the composter at ${whereText(pos)}.`,
+                used > 0 || made > 0 ? boneMealText(made, used) : ''), { made, used });
         }
-        // Amendment 2, I3: it ran out of things to compost, and without shears grass, ferns and
-        // leaves give nothing
-        const noShears = short === 'no_items' && made < want && !findItem(bot, 'shears') ? TEXTS.noShears : '';
         if (made === 0 && used === 0) {
             if (s.stop) {
                 return outcome(false, s.stop, stopText(s), { made, used });
             }
-            return outcome(false, short === 'no_items' ? 'nothing_to_compost' : (short ?? 'error'), join(TEXTS.nothingToCompost, noShears),
-                { made, used });
+            return outcome(false, r.short === 'no_items' ? 'nothing_to_compost' : (r.short ?? 'error'), TEXTS.nothingToCompost, { made, used });
         }
-        const text = join(boneMealText(made, used, made < want ? short : null, short === 'no_items' ? composterLevel(bot, pos) : null), stopText(s),
-            noShears);
+        const text = join(boneMealText(made, used, made < want ? r.short : null, r.short === 'no_items' ? composterLevel(bot, pos) : null), stopText(s));
         logTo(ctx, text);
-        return outcome(made > 0 && !s.stop, s.stop ?? (made >= want ? null : short), text, { made, used });
+        return outcome(made > 0 && !s.stop, s.stop ?? (made >= want ? null : r.short), text, { made, used });
     } catch (err) {
         console.warn('Farming pack: making bone meal failed:', errorText(err));
         return outcome(false, 'error', `I could not make bone_meal: ${errorText(err)}`, { made: 0, used: 0 });

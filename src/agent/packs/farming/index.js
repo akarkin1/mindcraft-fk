@@ -2,10 +2,13 @@
 // the farm cycle. Everything the glue needs is exported here. Importing this file has no side effects.
 //
 // Pure modules (no mineflayer, no src/agent/library): crop_logic, field_logic, texts.
-// Executing module (moves the bot, gets `ctx` = { areas, log, now, home?, storage? }): farming.
-export { COMPOSTABLE, CROPS, FLOWERS, TILLABLE, bestHoe, cellPlan, chooseCompostItem, compostSource, cropOf, harvestTarget, isAirName,
-    isCompostable, isCropBlock, isRipe, seedFor, visitOrder } from './crop_logic.js';
-export { FARM_RANGE, chooseFarmArea, fieldBox, fieldCells, findGates, insideBox, isInField, stepPenalty } from './field_logic.js';
-export { TEXTS, boneMealText, countList, cycleText, fertilizeText, gateOpenText, harvestText, noPlantsToFertilizeText, noSeedsText,
-    nothingGrowsText, nothingRipeText, nothingToPlantText, plantText, unknownFarmText, unknownSeedText, unreachedText, whereText } from './texts.js';
+// Executing module (moves the bot, gets `ctx` = { areas, log, now, home?, storage?, chests?, tools? }): farming.
+export { BONE_MEAL_PER_PLANT, BONE_MEAL_WANT_MAX, COMPOSTABLE, CROPS, FLOWERS, TILLABLE, bestHoe, boneMealWant, cellPlan, chestsHold,
+    chooseCompostItem, compostInChests, compostSource, compostSources, cropOf, harvestTarget, isAirName, isCompostable, isCropBlock, isRipe,
+    seedFor, visitOrder } from './crop_logic.js';
+export { COMPOSTER_NEAR_FARM, COMPOSTER_RANGE, FARM_RANGE, PICK_RANGE, chooseComposter, chooseFarmArea, farmMiddle, fieldBox, fieldCells,
+    findGates, insideBox, isInField, stepPenalty } from './field_logic.js';
+export { TEXTS, boneMealStepText, boneMealText, compostedText, countList, cycleText, fertilizeText, gateOpenText, growingText, harvestText,
+    noPlantsToFertilizeText, noSeedsText, notRipeText, nothingGrowsText, nothingRipeText, nothingToPlantText, plantText, ripenedText,
+    unknownFarmText, unknownSeedText, unreachedText, whereText } from './texts.js';
 export { FARM_LIMITS, farmCycle, fertilize, fieldMovements, findFarm, harvestCrops, makeBoneMeal, plantField } from './farming.js';

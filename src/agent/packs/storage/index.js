@@ -6,13 +6,14 @@
 // Executing module (it moves the bot and gets `ctx` = { chests, settings, log, now }): storage.
 import { fetchItem, storeItems } from './storage.js';
 
-export { ARROW_KEEP, CONTAINER_KINDS, FOOD_KEEP, KEEP_LIMITS, MATERIALS, TOOL_KINDS, chestKey, chooseChest, cleanName,
-    comparePositions, countIn, distanceTo, isArmour, isBed, isContainerKind, isSeed, keepPlan, keyHalf, materialOf,
+export { ARROW_KEEP, CONTAINER_KINDS, DIMENSIONS, FOOD_KEEP, KEEP_LIMITS, MATERIALS, TOOL_KINDS, chestKey, chooseChest, cleanName,
+    comparePositions, countIn, distanceTo, isArmour, isBed, isContainerKind, isDimensionName, isSeed, keepPlan, keyHalf, materialOf,
     normalizeDimension, normalizeKeepCounts, otherHalfOf, roomFor, summarizeSlots, toolKindOf } from './storage_logic.js';
-export { CHESTS_MAX, LIST_MAX, TEXTS, chestLine, chestListText, countsText, fetchText, notFoundText, posText, storeText } from './texts.js';
+export { CHESTS_MAX, CHEST_KINDS_MAX, LIST_MAX, TEXTS, chestLine, chestListText, countsText, fetchText, itemChestsText, notFoundText,
+    posText, storeText } from './texts.js';
 export { CHEST_FILE, ChestIndex } from './chest_index.js';
-export { FETCH_TIMEOUT_MS, LOOK_LIMIT, LOOK_RANGE, LOOK_TIMEOUT_MS, OPEN_TIMEOUT_MS, REACH, STORE_RANGE, STORE_TIMEOUT_MS,
-    chestsText, fetchItem, lookIntoChest, lookIntoChests, recordContainer, storeItems } from './storage.js';
+export { FETCH_LOOK_LIMIT, FETCH_LOOK_RANGE, FETCH_TIMEOUT_MS, LOOK_LIMIT, LOOK_RANGE, LOOK_TIMEOUT_MS, OPEN_TIMEOUT_MS, REACH, STORE_RANGE,
+    STORE_TIMEOUT_MS, chestsText, fetchItem, lookIntoChest, lookIntoChests, recordContainer, storeItems } from './storage.js';
 
 /**
  * `ctx.storage` of the pack context (spec section 2): storeItems and fetchItem bound to the bot.

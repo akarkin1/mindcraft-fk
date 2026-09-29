@@ -3,7 +3,7 @@
 import { Vec3 } from 'vec3';
 import { botPos } from '../home/context.js';
 import { findItem, inventoryOf } from './inventory.js';
-import { bestTool } from './tool_logic.js';
+import { bestTool, parseTool } from './tool_logic.js';
 import { DEFAULT_REACH, EYE_HEIGHT } from './tree_logic.js';
 
 /**
@@ -144,6 +144,41 @@ export async function holdBest(bot, kind) {
 }
 
 /**
+ * Holds the best tool of the kind, else an empty hand: a tool of another kind (a pickaxe for a
+ * log, spec v0.1.4.8 E3) is put away, into the inventory, or a block without wear is held instead
+ * when the inventory has no room. Never throws.
+ * @param {object} bot
+ * @param {string} kind
+ * @returns {Promise<boolean>} true when the bot holds a tool of the kind
+ */
+export async function holdBestOrHand(bot, kind) {
+    if (await holdBest(bot, kind)) {
+        return true;
+    }
+    try {
+        if (!parseTool(bot.heldItem?.name)) {
+            return false;
+        }
+        try {
+            if (typeof bot.unequip === 'function') {
+                await bot.unequip('hand');
+            }
+        } catch {
+            // no room in the inventory: another item below
+        }
+        if (parseTool(bot.heldItem?.name)) {
+            const other = (bot.inventory?.items?.() ?? []).find(i => i && i.count > 0 && !parseTool(i.name) && !(i.maxDurability > 0));
+            if (other) {
+                await bot.equip(other, 'hand');
+            }
+        }
+    } catch {
+        // the hand stays as it is
+    }
+    return false;
+}
+
+/**
  * Breaks one block when its name passes the test, holding the best tool of `tool` if given.
  * Never throws.
  * @param {object} bot
@@ -151,9 +186,11 @@ export async function holdBest(bot, kind) {
  * @param {{now: Function, wait: Function}} clock
  * @param {(name: string) => boolean} accept
  * @param {string|null} [tool] kind of tool to hold
+ * @param {{handIfNone?: boolean}} [options] handIfNone: without a tool of the kind, no other tool
+ *   is held (v0.1.4.8, E3: never a pickaxe for wood)
  * @returns {Promise<boolean>} true when the block is gone
  */
-export async function digBlock(bot, pos, clock, accept, tool = null) {
+export async function digBlock(bot, pos, clock, accept, tool = null, options = {}) {
     let block = null;
     try {
         block = bot.blockAt(vec(pos));
@@ -163,7 +200,9 @@ export async function digBlock(bot, pos, clock, accept, tool = null) {
     if (!block || !accept(block.name)) {
         return false;
     }
-    if (tool) {
+    if (tool && options?.handIfNone === true) {
+        await holdBestOrHand(bot, tool);
+    } else if (tool) {
         await holdBest(bot, tool);
     }
     const res = await settle(bot, clock, () => bot.dig(block, true), DIG_LIMIT_MS, () => bot.stopDigging?.());

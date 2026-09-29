@@ -49,6 +49,10 @@ export const UNDER_AREA_DEPTH = 16;
 export const ENTRANCE_RANGE = 48;
 /** A new shaft keeps this far from the columns of other mines (horizontal). */
 export const AVOID_DISTANCE = 4;
+/** The entrance of a new mine keeps this far from the place `home` and the areas of ENTRANCE_AREA_TYPES (v0.1.4.8, E4). */
+export const ENTRANCE_DISTANCE = 16;
+/** The types of areas a new entrance keeps ENTRANCE_DISTANCE from. */
+export const ENTRANCE_AREA_TYPES = Object.freeze(['home', 'building', 'pen', 'farm']);
 /** How far the shaft or the tunnel moves to the side. */
 export const SIDE_STEP = 3;
 /** The limits of shouldReturn (spec M2). */
@@ -702,21 +706,27 @@ function haveMaterialFor(material, have) {
  * (spec M2). Ladders: the depth plus 10 percent, at least 8; torches 16; cobblestone 32; food 8
  * pieces; a chest; a pickaxe of the needed material (at least stone), and a second one or the
  * material for it when the blocks of the trip are more than 80 percent of the uses left. With
- * `options.shaftExists` the mine is there: no ladders, no chest, no shaft and room to dig.
+ * `options.shaftExists` the way down of the mine is there (its route has a leg): ladders only for
+ * the part below `options.wayDownTo` (the feet at the end of the way, spec v0.1.4.8 E4), plus 10
+ * percent, and no chest and no room while `options.hasBase` is not false. Without `wayDownTo` the
+ * way reaches the level.
  * @param {string|object} ore
  * @param {number} fromY feet at the entrance
  * @param {number} toY the level
  * @param {object[]} inventory `{ name, count, uses_left }`
- * @param {{foods?: object|string[], tunnelLength?: number, shaftExists?: boolean}} [options]
- * @returns {{needs: object[], missing: object[], blocks: number, depth: number, pickaxe: string|null}}
+ * @param {{foods?: object|string[], tunnelLength?: number, shaftExists?: boolean, wayDownTo?: number, hasBase?: boolean}} [options]
+ * @returns {{needs: object[], missing: object[], blocks: number, depth: number, rest: number, pickaxe: string|null}}
+ *   rest: the blocks of the way down that are still to dig
  */
 export function tripNeeds(ore, fromY, toY, inventory, options = {}) {
     const row = oreOf(ore);
     const opts = options && typeof options === 'object' ? options : {};
     const depth = isFiniteNumber(fromY) && isFiniteNumber(toY) ? Math.max(0, Math.floor(fromY) - Math.floor(toY)) : 0;
     const exists = opts.shaftExists === true;
+    const rest = !exists ? depth : (isFiniteNumber(opts.wayDownTo) && isFiniteNumber(toY) ? Math.max(0, Math.floor(opts.wayDownTo) - Math.floor(toY)) : 0);
+    const base = exists && opts.hasBase !== false;
     const tunnel = isFiniteNumber(opts.tunnelLength) && opts.tunnelLength >= 0 ? Math.floor(opts.tunnelLength) : DEFAULT_TUNNEL_LENGTH;
-    const blocks = (exists ? 0 : depth + ROOM_BLOCKS) + 2 * tunnel;
+    const blocks = rest + (base ? 0 : ROOM_BLOCKS) + 2 * tunnel;
     const material = row ? tripPickaxe(row) : null;
     const have = counts(inventory);
     const pickaxes = material ? usablePickaxes(inventory, material) : [];
@@ -731,14 +741,15 @@ export function tripNeeds(ore, fromY, toY, inventory, options = {}) {
             missing.push({ name: 'pickaxe', material, count: 1, spare: true });
         }
     }
-    const ladders = exists ? 0 : Math.max(MIN_LADDERS, Math.ceil(depth * 1.1));
+    // a new shaft takes at least MIN_LADDERS; the rest of a shaft that is there takes what it lacks
+    const ladders = !exists ? Math.max(MIN_LADDERS, Math.ceil(depth * 1.1)) : (rest > 0 ? Math.ceil(rest * 1.1) : 0);
     const food = [...have.entries()].filter(([name]) => isFood(name, opts.foods)).reduce((sum, [, n]) => sum + n, 0);
     const wanted = [
         ['ladder', ladders, have.get('ladder') ?? 0],
         ['torch', TRIP_SUPPLIES.torch, have.get('torch') ?? 0],
         ['cobblestone', TRIP_SUPPLIES.cobblestone, have.get('cobblestone') ?? 0],
         ['food', TRIP_SUPPLIES.food, food],
-        ['chest', exists ? 0 : TRIP_SUPPLIES.chest, have.get('chest') ?? 0],
+        ['chest', base ? 0 : TRIP_SUPPLIES.chest, have.get('chest') ?? 0],
     ];
     for (const [name, count, got] of wanted) {
         if (count > 0) {
@@ -748,7 +759,24 @@ export function tripNeeds(ore, fromY, toY, inventory, options = {}) {
             }
         }
     }
-    return { needs, missing, blocks, depth, pickaxe: pickaxes.length > 0 ? pickaxes[0].name : null };
+    return { needs, missing, blocks, depth, rest, pickaxe: pickaxes.length > 0 ? pickaxes[0].name : null };
+}
+
+/**
+ * How a trip for an ore starts (spec v0.1.4.8 E4): `use` the known mine; without one, `underground`
+ * when the bot is under the ground (a new mine starts only from the surface), `ask` when the player
+ * did not order a new mine, else `new`.
+ * @param {{mine?: object|null, newMine?: boolean, underground?: boolean}} input
+ * @returns {'use'|'underground'|'ask'|'new'}
+ */
+export function tripStart(input) {
+    if (input?.mine) {
+        return 'use';
+    }
+    if (input?.underground === true) {
+        return 'underground';
+    }
+    return input?.newMine === true ? 'new' : 'ask';
 }
 
 // ------------------------------------------------------------------ protected areas and the entrance
@@ -770,6 +798,29 @@ function boxes(areas) {
  */
 export function shaftAllowed(p, areas) {
     return boxes(areas).every(a => horizontalDistanceToBox(a, center({ ...p, y: 0 })) >= AREA_DISTANCE);
+}
+
+/**
+ * True when the entrance of a new mine may be at (x, z) (spec v0.1.4.8 E4): shaftAllowed, and at
+ * least ENTRANCE_DISTANCE (16) blocks, horizontally from the centre of the block, from every area
+ * of the types home, building, pen and farm (an area without a type is a building) and from every
+ * point of `homes` (the place `home`).
+ * @param {{x: number, z: number}} p
+ * @param {object[]} areas
+ * @param {{x: number, z: number}[]} [homes]
+ * @returns {boolean}
+ */
+export function entranceAllowed(p, areas, homes = []) {
+    if (!shaftAllowed(p, areas)) {
+        return false;
+    }
+    const c = center({ ...p, y: 0 });
+    const kept = boxes(areas).filter(a => ENTRANCE_AREA_TYPES.includes(typeof a.type === 'string' && a.type.length > 0 ? a.type : 'building'));
+    if (kept.some(a => horizontalDistanceToBox(a, c) < ENTRANCE_DISTANCE)) {
+        return false;
+    }
+    const points = (Array.isArray(homes) ? homes : []).filter(h => h && isFiniteNumber(h.x) && isFiniteNumber(h.z));
+    return points.every(h => Math.hypot(h.x - c.x, h.z - c.z) >= ENTRANCE_DISTANCE);
 }
 
 /**
@@ -871,14 +922,16 @@ export function chooseDirection(shaft, level, areas, options = {}) {
 
 /**
  * The entrance of a new mine (spec M4): a place on the ground at least 8 blocks from every
- * protected area and at most 48 blocks from the bot, the nearest first. The bot stands on the
- * ground at the column behind the shaft (the ladders hang on that wall) and at the column of the
- * shaft itself: both are free for feet and head, on solid ground of the same height. The
- * direction comes from chooseDirection.
+ * protected area and at most 48 blocks from the bot, the nearest first; since v0.1.4.8 (E4) at
+ * least 16 blocks from the areas of the types home, building, pen and farm and from the place
+ * `home` (entranceAllowed). The bot stands on the ground at the column behind the shaft (the
+ * ladders hang on that wall) and at the column of the shaft itself: both are free for feet and
+ * head, on solid ground of the same height. The direction comes from chooseDirection.
  * @param {{bot: {x,y,z}, level: number, areas?: object[], ground: (x: number, z: number) => {y: number, name: string}|null,
- *   free?: (x: number, y: number, z: number) => boolean, range?: number, length?: number, avoid?: {x: number, z: number}[]}} input
+ *   free?: (x: number, y: number, z: number) => boolean, range?: number, length?: number, avoid?: {x: number, z: number}[],
+ *   homes?: {x: number, z: number}[]}} input
  *   ground(x, z): the top solid block of the column near the bot (its y and name), null when unknown;
- *   avoid: columns of other mines, kept AVOID_DISTANCE (4) away from
+ *   avoid: columns of other mines, kept AVOID_DISTANCE (4) away from; homes: the place `home`
  * @returns {{x: number, y: number, z: number, dir: string}|null} x, y, z: the feet of the bot above the shaft
  */
 export function chooseEntrance(input) {
@@ -911,8 +964,9 @@ export function chooseEntrance(input) {
     const prefer = areas.length > 0 ? awayFrom(start, areas) : 'north';
     const avoid = (Array.isArray(input.avoid) ? input.avoid : []).filter(p => p && isFiniteNumber(p.x) && isFiniteNumber(p.z));
     const clear = p => avoid.every(a => Math.hypot(a.x - p.x, a.z - p.z) >= AVOID_DISTANCE);
+    const homes = Array.isArray(input.homes) ? input.homes : [];
     for (const c of candidates) {
-        if (!shaftAllowed(c, areas) || !clear(c)) {
+        if (!entranceAllowed(c, areas, homes) || !clear(c)) {
             continue;
         }
         const g = groundAt(c.x, c.z);
@@ -926,7 +980,7 @@ export function chooseEntrance(input) {
         for (const dir of mineDirections(c, input.level, areas, { length: input.length, prefer })) {
             const back = offset(feet, backOf(dir));
             const gb = groundAt(back.x, back.z);
-            if (gb && gb.y === g.y && shaftAllowed(back, areas) && clear(back) && free(back.x, back.y, back.z) && free(back.x, back.y + 1, back.z)) {
+            if (gb && gb.y === g.y && entranceAllowed(back, areas, homes) && clear(back) && free(back.x, back.y, back.z) && free(back.x, back.y + 1, back.z)) {
                 return { ...feet, dir };
             }
         }

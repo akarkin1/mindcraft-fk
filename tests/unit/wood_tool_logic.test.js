@@ -155,7 +155,9 @@ describe('chooseMaterial and the request', () => {
     test('the best material the inventory allows, wood may be collected; at least the minimum', () => {
         assert.equal(L.chooseMaterial('pickaxe', '', []), 'wooden');
         assert.equal(L.chooseMaterial('pickaxe', 'wooden', inv('cobblestone', 3)), 'stone');
-        assert.equal(L.chooseMaterial('pickaxe', '', inv('iron_ingot', 3, 'cobblestone', 3)), 'iron');
+        // v0.1.4.8, E3: an empty material chooses the best up to stone; iron only when it is named
+        assert.equal(L.chooseMaterial('pickaxe', '', inv('iron_ingot', 3, 'cobblestone', 3)), 'stone');
+        assert.equal(L.chooseMaterial('pickaxe', 'stone', inv('iron_ingot', 3, 'cobblestone', 3)), 'iron');
         assert.equal(L.chooseMaterial('pickaxe', 'stone', []), 'stone');
         assert.equal(L.chooseMaterial('pickaxe', 'iron', inv('cobblestone', 64)), 'iron');
         assert.equal(L.chooseMaterial('pickaxe', 'golden', []), 'wooden');

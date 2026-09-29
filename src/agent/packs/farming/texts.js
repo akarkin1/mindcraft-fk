@@ -2,17 +2,22 @@
 // most of them word for word, tests compare them. Pure.
 import { CROPS } from './crop_logic.js';
 
-/** Fixed texts. */
+/**
+ * Fixed texts. Since v0.1.4.8 (E2) the sentence about shears is gone: it sent the bot far away for
+ * flowers; leaf litter and flowers are picked without shears.
+ */
 export const TEXTS = Object.freeze({
     noFarm: 'I know no farm here. Stand in the farm and tell me that this is the farm.',
     noComposter: 'I found no composter within 32 blocks.',
+    noComposterFarm: 'I found no composter at the farm or within 32 blocks.',
     nothingToCompost: 'I found nothing to compost. I do not use seeds for that.',
+    nothingToCompostCycle: 'I have nothing to compost and the chests I know have nothing.',
     noBoneMeal: 'I have no bone_meal.',
     noHoe: 'I have no hoe, so I planted only where the ground was farmland.',
     gateClosed: 'The gate is closed.',
     stopped: 'I was stopped before the end.',
     outOfTime: 'I ran out of time before the end.',
-    noShears: 'I have no shears, so I can only collect flowers and saplings.',
+    nothingToDo: 'Nothing to do now.',
 });
 
 const MAX_KINDS = 6;
@@ -114,12 +119,15 @@ export function nothingGrowsText(name) {
 
 /**
  * `I planted 12 wheat_seeds. 3 places stay empty, I have no more seeds.`, with places out of reach
- * and the sentence about the hoe when they apply.
- * @param {{planted: number, seed: string, emptyNoSeeds?: number, emptyUnreached?: number, noHoe?: boolean}} r
+ * and the sentence about the hoe when they apply. Since v0.1.4.8 (E2, F7) it says how many blocks
+ * were tilled: `I tilled 4 blocks and planted 12 wheat_seeds.`
+ * @param {{planted: number, seed: string, tilled?: number, emptyNoSeeds?: number, emptyUnreached?: number, noHoe?: boolean}} r
  * @returns {string}
  */
 export function plantText(r) {
-    const parts = [`I planted ${count(r.planted)} ${r.seed}.`];
+    const tilled = count(r.tilled);
+    const head = tilled > 0 ? `I tilled ${tilled} ${tilled === 1 ? 'block' : 'blocks'} and planted` : 'I planted';
+    const parts = [`${head} ${count(r.planted)} ${r.seed}.`];
     if (count(r.emptyNoSeeds) > 0) {
         parts.push(`${placesStay(r.emptyNoSeeds)} empty, I have no more seeds.`);
     }
@@ -200,6 +208,127 @@ export function fertilizeText(used, ripe) {
 export function noPlantsToFertilizeText(ripe) {
     const r = count(ripe);
     return r > 0 ? `No plant needs bone_meal. ${plantsAre(r)} ripe.` : 'No plant needs bone_meal.';
+}
+
+// --- the texts of the whole farm cycle (spec v0.1.4.8 E2) ---
+
+function joinAnd(words) {
+    return words.length <= 1 ? words.join('') : `${words.slice(0, -1).join(', ')} and ${words[words.length - 1]}`;
+}
+
+function chestWords(chests) {
+    const list = Array.isArray(chests) ? chests : [];
+    return list.length === 1 ? `the chest at ${whereText(list[0])}` : `${list.length} chests`;
+}
+
+/**
+ * `48 plants are not ripe.` or `1 plant is not ripe.`
+ * @param {number} n
+ * @returns {string}
+ */
+export function notRipeText(n) {
+    return `${plantsAre(count(n))} not ripe.`;
+}
+
+/**
+ * `48 plants are growing. Nothing to do now.`
+ * @param {number} n
+ * @returns {string}
+ */
+export function growingText(n) {
+    return `${plantsAre(count(n))} growing. ${TEXTS.nothingToDo}`;
+}
+
+/**
+ * Compost items that made no bone meal yet: `I put 12 leaf_litter into the composter at (x, y, z), it is at level 4 of 7.`
+ * @param {Object<string, number>} compost
+ * @param {{x: number, y: number, z: number}} pos
+ * @param {number|null} [level]
+ * @returns {string}
+ */
+export function compostedText(compost, pos, level = null) {
+    const at = typeof level === 'number' && Number.isFinite(level) ? `, it is at level ${level} of 7` : '';
+    return `I put ${countList(compost)} into the composter at ${whereText(pos)}${at}.`;
+}
+
+/**
+ * `9 more plants got ripe and I harvested them.`, `1 more plant got ripe and I harvested it.`,
+ * or with none `No plant got ripe yet.`
+ * @param {number} n
+ * @returns {string}
+ */
+export function ripenedText(n) {
+    const k = count(n);
+    if (k === 0) {
+        return 'No plant got ripe yet.';
+    }
+    return k === 1 ? '1 more plant got ripe and I harvested it.' : `${k} more plants got ripe and I harvested them.`;
+}
+
+// Where the compost items came from: ` of the chest at (x, y, z)`, ` that I picked nearby`, or with
+// several sources ` of my inventory, the chest at (x, y, z) and plants nearby`; '' for the inventory alone.
+function compostWhere(sources, chests) {
+    const s = sources && typeof sources === 'object' ? sources : {};
+    const list = [];
+    if (count(s.carried) > 0) {
+        list.push('my inventory');
+    }
+    if (count(s.chest) > 0) {
+        list.push(chestWords(chests));
+    }
+    if (count(s.picked) > 0) {
+        list.push('plants nearby');
+    }
+    if (list.length === 1 && count(s.picked) > 0) {
+        return ' that I picked nearby';
+    }
+    if (list.length === 1 && count(s.carried) > 0) {
+        return '';
+    }
+    return list.length > 0 ? ` of ${joinAnd(list)}` : '';
+}
+
+/**
+ * The bone meal step of the farm cycle (spec v0.1.4.8 E2): where the bone meal came from and how
+ * much was used, for example
+ * `I made 3 bone_meal from 21 leaf_litter of the chest at (11, 67, 53) and used them.`,
+ * `I took 4 bone_meal from the chest at (11, 67, 53) and used them.`, with only what the bot
+ * carried `I used 4 bone_meal.` '' when it had none.
+ * @param {{carried?: number, taken?: number, takenFrom?: object[], made?: number, compost?: Object<string, number>,
+ *   sources?: {carried: number, chest: number, picked: number}, compostChests?: object[], used?: number}} m
+ * @returns {string}
+ */
+export function boneMealStepText(m) {
+    const r = m && typeof m === 'object' ? m : {};
+    const carried = count(r.carried);
+    const taken = count(r.taken);
+    const made = count(r.made);
+    const used = count(r.used);
+    const total = carried + taken + made;
+    if (total === 0) {
+        return '';
+    }
+    if (taken === 0 && made === 0) {
+        return `I used ${used} bone_meal.`;
+    }
+    const parts = [];
+    if (carried > 0) {
+        parts.push(`I had ${carried} bone_meal`);
+    }
+    if (taken > 0) {
+        parts.push(`I took ${taken} bone_meal from ${chestWords(r.takenFrom)}`);
+    }
+    if (made > 0) {
+        const from = countList(r.compost);
+        parts.push(`I made ${made} bone_meal${from ? ` from ${from}` : ''}${compostWhere(r.sources, r.compostChests)}`);
+    }
+    let use;
+    if (used >= total) {
+        use = total === 1 ? 'used it' : 'used them';
+    } else {
+        use = used === 0 ? 'used none of it' : `used ${used} of them`;
+    }
+    return `${parts.join(', ')} and ${use}.`;
 }
 
 /**

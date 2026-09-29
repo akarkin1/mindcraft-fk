@@ -90,7 +90,6 @@ describe('COMPOSTABLE', () => {
         const expect = {
             oak_leaves: 30, cherry_leaves: 30, pale_oak_leaves: 30, oak_sapling: 30, birch_sapling: 30, short_grass: 30,
             fern: 65, poppy: 65, dandelion: 65, cornflower: 65, sunflower: 65, leaf_litter: 30, moss_carpet: 30, vine: 50,
-            cactus: 50, sugar_cane: 50, melon_slice: 50, pumpkin: 65,
         };
         for (const [name, chance] of Object.entries(expect)) {
             assert.equal(COMPOSTABLE[name], chance, name);
@@ -103,6 +102,8 @@ describe('COMPOSTABLE', () => {
     test('never seeds, crops, food or bone meal', () => {
         for (const name of ['wheat_seeds', 'beetroot_seeds', 'melon_seeds', 'pumpkin_seeds', 'torchflower_seeds', 'wheat', 'carrot',
             'potato', 'beetroot', 'bread', 'apple', 'baked_potato', 'bone_meal', 'cookie', 'dried_kelp',
+            // v0.1.4.8, E2: never crops, never food
+            'melon_slice', 'pumpkin', 'sugar_cane', 'cactus',
             // Amendment 2, I3: a hay block is 9 wheat
             'hay_block']) {
             assert.equal(isCompostable(name), false, name);
@@ -116,14 +117,14 @@ describe('COMPOSTABLE', () => {
         assert.equal(isCompostable(null), false);
     });
 
-    test('chooseCompostItem uses weeds first and the farm goods last', () => {
+    test('chooseCompostItem uses weeds first, then saplings; farm goods never (v0.1.4.8, E2)', () => {
         const inv = [
             { name: 'hay_block', count: 2 }, { name: 'pumpkin', count: 1 }, { name: 'oak_sapling', count: 3 },
             { name: 'wheat_seeds', count: 40 }, { name: 'oak_leaves', count: 5 }, { name: 'bone_meal', count: 1 },
         ];
         assert.equal(chooseCompostItem(inv), 'oak_leaves');
         assert.equal(chooseCompostItem(inv.filter(i => i.name !== 'oak_leaves')), 'oak_sapling');
-        assert.equal(chooseCompostItem([{ name: 'hay_block', count: 1 }, { name: 'pumpkin', count: 1 }]), 'pumpkin');
+        assert.equal(chooseCompostItem([{ name: 'hay_block', count: 1 }, { name: 'pumpkin', count: 1 }]), null);
         assert.equal(chooseCompostItem([{ name: 'hay_block', count: 1 }]), null, 'a hay block is 9 wheat (Amendment 2, I3)');
         assert.equal(chooseCompostItem([{ name: 'wheat_seeds', count: 64 }, { name: 'bone_meal', count: 3 }]), null);
         assert.equal(chooseCompostItem([{ name: 'oak_leaves', count: 0 }]), null);

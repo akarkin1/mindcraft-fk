@@ -134,16 +134,17 @@ describe('descendToLevel: a new mine', () => {
         ctx.areas = [{ name: 'town', type: 'building', min: { x: -60, y: 0, z: -60 }, max: { x: 60, y: 100, z: 60 } }];
         const r = await M.descendToLevel(bot, ctx, 50, { ...opts, ore: 'coal' });
         assert.equal(r.reason, 'no_entrance');
-        assert.equal(r.text, 'I found no place for a mine within 48 blocks that is at least 8 blocks from every protected area.');
+        assert.equal(r.text, 'I found no place for a mine within 48 blocks that is at least 16 blocks from your house and the areas I protect.');
     });
 
-    test('a house 5 blocks away: the entrance keeps 8 blocks from it', async () => {
+    test('a house 5 blocks away: the entrance keeps 16 blocks from it (v0.1.4.8, E4)', async () => {
         const { bot, ctx, opts } = await scene();
         ctx.areas = [{ name: 'home', type: 'building', min: { x: 5, y: 63, z: -3 }, max: { x: 11, y: 68, z: 3 } }];
         const r = await M.descendToLevel(bot, ctx, 56, { ...opts, ore: 'coal' });
         assert.equal(r.ok, true, r.text);
         const e = r.mine.entrance;
-        assert.ok(e.x <= -3 || Math.abs(e.z) >= 11, JSON.stringify(e));
+        const gap = (v, lo, hi) => (v < lo ? lo - v : v > hi ? v - hi : 0);
+        assert.ok(Math.hypot(gap(e.x + 0.5, 5, 12), gap(e.z + 0.5, -3, 4)) >= 16, JSON.stringify(e));
     });
 });
 
@@ -363,7 +364,7 @@ describe('mineOre, the whole trip', () => {
                 return { ok: true, reason: null, stored: { cobblestone: 40 }, left: {}, text: 'I stored 40 cobblestone in the chest at (-1, 56, 0).' };
             },
         };
-        const r = await M.mineOre(s.bot, s.ctx, 'coal', 3, s.opts);
+        const r = await M.mineOre(s.bot, s.ctx, 'coal', 3, { ...s.opts, newMine: true });
         assert.equal(r.ok, true, r.text);
         assert.equal(r.mined, 3);
         assert.match(r.text, /^I mined 3 coal\. The mine is at \(0, 64, 0\), its tunnel is \d+ blocks long at level 56\. I also stored 40 cobblestone in the chest of the mine\.$/);
@@ -375,11 +376,12 @@ describe('mineOre, the whole trip', () => {
 
     test('unknown ore, no pickaxe, a pickaxe too weak', async () => {
         const s = await scene({ gear: { pickaxe: null } });
+        const yes = { ...s.opts, newMine: true };
         assert.equal((await M.mineOre(s.bot, s.ctx, 'mithril', 2, s.opts)).text,
             'I do not know the ore "mithril". I know coal, copper, iron, lapis, gold, redstone and diamond.');
-        assert.equal((await M.mineOre(s.bot, s.ctx, 'coal', 2, s.opts)).text, 'I cannot mine coal. I need a stone pickaxe and have no pickaxe.');
+        assert.equal((await M.mineOre(s.bot, s.ctx, 'coal', 2, yes)).text, 'I cannot mine coal. I need a stone pickaxe and have no pickaxe.');
         give(s.bot, 'stone_pickaxe', 1);
-        assert.equal((await M.mineOre(s.bot, s.ctx, 'diamond', 2, s.opts)).text, 'I cannot mine diamond. I need an iron pickaxe and have a stone_pickaxe.');
+        assert.equal((await M.mineOre(s.bot, s.ctx, 'diamond', 2, yes)).text, 'I cannot mine diamond. I need an iron pickaxe and have a stone_pickaxe.');
     });
 
     test('the tools pack crafts the pickaxe; the time of a trip ends it on the surface', async () => {
@@ -396,7 +398,7 @@ describe('mineOre, the whole trip', () => {
             },
         };
         s.ctx.settings = { mining_max_minutes: 0.5 };
-        const r = await M.mineOre(s.bot, s.ctx, 'coal', 50, s.opts);
+        const r = await M.mineOre(s.bot, s.ctx, 'coal', 50, { ...s.opts, newMine: true });
         assert.deepEqual(asked[0].slice(0, 2), ['pickaxe', 'stone']);
         assert.equal(r.ok, false);
         assert.equal(r.reason, 'time');
@@ -409,7 +411,7 @@ describe('mineOre, the whole trip', () => {
         s.clock.onTick = () => {
             if (s.bot.calls.filter(c => c[0] === 'dig').length >= 45) s.bot.interrupt_code = true;
         };
-        const r = await M.mineOre(s.bot, s.ctx, 'coal', 50, s.opts);
+        const r = await M.mineOre(s.bot, s.ctx, 'coal', 50, { ...s.opts, newMine: true });
         assert.equal(r.reason, 'interrupted');
         assert.match(r.text, /I stopped because you stopped me\./);
     });

@@ -14,7 +14,7 @@ describe('fixed texts', () => {
         assert.equal(TEXTS.noBoneMeal, 'I have no bone_meal.');
         assert.equal(TEXTS.noHoe, 'I have no hoe, so I planted only where the ground was farmland.');
         assert.equal(TEXTS.gateClosed, 'The gate is closed.');
-        assert.equal(TEXTS.noShears, 'I have no shears, so I can only collect flowers and saplings.', 'Amendment 2, I3');
+        assert.equal(TEXTS.noShears, undefined, 'v0.1.4.8, E2: the sentence about shears is gone');
         assert.ok(Object.isFrozen(TEXTS));
     });
 });

@@ -115,7 +115,8 @@ const TALL_FLOWERS = new Set(['sunflower', 'lilac', 'rose_bush', 'peony']);
 /**
  * Items the bot may put into a composter, with the chance in percent that one item raises the
  * level. Seeds, crops, food and bone meal are not in it: seeds are for planting. Nor is the hay
- * block: it is 9 wheat (Amendment 2, I3).
+ * block: it is 9 wheat (Amendment 2, I3). Since v0.1.4.8 (E2) neither are melon_slice (food),
+ * pumpkin, sugar_cane and cactus (crops): never seeds, never crops, never food.
  * @type {Readonly<Object<string, number>>}
  */
 export const COMPOSTABLE = Object.freeze(Object.assign(Object.create(null), {
@@ -127,10 +128,6 @@ export const COMPOSTABLE = Object.freeze(Object.assign(Object.create(null), {
     leaf_litter: 30,
     moss_carpet: 30,
     vine: 50,
-    cactus: 50,
-    sugar_cane: 50,
-    melon_slice: 50,
-    pumpkin: 65,
 }));
 
 /**
@@ -143,17 +140,14 @@ export function isCompostable(name) {
     return n !== null && Object.prototype.hasOwnProperty.call(COMPOSTABLE, n);
 }
 
-// Weeds first, then saplings, then things a farm grows.
+// Weeds first, then saplings.
 function compostRank(name) {
-    if (SAPLINGS.includes(name)) {
-        return 1;
-    }
-    return ['cactus', 'sugar_cane', 'melon_slice', 'pumpkin'].includes(name) ? 2 : 0;
+    return SAPLINGS.includes(name) ? 1 : 0;
 }
 
 /**
  * The item of the inventory that goes into the composter next: weeds, leaves and flowers first,
- * then saplings, then cactus, sugar cane, melon and pumpkin; ties by name.
+ * then saplings; ties by name.
  * @param {{name: string, count: number}[]} items
  * @returns {string|null} null when nothing in the list may be composted
  */
@@ -169,8 +163,9 @@ export function chooseCompostItem(items) {
 
 /**
  * True for a block the bot may break to get something to compost: a flower (of a tall flower
- * the lower half) always; `short_grass`, `fern` and leaves only with shears, because without
- * them they do not drop themselves. Leaves placed by a player (`persistent`) stay.
+ * the lower half) and `leaf_litter` (v0.1.4.8, E2: it drops itself) always; `short_grass`, `fern`
+ * and leaves only with shears, because without them they do not drop themselves. Leaves placed by
+ * a player (`persistent`) stay.
  * @param {string} blockName
  * @param {object} [properties] the block state
  * @param {boolean} [hasShears]
@@ -182,6 +177,9 @@ export function compostSource(blockName, properties = {}, hasShears = false) {
     if (n === null) {
         return false;
     }
+    if (n === 'leaf_litter') {
+        return true;
+    }
     if (FLOWERS.includes(n)) {
         return !TALL_FLOWERS.has(n) || props.half !== 'upper';
     }
@@ -192,6 +190,69 @@ export function compostSource(blockName, properties = {}, hasShears = false) {
         return true;
     }
     return LEAVES.includes(n) && props.persistent !== true && props.persistent !== 'true';
+}
+
+/** Bone meal a farm cycle wants for each unripe plant (v0.1.4.8, E2) ... */
+export const BONE_MEAL_PER_PLANT = 2;
+/** ... and at most this much in one cycle. */
+export const BONE_MEAL_WANT_MAX = 16;
+
+/**
+ * The bone meal a farm cycle wants for the unripe plants: 2 each, at most 16; 0 for none.
+ * @param {number} unripe
+ * @returns {number}
+ */
+export function boneMealWant(unripe) {
+    const n = isFiniteNumber(unripe) && unripe > 0 ? Math.floor(unripe) : 0;
+    return Math.min(BONE_MEAL_WANT_MAX, BONE_MEAL_PER_PLANT * n);
+}
+
+/**
+ * The compost items the known chests hold, added up by name, the most first, then by name
+ * (spec v0.1.4.8 E2: `leaf_litter` of a chest is a source of compost).
+ * @param {{items?: Object<string, number>}[]} chests the chests of the chest index
+ * @returns {{name: string, count: number}[]}
+ */
+export function compostInChests(chests) {
+    const totals = new Map();
+    for (const chest of Array.isArray(chests) ? chests : []) {
+        for (const [name, n] of Object.entries(chest?.items ?? {})) {
+            if (isCompostable(name) && isFiniteNumber(n) && n > 0) {
+                totals.set(baseName(name), (totals.get(baseName(name)) ?? 0) + n);
+            }
+        }
+    }
+    return [...totals].map(([name, count]) => ({ name, count }))
+        .sort((a, b) => b.count - a.count || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+}
+
+/**
+ * True when the chests of the index hold the item.
+ * @param {{items?: Object<string, number>}[]} chests
+ * @param {string} name
+ * @returns {boolean}
+ */
+export function chestsHold(chests, name) {
+    const n = baseName(name);
+    return n !== null && (Array.isArray(chests) ? chests : []).some(c => isFiniteNumber(c?.items?.[n]) && c.items[n] > 0);
+}
+
+/**
+ * Where the compost items that went into the composter came from, in the order of the spec
+ * (v0.1.4.8, E2): what the bot carried first, then what it took from chests, then what it picked.
+ * @param {{carried?: number, fetched?: number, picked?: number, used?: number}} counts
+ *   carried: compost items carried at the start; fetched: taken from chests; picked: picked
+ * @returns {{carried: number, chest: number, picked: number}}
+ */
+export function compostSources(counts) {
+    const c = counts && typeof counts === 'object' ? counts : {};
+    const num = v => (isFiniteNumber(v) && v > 0 ? Math.floor(v) : 0);
+    let left = num(c.used);
+    const carried = Math.min(num(c.carried), left);
+    left -= carried;
+    const chest = Math.min(num(c.fetched), left);
+    left -= chest;
+    return { carried, chest, picked: Math.min(num(c.picked), left) };
 }
 
 /** Ground that a hoe turns into farmland (coarse dirt first into dirt). */

@@ -12,14 +12,14 @@ import { craftSupplies, ensureTool } from './tools.js';
 export { DEFAULT_REACH, EYE_HEIGHT, GROUND_NAMES, MAX_PILLAR, MIN_LEAVES, TREE_DEFAULTS, WOOD_KINDS, chopPlan, eyeOf, findTrees,
     inReach, inspectTrees, isGround, isLeaves, isTrunkLog, isWorkedWood, logItemOf, normaliseWoodKind, pickTree, planksOf, saplingOf,
     treeKey, treeNearAreas, woodKind } from './tree_logic.js';
-export { GOLDEN, MATERIALS, RECIPES, SUPPLY_NAMES, TOOL_KINDS, TOOL_USES, bestTool, chooseMaterial, craftSteps, isWoodItem,
-    materialLevel, normaliseSupply, normaliseToolRequest, parseTool, supplySteps, toolName, toolsOf, usesLeft,
-    woodOfInventory } from './tool_logic.js';
-export { TREE_RANGE, chopText, countList, craftedSupplyText, craftedToolsText, haveToolText, needText, noTreeText,
-    notCraftableText, unknownMaterialText, unknownSupplyText, unknownToolText, unknownWoodText, withArticle } from './texts.js';
+export { GOLDEN, MATERIALS, OPEN_MATERIAL_MAX, RECIPES, SUPPLY_NAMES, TOOL_KINDS, TOOL_USES, bestTool, chooseMaterial, craftSteps,
+    isWoodItem, materialLevel, missingIngredient, normaliseSupply, normaliseToolRequest, parseTool, stepIngredients, supplySteps, toolName,
+    toolsOf, usesLeft, woodOfInventory } from './tool_logic.js';
+export { TREE_RANGE, chopStoppedText, chopText, countList, craftFailedText, craftedSupplyText, craftedToolsText, haveToolText, needText,
+    noTreeText, notCraftableText, unknownMaterialText, unknownSupplyText, unknownToolText, unknownWoodText, withArticle } from './texts.js';
 export { countItems, findItem, inventoryOf, itemCounts, itemUsesLeft } from './inventory.js';
-export { CHOP_LIMIT_MS, DROP_RADIUS, NO_DIG_NEAR_AREA, SAPLING_WAIT_MS, TREE_LIMIT_MS, chopTrees } from './wood.js';
-export { NO_STONE_TEXT, STONE_LIMIT_MS, STONE_RANGE, collectCobblestone, craftSupplies, ensureTool, tableNear } from './tools.js';
+export { CHOP_LIMIT_MS, DROP_PICKUP_MS, DROP_RADIUS, NO_DIG_NEAR_AREA, SAPLING_WAIT_MS, TREE_LIMIT_MS, chopArgs, chopTrees } from './wood.js';
+export { NO_STONE_TEXT, STONE_LIMIT_MS, STONE_RANGE, chestCounts, collectCobblestone, craftSupplies, ensureTool, tableNear } from './tools.js';
 
 /** `ctx.tools` of packContext (spec section 2). */
 export const TOOLS_API = Object.freeze({ ensureTool, craftSupplies });

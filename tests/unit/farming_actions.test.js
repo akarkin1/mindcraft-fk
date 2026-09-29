@@ -365,7 +365,7 @@ describe('plantField', () => {
         const s = sim(bot);
         const res = await plantField(bot, ctx, 'wheat_farm', 'wheat_seeds', { now: s.now, wait: s.wait });
         assert.equal(res.ok, true, res.text);
-        assert.equal(res.text, 'I planted 10 wheat_seeds.');
+        assert.equal(res.text, 'I tilled 2 blocks and planted 10 wheat_seeds.', 'v0.1.4.8, E2: the tilled blocks are named');
         assert.equal(res.tilled, 2);
         assert.equal(farmlandCount(world, 2, 5), 10);
         assert.ok(cropsAt(world, 2, 5).every(c => c[2] === 'wheat' && c[3] === 0));
@@ -389,7 +389,7 @@ describe('plantField', () => {
         give(bot, 'wooden_hoe', 1);
         const s = sim(bot);
         const res = await plantField(bot, ctx, '', 'beetroot', { now: s.now, wait: s.wait });
-        assert.equal(res.text, 'I planted 1 beetroot_seeds.');
+        assert.equal(res.text, 'I tilled 1 block and planted 1 beetroot_seeds.');
         assert.equal(world.nameAt(0, 63, 0), 'farmland');
         assert.equal(world.nameAt(0, 64, 0), 'beetroots');
     });
@@ -565,7 +565,7 @@ describe('makeBoneMeal', () => {
         const s = sim(bot);
         const res = await makeBoneMeal(bot, {}, 1, { now: s.now, wait: s.wait });
         assert.equal(res.ok, false);
-        assert.equal(res.text, `${TEXTS.nothingToCompost} ${TEXTS.noShears}`, 'no shears (Amendment 2, I3)');
+        assert.equal(res.text, TEXTS.nothingToCompost, 'v0.1.4.8, E2: no sentence about shears');
         assert.equal(countOf(bot, 'wheat_seeds'), 30);
     });
 
@@ -585,7 +585,7 @@ describe('makeBoneMeal', () => {
         const res = await makeBoneMeal(bot, {}, 1, { now: s.now, wait: s.wait });
         assert.equal(countOf(bot, 'hay_block'), 5);
         assert.equal(world.propsAt(3, 64, 0).level, 0);
-        assert.equal(res.text, `${TEXTS.nothingToCompost} ${TEXTS.noShears}`);
+        assert.equal(res.text, TEXTS.nothingToCompost);
     });
 
     test('made less than asked with shears: no sentence about shears (Amendment 2, I3)', async () => {
@@ -645,8 +645,8 @@ describe('makeBoneMeal', () => {
         give(bot, 'oak_sapling', 3);
         const s = sim(bot);
         const res = await makeBoneMeal(bot, {}, 1, { now: s.now, wait: s.wait });
-        assert.equal(res.text, 'I made 0 bone_meal from 3 items. The composter is at level 3 of 7, I have nothing more to compost.'
-            + ' I have no shears, so I can only collect flowers and saplings.', 'no shears (Amendment 2, I3)');
+        assert.equal(res.text, 'I made 0 bone_meal from 3 items. The composter is at level 3 of 7, I have nothing more to compost.',
+            'v0.1.4.8, E2: no sentence about shears');
         assert.equal(world.propsAt(3, 64, 0).level, 3);
     });
 });
@@ -694,7 +694,7 @@ describe('farmCycle', () => {
             },
         };
         const s = sim(bot);
-        const res = await farmCycle(bot, ctx, '', { now: s.now, wait: s.wait });
+        const res = await farmCycle(bot, ctx, '', { now: s.now, wait: s.wait, fertilize: false });
         assert.equal(res.ok, true, res.text);
         assert.equal(res.text, 'Farm "wheat_farm": I harvested 6 wheat and planted 6 again. 3 plants are not ripe yet. '
             + 'I stored 6 wheat in the chest at (-13, 63, 28). I planted 1 wheat_seeds. The gate is closed.');
@@ -714,7 +714,7 @@ describe('farmCycle', () => {
             },
         };
         const s = sim(bot);
-        const res = await farmCycle(bot, ctx, '', { now: s.now, wait: s.wait });
+        const res = await farmCycle(bot, ctx, '', { now: s.now, wait: s.wait, fertilize: false });
         assert.deepEqual(stored, [{ only: ['carrot'], keep: { carrot: 32 } }]);
         assert.equal(res.text, 'Farm "wheat_farm": I harvested 2 carrots and planted 2 again. I stored 4 carrot in the chest at (1, 2, 3). The gate is closed.');
     });
@@ -724,15 +724,16 @@ describe('farmCycle', () => {
         give(bot, 'bone_meal', 5);
         const s = sim(bot);
         const res = await farmCycle(bot, ctx, 'wheat_farm', { now: s.now, wait: s.wait });
-        assert.equal(res.text, 'Farm "wheat_farm": I harvested 1 wheat and planted 1 again. 1 plant is not ripe yet. '
-            + 'I used 4 bone_meal. 2 plants are ripe now. The gate is closed.');
+        // v0.1.4.8, E2: the plants that got ripe are harvested in the same cycle
+        assert.equal(res.text, 'Farm "wheat_farm": I harvested 1 wheat and planted 1 again. 2 plants are not ripe. '
+            + 'I used 4 bone_meal. 2 more plants got ripe and I harvested them. The gate is closed.');
     });
 
     test('an empty field is planted; nothing to say about the harvest then', async () => {
         const { bot, ctx } = farm({ w: 1, d: 2, ages: () => null });
         give(bot, 'wheat_seeds', 5);
         const s = sim(bot);
-        const res = await farmCycle(bot, ctx, '', { now: s.now, wait: s.wait });
+        const res = await farmCycle(bot, ctx, '', { now: s.now, wait: s.wait, fertilize: false });
         assert.equal(res.text, 'Farm "wheat_farm": I planted 2 wheat_seeds. The gate is closed.');
     });
 
@@ -740,7 +741,7 @@ describe('farmCycle', () => {
         const { world, bot, ctx } = farm({ ages: () => 3 });
         world.setProps(0, 64, 5, { open: true });
         const s = sim(bot);
-        const res = await farmCycle(bot, ctx, '', { now: s.now, wait: s.wait });
+        const res = await farmCycle(bot, ctx, '', { now: s.now, wait: s.wait, fertilize: false });
         assert.equal(res.text, 'Farm "wheat_farm": Nothing is ripe yet. 10 plants are growing. The gate is closed.');
         assert.equal(gateOpen(world, 5), false);
 
@@ -748,7 +749,7 @@ describe('farmCycle', () => {
         f2.world.setProps(0, 64, 5, { open: true });
         addPlayer(f2.bot, 'owner', [0.5, 64, 5.5]);
         const s2 = sim(f2.bot);
-        const res2 = await farmCycle(f2.bot, f2.ctx, '', { now: s2.now, wait: s2.wait });
+        const res2 = await farmCycle(f2.bot, f2.ctx, '', { now: s2.now, wait: s2.wait, fertilize: false });
         assert.equal(res2.text, 'Farm "wheat_farm": Nothing is ripe yet. 10 plants are growing. The gate at (0, 64, 5) is open.');
     });
 

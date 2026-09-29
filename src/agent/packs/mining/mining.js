@@ -6,10 +6,14 @@
 // - mines: the MineStore of the world (without it the mine lives only for the call);
 // - storage: { storeItems, fetchItem } (optional: without it the bot does not store or fetch);
 // - tools: { ensureTool, craftSupplies }, called as fn(bot, ctx, ...) (optional);
-// - skills.craftRecipe(bot, name, count) for a second chest (optional).
+// - skills.craftRecipe(bot, name, count) for a second chest (optional);
+// - whereAmI() -> { underground } (v0.1.4.8, optional: without it the bot counts as on the surface);
+// - say(text): a text for the player (v0.1.4.8, optional: without it the text goes to log).
 // Every function returns { ok, reason, text, ... } with numbers, ends on bot.interrupt_code, has an
 // upper limit of time and never throws.
-import { botPos, clockOf, dimensionOf, listAreas, logTo } from '../home/context.js';
+import { horizontalDistanceToBox } from '../home/box_math.js';
+import { botPos, clockOf, dimensionOf, listAreas, logTo, recallHome } from '../home/context.js';
+import { chooseFood, isEdibleFood } from '../home/food_logic.js';
 import { walkNear } from '../home/motion.js';
 import {
     blockAt, collectDrops, countOf, digClear, equipPickaxe, fillerCount, freeSlots, inventoryList, isFree, isSolid,
@@ -18,12 +22,15 @@ import {
 import { followDown, followUp, placeLadder, waitStanding } from './ladder.js';
 import {
     backOf, chooseEntrance, classify, faceNeighbours, leftOf, offset, posKey, returnTimeMs, rightOf, roomPlan,
-    shaftAllowed, shaftStep, shaftView, shouldReturn, staircaseStep, staircaseView, tripNeeds, tunnelAllowed, tunnelSlots,
+    shaftAllowed, shaftStep, shaftView, shouldReturn, staircaseStep, staircaseView, tripNeeds, tripStart, tunnelAllowed, tunnelSlots,
     tunnelStep, tunnelView, usablePickaxes, veinOrder,
 } from './mine_logic.js';
 import { MineStore } from './mine_store.js';
 import { ORES, isOreBlock, oreOf, targetLevel, tripPickaxe } from './ore_table.js';
-import { STOP_REASONS, TEXTS, cannotMineText, descendText, mineOreText, posText, tunnelText, unknownOreText } from './texts.js';
+import {
+    STOP_REASONS, TEXTS, askMineText, cannotMineText, descendText, mineOreText, posText, suppliesStoppedText, suppliesText, tunnelText,
+    unknownOreText,
+} from './texts.js';
 
 /** Minutes of one trip when the setting mining_max_minutes is missing. */
 export const DEFAULT_MAX_MINUTES = 30;
@@ -138,6 +145,87 @@ function rememberPlace(ctx, name, p, dimension) {
     } catch (err) {
         console.warn('Mining pack: could not remember the place of the mine:', errText(err));
     }
+}
+
+// A text for the player: ctx.say when the glue gives it, else the progress log (v0.1.4.8, E4).
+function sayTo(ctx, text) {
+    try {
+        if (typeof ctx?.say === 'function') {
+            ctx.say(text);
+            return;
+        }
+    } catch {
+        // saying must not break an action
+    }
+    logTo(ctx, text);
+}
+
+// True when ctx.whereAmI says the bot is under the ground; without it the bot is on the surface.
+function underground(ctx) {
+    try {
+        return ctx?.whereAmI?.()?.underground === true;
+    } catch {
+        return false;
+    }
+}
+
+// The place `home` in the dimension of the bot as a list of one point, for chooseEntrance.
+function homePoints(ctx, bot) {
+    const home = recallHome(ctx);
+    const dim = dimensionOf(bot);
+    const hd = typeof home?.dimension === 'string' ? home.dimension.replace(/^minecraft:/, '') : null;
+    return home && (!dim || !hd || hd === dim) ? [{ x: home.x, z: home.z }] : [];
+}
+
+// Blocks from a position to the house: the nearest area of type home, else the place `home`; null without a house.
+function houseDistance(ctx, bot, p) {
+    const c = { x: p.x + 0.5, y: p.y, z: p.z + 0.5 };
+    const homes = areasOf(bot, ctx).filter(a => a.type === 'home').map(a => horizontalDistanceToBox(a, c));
+    if (homes.length > 0) {
+        return Math.min(...homes);
+    }
+    const place = homePoints(ctx, bot)[0];
+    return place ? Math.hypot(place.x - c.x, place.z - c.z) : null;
+}
+
+// The top solid blocks of the columns around the bot and the columns of the other mines, for chooseEntrance.
+function entranceInput(bot, ctx, level) {
+    const feet = feetOf(bot);
+    const avoid = [];
+    try {
+        for (const other of storeOf(ctx)?.list() ?? []) {
+            avoid.push(other.entrance, ...other.route.filter(l => l.kind === 'ladder').map(l => ({ x: l.x, z: l.z })));
+        }
+    } catch {
+        // no other mines
+    }
+    return {
+        bot: feet, level, areas: areasOf(bot, ctx), ground: groundReader(bot, (feet?.y ?? 64) + 12), avoid, homes: homePoints(ctx, bot),
+        free: (x, yy, z) => isFree(blockAt(bot, { x, y: yy, z })),
+    };
+}
+
+/** How long the place that mineOre offered for a new mine is used when the player says yes. */
+export const PROPOSAL_MS = 10 * 60000;
+// bot -> { ore, entrance: {x, y, z, dir}, at }: the place of the last question of mineOre
+const proposals = new WeakMap();
+
+// The place of a new mine for the ore: the one offered in the last question when it is recent, still
+// allowed and within reach, else chooseEntrance. null when there is none.
+function newEntrance(bot, ctx, row, clock) {
+    const feet = feetOf(bot);
+    if (!feet) {
+        return null;
+    }
+    const input = entranceInput(bot, ctx, targetLevel(row, feet.y, bot.game?.minY ?? -64));
+    const last = proposals.get(bot);
+    if (last && last.ore === row.ore && clock.now() - last.at <= PROPOSAL_MS && Math.hypot(last.entrance.x - feet.x, last.entrance.z - feet.z) <= 48) {
+        const again = chooseEntrance({ ...input, bot: last.entrance, range: 0, level: targetLevel(row, last.entrance.y, bot.game?.minY ?? -64) });
+        if (again) {
+            return again;
+        }
+    }
+    return chooseEntrance(input);
 }
 
 // The cells the mine has opened: the route (ladder columns, walks, staircases), the room and the
@@ -268,9 +356,23 @@ export function currentMine(bot, ctx) {
 
 // ------------------------------------------------------------------ prepare
 
-function haveFood(bot) {
+function haveFood(bot, ctx = {}) {
     const foods = bot.registry?.foodsByName;
-    return inventoryList(bot).some(i => (foods ? Boolean(foods[i.name]) : false) && !['rotten_flesh', 'spider_eye', 'poisonous_potato', 'pufferfish'].includes(i.name));
+    return carriedFood(bot, ctx).some(i => (foods ? Boolean(foods[i.name]) : false) && !['rotten_flesh', 'spider_eye', 'poisonous_potato', 'pufferfish'].includes(i.name));
+}
+
+// The inventory for tripNeeds: inventoryList and the item of the off-hand (slot 45), v0.1.4.8 E4.
+function tripInventory(bot) {
+    const list = inventoryList(bot);
+    try {
+        const off = bot.inventory.slots?.[45];
+        if (off?.name && !list.some(i => i.slot === 45)) {
+            list.push({ name: off.name, count: off.count, slot: 45, uses_left: null });
+        }
+    } catch {
+        // no off-hand
+    }
+    return list;
 }
 
 function foodNamesInChests(ctx, bot) {
@@ -294,7 +396,9 @@ function foodNamesInChests(ctx, bot) {
  * Gets ready for a trip for the ore (spec M4): computes tripNeeds and gets what is missing,
  * from chests through ctx.storage and crafted through ctx.tools. Cobblestone is collected on the
  * way down. Without a pickaxe of the needed material (at least stone) the bot does not go; it goes
- * without torches or with fewer ladders and says so.
+ * without torches or with fewer ladders and says so. Since v0.1.4.8 (E4) it first says what it
+ * gets (ctx.say), takes ladders only for the part of the way down that has none yet, and ends
+ * with `interrupted` when it is stopped.
  * @param {object} bot
  * @param {object} ctx
  * @param {string} ore
@@ -312,14 +416,26 @@ export async function prepareMiningTrip(bot, ctx = {}, ore = '', options = {}) {
         const surfaceY = mine ? mine.entrance.y : (isFiniteNumber(options.surfaceY) ? options.surfaceY : feet?.y ?? 64);
         const level = mine ? mine.level : targetLevel(row, surfaceY, bot.game?.minY ?? -64);
         const material = tripPickaxe(row);
-        const needs = () => tripNeeds(row, surfaceY, level, inventoryList(bot), { foods: bot.registry?.foodsByName, shaftExists: Boolean(mine?.base) });
+        const way = mine && Array.isArray(mine.route) && mine.route.length > 0 ? routeEnd(mine) : null;
+        const needs = () => tripNeeds(row, surfaceY, level, tripInventory(bot), {
+            foods: bot.registry?.foodsByName, shaftExists: Boolean(way), wayDownTo: way?.y, hasBase: Boolean(mine?.base),
+        });
         let plan = needs();
         const notes = [];
         const lack = name => plan.missing.find(m => m.name === name && !m.spare);
+        const stopped = () => (bot.interrupt_code
+            ? { ok: false, reason: 'interrupted', missing: plan.missing, level, text: suppliesStoppedText(plan.missing) } : null);
+        const say = suppliesText(plan.missing);
+        if (say) {
+            sayTo(ctx, say);
+        }
         if (lack('pickaxe') || plan.missing.find(m => m.name === 'pickaxe' && m.spare)) {
             const count = plan.needs.find(n => n.name === 'pickaxe')?.count ?? 1;
             await callTool(ctx, 'tools', 'ensureTool', bot, 'pickaxe', material, { count });
             plan = needs();
+            if (stopped()) {
+                return stopped();
+            }
         }
         if (lack('pickaxe')) {
             const best = usablePickaxes(inventoryList(bot), 'wooden')[0]?.name ?? null;
@@ -336,10 +452,16 @@ export async function prepareMiningTrip(bot, ctx = {}, ore = '', options = {}) {
                 await callTool(ctx, 'storage', 'fetchItem', bot, name, m.count);
             }
             plan = needs();
+            if (stopped()) {
+                return stopped();
+            }
             const still = lack(name);
             if (still && canCraft) {
                 await callTool(ctx, 'tools', 'craftSupplies', bot, name, still.count);
                 plan = needs();
+                if (stopped()) {
+                    return stopped();
+                }
             }
         }
         const food = lack('food');
@@ -348,25 +470,28 @@ export async function prepareMiningTrip(bot, ctx = {}, ore = '', options = {}) {
             for (const name of foodNamesInChests(ctx, bot)) {
                 const r = await callTool(ctx, 'storage', 'fetchItem', bot, name, want);
                 want -= isFiniteNumber(r?.taken) ? r.taken : 0;
-                if (want <= 0) {
+                if (want <= 0 || bot.interrupt_code) {
                     break;
                 }
             }
             plan = needs();
+            if (stopped()) {
+                return stopped();
+            }
         }
         if (!canFetch && !canCraft) {
             notes.push(TEXTS.carryOnly);
         }
         const ladders = countOf(bot, 'ladder');
         if (lack('ladder')) {
-            notes.push(`I have ${ladders} ladders for ${plan.depth} blocks, the rest of the way down is a staircase.`);
+            notes.push(`I have ${ladders} ladders for ${plan.rest} blocks, the rest of the way down is a staircase.`);
         }
         if (lack('torch')) {
             const t = countOf(bot, 'torch');
             notes.push(t === 0 ? 'I go without torches.' : `I have only ${t} torches.`);
         }
         if (lack('food')) {
-            notes.push(haveFood(bot) ? 'I have little food with me.' : 'I have no food with me.');
+            notes.push(haveFood(bot, ctx) ? 'I have little food with me.' : 'I have no food with me.');
         }
         if (lack('chest')) {
             notes.push('I have no chest for the base.');
@@ -739,19 +864,14 @@ export async function descendToLevel(bot, ctx = {}, y = 16, options = {}) {
                 return done(true, null, mine, descendText({ level, mine, climbed: true }));
             }
         } else {
-            const top = feet.y + 12;
-            const avoid = [];
-            try {
-                for (const other of store?.list() ?? []) {
-                    avoid.push(other.entrance, ...other.route.filter(l => l.kind === 'ladder').map(l => ({ x: l.x, z: l.z })));
-                }
-            } catch {
-                // no other mines
+            // v0.1.4.8, E4: a new mine starts only from the surface, at the place mineOre chose, or at least
+            // 16 blocks from the house and the areas of people
+            if (underground(ctx)) {
+                return done(false, 'underground', null, TEXTS.underground);
             }
-            const entrance = chooseEntrance({
-                bot: feet, level, areas: job.areas, ground: groundReader(bot, top), avoid,
-                free: (x, yy, z) => isFree(blockAt(bot, { x, y: yy, z })),
-            });
+            const given = options.entrance;
+            const entrance = given && isFiniteNumber(given.x) && isFiniteNumber(given.y) && isFiniteNumber(given.z) && given.dir
+                ? given : chooseEntrance(entranceInput(bot, ctx, level));
             if (!entrance) {
                 return done(false, 'no_entrance', null, TEXTS.noEntrance);
             }
@@ -1306,14 +1426,43 @@ export async function climbToSurface(bot, ctx = {}, options = {}) {
 
 // ------------------------------------------------------------------ the trip
 
-async function eatIfHungry(bot) {
+// The food the bot carries, the off-hand (slot 45) included (v0.1.4.8, E4): foodItems of the home
+// pack (I7) through ctx.home when the glue gives it, else the inventory and slot 45 read here.
+function carriedFood(bot, ctx) {
+    const fn = ctx?.home?.foodItems;
+    if (typeof fn === 'function') {
+        try {
+            const list = fn(bot);
+            if (Array.isArray(list)) {
+                return list;
+            }
+        } catch {
+            // read it here
+        }
+    }
+    const foods = bot.registry?.foodsByName ?? {};
+    let list = [];
+    try {
+        list = [...bot.inventory.items()];
+        const off = bot.inventory.slots?.[45];
+        if (off?.name && !list.includes(off)) {
+            list.push(off);
+        }
+    } catch {
+        return [];
+    }
+    return list.filter(i => i && isEdibleFood(i.name, foods));
+}
+
+async function eatIfHungry(bot, ctx = {}) {
     try {
         if ((bot.food ?? 20) >= 14) {
             return;
         }
         const foods = bot.registry?.foodsByName ?? {};
-        const item = bot.inventory.items().filter(i => foods[i.name] && !['rotten_flesh', 'spider_eye', 'poisonous_potato', 'pufferfish'].includes(i.name))
-            .sort((a, b) => (foods[b.name]?.foodPoints ?? 0) - (foods[a.name]?.foodPoints ?? 0))[0];
+        const list = carriedFood(bot, ctx).filter(i => isEdibleFood(i.name, foods));
+        const best = chooseFood(list, foods);
+        const item = list.find(i => i.name === (typeof best === 'string' ? best : best?.name)) ?? list[0];
         if (!item) {
             return;
         }
@@ -1330,11 +1479,15 @@ async function eatIfHungry(bot) {
  * inventory is full and go on, and come up at the end with the ore in its inventory (the ore of
  * the trip is kept when storing). Ends after the setting mining_max_minutes, with the time of the
  * way back planned in.
+ * Since v0.1.4.8 (E4, tripStart): without a known mine for the ore and without `options.newMine`
+ * it only asks (reason `ask`: nothing is dug, nothing is crafted) and offers a place for a new
+ * mine; under the ground it starts no new mine (reason `underground`). With `newMine` the new mine
+ * is at the place it offered last, when that is recent and still allowed.
  * @param {object} bot
  * @param {object} ctx
  * @param {string} ore
  * @param {number} [count]
- * @param {object} [options]
+ * @param {{newMine?: boolean}} [options] and the clock of the tests (now, wait)
  * @returns {Promise<{ok: boolean, reason: string|null, text: string, mined: number, stored: object, mine: object|null}>}
  */
 export async function mineOre(bot, ctx = {}, ore = '', count = 8, options = {}) {
@@ -1360,14 +1513,41 @@ export async function mineOre(bot, ctx = {}, ore = '', count = 8, options = {}) 
     // the clock of the tests goes to every step
     const pass = { now: options.now, wait: options.wait };
     try {
-        const prep = await prepareMiningTrip(bot, tripCtx, row.ore, options);
+        let known = options.mine ?? null;
+        try {
+            known = known ?? storeOf(tripCtx)?.get(row.ore, dimensionOf(bot) ?? undefined) ?? null;
+        } catch {
+            known = null;
+        }
+        const start = tripStart({ mine: known, newMine: options.newMine === true, underground: underground(ctx) });
+        const early = (why, text) => ({ ok: false, reason: why, text, mined: 0, stored, mine: null });
+        if (start === 'underground') {
+            return early('underground', TEXTS.underground);
+        }
+        let entrance = null;
+        if (start === 'ask' || start === 'new') {
+            entrance = newEntrance(bot, tripCtx, row, clock);
+            if (start === 'ask') {
+                if (entrance) {
+                    proposals.set(bot, { ore: row.ore, entrance, at: clock.now() });
+                }
+                const text = askMineText(row.ore, entrance, entrance ? houseDistance(tripCtx, bot, entrance) : null);
+                logTo(ctx, text);
+                return early('ask', text);
+            }
+            if (!entrance) {
+                return early('no_entrance', TEXTS.noEntrance);
+            }
+            proposals.delete(bot);
+        }
+        const prep = await prepareMiningTrip(bot, tripCtx, row.ore, entrance ? { ...options, surfaceY: entrance.y } : options);
         if (!prep.ok) {
             return { ok: false, reason: prep.reason, text: prep.text, mined: 0, stored, mine: null };
         }
         const material = tripPickaxe(row);
         const deadline = t0 + maxMs;
         const level = prep.level;
-        const down = await descendToLevel(bot, tripCtx, level, { ...pass, ore: row.ore, deadline: deadline - 60000 });
+        const down = await descendToLevel(bot, tripCtx, level, { ...pass, ore: row.ore, deadline: deadline - 60000, entrance });
         mine = down.mine;
         if (!down.ok) {
             reason = down.reason;
@@ -1394,10 +1574,10 @@ export async function mineOre(bot, ctx = {}, ore = '', count = 8, options = {}) 
                 reason = 'interrupted';
                 break;
             }
-            await eatIfHungry(bot);
+            await eatIfHungry(bot, tripCtx);
             const pick = pickaxeState(bot, material);
             const state = {
-                collected: mined(), wanted, health: bot.health, food: bot.food, hasFood: haveFood(bot),
+                collected: mined(), wanted, health: bot.health, food: bot.food, hasFood: haveFood(bot, tripCtx),
                 pickaxeUses: pick.uses, spare: pick.spare, elapsedMs: clock.now() - t0, returnMs: returnTimeMs(depth, mine.length), maxMs,
                 freeSlots: freeSlots(bot),
             };

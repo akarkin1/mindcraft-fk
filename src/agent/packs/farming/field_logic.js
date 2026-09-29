@@ -1,10 +1,60 @@
 // The geometry of a farm for the farming pack (spec v0.1.4.7 F2), pure: which farm area, the
 // cells of a field, its gates, whether the bot stands in it, and where the bot may not step.
-import { distanceToBox, expandBox, isBox } from '../home/box_math.js';
+import { boxCenter, distanceToBox, expandBox, isBox } from '../home/box_math.js';
 import { TILLABLE, isAirName, isCropBlock } from './crop_logic.js';
 
 /** A farm area counts when it is at most this far from the bot (spec F2). */
 export const FARM_RANGE = 64;
+/** The composter of a farm stands in its area or at most this far from it (v0.1.4.8, E2). */
+export const COMPOSTER_NEAR_FARM = 8;
+/** Without one, the nearest composter within this distance of the bot. */
+export const COMPOSTER_RANGE = 32;
+/** Compost plants are picked within this distance of the middle of the farm (of the bot without a farm). */
+export const PICK_RANGE = 32;
+
+function centreOf(p) {
+    return { x: Math.floor(p.x) + 0.5, y: Math.floor(p.y) + 0.5, z: Math.floor(p.z) + 0.5 };
+}
+
+function isPos(p) {
+    return p !== null && typeof p === 'object' && isFiniteNumber(p.x) && isFiniteNumber(p.y) && isFiniteNumber(p.z);
+}
+
+/**
+ * The composter to use (spec v0.1.4.8 E2): the one inside the farm area or within 8 blocks of it,
+ * the nearest to the farm first; else the nearest within 32 blocks of the bot. Ties by position.
+ * @param {{x: number, y: number, z: number}[]} composters block positions
+ * @param {{min: object, max: object}|null} farmBox the box of the farm area, null without a farm
+ * @param {{x: number, y: number, z: number}|null} botPos
+ * @returns {{x: number, y: number, z: number}|null}
+ */
+export function chooseComposter(composters, farmBox, botPos) {
+    const list = (Array.isArray(composters) ? composters : []).filter(isPos).map(p => ({ x: Math.floor(p.x), y: Math.floor(p.y), z: Math.floor(p.z) }));
+    const order = (a, b) => a.d - b.d || a.p.x - b.p.x || a.p.y - b.p.y || a.p.z - b.p.z;
+    if (isBox(farmBox)) {
+        const near = list.map(p => ({ p, d: distanceToBox(farmBox, centreOf(p)) })).filter(e => e.d <= COMPOSTER_NEAR_FARM).sort(order);
+        if (near.length > 0) {
+            return near[0].p;
+        }
+    }
+    if (!isPos(botPos)) {
+        return null;
+    }
+    const d = p => Math.hypot(botPos.x - (p.x + 0.5), botPos.y - (p.y + 0.5), botPos.z - (p.z + 0.5));
+    const near = list.map(p => ({ p, d: d(p) })).filter(e => e.d <= COMPOSTER_RANGE + 1).sort(order);
+    return near[0]?.p ?? null;
+}
+
+/**
+ * The middle of a farm box, one block above its lowest ground, where the picking of compost plants
+ * is measured from; null without a box.
+ * @param {{min: object, max: object}|null} farmBox
+ * @returns {{x: number, y: number, z: number}|null}
+ */
+export function farmMiddle(farmBox) {
+    const c = boxCenter(farmBox);
+    return c ? { x: c.x, y: farmBox.min.y + 1, z: c.z } : null;
+}
 
 // The largest box the pack reads: an area is at most 64 by 48 by 64, a scan a little more.
 const MAX_SIDE = 128;
