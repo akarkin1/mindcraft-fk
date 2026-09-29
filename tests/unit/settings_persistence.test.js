@@ -40,9 +40,12 @@ describe('settings.js: persistence settings of v0.1.4.3', () => {
         }
     });
 
-    test('settings.js keeps CRLF line endings', () => {
-        assert.ok(settingsSource.includes('\r\n'));
-        assert.equal(/[^\r]\n/.test(settingsSource), false, 'no bare LF line ending');
+    test('settings.js keeps one kind of line ending', () => {
+        // The repository stores LF; a Windows checkout with core.autocrlf=true turns every line
+        // into CRLF. Either is fine, a mix of the two is not.
+        const crlf = settingsSource.includes('\r\n');
+        if (crlf) assert.equal(/[^\r]\n/.test(settingsSource), false, 'no bare LF line ending');
+        else assert.equal(settingsSource.includes('\r'), false, 'no CR at all');
     });
 
     test('load_memory is a boolean and init_message a string', () => {
