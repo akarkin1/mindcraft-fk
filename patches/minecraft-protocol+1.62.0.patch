@@ -1,0 +1,24 @@
+diff --git a/node_modules/minecraft-protocol/src/client/chat.js b/node_modules/minecraft-protocol/src/client/chat.js
+index 0021870..f5db6d7 100644
+--- a/node_modules/minecraft-protocol/src/client/chat.js
++++ b/node_modules/minecraft-protocol/src/client/chat.js
+@@ -377,7 +377,8 @@ module.exports = function (client, options) {
+           salt: options.salt,
+           argumentSignatures: canSign ? signaturesForCommand(command, options.timestamp, options.salt, options.preview, acknowledgements) : [],
+           messageCount: client._lastSeenMessages.pending,
+-          checksum: computeChatChecksum(client._lastSeenMessages), // 1.21.5+
++          // 1.21.5+: over the acknowledged signatures in window order, oldest first, as the server does
++          checksum: computeChatChecksum(acknowledgements.map(signature => ({ signature }))),
+           acknowledged
+         }
+         client.write((mcData.supportFeature('seperateSignedChatCommandPacket') && canSign) ? 'chat_command_signed' : 'chat_command', chatPacket)
+@@ -409,7 +410,8 @@ module.exports = function (client, options) {
+         salt: options.salt,
+         signature: (client.profileKeys && client._session) ? client.signMessage(message, options.timestamp, options.salt, undefined, acknowledgements) : undefined,
+         offset: client._lastSeenMessages.pending,
+-        checksum: computeChatChecksum(client._lastSeenMessages), // 1.21.5+
++        // 1.21.5+: over the acknowledged signatures in window order, oldest first, as the server does
++        checksum: computeChatChecksum(acknowledgements.map(signature => ({ signature }))),
+         acknowledged
+       })
+       client._lastSeenMessages.pending = 0

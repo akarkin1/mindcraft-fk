@@ -1,5 +1,7 @@
 import { Agent } from '../agent/agent.js';
 import { serverProxy } from '../agent/mindserver_proxy.js';
+import settings from '../agent/settings.js';
+import { installLogTime } from '../utils/log_time.js';
 import yargs from 'yargs';
 
 const args = process.argv.slice(2);
@@ -47,6 +49,8 @@ const argv = yargs(args)
     try {
         console.log('Connecting to MindServer');
         await serverProxy.connect(argv.name, argv.port);
+        // v0.1.4.8, F4: the settings of the agent are known from here on
+        installLogTime(settings.log_timestamps ?? false);
         console.log('Starting agent');
         const agent = new Agent();
         serverProxy.setAgent(agent);

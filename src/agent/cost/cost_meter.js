@@ -3,6 +3,10 @@
 // Pure: time, settings, file path and the ways to speak are passed in.
 //
 // Money is summed as whole picodollars (1e-12 dollars), so totals show no rounding noise.
+//
+// v0.1.4.8, F2: with a launch id (MINDCRAFT_LAUNCH_ID, set once by main.js and inherited by every
+// agent process) each session in the file carries it, and the limit per session and the report
+// count the sessions of earlier processes of the same launch too. Without it all is as in v0.1.4.7.
 import { readJsonSafe, writeJsonAtomic } from '../../utils/safe_json.js';
 import { priceFor, costOf } from './price_table.js';
 
@@ -93,6 +97,54 @@ function newBucket() {
     return { calls: 0, pico: 0, input_tokens: 0, output_tokens: 0 };
 }
 
+// A launch id from the options, else from the environment; null without one.
+function launchIdOf(opts) {
+    const value = Object.hasOwn(opts, 'launchId') ? opts.launchId : process.env.MINDCRAFT_LAUNCH_ID;
+    if (typeof value !== 'string') {
+        return null;
+    }
+    const clean = value.trim();
+    return clean.length > 0 ? clean : null;
+}
+
+function countOf(value) {
+    return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : 0;
+}
+
+function picoOf(dollars) {
+    return typeof dollars === 'number' && Number.isFinite(dollars) && dollars > 0 ? Math.round(dollars * PICO_PER_DOLLAR) : 0;
+}
+
+// The sessions of earlier processes of the same launch, summed: { sessions, calls, unpriced, pico,
+// byPurpose: Map name -> { calls, pico } }. Values that are not numbers count as 0.
+function sumLaunch(history, launchId) {
+    const base = { sessions: 0, calls: 0, unpriced: 0, pico: 0, byPurpose: new Map() };
+    for (const session of history) {
+        if (session.launch_id !== launchId) {
+            continue;
+        }
+        base.sessions += 1;
+        base.calls += countOf(session.calls);
+        base.unpriced += countOf(session.unpriced_calls);
+        base.pico += picoOf(session.dollars);
+        if (!isPlainObject(session.by_purpose)) {
+            continue;
+        }
+        for (const [name, bucket] of Object.entries(session.by_purpose)) {
+            if (!isPlainObject(bucket)) {
+                continue;
+            }
+            const sum = base.byPurpose.get(name) ?? { calls: 0, pico: 0 };
+            sum.calls += countOf(bucket.calls);
+            sum.pico += picoOf(bucket.dollars);
+            base.byPurpose.set(name, sum);
+        }
+    }
+    return base;
+}
+
+const NO_LAUNCH = Object.freeze({ sessions: 0, calls: 0, unpriced: 0, pico: 0, byPurpose: new Map() });
+
 function addToBucket(map, key, usage, pico) {
     let bucket = map.get(key);
     if (bucket === undefined) {
@@ -131,11 +183,13 @@ function warn(text, err) {
 export class CostMeter {
     /**
      * @param {{settings?: object, now?: () => (number|Date), filePath?: string|null,
-     *          say?: (text: string) => void, log?: (text: string) => void}} options
+     *          say?: (text: string) => void, log?: (text: string) => void, launchId?: string|null}} options
      *        settings: the bot settings, read live (cost_warn_per_hour, cost_limit_per_hour,
      *        cost_limit_per_session, model_prices). now: milliseconds or a Date, default
      *        Date.now. filePath: bots/<name>/usage.json, without it nothing is written.
      *        say tells the player in chat, log prints to the console; both optional.
+     *        launchId: default process.env.MINDCRAFT_LAUNCH_ID; null for none. With a launch id
+     *        and a file the earlier sessions are read once, here.
      */
     constructor(options = {}) {
         const opts = isPlainObject(options) ? options : {};
@@ -144,6 +198,8 @@ export class CostMeter {
         this._filePath = typeof opts.filePath === 'string' && opts.filePath.length > 0 ? opts.filePath : null;
         this._say = typeof opts.say === 'function' ? opts.say : null;
         this._log = typeof opts.log === 'function' ? opts.log : null;
+        this._launchId = launchIdOf(opts);
+        this._launch = null;
 
         this._startedMs = this._nowMs();
         this._calls = 0;
@@ -164,6 +220,15 @@ export class CostMeter {
         this._dirty = false;
         this._lastWriteMs = null;
         this._history = null;
+        if (this._launchId !== null && this._filePath !== null) {
+            // record() reads no file, so the sessions of the launch are read now
+            this._loadHistory();
+        }
+    }
+
+    /** @returns {string|null} the launch id that goes into the file, or null */
+    get launchId() {
+        return this._launchId;
     }
 
     /** @returns {'normal'|'warned'|'saving'} the budget state */
@@ -273,14 +338,25 @@ export class CostMeter {
      * Purposes ordered by dollars (then calls, then name). Without a rate the rate part is left
      * out, without calls the parentheses. Unpriced calls add
      * ` 12 calls of models without a price are not included.`
+     * With earlier processes of the same launch (F2) their dollars and calls are in the numbers
+     * (the rate is of this process), and ` It includes 2 earlier processes since the start of the
+     * bot.` is added.
      * @returns {string}
      */
     reportLine() {
         const t = this._nowMs();
-        const purposes = [...this._byPurpose]
+        const launch = this._launchBase();
+        const byPurpose = new Map([...launch.byPurpose].map(([name, bucket]) => [name, { ...bucket }]));
+        for (const [name, bucket] of this._byPurpose) {
+            const sum = byPurpose.get(name) ?? { calls: 0, pico: 0 };
+            sum.calls += bucket.calls;
+            sum.pico += bucket.pico;
+            byPurpose.set(name, sum);
+        }
+        const purposes = [...byPurpose]
             .filter(([, bucket]) => bucket.calls > 0)
             .sort(([nameA, a], [nameB, b]) => (b.pico - a.pico) || (b.calls - a.calls) || compareNames(nameA, nameB));
-        let line = `Cost: session $${formatPico(this._pico)}`;
+        let line = `Cost: session $${formatPico(this._pico + launch.pico)}`;
         if (purposes.length > 0) {
             line += ` (${purposes.map(([name, bucket]) => `${name} $${formatPico(bucket.pico)}`).join(', ')})`;
         }
@@ -289,9 +365,13 @@ export class CostMeter {
         if (rate !== null) {
             line += ` rate $${formatPico(rate)} per hour,`;
         }
-        line += ` ${this._calls} calls.`;
-        if (this._unpricedCalls > 0) {
-            line += ` ${this._unpricedCalls} calls of models without a price are not included.`;
+        line += ` ${this._calls + launch.calls} calls.`;
+        const unpriced = this._unpricedCalls + launch.unpriced;
+        if (unpriced > 0) {
+            line += ` ${unpriced} calls of models without a price are not included.`;
+        }
+        if (launch.sessions > 0) {
+            line += ` It includes ${launch.sessions} earlier process${launch.sessions === 1 ? '' : 'es'} since the start of the bot.`;
         }
         return line;
     }
@@ -400,12 +480,13 @@ export class CostMeter {
             return;
         }
         const limitSession = this._limitPico('cost_limit_per_session');
-        if (limitSession > 0 && this._pico >= limitSession) {
+        const sessionPico = this._pico + this._launchBase().pico;
+        if (limitSession > 0 && sessionPico >= limitSession) {
             const announce = this._state !== SAVING;
             this._state = SAVING;
             this._savingBy = BY_SESSION;
             if (announce) {
-                this._announce(limitText(`$${formatPico(this._pico)} in this session`));
+                this._announce(limitText(`$${formatPico(sessionPico)} in this session`));
             }
             return;
         }
@@ -496,6 +577,18 @@ export class CostMeter {
         return this._history;
     }
 
+    // The earlier processes of the same launch, summed once the earlier sessions are read. Without
+    // a launch id, or while the file could not be read, nothing.
+    _launchBase() {
+        if (this._launchId === null) {
+            return NO_LAUNCH;
+        }
+        if (this._launch === null && this._history !== null) {
+            this._launch = sumLaunch(this._history, this._launchId);
+        }
+        return this._launch ?? NO_LAUNCH;
+    }
+
     _write(t) {
         const history = this._loadHistory();
         if (history === null) {
@@ -512,6 +605,9 @@ export class CostMeter {
             by_purpose: totals.by_purpose,
             by_model: totals.by_model,
         };
+        if (this._launchId !== null) {
+            session.launch_id = this._launchId;
+        }
         try {
             writeJsonAtomic(this._filePath, { version: FILE_VERSION, sessions: [...history, session] });
         } catch (err) {
