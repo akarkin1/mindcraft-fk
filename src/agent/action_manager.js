@@ -1,3 +1,8 @@
+import { MAX_OUT, outputSummary, stopperText } from './reflex/output_logic.js';
+
+// v0.1.4.8, I5: who stopped an action when nobody said it (for example the death of the bot)
+const UNKNOWN_STOPPER = 'an interrupt';
+
 export class ActionManager {
     constructor(agent) {
         this.agent = agent;
@@ -9,6 +14,8 @@ export class ActionManager {
         this.resume_name = '';
         this.last_action_time = 0;
         this.recent_action_counter = 0;
+        this.stopped_by = null; // v0.1.4.8, A4: who stops the running action, the first one counts
+        this.command_serial = 0; // v0.1.4.8, A2: counts the commands (actions action:*) that started
     }
 
     async resumeAction(actionFn, timeout) {
@@ -16,6 +23,12 @@ export class ActionManager {
     }
 
     async runAction(actionLabel, actionFn, { timeout, resume = false } = {}) {
+        if (typeof actionLabel === 'string' && actionLabel.startsWith('action:')) {
+            this.command_serial++;
+            // v0.1.4.8, A5: a newer command ends the resume function of an older one; a mode does not
+            if (!resume)
+                this.cancelResume();
+        }
         if (resume) {
             return this._executeResume(actionLabel, actionFn, timeout);
         } else {
@@ -23,18 +36,27 @@ export class ActionManager {
         }
     }
 
-    async stop() {
+    // by: who stops, the label of the new action ('mode:unstuck', 'action:mineOre') or a text of the
+    // agent ('!stop', 'a new message'). Only the first one counts for the running action.
+    async stop(by = null) {
         if (!this.executing) return;
+        this.noteStop(by);
         const timeout = setTimeout(() => {
             this.agent.cleanKill('Code execution refused stop after 10 seconds. Killing process.');
         }, 10000);
         while (this.executing) {
-            this.agent.requestInterrupt();
+            this.agent.requestInterrupt(by);
             console.log('waiting for code to finish executing...');
             await new Promise(resolve => setTimeout(resolve, 300));
         }
         clearTimeout(timeout);
-    } 
+    }
+
+    // v0.1.4.8, A4: notes who stops the running action, for a stop that does not go through stop().
+    noteStop(by) {
+        if (this.executing && this.stopped_by === null && typeof by === 'string' && by !== '')
+            this.stopped_by = by;
+    }
 
     cancelResume() {
         this.resume_func = null;
@@ -56,6 +78,14 @@ export class ActionManager {
         } else {
             return { success: false, message: null, interrupted: false, timedout: false };
         }
+    }
+
+    // The result of an action; when it was interrupted also who stopped it (I5).
+    _result(success, message, interrupted, timedout, stopped_by) {
+        const result = { success, message, interrupted, timedout };
+        if (interrupted)
+            result.stopped_by = stopperText(stopped_by) ?? UNKNOWN_STOPPER;
+        return result;
     }
 
     async _executeAction(actionLabel, actionFn, timeout = 10) {
@@ -87,7 +117,7 @@ export class ActionManager {
             if (this.executing) {
                 console.log(`action "${actionLabel}" trying to interrupt current action "${this.currentActionLabel}"`);
             }
-            await this.stop();
+            await this.stop(actionLabel);
 
             // clear bot logs and reset interrupt code
             this.agent.clearBotLogs();
@@ -96,6 +126,7 @@ export class ActionManager {
             this.currentActionLabel = actionLabel;
             this.currentActionFn = actionFn;
             this.timedout = false; // a timeout of an earlier action does not count for this one
+            this.stopped_by = null; // nobody stopped this one yet
 
             // timeout in minutes
             if (timeout > 0) {
@@ -115,6 +146,7 @@ export class ActionManager {
             let output = this.getBotOutputSummary();
             let interrupted = this.agent.bot.interrupt_code;
             let timedout = this.timedout;
+            let stopped_by = this.stopped_by;
             this.agent.clearBotLogs();
 
             // if not interrupted and not generating, emit idle event
@@ -123,13 +155,14 @@ export class ActionManager {
             }
 
             // return action status report
-            return { success: true, message: output, interrupted, timedout };
+            return this._result(true, output, interrupted, timedout, stopped_by);
         } catch (err) {
             this.executing = false;
             this.currentActionLabel = '';
             this.currentActionFn = null;
             clearTimeout(TIMEOUT);
             this.cancelResume();
+            let stopped_by = this.stopped_by;
             console.error("Code execution triggered catch:", err);
             // Log the full stack trace
             console.error(err.stack);
@@ -146,22 +179,15 @@ export class ActionManager {
             if (!interrupted) {
                 this.agent.bot.emit('idle');
             }
-            return { success: false, message, interrupted, timedout: false };
+            return this._result(false, message, interrupted, false, stopped_by);
         }
     }
 
+    // v0.1.4.8, A4: also the output of an interrupted action (the output so far). Longer than MAX_OUT
+    // characters: whole lines from the start and from the end.
     getBotOutputSummary() {
         const { bot } = this.agent;
-        if (bot.interrupt_code && !this.timedout) return '';
-        let output = bot.output;
-        const MAX_OUT = 500;
-        if (output.length > MAX_OUT) {
-            output = `Action output is very long (${output.length} chars) and has been shortened.\n
-          First outputs:\n${output.substring(0, MAX_OUT / 2)}\n...skipping many lines.\nFinal outputs:\n ${output.substring(output.length - MAX_OUT / 2)}`;
-        }
-        else {
-            output = 'Action output:\n' + output.toString();
-        }
+        let output = outputSummary(bot.output, MAX_OUT);
         bot.output = '';
         return output;
     }
@@ -171,7 +197,7 @@ export class ActionManager {
             console.warn(`Code execution timed out after ${TIMEOUT_MINS} minutes. Attempting force stop.`);
             this.timedout = true;
             this.agent.history.add('system', `Code execution timed out after ${TIMEOUT_MINS} minutes. Attempting force stop.`);
-            await this.stop(); // last attempt to stop
+            await this.stop('the time limit'); // last attempt to stop
         }, TIMEOUT_MINS * 60 * 1000);
     }
 
