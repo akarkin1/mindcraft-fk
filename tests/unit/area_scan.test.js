@@ -422,7 +422,8 @@ describe('scanFarm: fenced ground', () => {
 
     test('a field on a slope with steps of one block', () => {
         const world = flat();
-        world.field({ x: 20, y: 63, z: 0, width: 6, depth: 4, crop: null, ground: 'grass_block' });
+        // v0.1.4.8 (D5): a farm needs farmland or a crop, so the lower half is farmland.
+        world.field({ x: 20, y: 63, z: 0, width: 6, depth: 4, crop: null, ground: 'farmland' });
         // The eastern half is one block higher, the fence there stands one higher too.
         world.fill(23, 64, 0, 25, 64, 3, 'grass_block');
         world.fill(22, 65, -1, 26, 65, -1, 'oak_fence');
