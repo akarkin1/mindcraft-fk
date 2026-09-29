@@ -272,7 +272,8 @@ function recordRepeat(guard, name, args, result, pack) {
                 guard.record(name, args, typeof pack.text === 'string' ? pack.text : result, pack.ok === false);
             return;
         }
-        guard.record(name, args, result);
+        // the heading of an action output is no part of the result that the refusal quotes
+        guard.record(name, args, typeof result === 'string' ? result.replace(/^Action output:\s*/, '') : result);
     } catch (error) {
         console.warn('The repeat guard could not record the command:', error);
     }
