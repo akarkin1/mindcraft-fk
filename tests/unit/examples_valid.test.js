@@ -103,10 +103,12 @@ describe('the file', () => {
         assert.ok(Array.isArray(PROFILE.coding_examples));
     });
 
-    test('keeps its CRLF line endings', () => {
+    test('keeps one kind of line ending', () => {
+        // The repository stores LF; a Windows checkout with core.autocrlf=true turns every line
+        // into CRLF. Either is fine, a mix of the two is not.
         const lf = PROFILE_TEXT.split('\n').length - 1;
         const crlf = PROFILE_TEXT.split('\r\n').length - 1;
-        assert.equal(crlf, lf, 'every line ends with CRLF');
+        assert.ok(crlf === lf || crlf === 0, `every line ends with CRLF or every line ends with LF (${crlf} of ${lf})`);
     });
 
     test('every example is a list of turns with a known role and a text', () => {
