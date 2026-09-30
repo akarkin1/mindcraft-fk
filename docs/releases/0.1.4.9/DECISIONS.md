@@ -16,9 +16,28 @@ server), 2026-09-30. The decisions of the tech lead and the owner of each correc
 All five are corrected: unit tests 6046, 0 failures. The tester's line `rt_mine_player` 565 expected
 `sky === true` on a ladder step; it now expects `false`, by T1-3.
 
-## Found by the scenarios of T2
+## Found by the scenarios of T2 on the real server
 
-Pending: the world tests are running.
+First full run: 64 of 72 scenarios pass, 5865 s. Failing: W62, W63, W64, W66, W67, W70, W74 and w21 (a
+flake). The test base (`tests/world/base_world.js`) now has a furnace in the room of the mine.
+
+| Id | Defect | Evidence | Decision | Owner |
+|---|---|---|---|---|
+| F1 | **The bot cannot climb out of the shaft through the open trapdoor.** After every trip in the mine of the player it stays in the room at y 41: `I could not follow the route "mine" at step 5 of 6, at (1203, 41, -2).` In W62 it opened the trapdoor, sat in its cell at y 60 for 17 s and slid back down. Cause: `prismarine-physics` 1.10.0 knows that an open trapdoor above a ladder is climbable only for Minecraft 1.9 to 1.20 (`lib/features.json`, `climbableTrapdoor`), and its set of trapdoors ends at mangrove. For 1.21.8 the bot's physics does not climb the trapdoor cell. | W67, W62; the same text in W68, W69, W73 | A patch `patches/prismarine-physics+1.10.0.patch`: the feature also for 1.21, and the bamboo, cherry and copper trapdoors in the set. In `climbUp` a second way out when the physics still does not climb: from the top ladder, jump and walk towards the open side for 1 s, up to 3 times. W67 checks that the bot is on the surface at the end. | A, with `ladder.js` and `patches/` |
+| F2 | **`!goToRememberedPlace` never reaches the learned route.** The path search stands on the closed trapdoor until `unstuck` stops the command after 20 s: `Command !goToRememberedPlace was stopped by the reflex unstuck.` The route walk would only start after the path search returns. Called alone, the route works both ways and the I3 text is exact. | W63, W64, W60 order 35 | With `routes_pack` and a route for the place (`routeFor`), the route is walked first, then the path search for the rest; without a route as before. The command pauses `unstuck` like a pack command. | G |
+| F3 | **The walk to the foot of a ladder fails**: a path-search goal on the foot of the ladder makes the patched path search enter the column and climb, and the bot hangs at y 43 to 44. | the route "bed" alone from the room; `!goToBed` | A ladder leg gets `foot`, the cell beside the column at the bottom (the last trail step beside it), as it has `entry` at the top. Walk legs end at `foot` or `entry`, never inside a column; `climbUp` steps into the column from `foot` and sets no goal in a column. | A |
+| F4 | **`!collectBlocks` refuses an ore in the tunnel wall at the height of the feet** with the mining pack on: `I am underground. I start a new mine only from the surface.` The check of v0.1.4.7 in `actions.js` uses `bot.canSeeBlock` from the eyes; the block above the ore blocks the ray, the order goes to `!mineOre`, which refuses underground. | W70, W74 part D | `collectWork` uses the sight rule of C1 (`oreInSight` with `ore_sense_range`) instead of `bot.canSeeBlock`. Underground it never goes to `!mineOre`; the text of the library is the answer. | G |
+| F5 | **The sky light of the bot is stale**: 15 inside the house and at the roof block when the house crosses a chunk border; `!rememberMine` then puts the entrance inside the house next to the trapdoor, without the door leg. | W61 in the regions at x 400, 800, 1200; W65 exposed | The trail never trusts the light: open sky is the column of 64 blocks above (`columnIsOpen`), plus the rules of T1-3. | A |
+| F6 | **The tunnel direction follows a stale yaw of the player** (a player who did not turn since a teleport). A second tunnel pointing into the landing appeared. | W66, 2 of 4 runs | The yaw of the player is ignored when it points towards the room or the entrance (the anchor); then the tunnel points away from the anchor. The scenario turns the player, as a real player does. | B |
+| F7 | **`!rememberTunnel` accepts a room as a tunnel**: inside the house, `it starts at (15002, 61, -2), goes north, and ends at (15002, 61, -4) after 3 blocks, at level 61.` A trip for coal, copper or iron could choose it. | W60 order 38 | `rememberTunnel` uses the corridor rule of `rememberMine` (every cell at most 2 open neighbours) and needs 4 or more cells; else the no-corridor text. | B |
+| F8 | **The route sometimes misses the trapdoor**: `3 steps, 1 ladder.` without the trapdoor. `viaOf` looks at one cell between two steps; at 200 ms per cell and 250 ms per tick the step under the trapdoor is skipped. A sprinting bot skips cells too. | W62, 2 of 4 runs | `viaOf` looks at every cell on the line between two steps (up to 4 cells), and the trail ticks every 100 ms. | A |
+| F9 | w47 `creeper_in_sight` hung twice as the 14th scenario of a long session: the server dropped both bots with `Timed out`. Alone and in the full run it passes, with v0.1.4.8 as well. | one session | Not reproduced. Known flake, watched in the next full run. | none |
+| F10 | w21 `trees` left one log on the ground in the full run; alone it passes. The wood pack did not change. | one run | Known flake. | none |
+
+Notes of T2 that are accepted as they are: a route from the trapdoor to the bed starts at the place
+`home` when it passes within 2 blocks of it (A2 as written); W60 replaces 8 repeated queries by 8 orders
+of the new commands so that it stays under 45 minutes; the hidden commands answer
+`Command '!x' does not exist.`
 
 ## Decided from the reports of the engineers, without a test
 
