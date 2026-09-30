@@ -34,7 +34,8 @@ const PRICE_KEYS = ['input', 'output', 'cache_read', 'cache_write'];
 // { "<model id>": { input, output, cache_read?, cache_write? } }, dollars per million tokens
 const isPriceTable = (value) => isPlainObject(value) && Object.values(value).every((price) => isPlainObject(price)
     && Object.keys(price).length > 0 && Object.entries(price).every(([key, dollars]) => PRICE_KEYS.includes(key) && isNumberZeroOrMore(dollars)));
-export const HOME_REFLEXES = Object.freeze(['door_closing', 'night_shelter', 'creeper_safety']);
+// v0.1.4.8 (spec section 2): home_reflexes.hunger
+export const HOME_REFLEXES = Object.freeze(['door_closing', 'night_shelter', 'creeper_safety', 'hunger']);
 // a missing reflex counts as true
 const isReflexTable = (value) => isPlainObject(value) && Object.entries(value).every(([key, on]) => HOME_REFLEXES.includes(key) && isBoolean(on));
 

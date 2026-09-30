@@ -18,10 +18,12 @@
 //        5) does not say that the wheat belongs to a protected area, it breaks wheat of the farm and
 //        answers "Collected <n> wheat.", no farmland becomes dirt.
 //   on   also (Amendment 2, I6): !setArea of the fenced field counts its gate: "..., 1 gate."
+// v0.1.4.8, B1: the old collecting counts what the inventory gained, every kind: "Collected 17 wheat_seeds,
+// 5 wheat." (v0.1.4.7: "Collected 5 wheat."); the checks accept the list when it names the wheat.
 import { fileURLToPath } from 'node:url';
 import {
     scenarioMain, check, note, exitSoon, startAgent, stopRealAgent, NEW_FLAGS_OFF, placeBot, resetBot, command_,
-    giveItems, connectPlayer, quitPlayer, waitFor, waitIdle, historyTurn, runPhase,
+    giveItems, connectPlayer, quitPlayer, waitFor, waitIdle, historyTurn, runPhase, withModes,
 } from './helpers.js';
 import {
     region, prepareRegion, releaseRegion, fieldPlan, buildField, cropAges, blockNames, stableInventory, itemsText,
@@ -31,6 +33,8 @@ const SELF = fileURLToPath(import.meta.url);
 const NAME = 'w_oldfarm';
 const PLAYER = 'w_player';
 const BASE = { ...NEW_FLAGS_OFF, protected_areas: true, world_memory: true };
+// "Collected <list>." of B1 with <n> wheat in the list ("Collected 17 wheat_seeds, 5 wheat.")
+const COLLECTED_WHEAT = /Collected (?:\d+ \w+, )*[1-9]\d* wheat(?:, \d+ \w+)*\./;
 
 const r = region(32);
 const g = r.g;
@@ -91,7 +95,7 @@ async function part(which, settings) {
             note(`off: the old command broke ${ripeNow.filter((a) => a === null).length} ripe and ${youngNow.filter((a) => a === null).length} unripe plants`);
             check(broken >= 1 && replanted === 0, 'off (old behaviour): !collectBlocks broke wheat and planted nothing again (the harvest of the farming pack did not run)',
                 `broken ${broken}, cells of age 0: ${replanted}`);
-            check(/Collected \d+ wheat\./.test(result) && !result.includes('I harvested'), 'off: the result is the old one ("Collected <n> wheat."), not the text of the farming pack', JSON.stringify(result.slice(0, 200)));
+            check(COLLECTED_WHEAT.test(result) && !result.includes('I harvested'), 'off: the result is the old one ("Collected ... <n> wheat ...", B1), not the text of the farming pack', JSON.stringify(result.slice(-200)));
         }
         check(ground.every((x) => x === 'farmland'), `${which}: no block of farmland became dirt`, JSON.stringify(f.cells.filter((c, i) => ground[i] !== 'farmland').map((c) => c.ground)));
         check(s.realCalls.length === 0, `${which}: no request reached a real model class`, JSON.stringify(s.realCalls));
@@ -126,8 +130,8 @@ async function savedFarm() {
         const broken = [...ripeNow, ...youngNow].filter((a) => a === null).length;
         note(`saved: where the ripe wheat stood: ${JSON.stringify(ripeNow)}; the young wheat: ${JSON.stringify(youngNow)}; the bot carries ${itemsText(inv.items)}`);
         check(!reply.includes('belong to a protected area'), 'saved (I5): the old command does not call the wheat of the saved farm protected', JSON.stringify(reply.slice(0, 300)));
-        check(/Collected [1-9]\d* wheat\./.test(reply) && broken >= 1, 'saved (I5): !collectBlocks("wheat", 5) broke wheat inside the saved farm and answered "Collected <n> wheat."',
-            `broken ${broken}, ${JSON.stringify(reply.slice(0, 200))}`);
+        check(COLLECTED_WHEAT.test(reply) && broken >= 1, 'saved (I5): !collectBlocks("wheat", 5) broke wheat inside the saved farm and answered "Collected ... <n> wheat ..." (B1)',
+            `broken ${broken}, ${JSON.stringify(reply.slice(-200))}`);
         check(ground.every((x) => x === 'farmland'), 'saved: no block of farmland became dirt (the guard of the farm)', JSON.stringify(f.cells.filter((c, i) => ground[i] !== 'farmland').map((c) => c.ground)));
         check(s.realCalls.length === 0, 'saved: no request reached a real model class', JSON.stringify(s.realCalls));
     } finally {
@@ -136,7 +140,9 @@ async function savedFarm() {
 }
 
 await scenarioMain({
-    async on() { await part('on', { ...BASE, farming_pack: true }); },
+    // v0.1.4.8 (W30): the part with the pack on runs with the modes of the owner; "off" and "saved" test a
+    // switch that is off and keep the modes off (spec v0.1.4.8 section 12, T2.1)
+    async on() { await part('on', withModes({ ...BASE, farming_pack: true })); },
     async off() { await part('off', { ...BASE, farming_pack: false }); },
     async saved() { await savedFarm(); },
     async main() {

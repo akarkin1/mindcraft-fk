@@ -261,21 +261,41 @@ export function craftSteps(kind, material, inventory, options = {}) {
     return plan(inventory, need, options);
 }
 
+// The items of the known chests as inventory entries: a list of { name, count } or an object of counts.
+function chestEntries(chests) {
+    if (Array.isArray(chests)) {
+        return chests.filter(e => e && typeof e.name === 'string');
+    }
+    if (chests && typeof chests === 'object') {
+        return Object.entries(chests).map(([name, count]) => ({ name, count }));
+    }
+    return [];
+}
+
+/** The strongest material an empty material may choose (spec v0.1.4.8 E3): stone. */
+export const OPEN_MATERIAL_MAX = 'stone';
+
 /**
  * The best material for a tool of the kind that the inventory allows, at least minMaterial:
  * the strongest craftable material whose steps miss nothing but wood (wood is collected).
  * Without one: minMaterial itself (empty and golden: wooden).
+ * Since v0.1.4.8 (E3): what the known chests hold counts as if carried (`options.chests`, counts
+ * by name or a list of { name, count }), and an empty material chooses the best material up to
+ * stone (OPEN_MATERIAL_MAX): iron and diamond are used only when the caller names them.
  * @param {string} kind
  * @param {string} minMaterial
  * @param {object[]} inventory
- * @param {{table?: boolean}} [options]
+ * @param {{table?: boolean, chests?: object}} [options]
  * @returns {string}
  */
 export function chooseMaterial(kind, minMaterial, inventory, options = {}) {
     const min = materialLevel(minMaterial) ?? 0;
-    const craftable = MATERIALS.filter(m => m.craftable && m.level >= min).reverse();
+    const open = minMaterial === '' || minMaterial === null || minMaterial === undefined;
+    const max = open ? materialLevel(OPEN_MATERIAL_MAX) : Infinity;
+    const all = [...(Array.isArray(inventory) ? inventory : []), ...chestEntries(options?.chests)];
+    const craftable = MATERIALS.filter(m => m.craftable && m.level >= min && m.level <= max).reverse();
     for (const m of craftable) {
-        const { missing } = craftSteps(kind, m.name, inventory, options);
+        const { missing } = craftSteps(kind, m.name, all, options);
         if (missing.every(x => isWoodItem(x.name))) {
             return m.name;
         }
@@ -284,6 +304,77 @@ export function chooseMaterial(kind, minMaterial, inventory, options = {}) {
         return 'wooden';
     }
     return minMaterial;
+}
+
+// The planks of the single kind of wood the inventory has most of: { name, count }.
+function bestPlanks(counts) {
+    let best = { name: 'planks', count: 0 };
+    for (const kind of WOOD_KINDS) {
+        const n = counts[planksOf(kind)] ?? 0;
+        if (n > best.count) {
+            best = { name: planksOf(kind), count: n };
+        }
+    }
+    return best;
+}
+
+/**
+ * What one craft step of craftSteps or supplySteps takes from the inventory (spec v0.1.4.8 E3,
+ * M12): `{ name, need, have }` per ingredient for all its `times`. Planks count one kind of wood
+ * (the kind the inventory has most of); a stone tool takes one of the kinds of cobblestone; a
+ * torch takes coal or charcoal. [] for a step it does not know.
+ * @param {{item: string, times: number}} step
+ * @param {object[]} inventory
+ * @returns {{name: string, need: number, have: number}[]}
+ */
+export function stepIngredients(step, inventory) {
+    const item = baseName(step?.item);
+    const times = positiveInt(step?.times, 1);
+    if (!item) {
+        return [];
+    }
+    const counts = countsOf(inventory);
+    const planks = bestPlanks(counts);
+    const out = [];
+    const add = (name, per, have) => out.push({ name, need: per * times, have });
+    const tool = parseTool(item);
+    if (item.endsWith('_planks') && WOOD_KINDS.includes(item.replace(/_planks$/, ''))) {
+        const log = logItemOf(item.replace(/_planks$/, ''));
+        add(log, 1, counts[log] ?? 0);
+    } else if (item === 'stick') {
+        add(planks.name, PLANKS_PER_STICK_CRAFT, planks.count);
+    } else if (item === 'crafting_table') {
+        add(planks.name, PLANKS_PER_TABLE, planks.count);
+    } else if (item === 'chest') {
+        add(planks.name, 8, planks.count);
+    } else if (item === 'ladder') {
+        add('stick', 7, counts.stick ?? 0);
+    } else if (item === 'torch') {
+        add('stick', 1, counts.stick ?? 0);
+        add('coal', 1, COAL.reduce((s, n) => s + (counts[n] ?? 0), 0));
+    } else if (tool) {
+        const recipe = RECIPES[tool.kind];
+        const mat = materialOf(tool.material);
+        if (mat.name === 'wooden') {
+            add(planks.name, recipe.material, planks.count);
+        } else {
+            const accepts = mat.accepts ?? [mat.item];
+            const have = Math.max(...accepts.map(n => counts[n] ?? 0));
+            add(mat.item, recipe.material, have);
+        }
+        add('stick', recipe.sticks, counts.stick ?? 0);
+    }
+    return out;
+}
+
+/**
+ * The first ingredient of a craft step that the inventory lacks, or null.
+ * @param {{item: string, times: number}} step
+ * @param {object[]} inventory
+ * @returns {{name: string, need: number, have: number}|null}
+ */
+export function missingIngredient(step, inventory) {
+    return stepIngredients(step, inventory).find(i => i.have < i.need) ?? null;
 }
 
 /**

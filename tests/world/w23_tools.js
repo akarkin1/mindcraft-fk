@@ -4,9 +4,11 @@
 // open in the ground 5 blocks west (no stone anywhere else: the flat world is grass on dirt).
 // !getTool("pickaxe", "stone"): the bot cuts the tree, crafts a wooden pickaxe, breaks stone and
 // crafts a stone pickaxe. It ends with a stone_pickaxe (server), the text of T4.
+// v0.1.4.8 (W30): the modes of the owner are on (MODES_PROFILE, with the home reflexes) and !getTool is typed
+// by the player in the chat (the real path of a typed command), as in play.
 import {
     scenarioMain, check, note, exitSoon, startAgent, stopRealAgent, NEW_FLAGS_OFF, placeBot, resetBot, command_,
-    entityPos, fmt, startTrace, printTrace, commands,
+    entityPos, fmt, startTrace, printTrace, commands, withModes, orderChannel,
 } from './helpers.js';
 import {
     region, prepareRegion, releaseRegion, treePlan, buildTree, blockNames, stableInventory, itemsText, inventoryOf,
@@ -25,10 +27,11 @@ await scenarioMain({
         for (let dx = 0; dx < 3; dx++) for (let dz = 0; dz < 2; dz++) stone.push({ x: r.ox - 5 - dx, y: g, z: r.oz + 2 + dz });
         await commands(stone.map((p) => `setblock ${p.x} ${p.y} ${p.z} minecraft:stone`));
 
-        let agent = null;
+        let agent = null, orders = null;
         try {
-            const s = await startAgent(NAME, { ...NEW_FLAGS_OFF, protected_areas: true, world_memory: true, wood_pack: true });
+            const s = await startAgent(NAME, withModes({ ...NEW_FLAGS_OFF, protected_areas: true, world_memory: true, wood_pack: true }));
             agent = s.agent;
+            orders = await orderChannel(s, { at: { x: r.ox, y: g + 1, z: r.oz - 16 } });
             await resetBot(NAME);
             await placeBot(agent, { x: r.ox, y: g + 1, z: r.oz }, -90);
             const empty = await inventoryOf(NAME);
@@ -37,7 +40,7 @@ await scenarioMain({
 
             const trace = startTrace(async () => ({ pos: await entityPos(NAME) }), 1000);
             const t0 = Date.now();
-            const reply = await command_(agent, '!getTool("pickaxe", "stone")', 360000);
+            const reply = await orders.order('!getTool("pickaxe", "stone")', 360000);
             const rows = await trace.stop();
             printTrace('!getTool("pickaxe", "stone")', rows, { pos: (x) => fmt(x.pos) }, 40);
             note(`!getTool answered after ${((Date.now() - t0) / 1000).toFixed(1)} s: ${JSON.stringify(reply)}`);
@@ -51,6 +54,7 @@ await scenarioMain({
             check(stoneLeft.filter((x) => x === null).length >= 3, 'the bot broke at least 3 of the stone blocks for cobblestone', `${stoneLeft.filter((x) => x === null).length} broken`);
             check(s.realCalls.length === 0, 'no request reached a real model class', JSON.stringify(s.realCalls));
         } finally {
+            if (orders) await orders.quit();
             await stopRealAgent(agent);
             await releaseRegion(r);
         }

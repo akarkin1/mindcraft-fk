@@ -2,7 +2,7 @@
 // (tests/unit/examples_valid.test.js) and the routing check (scripts/routing_check.js).
 // Pure data, no imports, no side effects.
 //
-// SPEC_COMMANDS are the commands of releases v0.1.4.6 and v0.1.4.7, TAKEN FROM THE SPECS,
+// SPEC_COMMANDS are the commands of releases v0.1.4.6 to v0.1.4.8 that belong to a part, TAKEN FROM THE SPECS,
 // because they do not exist in the code while the parts are written. At the join the real
 // definitions in src/agent/commands/actions.js and queries.js take over: the example check
 // prefers a real definition over an entry of this table, and has a switch to use only the real
@@ -40,7 +40,7 @@ export const SPEC_SETTINGS = {
 export const PART_COMMANDS = {
     player_rules: ['!rememberRule', '!forgetRule', '!rules'],
     protected_areas: ['!rememberArea', '!setArea', '!forgetArea', '!areas', '!allowChanges'],
-    home_pack: ['!goToShelter', '!eat'],
+    home_pack: ['!goToShelter', '!eat', '!closeDoor'],
     cost_meter: ['!cost'],
     // v0.1.4.7: the commands of the four sets (S4, F3, T5, M5 of its spec)
     storage_pack: ['!storeItems', '!fetchItem', '!chests'],
@@ -58,7 +58,7 @@ export const SPEC_COMMANDS = [
     { name: '!rules', section: 'R3', part: 'player_rules', params: [] },
     { name: '!rememberArea', section: '6', part: 'protected_areas',
         params: [{ name: 'name', type: 'string' }, { name: 'type', type: 'string', default: 'building' }],
-        description: 'Remember the building or the fenced farm you are standing in as a protected area. In a building you will not break or place blocks. In a farm you will only plant and harvest. Use this when the player says "this is home", "this is our base", "this is the farm", or tells you not to damage a place.' },
+        description: 'Save the place you stand in as a protected area: home (the house), building, farm (only plant and harvest), pen (animals) or mine (only natural blocks). Use this when the player says "this is home", "this is the farm" or "this is the mine".' },
     { name: '!setArea', section: '6', part: 'protected_areas', assumed: 'types of the coordinates (float, as in actions.js)',
         params: [{ name: 'name', type: 'string' }, { name: 'type', type: 'string' },
             ...['x1', 'y1', 'z1', 'x2', 'y2', 'z2'].map((name) => ({ name, type: 'float' }))] },
@@ -66,38 +66,40 @@ export const SPEC_COMMANDS = [
     { name: '!areas', section: '6', part: 'protected_areas', params: [] },
     { name: '!allowChanges', section: '6', part: 'protected_areas',
         params: [{ name: 'name', type: 'string' }, { name: 'minutes', type: 'int', default: 10 }],
-        description: 'Allow yourself to break and place blocks in a protected area for some minutes. Use this ONLY when the player tells you to build, repair or break something inside that area.' },
+        description: 'Allow yourself to break and place blocks in a protected area for some minutes. ONLY when the player tells you to build, repair or break something there.' },
     { name: '!goToShelter', section: 'H7', part: 'home_pack', params: [],
-        description: 'Go to your shelter, get in through the door and close it. Use this when night comes, when monsters are near, when the player says "get to shelter", "go home" or "go inside".' },
+        description: 'Go into your home and close the door. Use this when night comes, when monsters are near, when the player says "get to shelter", "go home" or "go inside".' },
     { name: '!eat', section: 'H7', part: 'home_pack', params: [],
-        description: 'Eat the best food you have. Use this when you are hungry or hurt, or when the player tells you to eat.' },
+        description: 'Eat until you are full, and until your health is full while you have food. Use this when the player tells you to eat, or when you are hungry or hurt.' },
+    // v0.1.4.8 (section 11 of its spec): the command of the door service
+    { name: '!closeDoor', section: '11', part: 'home_pack', params: [], description: 'Close the open doors, gates and trapdoors within 6 blocks of you.' },
     { name: '!cost', section: 'G1', part: 'cost_meter', params: [] },
     // v0.1.4.7 (sections S4, F3, T5 and M5 of its spec)
     { name: '!storeItems', section: 'S4', part: 'storage_pack', params: [],
-        description: 'Put what you carry into a chest. You keep your tools, food and torches. Use this when your inventory is full, when you come back with things, or when the player says "store", "stash" or "put it in the chest".' },
+        description: 'Put what you carry into a chest. You keep your tools, food and torches. Use this when your inventory is full, or when the player says "store", "stash" or "put it in the chest".' },
     { name: '!fetchItem', section: 'S4', part: 'storage_pack', params: [{ name: 'item_name', type: 'ItemName' }, { name: 'num', type: 'int', default: 1 }],
-        description: 'Get an item out of a chest you know. Use this when you need something you do not carry, or when the player says "take", "get" or "fetch" something from the chest.' },
-    { name: '!chests', section: 'S4', part: 'storage_pack', params: [], description: 'List the chests you know and what is in them.' },
+        description: 'Get an item out of a chest you know. Use this when you need something you do not carry, or when the player says "get" or "fetch" something from the chest.' },
+    { name: '!chests', section: 'S4', part: 'storage_pack', params: [{ name: 'item', type: 'string', default: '' }], description: 'List the chests you know and what is in them, or which ones hold an item. From memory, no walk.' },
     { name: '!farmCycle', section: 'F3', part: 'farming_pack', params: [{ name: 'area', type: 'string', default: '' }],
-        description: 'Do the farm work: harvest what is ripe, store it, plant again. Use this when the player says "farm", "get back to farming", "do the farm work" or "take care of the wheat".' },
+        description: 'Do the whole farm round: harvest, store, plant, make bone meal in the composter and use it, close the gate. Use this when the player says "farm" or "take care of the wheat".' },
     { name: '!harvest', section: 'F3', part: 'farming_pack', params: [{ name: 'area', type: 'string', default: '' }],
-        description: 'Harvest the ripe plants of a farm and plant them again. Unripe plants stay. Use this when the player says "harvest" or "collect the wheat".' },
+        description: 'Harvest the ripe plants of a farm and plant them again. Use this when the player says "harvest" or "collect the wheat".' },
     { name: '!plant', section: 'F3', part: 'farming_pack', params: [{ name: 'seed', type: 'string', default: 'wheat_seeds' }, { name: 'area', type: 'string', default: '' }],
         description: 'Plant seeds on the free ground of a farm. Use this when the player says "plant", "seed" or "sow".' },
     { name: '!makeBoneMeal', section: 'F3', part: 'farming_pack', params: [{ name: 'num', type: 'int', default: 1 }],
-        description: 'Make bone meal in a composter from leaves, grass and flowers. Never from seeds. Use this when the player asks for fertilizer.' },
+        description: 'Make bone meal in the composter from compost items you carry, fetch from the chests you know or pick near the farm. Never seeds or food.' },
     { name: '!fertilize', section: 'F3', part: 'farming_pack', params: [{ name: 'area', type: 'string', default: '' }],
         description: 'Use your bone meal on the plants of a farm, so they grow faster.' },
-    { name: '!chopTrees', section: 'T5', part: 'wood_pack', params: [{ name: 'num', type: 'int', default: 8 }, { name: 'kind', type: 'string', default: '' }],
-        description: 'Cut trees and collect the logs. Only real trees, never the logs of a building. Use this when the player asks for wood or logs.' },
+    { name: '!chopTrees', section: 'T5', part: 'wood_pack', params: [{ name: 'num', type: 'IntOrString', default: 8 }, { name: 'kind', type: 'string', default: '' }],
+        description: 'Cut whole trees and pick up the logs until you have that many, with an axe if you can get one. Only real trees. Use this when the player asks for wood.' },
     { name: '!getTool', section: 'T5', part: 'wood_pack', params: [{ name: 'kind', type: 'string' }, { name: 'material', type: 'string', default: '' }],
-        description: 'Make sure you have a tool: pickaxe, axe, shovel, hoe or sword. You craft it if you have none, with everything that needs. Use this before work that needs a tool.' },
+        description: 'Make sure you have a tool. You take it from a chest you know or craft it, with everything that needs.' },
     { name: '!craftSupplies', section: 'T5', part: 'wood_pack', params: [{ name: 'item', type: 'string' }, { name: 'num', type: 'int', default: 1 }],
         description: 'Craft torches, ladders, a chest or a crafting table, and collect the wood for it.' },
-    { name: '!mineOre', section: 'M5', part: 'mining_pack', params: [{ name: 'ore', type: 'string' }, { name: 'num', type: 'int', default: 8 }],
-        description: 'Go mining for an ore: coal, copper, iron, lapis, gold, redstone or diamond. You go down to the right level, dig a tunnel, collect the ore and come back. Use this when the player asks for an ore or for mining.' },
+    { name: '!mineOre', section: 'M5', part: 'mining_pack', params: [{ name: 'ore', type: 'string' }, { name: 'num', type: 'int', default: 8 }, { name: 'new_mine', type: 'boolean', default: false }],
+        description: 'Mine an ore and come back. Without a known mine you first ask the player. Use this when the player asks for an ore or for mining.' },
     { name: '!goToMine', section: 'M5', part: 'mining_pack', params: [{ name: 'ore', type: 'string', default: '' }],
-        description: 'Go down into your mine. Without an ore, the nearest mine.' },
+        description: 'Go down into your mine.' },
     { name: '!leaveMine', section: 'M5', part: 'mining_pack', params: [], description: 'Come up from the mine to the surface.' },
 ];
 
@@ -117,8 +119,11 @@ export const EXISTING_COMMANDS = [
     '!getCraftingPlan', '!searchWiki', '!help',
 ];
 
+// Commands of v0.1.4.8 that belong to no part: they are always offered (section 11 of its spec).
+export const ALWAYS_COMMANDS = ['!pickUpItems'];
+
 // Every command name that a sentence may expect.
-export const ALL_COMMAND_NAMES = [...EXISTING_COMMANDS, ...SPEC_COMMANDS.map((c) => c.name)];
+export const ALL_COMMAND_NAMES = [...EXISTING_COMMANDS, ...ALWAYS_COMMANDS, ...SPEC_COMMANDS.map((c) => c.name)];
 
 // A command definition in the form of actions.js for an entry of SPEC_COMMANDS, for the parser.
 export function specCommandDef(entry) {

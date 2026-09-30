@@ -5,6 +5,8 @@
 //     never does, also while an action runs;
 //   - while creeper_safety is on, a creeper is no target for self_defense and cowardice;
 //   - torch_placing places no torch where the area guard refuses one.
+// v0.1.4.8 (part A): the mode hunger comes directly after self_defense (A11, decision of the tech lead);
+// night_shelter does nothing without a home (A7, C4), so its test gives the place "home".
 //
 // The modes run through the real ModeController.update() of a fake agent. runAction records the
 // label and does not run the mode's function (the functions of the home pack are tested by H).
@@ -47,7 +49,10 @@ settingsModule.setSettings({ language: 'en', home_pack: true, narrate_behavior: 
 mcdata.__setMcdataForTests(minecraftData('1.21.8'));
 
 const ALL_OFF = { self_preservation: false, unstuck: false, cowardice: false, self_defense: false, hunting: false, item_collecting: false,
-    torch_placing: false, elbow_room: false, idle_staring: false, cheat: false, creeper_safety: false, night_shelter: false, door_closing: false };
+    torch_placing: false, elbow_room: false, idle_staring: false, cheat: false, creeper_safety: false, night_shelter: false, door_closing: false,
+    hunger: false };
+// v0.1.4.8: the place "home" far away, so night_shelter has a shelter to go to (A7, C4)
+const PLACES = { recall: (name) => (name === 'home' ? { x: 100, y: 64, z: 100, dimension: 'overworld' } : null) };
 
 function makeAgent() {
     const bot = {
@@ -93,7 +98,7 @@ function makeAgent() {
                 return { success: true, message: '', interrupted: true, timedout: false };
             },
         },
-        homeContext: () => ({ areas: null, places: null, settings, log() {}, now: () => Date.now(), skills: {}, world: {} }),
+        homeContext: () => ({ areas: null, places: PLACES, settings, log() {}, now: () => Date.now(), skills: {}, world: {} }),
     };
     modes.initModes(agent);
     return agent;
@@ -114,8 +119,8 @@ afterEach(() => {
 });
 
 describe('the list of modes with home_pack on', () => {
-    test('creeper_safety and night_shelter after self_preservation, door_closing at the end; a second initModes adds nothing', () => {
-        const expected = ['self_preservation', 'creeper_safety', 'night_shelter', 'unstuck', 'cowardice', 'self_defense', 'hunting',
+    test('creeper_safety and night_shelter after self_preservation, hunger after self_defense, door_closing at the end; a second initModes adds nothing', () => {
+        const expected = ['self_preservation', 'creeper_safety', 'night_shelter', 'unstuck', 'cowardice', 'self_defense', 'hunger', 'hunting',
             'item_collecting', 'torch_placing', 'elbow_room', 'idle_staring', 'cheat', 'door_closing'];
         const agent = makeAgent();
         assert.deepEqual(names(agent), expected);
@@ -148,6 +153,7 @@ describe('the list of modes with home_pack on', () => {
             const line = run.stdout.split(/\r?\n/).find((l) => l.startsWith('RESULT '));
             const list = JSON.parse(line.slice(7)).map((l) => l.replace(/^- /, '').replace(/\((ON|OFF)\)$/, ''));
             assert.deepEqual(list.slice(0, 4), ['self_preservation', 'creeper_safety', 'night_shelter', 'unstuck']);
+            assert.equal(list[list.indexOf('self_defense') + 1], 'hunger');
             assert.ok(!list.includes('door_closing'));
         } finally {
             removeTmpDir(dir);

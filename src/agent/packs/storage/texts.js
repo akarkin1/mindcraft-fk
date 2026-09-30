@@ -14,6 +14,8 @@ export const TEXTS = Object.freeze({
 export const LIST_MAX = 6;
 /** Most chests the list of chests names. */
 export const CHESTS_MAX = 10;
+/** Most kinds of items a line of the list of chests names (v0.1.4.8, E1: the wheat hid in "32 more kinds"). */
+export const CHEST_KINDS_MAX = 10;
 
 function blockCoord(value) {
     return typeof value === 'number' && Number.isFinite(value) ? Math.floor(value) : value;
@@ -36,12 +38,14 @@ export function posText(pos) {
 }
 
 /**
- * `12 wheat, 3 wheat_seeds`: sorted by count, highest first, then by name; at most 6 kinds,
- * followed by ` and <n> more kinds`. Counts of 0 or less are left out.
+ * `12 wheat, 3 wheat_seeds`: sorted by count, highest first, then by name; at most 6 kinds (or
+ * `max`), followed by ` and <n> more kinds`. Counts of 0 or less are left out.
  * @param {Object<string, number>|{name: string, count: number}[]} counts
+ * @param {number} [max] LIST_MAX
  * @returns {string}
  */
-export function countsText(counts) {
+export function countsText(counts, max = LIST_MAX) {
+    const limit = typeof max === 'number' && Number.isInteger(max) && max > 0 ? max : LIST_MAX;
     let list = [];
     if (Array.isArray(counts)) {
         list = counts.map(e => ({ name: e?.name, count: e?.count }));
@@ -50,8 +54,8 @@ export function countsText(counts) {
     }
     list = list.filter(e => typeof e.name === 'string' && typeof e.count === 'number' && e.count > 0)
         .sort((a, b) => b.count - a.count || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
-    const shown = list.slice(0, LIST_MAX).map(e => `${e.count} ${e.name}`).join(', ');
-    return list.length > LIST_MAX ? `${shown} and ${list.length - LIST_MAX} more kinds` : shown;
+    const shown = list.slice(0, limit).map(e => `${e.count} ${e.name}`).join(', ');
+    return list.length > limit ? `${shown} and ${list.length - limit} more kinds` : shown;
 }
 
 function hasCounts(counts) {
@@ -65,8 +69,10 @@ function placeText(chests, preposition) {
 
 /**
  * The text of storeItems. `reason` says why something is left: `no_chest`, `full`, `unreachable`,
- * `interrupted`, `timeout` or `error` (with `error`).
- * @param {{stored?: object, left?: object, chests?: object[], reason?: string|null, error?: Error|string}} result
+ * `interrupted`, `timeout` or `error` (with `error`). `tried` is the number of chests the bot used when
+ * there were more within the range (v0.1.4.8, X8): then `full` says `I tried the 27 nearest chests.`
+ * and not that the chests are full.
+ * @param {{stored?: object, left?: object, chests?: object[], reason?: string|null, error?: Error|string, tried?: number|null}} result
  * @returns {string}
  */
 export function storeText(result) {
@@ -84,6 +90,9 @@ export function storeText(result) {
     case 'no_chest':
         return then(TEXTS.noChest);
     case 'full':
+        if (typeof r.tried === 'number' && Number.isInteger(r.tried) && r.tried > 0) {
+            return then(`I tried the ${r.tried} nearest chests. I still carry ${carry}.`);
+        }
         return did ? `${did} The chests are full now, I still carry ${carry}.` : `All chests nearby are full. I still carry ${carry}.`;
     case 'unreachable':
         return did ? `${did} I could not get to another chest, I still carry ${carry}.`
@@ -141,14 +150,34 @@ export function fetchText(result) {
 
 /**
  * One line of the list of chests: `- (-13, 63, 28): 12 wheat, 3 wheat_seeds, 4 free slots`, or
- * `- (x, y, z): empty, 27 free slots`.
+ * `- (x, y, z): empty, 27 free slots`. Since v0.1.4.8 (E1) up to 10 kinds, then `and <n> more kinds`.
  * @param {{x,y,z,items: object, free_slots: number}} chest
  * @returns {string}
  */
 export function chestLine(chest) {
-    const content = hasCounts(chest?.items) ? countsText(chest.items) : 'empty';
+    const content = hasCounts(chest?.items) ? countsText(chest.items, CHEST_KINDS_MAX) : 'empty';
     const free = typeof chest?.free_slots === 'number' ? chest.free_slots : 0;
     return `- ${posText(chest)}: ${content}, ${free} free slots`;
+}
+
+/**
+ * The answer of `!chests` for one item (spec v0.1.4.8 E1), from the chests that hold it in the
+ * given order (the index gives the most first): `wheat: 28 in the chest at (11, 67, 53). Total 28.`,
+ * with several `wheat: 28 in the chest at (11, 67, 53), 5 in the chest at (-13, 63, 28). Total 33.`,
+ * after 10 chests ` and <n> more chests`. Without a chest `I know no chest with wheat.`
+ * @param {string} name
+ * @param {{x,y,z,items: object}[]} chests
+ * @returns {string}
+ */
+export function itemChestsText(name, chests) {
+    const list = (Array.isArray(chests) ? chests : []).filter(c => typeof c?.items?.[name] === 'number' && c.items[name] > 0);
+    if (list.length === 0) {
+        return notFoundText(name);
+    }
+    const total = list.reduce((sum, c) => sum + c.items[name], 0);
+    const parts = list.slice(0, CHESTS_MAX).map(c => `${c.items[name]} in the chest at ${posText(c)}`);
+    const more = list.length > CHESTS_MAX ? ` and ${list.length - CHESTS_MAX} more chests` : '';
+    return `${name}: ${parts.join(', ')}${more}. Total ${total}.`;
 }
 
 /**

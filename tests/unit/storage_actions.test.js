@@ -418,17 +418,19 @@ describe('storeItems', () => {
         assert.equal(res.text, 'I could not get to a chest nearby or open it. I still carry 20 dirt, 12 wheat.');
     });
 
-    test('a chest with a solid block above is not opened; glass does not block', async () => {
+    test('a chest with a solid block above counts as blocked only after its open failed; glass does not block (v0.1.4.8, E1)', async () => {
         const world = makeWorld();
         world.container(3, 64, 0);
         world.set(3, 65, 0, 'stone');
         const glass = world.container(-3, 64, 0);
         world.set(-3, 65, 0, 'glass');
         const bot = makeBot(world, { items: [['dirt', 5]] });
+        bot.failOpen.add(key(3, 64, 0));
         const res = await S.storeItems(bot, makeCtx(), fastClock());
         assert.equal(res.text, 'I stored 5 dirt in the chest at (-3, 64, 0).');
         assert.deepEqual(boxCounts(glass), { dirt: 5 });
-        assert.ok(!bot.calls.some(c => c[0] === 'open' && c[1] === 3));
+        assert.ok(bot.calls.some(c => c[0] === 'open' && c[1] === 3), 'the open is tried');
+        assert.match(cap.allText(), /a solid block is above it/);
     });
 
     test('a chest that does not open in time is given up; a late window is closed', async () => {
@@ -687,14 +689,14 @@ describe('fetchItem', () => {
         assert.equal(res.text, 'I took 3 bread from the chest at (-13, 64, 28). There was no more.');
     });
 
-    test('without a chest in the index it looks into the chests within 32 blocks first', async () => {
+    test('without a chest in the index it looks into the chests it does not know within 16 blocks first (v0.1.4.8, E1)', async () => {
         const world = makeWorld();
-        world.container(20, 64, 0, { items: [['bread', 7]] });
+        world.container(12, 64, 0, { items: [['bread', 7]] });
         world.container(3, 64, 0, { items: [['dirt', 7]] });
         const bot = makeBot(world);
         const ctx = makeCtx();
         const res = await S.fetchItem(bot, ctx, 'bread', 2, fastClock());
-        assert.equal(res.text, 'I took 2 bread from the chest at (20, 64, 0).');
+        assert.equal(res.text, 'I took 2 bread from the chest at (12, 64, 0).');
         assert.equal(ctx.chests.size, 2);
     });
 

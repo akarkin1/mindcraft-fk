@@ -6,9 +6,11 @@
 //   every ripe plant was taken and planted again (wheat of age 0 where the ripe wheat stood), every
 //   unripe plant stands (age 2), no block of farmland became dirt, the fence is whole, the gate is
 //   closed at the end, the bot carries the 7 wheat, and the text of F2.
+// v0.1.4.8 (W30): the modes of the owner are on (MODES_PROFILE, with the home reflexes) and !harvest is typed
+// by the player in the chat (the real path of a typed command), as in play.
 import {
     scenarioMain, check, note, exitSoon, startAgent, stopRealAgent, NEW_FLAGS_OFF, placeBot, resetBot, command_,
-    giveItems, startTrace, printTrace, entityPos, fmt,
+    giveItems, startTrace, printTrace, entityPos, fmt, withModes, orderChannel,
 } from './helpers.js';
 import {
     region, prepareRegion, releaseRegion, fieldPlan, buildField, cropAges, blockNames, isOpen, stableInventory, itemsText,
@@ -28,9 +30,9 @@ await scenarioMain({
         const young = f.cells.filter((c) => c.spec.age === 2);
         const empty = f.cells.filter((c) => !c.spec.crop);
 
-        let agent = null;
+        let agent = null, orders = null;
         try {
-            const s = await startAgent(NAME, { ...NEW_FLAGS_OFF, protected_areas: true, world_memory: true, farming_pack: true });
+            const s = await startAgent(NAME, withModes({ ...NEW_FLAGS_OFF, protected_areas: true, world_memory: true, farming_pack: true }));
             agent = s.agent;
             await resetBot(NAME);
             await placeBot(agent, f.inside, 0);
@@ -38,13 +40,14 @@ await scenarioMain({
             const set = await command_(agent, `!setArea("wheat_farm", "farm", ${min.x}, ${g - 1}, ${min.z}, ${max.x}, ${g + 3}, ${max.z})`, 20000);
             check(set.includes('Area "wheat_farm" (farm) saved:'), 'precondition: the field is saved as the farm "wheat_farm"', JSON.stringify(set.slice(0, 200)));
             await placeBot(agent, f.outsideGate, 0);
+            orders = await orderChannel(s, { at: { x: r.ox + 16, y: g + 1, z: r.oz - 16 } });
             await giveItems(NAME, [['wheat_seeds', 8]], agent.bot);
             check(await isOpen(f.gate, 'oak_fence_gate') === false, 'precondition: the gate is closed');
             check((await cropAges(ripe.map((c) => c.above))).every((a) => a === 7), 'precondition: 7 wheat of age 7 stand in the field');
 
             const inField = { min: { x: min.x + 1, y: g, z: min.z + 1 }, max: { x: max.x - 1, y: g + 3, z: max.z - 1 } };
             const trace = startTrace(async () => ({ pos: await entityPos(NAME), gate: await isOpen(f.gate, 'oak_fence_gate') }), 250);
-            const reply = await command_(agent, '!harvest', 180000);
+            const reply = await orders.order('!harvest', 180000);
             const rows = await trace.stop();
             printTrace('!harvest', rows, { pos: (x) => fmt(x.pos), inField: (x) => (inBox(x.pos, inField) ? 'yes' : 'no'), gate: (x) => (x.gate ? 'open' : 'closed') });
             note(`!harvest answered ${JSON.stringify(reply)}`);
@@ -73,6 +76,7 @@ await scenarioMain({
             check((inv.items.wheat || 0) === 7, 'the bot carries the 7 wheat of the harvest', `wheat ${inv.items.wheat || 0}`);
             check(s.realCalls.length === 0, 'no request reached a real model class', JSON.stringify(s.realCalls));
         } finally {
+            if (orders) await orders.quit();
             await stopRealAgent(agent);
             await releaseRegion(r);
         }

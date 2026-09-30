@@ -8,12 +8,14 @@
 //           and takes 5 bread. Then three chests near the bot: one full, one with 2 free slots, one
 //           empty. !storeItems with 5 stacks of oak_log: the full chest is skipped, the logs go into
 //           the second chest until it is full and the rest into the third.
+// v0.1.4.8 (W30): the modes of the owner are on (MODES_PROFILE, with the home reflexes) and every order is
+// typed by the player in the chat (the real path of a typed command), as in play.
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-    scenarioMain, check, note, exitSoon, startAgent, stopRealAgent, NEW_FLAGS_OFF, placeBot, resetBot, command_,
-    waitFor, runPhase, listFiles, giveItems,
+    scenarioMain, check, note, exitSoon, startAgent, stopRealAgent, NEW_FLAGS_OFF, placeBot, resetBot,
+    waitFor, runPhase, listFiles, giveItems, withModes, orderChannel,
 } from './helpers.js';
 import {
     region, prepareRegion, releaseRegion, buildChest, buildFullChest, chestItems, stableInventory, itemsText, hdist,
@@ -22,7 +24,7 @@ import {
 
 const SELF = fileURLToPath(import.meta.url);
 const NAME = 'w_store';
-const SETTINGS = { ...NEW_FLAGS_OFF, storage_pack: true, world_memory: true, keep_items: {} };
+const SETTINGS = withModes({ ...NEW_FLAGS_OFF, storage_pack: true, world_memory: true, keep_items: {} });
 
 const r = region(48);
 const g = r.g;
@@ -55,12 +57,13 @@ function sameItems(a, b) {
 
 await scenarioMain({
     async first() {
-        let agent = null;
+        let agent = null, orders = null;
         try {
             const s = await startAgent(NAME, SETTINGS);
             agent = s.agent;
             await resetBot(NAME);
             await placeBot(agent, START, -90);
+            orders = await orderChannel(s, { at: { x: r.ox - 12, y: g + 1, z: r.oz + 12 } });
             await giveItems(NAME, GIVE, agent.bot);
             const full = await waitFor(() => agent.bot.inventory.items().length >= 36, { ms: 8000 });
             const before = await stableInventory(NAME);
@@ -68,7 +71,7 @@ await scenarioMain({
             check(full.ok && agent.bot.inventory.emptySlotCount() === 0, 'precondition: the inventory of the bot is full (36 stacks)', `${agent.bot.inventory.items().length} stacks`);
             check(sameItems(await chestItems(CHEST_A), {}), 'precondition: the chest is empty');
 
-            const reply = await command_(agent, '!storeItems', 120000);
+            const reply = await orders.order('!storeItems', 120000);
             note(`first: !storeItems answered ${JSON.stringify(reply)}`);
             const inChest = await chestItems(CHEST_A);
             const after = await stableInventory(NAME);
@@ -82,34 +85,40 @@ await scenarioMain({
                 tools.map((t) => `${t} ${after.items[t] || 0}`).join(', '));
             check(!after.items.wooden_pickaxe, 'first: the third pickaxe (wooden) was stored');
             check(after.items.bread === 16, 'first: the bot keeps 16 bread (food up to 16)', `bread ${after.items.bread || 0}`);
-            check(after.items.torch === 64, 'first: the bot keeps its 64 torches', `torch ${after.items.torch || 0}`);
+            // v0.1.4.8 (W30): with the modes of the owner, torch_placing may put a torch at the feet of the idle bot
+            // before the order (it places one when no torch is within 6 blocks, by day too)
+            const torches = before.items.torch || 0;
+            if (torches < 64) note(`first: the mode torch_placing placed ${64 - torches} torch(es) before the order`);
+            check(after.items.torch === torches, `first: the bot keeps all its torches (${torches})`, `torch ${after.items.torch || 0}`);
             check(after.items.cobblestone === 32, 'first: the bot keeps 32 cobblestone', `cobblestone ${after.items.cobblestone || 0}`);
             const other = ['bow', 'arrow', 'ladder', 'crafting_table', 'red_bed', 'water_bucket'];
             check(other.every((t) => after.items[t] === KEEP[t]), 'first: the bot keeps bow, 64 arrows, 20 ladders, the crafting table, the bed and the water bucket',
                 other.map((t) => `${t} ${after.items[t] || 0}`).join(', '));
-            check(sameItems(after.items, KEEP), 'first: the bot carries exactly what the plan keeps', `carries ${itemsText(after.items)}`);
+            check(sameItems(after.items, { ...KEEP, torch: torches }), 'first: the bot carries exactly what the plan keeps', `carries ${itemsText(after.items)}`);
             check(s.realCalls.length === 0, 'first: no request reached a real model class', JSON.stringify(s.realCalls));
         } finally {
+            if (orders) await orders.quit();
             await stopRealAgent(agent);
         }
     },
 
     async second() {
-        let agent = null;
+        let agent = null, orders = null;
         try {
             const s = await startAgent(NAME, SETTINGS);
             agent = s.agent;
             await resetBot(NAME);
             await placeBot(agent, FAR, -90);
+            orders = await orderChannel(s, { at: { x: r.ox - 20, y: g + 1, z: r.oz - 12 } });
             note(`second: the bot stands at ${fmt(await entityPos(NAME))}, ${hdist(FAR, CHEST_A).toFixed(0)} blocks from the chest`);
 
-            const list = await command_(agent, '!chests', 20000);
+            const list = await orders.order('!chests', 20000);
             note(`second: !chests answered ${JSON.stringify(list)}`);
             const line = `- ${at(CHEST_A)}: 1152 dirt, 32 cobblestone, 30 wheat, 12 wheat_seeds, 8 bread, 1 wooden_pickaxe, 4 free slots`;
             check(list.startsWith('Chests I know in this world:'), 'second: after the restart !chests starts with "Chests I know in this world:"', JSON.stringify(list.slice(0, 120)));
             check(list.split('\n').includes(line), 'second: after the restart the index still knows the chest and its items (the line of S3)', `expected ${JSON.stringify(line)}`);
 
-            const fetched = await command_(agent, '!fetchItem("bread", 5)', 120000);
+            const fetched = await orders.order('!fetchItem("bread", 5)', 120000);
             note(`second: !fetchItem answered ${JSON.stringify(fetched)}`);
             const inv = await stableInventory(NAME);
             const inChest = await chestItems(CHEST_A);
@@ -126,7 +135,7 @@ await scenarioMain({
             await placeBot(agent, NEAR_BCD, -90);
             await giveItems(NAME, [['oak_log', 320]], agent.bot);
             await waitFor(() => agent.bot.inventory.items().filter((i) => i.name === 'oak_log').length === 5, { ms: 5000 });
-            const stored = await command_(agent, '!storeItems', 120000);
+            const stored = await orders.order('!storeItems', 120000);
             note(`second: !storeItems answered ${JSON.stringify(stored)}`);
             const b = await chestItems(CHEST_B), c = await chestItems(CHEST_C), d = await chestItems(CHEST_D);
             const inv2 = await stableInventory(NAME);
@@ -138,6 +147,7 @@ await scenarioMain({
             check(!inv2.items.oak_log, 'second: the bot carries no oak_log', `oak_log ${inv2.items.oak_log || 0}`);
             check(s.realCalls.length === 0, 'second: no request reached a real model class', JSON.stringify(s.realCalls));
         } finally {
+            if (orders) await orders.quit();
             await stopRealAgent(agent);
         }
     },

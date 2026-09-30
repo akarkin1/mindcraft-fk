@@ -10,8 +10,8 @@
 //          server sends (without chunks mineflayer runs no physics and the pathfinder can neither
 //          move nor stop, so the move would never end and the kill timer would fire rightly). The
 //          clock of the process is moved 25 s forward so the mode finds the bot stuck, it starts
-//          moveAway, !stop interrupts it, and the process is still alive 11 s later (the kill timer
-//          of 10 s was cleared). Date.now can only be moved without the SES lockdown, so this
+//          moveAway, !stop interrupts it (the move ends short of its 5 blocks, without "I'm free."), and
+//          the process is still alive 11 s later (the kill timer of 10 s was cleared). Date.now can only be moved without the SES lockdown, so this
 //          phase runs with sandbox_lockdown false.
 // main     text to speech without sound: systemSpeechCommand builds a command without the text for
 //          a hostile text (win32, darwin, linux); speak.js starts no shell; on Windows the real
@@ -137,9 +137,17 @@ await scenarioMain({
             }
             await withTimeout(running, 15000, 'the interrupted !useSkill').catch((e) => note(e.message));
             const finished = logs.find((l) => l.includes('Mode unstuck finished executing')) ?? '(no line)';
-            note(`unstuck: ${finished.replace(/\s+/g, ' ').slice(0, 220)}`);
-            check(stuckAt !== null && finished.includes('PathStopped'), 'unstuck: !stop interrupted the move of the mode (moveAway ended with PathStopped)',
-                finished.replace(/\s+/g, ' ').slice(0, 160));
+            const flat = finished.replace(/\s+/g, ' ');
+            note(`unstuck: ${flat.slice(0, 220)}`);
+            // v0.1.4.8 (part B): an interrupted walk ends quietly and moveAway says where it stopped ("Moved away
+            // from (x, y, z) to (x, y, z)."); before, the stop showed as PathStopped. moveAway(5) of the escape that
+            // ends short of its 5 blocks, without "I'm free.", was cut short by the stop.
+            const moved = /Moved away from \((-?\d+), (-?\d+), (-?\d+)\) to \((-?\d+), (-?\d+), (-?\d+)\)/.exec(flat);
+            const walked = moved ? Math.hypot(Number(moved[4]) - Number(moved[1]), Number(moved[6]) - Number(moved[3])) : null;
+            const freeSaid = String(agent.bot.modes.behavior_log).includes("I'm free.");
+            check(stuckAt !== null && (flat.includes('PathStopped') || (walked !== null && walked < 5)) && !freeSaid,
+                'unstuck: !stop interrupted the move of the mode (moveAway(5) ended short of its 5 blocks, or with PathStopped, and the mode did not say "I\'m free.")',
+                `${flat.slice(0, 160)}; walked ${walked === null ? '?' : walked.toFixed(1)} blocks; "I'm free." ${freeSaid}`);
             const tStop = realNow();
             await sleep(11500);
             const killed = logs.some((l) => l.includes('Agent process ends with exit code')) || logs.some((l) => l.includes("couldn't get unstuck"));

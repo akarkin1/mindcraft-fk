@@ -1,15 +1,20 @@
 // Doors, fence gates and trapdoors for the home pack (spec v0.1.4.6 H2): find them, open and close
-// them and CHECK the new state, pass through a door and close it behind the bot.
+// them and CHECK the new state, pass through a door and close it behind the bot. The door service of
+// v0.1.4.8 (C5) closes what the bot opened or passed, beside every action.
 //
 // After bot.activateBlock the new state arrives with a block update from the server. Nothing here
 // assumes the click worked: every change is read back from the world.
 import { Vec3 } from 'vec3';
-import { containsPos, interiorBox, isBox } from './box_math.js';
+import { isGatedArea } from './area_kinds.js';
+import { containsPos, expandBox, interiorBox, isBox } from './box_math.js';
 import { isInsideArea } from './shelter_logic.js';
 import { botPos, clockOf, dimensionOf, entitiesWhere, listAreas, logTo, otherPlayerPositions } from './context.js';
-import { doorCenter, doorSides, openableKind, sideOf } from './door_logic.js';
+import { DOOR_SERVICE_RULES, DoorWatch, doorAxis, doorCenter, doorSides, openableKind, sideOf } from './door_logic.js';
+import { reflexOn } from './home_settings.js';
 import { isHostileForShelter } from './night_logic.js';
-import { goals, gotoGoal, isNear, makeMovements, walkNear } from './motion.js';
+import { blockReader, goals, gotoGoal, isNear, makeMovements, walkNear } from './motion.js';
+import { isNoStandBlock, isNoStandCell } from './stand_logic.js';
+import { closeNearText, doorClosedLog } from './texts.js';
 
 /** How far a hostile mob may be from the door (16) and from the bot when it approaches (24). */
 export const DOOR_SAFETY = Object.freeze({ nearDoor: 16, nearBot: 24 });
@@ -70,19 +75,40 @@ function readOpenable(bot, pos) {
 }
 
 /**
+ * The state of the door, gate or trapdoor at a position as { x, y, z, kind, open, name, facing }, read
+ * from the world now (the upper half of a door is read as its lower half). undefined: the block is
+ * not loaded; null: no openable there. Never throws.
+ * @param {object} bot
+ * @param {{x,y,z}} pos
+ * @returns {object|null|undefined}
+ */
+export function doorState(bot, pos) {
+    try {
+        return readOpenable(bot, pos);
+    } catch {
+        return undefined;
+    }
+}
+
+/**
  * Doors, fence gates and trapdoors that a hand can open (no iron) within range, as
  * { x, y, z, kind, open, name, facing }. Of a door only the lower block. Never throws.
  * @param {object} bot
  * @param {number} [range]
+ * @param {{x,y,z}|null} [from] measure the range from this point instead of the bot (fix round X6)
  * @returns {object[]}
  */
-export function findOpenables(bot, range = 6) {
+export function findOpenables(bot, range = 6, from = null) {
     try {
-        const positions = bot.findBlocks({
+        const query = {
             matching: block => block !== null && block !== undefined && openableKind(block.name) !== null,
             maxDistance: range,
             count: 64,
-        });
+        };
+        if (isPoint(from)) {
+            query.point = new Vec3(from.x, from.y, from.z);
+        }
+        const positions = bot.findBlocks(query);
         const out = [];
         const seen = new Set();
         for (const pos of positions) {
@@ -107,13 +133,17 @@ export function findOpenables(bot, range = 6) {
 
 async function waitForState(bot, pos, wantOpen, ms, clock) {
     const start = clock.now();
+    // also bounded by the number of looks, so a clock that does not advance cannot keep it waiting
+    const looks = Math.ceil(Math.max(ms, 1) / 25) + 1;
+    let n = 0;
     do {
         await clock.wait(Math.min(25, ms));
         const state = readOpenable(bot, pos);
         if (state && state.open === wantOpen) {
             return true;
         }
-    } while (clock.now() - start < ms);
+        n++;
+    } while (clock.now() - start < ms && n < looks);
     return false;
 }
 
@@ -236,8 +266,15 @@ export function doorIsSafe(bot, door, ctx = {}) {
     }
 }
 
-// Which side of the door is the goal: the inner side of `inside`, or the side away from the bot.
-function chooseSides(state, sides, bot, inside) {
+// Which side of the door is the goal: the inner side of `inside`, the side of the point `toward`
+// (fix round X6: the place "home" when there is no area), or the side away from the bot.
+function chooseSides(state, sides, bot, inside, toward = null) {
+    if (isPoint(toward) && !isBox(inside)) {
+        const goal = sideOf(state, toward);
+        if (goal !== 0) {
+            return goal === 1 ? { near: sides[0], far: sides[1], farSign: 1 } : { near: sides[1], far: sides[0], farSign: -1 };
+        }
+    }
     if (isBox(inside)) {
         const room = interiorBox(inside);
         const inA = containsPos(room, { x: sides[0].x + 0.5, y: sides[0].y, z: sides[0].z + 0.5 });
@@ -259,16 +296,152 @@ function outcome(ok, reason, text, extra = {}) {
     return { ok, reason, text, ...extra };
 }
 
+// ---- the step through (fix round, the last holes of X1) ----
+
+/** How far behind the gate farmland makes the step careful. */
+export const FARMLAND_BEHIND = 2;
+
+const LIQUID_NAMES = new Set(['water', 'lava', 'bubble_column']);
+
+function blockAtXYZ(bot, x, y, z) {
+    try {
+        return bot.blockAt(new Vec3(x, y, z));
+    } catch {
+        return null;
+    }
+}
+
+function isEmptyBlock(b) {
+    return Boolean(b) && (b.boundingBox === 'empty' || /^(cave_|void_)?air$/.test(b.name)) && !LIQUID_NAMES.has(b.name);
+}
+
+function isStandGround(b) {
+    const props = typeof b?.getProperties === 'function' ? b.getProperties() : (b?._properties ?? null);
+    return Boolean(b) && b.boundingBox === 'block' && !LIQUID_NAMES.has(b.name) && !isNoStandBlock(b.name, props);
+}
+
+/**
+ * True when the far side of the door lies in a farm: `inside` is a farm (an area of type farm, or a box
+ * without a type as the farming pack gives it), or farmland lies within 2 blocks behind the door, down to 2
+ * blocks below the feet. Never throws.
+ * @param {object} bot
+ * @param {object} state the door as readOpenable gives it
+ * @param {-1|1} farSign
+ * @param {object} [inside]
+ * @returns {boolean}
+ */
+export function farmBehind(bot, state, farSign, inside = null) {
+    try {
+        if (isBox(inside) && (inside.type === undefined || inside.type === null || inside.type === 'farm')) {
+            return true;
+        }
+        const axis = doorAxis(state.facing);
+        if (!axis) {
+            return false;
+        }
+        for (let a = 1; a <= FARMLAND_BEHIND; a++) {
+            for (let l = -FARMLAND_BEHIND; l <= FARMLAND_BEHIND; l++) {
+                const x = state.x + axis.x * farSign * a + axis.z * l;
+                const z = state.z + axis.z * farSign * a + axis.x * l;
+                for (let dy = -2; dy <= 0; dy++) {
+                    if (blockAtXYZ(bot, x, state.y + dy, z)?.name === 'farmland') {
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
+    } catch {
+        return false;
+    }
+}
+
+/**
+ * The movements of the step through a door: without digging and without opening doors. Careful ones (into
+ * a farm) also without sprint (a sprint jump), without parkour and without any step up, which needs a jump
+ * (a jump onto farmland makes it dirt): the path search gets no neighbour higher than the node.
+ * @param {object} bot
+ * @param {boolean} careful
+ * @returns {object} a Movements object
+ */
+export function stepMovements(bot, careful) {
+    const m = makeMovements(bot, { dig: false, doors: false });
+    if (careful) {
+        m.allowSprinting = false;
+        m.allowParkour = false;
+        m.getMoveJumpUp = () => {};
+        const neighbors = m.getNeighbors;
+        if (typeof neighbors === 'function') {
+            m.getNeighbors = function (node) {
+                const list = neighbors.call(this, node);
+                return Array.isArray(list) ? list.filter(n => n.y <= node.y) : list;
+            };
+        }
+    }
+    return m;
+}
+
+function throughMovements(bot, state, farSign, inside) {
+    return stepMovements(bot, farmBehind(bot, state, farSign, inside));
+}
+
+/**
+ * The cell of the far side where the step through ends: `far` itself, or when it is in or on a block of
+ * isNoStandBlock (a composter, chest, fence ... behind the door), the nearest free cell beside it on the
+ * far side: feet and head free, solid ground under them that is no such block, within 2 blocks. null when
+ * there is none. Never throws.
+ * @param {object} bot
+ * @param {object} state the door
+ * @param {{x,y,z}} far
+ * @param {-1|1} farSign
+ * @returns {{x: number, y: number, z: number}|null}
+ */
+export function freeFarCell(bot, state, far, farSign) {
+    try {
+        const get = blockReader(bot);
+        if (!isNoStandCell(get, far)) {
+            return far;
+        }
+        const found = [];
+        for (let dx = -2; dx <= 2; dx++) {
+            for (let dz = -2; dz <= 2; dz++) {
+                for (const dy of [0, 1, -1]) {
+                    const c = { x: far.x + dx, y: far.y + dy, z: far.z + dz };
+                    if ((dx === 0 && dz === 0) || sideOf(state, { x: c.x + 0.5, y: c.y, z: c.z + 0.5 }) !== farSign || isNoStandCell(get, c)) {
+                        continue;
+                    }
+                    if (isEmptyBlock(blockAtXYZ(bot, c.x, c.y, c.z)) && isEmptyBlock(blockAtXYZ(bot, c.x, c.y + 1, c.z))
+                        && isStandGround(blockAtXYZ(bot, c.x, c.y - 1, c.z))) {
+                        found.push({ c, d: Math.hypot(dx, dy, dz) + Math.abs(dy) * 0.5 });
+                    }
+                }
+            }
+        }
+        found.sort((a, b) => a.d - b.d || a.c.x - b.c.x || a.c.z - b.c.z || a.c.y - b.c.y);
+        return found.length > 0 ? found[0].c : null;
+    } catch {
+        return null;
+    }
+}
+
+// The word for an openable in a text (X13): door, gate or trapdoor.
+function kindName(state) {
+    return state?.kind === 'gate' || state?.kind === 'trapdoor' ? state.kind : 'door';
+}
+
 /**
  * Walks to the door, opens it, walks through to the other side, closes it and checks that it is
- * closed. The other side is the side inside `options.inside` (an area) when given, otherwise the
- * side away from the bot. Refuses with `monster_near` when doorIsSafe says no, before walking and
- * again at the door. A door it opened but could not pass is closed again.
+ * closed. The other side is the side inside `options.inside` (an area) when given, else the side of
+ * the point `options.toward` (fix round X6), otherwise the side away from the bot. Refuses with
+ * `monster_near` when doorIsSafe says no, before walking and again at the door. A door it opened but
+ * could not pass is closed again. The texts name what it is: door, gate or trapdoor (X13).
  * @param {object} bot
  * @param {{x,y,z}} door the lower block of a door, or a fence gate
  * @param {object} [ctx] { areas, log, now, ... }
- * @param {{inside?: object, timeoutMs?: number, allowDig?: boolean, areas?: object[], checkMs?: number, now?: Function, wait?: Function}} [options]
- *   allowDig (default true): the walk to the door may dig as its last try, never within 2 blocks of an area
+ * @param {{inside?: object, toward?: {x,y,z}, movements?: object, timeoutMs?: number, allowDig?: boolean, areas?: object[], checkMs?: number, now?: Function, wait?: Function}} [options]
+ *   allowDig (default true): the walk to the door may dig as its last try, never within 2 blocks of an area;
+ *   movements (fix round): the movements of the step through, else careful ones into a farm (no sprint,
+ *   parkour or jump). The step ends on a free cell of the far side, never in or on a composter, chest, fence.
  * @returns {Promise<{ok: boolean, reason: string|null, text: string, mob?: object}>}
  *   reasons: no_path, blocked, could_not_close, monster_near, interrupted, error
  */
@@ -306,8 +479,9 @@ async function passInner(bot, door, ctx, options) {
     if (!sides) {
         return outcome(false, 'blocked', `I cannot walk through the ${state.kind} at ${where(state)}.`);
     }
-    const { near, far, farSign } = chooseSides(state, sides, bot, options.inside);
-    const monster = (danger) => outcome(false, 'monster_near', `A monster is near the door at ${where(state)}. I do not open it.`, { mob: danger.entity });
+    const { near, far, farSign } = chooseSides(state, sides, bot, options.inside, options.toward);
+    const kind = kindName(state); // X13: the texts name what it is: door, gate or trapdoor
+    const monster = (danger) => outcome(false, 'monster_near', `A monster is near the ${kind} at ${where(state)}. I do not open it.`, { mob: danger.entity });
 
     // Already through: inside the area when one is given, otherwise just behind the door. The side of
     // the door's plane alone is not enough: a bot behind the opposite wall is on that side too.
@@ -317,9 +491,9 @@ async function passInner(bot, door, ctx, options) {
         : sideOf(state, botPos(bot)) === farSign && isNear(bot, farCenter, 2.5);
     if (alreadyThrough) {
         if (state.open && !(await closeDoor(bot, state, { ...doorOpts, respectInterrupt: false }))) {
-            return outcome(false, 'could_not_close', `I could not close the door at ${where(state)}.`);
+            return outcome(false, 'could_not_close', `I could not close the ${kind} at ${where(state)}.`);
         }
-        return outcome(true, null, `I am on the other side of the door at ${where(state)}. It is closed.`);
+        return outcome(true, null, `I am on the other side of the ${kind} at ${where(state)}. It is closed.`);
     }
 
     let danger = doorDanger(bot, state, ctx);
@@ -335,13 +509,13 @@ async function passInner(bot, door, ctx, options) {
         const walk = await walkNear(bot, near, 1, { timeoutMs: walkMs, clock, allowDig: options.allowDig !== false, areas });
         if (!walk.ok) {
             if (walk.reason === 'interrupted') {
-                return outcome(false, 'interrupted', 'I stopped on my way to the door.');
+                return outcome(false, 'interrupted', `I stopped on my way to the ${kind}.`);
             }
-            return outcome(false, 'no_path', `I found no way to the door at ${where(state)}.`);
+            return outcome(false, 'no_path', `I found no way to the ${kind} at ${where(state)}.`);
         }
     }
     if (bot.interrupt_code) {
-        return outcome(false, 'interrupted', 'I stopped at the door.');
+        return outcome(false, 'interrupted', `I stopped at the ${kind}.`);
     }
     danger = doorDanger(bot, state, ctx);
     if (danger) {
@@ -363,34 +537,37 @@ async function passInner(bot, door, ctx, options) {
     if (!(await openDoor(bot, state, doorOpts))) {
         await closeAgain();
         if (bot.interrupt_code) {
-            return outcome(false, 'interrupted', 'I stopped at the door.');
+            return outcome(false, 'interrupted', `I stopped at the ${kind}.`);
         }
-        return outcome(false, 'blocked', `The door at ${where(state)} does not open.`);
+        return outcome(false, 'blocked', `The ${kind} at ${where(state)} does not open.`);
     }
     if (bot.interrupt_code) {
         await closeAgain();
-        return outcome(false, 'interrupted', 'I stopped at the door.');
+        return outcome(false, 'interrupted', `I stopped at the ${kind}.`);
     }
 
-    const through = await gotoGoal(bot, new goals.GoalBlock(far.x, far.y, far.z), {
-        movements: makeMovements(bot, { dig: false, doors: false }),
+    // fix round (X1): the step ends on a free cell of the far side, never in or on a composter, chest,
+    // fence ...; into a farm without sprint, parkour or jump (a jump onto farmland makes it dirt)
+    const target = freeFarCell(bot, state, far, farSign) ?? far;
+    const through = await gotoGoal(bot, new goals.GoalBlock(target.x, target.y, target.z), {
+        movements: options.movements ?? throughMovements(bot, state, farSign, options.inside),
         timeoutMs: isFiniteNumber(options.throughMs) ? options.throughMs : 8000,
         clock,
     });
     const pos = botPos(bot);
-    const arrived = sideOf(state, pos) === farSign && isNear(bot, { x: far.x + 0.5, y: far.y, z: far.z + 0.5 }, 1.8);
+    const arrived = sideOf(state, pos) === farSign && isNear(bot, { x: target.x + 0.5, y: target.y, z: target.z + 0.5 }, 1.8);
     if (!arrived) {
         await closeAgain();
         if (through.reason === 'interrupted' || bot.interrupt_code) {
-            return outcome(false, 'interrupted', 'I stopped in the doorway.');
+            return outcome(false, 'interrupted', `I stopped in the ${kind === 'gate' ? 'gateway' : 'doorway'}.`);
         }
-        return outcome(false, 'blocked', `I could not get through the door at ${where(state)}.`);
+        return outcome(false, 'blocked', `I could not get through the ${kind} at ${where(state)}.`);
     }
     if (!(await closeDoor(bot, state, { ...doorOpts, respectInterrupt: false }))) {
-        return outcome(false, 'could_not_close', `I went through the door at ${where(state)}, but I could not close it.`);
+        return outcome(false, 'could_not_close', `I went through the ${kind} at ${where(state)}, but I could not close it.`);
     }
-    logTo(ctx, `I went through the door at ${where(state)} and closed it.`);
-    return outcome(true, null, `I went through the door at ${where(state)} and closed it.`);
+    logTo(ctx, `I went through the ${kind} at ${where(state)} and closed it.`);
+    return outcome(true, null, `I went through the ${kind} at ${where(state)} and closed it.`);
 }
 
 /**
@@ -432,5 +609,229 @@ export async function closeDoorsBehind(bot, tracker, ctx = {}, options = {}) {
         return [];
     } finally {
         closing.delete(bot);
+    }
+}
+
+// ---- the door service (v0.1.4.8, C5) ----
+
+// Entities that do not stand in a door: items, orbs and projectiles.
+const NOT_STANDING = new Set(['item', 'experience_orb', 'arrow', 'spectral_arrow', 'trident', 'snowball', 'egg', 'ender_pearl',
+    'fishing_bobber', 'potion', 'experience_bottle', 'falling_block', 'painting', 'item_frame', 'glow_item_frame']);
+
+/**
+ * True when an entity other than the bot stands in the openable: its box overlaps the block of a
+ * gate or trapdoor, or the two blocks of a door. Items, orbs and projectiles do not count. Never throws.
+ * @param {object} bot
+ * @param {{x,y,z,kind}} door
+ * @returns {boolean}
+ */
+export function somebodyInDoor(bot, door) {
+    try {
+        const cx = door.x + 0.5;
+        const cz = door.z + 0.5;
+        const top = door.y + (door.kind === 'door' ? 2 : 1);
+        for (const entity of Object.values(bot?.entities ?? {})) {
+            if (!entity || entity === bot.entity || !entity.position || NOT_STANDING.has(entity.name) || entity.type === 'projectile') {
+                continue;
+            }
+            const p = entity.position;
+            const reach = (isFiniteNumber(entity.width) ? entity.width : 0.6) / 2 + 0.5;
+            const height = isFiniteNumber(entity.height) ? entity.height : 1.8;
+            if (Math.abs(p.x - cx) < reach && Math.abs(p.z - cz) < reach && p.y < top && p.y + height > door.y) {
+                return true;
+            }
+        }
+        return false;
+    } catch {
+        return true; // when in doubt, leave the door open
+    }
+}
+
+function botStandsIn(bot, door) {
+    const me = botPos(bot);
+    return Boolean(me) && Math.abs(me.x - (door.x + 0.5)) < 0.8 && Math.abs(me.z - (door.z + 0.5)) < 0.8
+        && me.y < door.y + (door.kind === 'door' ? 2 : 1) && me.y + 1.8 > door.y;
+}
+
+function where3(door) {
+    return `(${door.x}, ${door.y}, ${door.z})`;
+}
+
+/**
+ * The door service of the bot (spec v0.1.4.8, I8 and C5). It follows doors, fence gates and trapdoors
+ * (see DoorWatch of door_logic.js) and closes what the bot opened or passed, beside every action.
+ * - `tick()`: for the background mode door_closing, called on every tick of the modes. It reads the
+ *   openables within 6 blocks at most every 250 ms, starts at most one closing at a time without
+ *   waiting for it, never touches the path search, never throws. Nothing while home_pack or
+ *   home_reflexes.door_closing is off, while passThrough runs, while the bot eats, sleeps or has a
+ *   window open.
+ * - `closeNear(range = 6)`: the function of !closeDoor. Closes every open openable within range and
+ *   reads its state back. Text: `I closed oak_door at (x, y, z) and oak_fence_gate at (x, y, z).` or
+ *   `All doors near me are closed.`
+ * - `stop()`: the service does nothing more.
+ * Each closing prints `Door service: closed <name> at (x, y, z).` to the console.
+ * @param {object} bot
+ * @param {object} ctx { areas, settings, now, log }
+ * @param {{now?: Function, wait?: Function, scanMs?: number, checkMs?: number}} [options] for tests
+ * @returns {{tick: () => void, stop: () => void, closeNear: (range?: number) => Promise<object>}}
+ */
+export function createDoorService(bot, ctx = {}, options = {}) {
+    const clock = clockOf(ctx, options);
+    const watch = new DoorWatch();
+    const scanMs = isFiniteNumber(options?.scanMs) ? options.scanMs : 250;
+    const checkMs = isFiniteNumber(options?.checkMs) ? options.checkMs : 300;
+    let stopped = false;
+    let busy = false;
+    let lastScan = -Infinity;
+    let lastPos = null;
+    let movedAt = -Infinity;
+
+    const read = (me, now) => {
+        const areas = listAreas(ctx, dimensionOf(bot)).map(a => ({ area: a, box: expandBox(a, 1) }));
+        const doors = findOpenables(bot, DOOR_SERVICE_RULES.scanRange).map(door => ({
+            ...door,
+            inArea: areas.some(({ box }) => containsPos(box, door)),
+            gated: door.kind === 'gate' && areas.some(({ area, box }) => isGatedArea(area) && containsPos(box, door)),
+            occupied: somebodyInDoor(bot, door),
+        }));
+        const moving = now - movedAt <= DOOR_SERVICE_RULES.movedWithinMs || bot.pathfinder?.isMoving?.() === true;
+        return watch.observe({ now, botPos: me, moving, doors, players: otherPlayerPositions(bot, 16) });
+    };
+
+    const closeOne = async (door) => {
+        let outcome = 'unknown';
+        try {
+            const before = readOpenable(bot, door);
+            if (!before || !before.open) {
+                // closed meanwhile; after an attempt of the service the late block update shows its click
+                if (before && (watch.noted(door)?.tries ?? 0) > 0) {
+                    console.log(doorClosedLog(before));
+                }
+                watch.forget(door);
+                return;
+            }
+            if (somebodyInDoor(bot, door) || botStandsIn(bot, door)) {
+                return; // tried again on a later look
+            }
+            const closed = await closeDoor(bot, before, { tries: 1, checkMs, respectInterrupt: false, ctx, now: options?.now, wait: options?.wait });
+            outcome = watch.attempt(door, closed, clock.now());
+            if (closed) {
+                console.log(doorClosedLog(before));
+            } else if (outcome === 'gave_up') {
+                console.log(`Door service: could not close ${before.name} at ${where3(before)}.`);
+            }
+        } catch (err) {
+            console.warn('Door service: closing failed:', err?.message ?? err);
+            watch.attempt(door, false, clock.now());
+        }
+    };
+
+    return {
+        tick() {
+            if (stopped) {
+                return;
+            }
+            try {
+                if (!reflexOn(ctx?.settings, 'door_closing')) {
+                    return;
+                }
+                const me = botPos(bot);
+                if (!me) {
+                    return;
+                }
+                const now = clock.now();
+                if (lastPos && Math.hypot(me.x - lastPos.x, me.y - lastPos.y, me.z - lastPos.z) >= 0.1) {
+                    movedAt = now;
+                }
+                lastPos = me;
+                if (now - lastScan < scanMs) {
+                    return;
+                }
+                lastScan = now;
+                const toClose = read(me, now);
+                for (const door of watch.takeClosedLate()) {
+                    console.log(doorClosedLog(door));
+                }
+                if (busy || toClose.length === 0 || isPassingThrough(bot) || bot.usingHeldItem === true || bot.currentWindow
+                    || bot.isSleeping === true) {
+                    return;
+                }
+                busy = true;
+                closeOne(toClose[0]).finally(() => {
+                    busy = false;
+                });
+            } catch (err) {
+                console.warn('Door service: the look failed:', err?.message ?? err);
+            }
+        },
+
+        stop() {
+            stopped = true;
+            watch.reset();
+        },
+
+        async closeNear(range = DOOR_SERVICE_RULES.scanRange) {
+            return await closeNear(bot, ctx, range, { ...options, checkMs });
+        },
+    };
+}
+
+/**
+ * Closes every open door, gate and trapdoor within range and reads its state back (v0.1.4.8, C5; the
+ * command !closeDoor). One farther than 4.5 blocks is walked to first, without opening or digging.
+ * An openable in which somebody stands stays open. Texts: `I closed oak_door at (x, y, z) and
+ * oak_fence_gate at (x, y, z).`, `All doors near me are closed.`, plus `I could not close ...` and
+ * `I left ... open, because somebody stands in it.` Never throws.
+ * @param {object} bot
+ * @param {object} ctx
+ * @param {number} [range]
+ * @param {{now?: Function, wait?: Function, checkMs?: number}} [options]
+ * @returns {Promise<{ok: boolean, reason: string|null, closed: object[], failed: object[], occupied: object[], text: string}>}
+ */
+export async function closeNear(bot, ctx = {}, range = DOOR_SERVICE_RULES.scanRange, options = {}) {
+    const closed = [];
+    const failed = [];
+    const occupied = [];
+    try {
+        const clock = clockOf(ctx, options);
+        const r = isFiniteNumber(range) && range > 0 ? Math.min(range, 16) : DOOR_SERVICE_RULES.scanRange;
+        const me = botPos(bot);
+        const open = findOpenables(bot, r).filter(d => d.open)
+            .sort((a, b) => (me ? Math.hypot(a.x + 0.5 - me.x, a.y - me.y, a.z + 0.5 - me.z) - Math.hypot(b.x + 0.5 - me.x, b.y - me.y, b.z + 0.5 - me.z) : 0));
+        let interrupted = false;
+        for (const door of open) {
+            if (bot.interrupt_code) {
+                interrupted = true;
+                break;
+            }
+            if (somebodyInDoor(bot, door) || botStandsIn(bot, door)) {
+                occupied.push(door);
+                continue;
+            }
+            if (!isNear(bot, doorCenter(door), 4.5)) {
+                await walkNear(bot, door, 3, { clock, timeoutMs: 8000, allowDoors: false });
+                if (readOpenable(bot, door)?.open !== true) {
+                    continue; // somebody else closed it meanwhile, or it is gone
+                }
+            }
+            const ok = await closeDoor(bot, door, { tries: 3, checkMs: isFiniteNumber(options.checkMs) ? options.checkMs : 300,
+                respectInterrupt: false, ctx, now: options.now, wait: options.wait });
+            if (ok) {
+                closed.push(door);
+                console.log(doorClosedLog(door));
+            } else {
+                failed.push(door);
+            }
+        }
+        let text = closeNearText({ closed, failed, occupied });
+        if (interrupted) {
+            text = `${closed.length > 0 ? text : 'I closed no door.'} I was stopped before I closed the rest.`;
+        }
+        const reason = interrupted ? 'interrupted' : (failed.length > 0 ? 'could_not_close' : (occupied.length > 0 ? 'occupied' : null));
+        logTo(ctx, text);
+        return { ok: reason === null, reason, closed, failed, occupied, text };
+    } catch (err) {
+        console.warn('Home pack: closing the doors near me failed:', err?.message ?? err);
+        return { ok: false, reason: 'error', closed, failed, occupied, text: `I could not close the doors: ${err?.message ?? err}` };
     }
 }

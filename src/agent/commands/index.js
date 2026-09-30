@@ -1,6 +1,7 @@
 import { getBlockId, getItemId } from "../../utils/mcdata.js";
 import { actionsList } from './actions.js';
 import { queryList } from './queries.js';
+import { commandText } from '../repeat_guard.js';
 
 let suppressNoDomainWarning = true;
 
@@ -131,6 +132,12 @@ export function parseCommandMessage(message, lookup = getCommand) {
         switch(param.type) {
             case 'int':
                 arg = Number.parseInt(arg); break;
+            case 'IntOrString':
+                // v0.1.4.8: a whole number becomes a number, any other text stays text (!chopTrees takes its
+                // arguments in either order, the command sorts them)
+                if (/^-?\d+$/.test(arg.trim()))
+                    arg = Number.parseInt(arg);
+                break;
             case 'float':
                 arg = Number.parseFloat(arg); break;
             case 'boolean':
@@ -229,7 +236,77 @@ function numParams(command) {
     return commandParams(command).length;
 }
 
-export async function executeCommand(agent, message) {
+/**
+ * The text of the command in a message, as the player could type it: `!mineOre("iron", 8, false)`, with
+ * the defaults filled in and strings in double quotes. The command as written when it does not parse,
+ * null for a message without a command (v0.1.4.8, the restart context and the refusals of the guard).
+ * @param {string} message
+ * @returns {string|null}
+ */
+export function commandCallText(message) {
+    if (typeof message !== 'string')
+        return null;
+    const match = message.match(commandRegex);
+    if (!match)
+        return null;
+    try {
+        const parsed = parseCommandMessage(message);
+        if (typeof parsed === 'object' && parsed !== null)
+            return commandText(parsed.commandName, parsed.args);
+    } catch (error) {
+        // the command as written
+    }
+    return match[0];
+}
+
+// v0.1.4.8 (F5): what the repeat guard learns of a command that ran. A command of a pack (pack: the result
+// that runForText of actions.js noted on the entry of the command) counts as failed when the pack said
+// ok: false, and a stopped one (reason interrupted) is not recorded; any other command gives its text and
+// the guard judges it. Never throws.
+function recordRepeat(guard, name, args, result, pack) {
+    if (!guard)
+        return;
+    try {
+        if (pack && typeof pack === 'object') {
+            if (pack.reason !== 'interrupted')
+                guard.record(name, args, typeof pack.text === 'string' ? pack.text : result, pack.ok === false);
+            return;
+        }
+        // the heading of an action output is no part of the result that the refusal quotes
+        guard.record(name, args, typeof result === 'string' ? result.replace(/^Action output:\s*/, '') : result);
+    } catch (error) {
+        console.warn('The repeat guard could not record the command:', error);
+    }
+}
+
+// True when the command is the order that a player typed in the chat and that runs now (v0.1.4.8).
+function typedOrder(agent, name) {
+    const order = agent?.last_order;
+    return order !== null && typeof order === 'object' && order.typed === true && order.command === name;
+}
+
+// v0.1.4.8 (X4): the player who typed the command: options.by, else the player of agent.last_order; null
+// when it is not known.
+function typedBy(agent, options) {
+    if (typeof options?.by === 'string' && options.by !== '')
+        return options.by;
+    const by = agent?.last_order?.by;
+    return typeof by === 'string' && by !== '' ? by : null;
+}
+
+/**
+ * Runs the command in a message. v0.1.4.8: with the setting repeat_guard (agent.repeat_guard), a command
+ * of the model that failed the same way again and again is refused before it runs; a command that the
+ * player typed is recorded and never refused (see recordRepeat). While it runs, the command is on
+ * agent.running_commands ({ name, args, text, typed, by?, pack? }), the last one is the newest. by (v0.1.4.8,
+ * X4): the player who typed it, options.by or the player of agent.last_order; a stopped command tells him.
+ * @param {object} agent
+ * @param {string} message
+ * @param {{typed?: boolean, by?: string}} [options] typed: the player typed the command in the chat; without it
+ *   agent.last_order decides (an order with typed: true and the same command)
+ * @returns {Promise<string|undefined>}
+ */
+export async function executeCommand(agent, message, options = {}) {
     let parsed = parseCommandMessage(message);
     if (typeof parsed === 'string')
         return parsed; //The command was incorrectly formatted or an invalid input was given.
@@ -243,8 +320,30 @@ export async function executeCommand(agent, message) {
         if (numArgs !== numParams(command))
             return `Command ${command.name} was given ${numArgs} args, but requires ${numParams(command)} args.`;
         else {
-            const result = await command.perform(agent, ...parsed.args);
-            return result;
+            const typed = typeof options?.typed === 'boolean' ? options.typed : typedOrder(agent, command.name);
+            const guard = agent?.repeat_guard ?? null;
+            if (guard && !typed) {
+                const refusal = guard.check(command.name, parsed.args);
+                if (refusal) {
+                    console.log('Repeat guard:', refusal);
+                    return refusal;
+                }
+            }
+            const running = { name: command.name, args: parsed.args, text: commandText(command.name, parsed.args), typed };
+            const by = typed ? typedBy(agent, options) : null;
+            if (by)
+                running.by = by;
+            const list = agent && typeof agent === 'object' ? (Array.isArray(agent.running_commands) ? agent.running_commands : (agent.running_commands = [])) : [];
+            list.push(running);
+            try {
+                const result = await command.perform(agent, ...parsed.args);
+                recordRepeat(guard, command.name, parsed.args, result, running.pack);
+                return result;
+            } finally {
+                const at = list.indexOf(running);
+                if (at >= 0)
+                    list.splice(at, 1);
+            }
         }
     }
 }
@@ -258,6 +357,7 @@ export function getCommandDocs(agent, commands = commandList) {
         'BlockName':         'string',
         'ItemName':          'string',
         'BlockOrItemName':   'string',
+        'IntOrString':       'number',
         'boolean':           'bool'
     }
     let docs = `\n*COMMAND DOCS\n You can use the following commands to perform actions and get information about the world. 

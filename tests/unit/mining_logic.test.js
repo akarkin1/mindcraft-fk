@@ -626,17 +626,17 @@ describe('protected areas, the room and the entrance', () => {
         assert.deepEqual(e, { x: 5, y: 61, z: 5, dir: 'north' });
     });
 
-    test('chooseEntrance: a house 5 blocks from the bot: at least 8 blocks from it', () => {
+    test('chooseEntrance: a house 5 blocks from the bot: at least 16 blocks from it (v0.1.4.8, E4)', () => {
         const ground = () => ({ y: 60, name: 'grass_block' });
         const bot = { x: 21.5, y: 61, z: 3.5 };
         const e = L.chooseEntrance({ bot, level: 16, areas: [house], ground });
         assert.ok(e);
-        assert.ok(L.shaftAllowed(e, [house]));
+        assert.ok(L.entranceAllowed(e, [house]));
         const back = L.offset(e, L.backOf(e.dir));
-        assert.ok(L.shaftAllowed(back, [house]), 'the place behind the shaft too');
+        assert.ok(L.entranceAllowed(back, [house]), 'the place behind the shaft too');
         assert.ok(Math.hypot(e.x - 21, e.z - 3) <= 48);
-        assert.ok(e.x - 16 >= 8, `x ${e.x}`);
-        assert.deepEqual(e, { x: 25, y: 61, z: 3, dir: 'south' }, 'east first, but the place behind the shaft would be 7.5 from the house');
+        assert.ok(e.x - 17 >= 16, `x ${e.x}`);
+        assert.deepEqual(e, { x: 33, y: 61, z: 3, dir: 'south' }, 'east first, but the place behind the shaft would be 15.5 from the house');
         const shallow = L.chooseEntrance({ bot, level: 50, areas: [house], ground });
         assert.notEqual(shallow.dir, 'west', 'at level 50 the tunnel may not lead under the house');
     });

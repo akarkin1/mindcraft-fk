@@ -341,7 +341,8 @@ describe('chopTrees: stops and failures', () => {
         const res = await W.chopTrees(bot, ctx, 8, '', opts);
         assert.equal(res.ok, false);
         assert.equal(res.reason, 'interrupted');
-        assert.equal(res.text, 'I cut 1 oak tree and got 1 oak_log. I had no sapling to plant. I was interrupted.');
+        // v0.1.4.8, I6: what was cut and what was picked up
+        assert.equal(res.text, 'I cut 1 oak_log and picked up 1. I was stopped.');
         assert.equal(digs(bot).length, 1);
     });
 

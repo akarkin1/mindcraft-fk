@@ -1,14 +1,16 @@
 // Cutting trees (spec v0.1.4.7 T2). The decisions are in tree_logic.js; this module walks, digs,
 // builds the pillar, picks up the drops and plants the saplings.
 //
-// ctx: { areas, log, now } of the home pack. Nothing else is needed.
+// ctx: { areas, log, now } of the home pack. Since v0.1.4.8 (E3) also tools.ensureTool (optional):
+// the axe before the first tree.
 import { Vec3 } from 'vec3';
 import { distanceToBox } from '../home/box_math.js';
 import { botPos, clockOf, dimensionOf, entitiesWhere, listAreas, logTo } from '../home/context.js';
 import { goals, gotoGoal, makeMovements, stopMoving } from '../home/motion.js';
 import { EXEC_REACH, PLACE_LIMIT_MS, digBlock, eyeOfBot, feetOf, isAirLike, nameAt, settle, vec, waitUntil } from './actions.js';
-import { findItem, itemCounts } from './inventory.js';
-import { chopText, unknownWoodText } from './texts.js';
+import { findItem, inventoryOf, itemCounts } from './inventory.js';
+import { chopStoppedText, chopText, unknownWoodText } from './texts.js';
+import { bestTool } from './tool_logic.js';
 import { DEFAULT_REACH, TREE_DEFAULTS, chopPlan, findTrees, inReach, isLeaves, isTrunkLog, normaliseWoodKind,
     pickTree, saplingOf, treeKey, treeNearAreas } from './tree_logic.js';
 
@@ -31,6 +33,8 @@ export const LOG_DROP_RADIUS = 6;
 export const INVENTORY_QUIET_MS = 500;
 /** Within this distance of a protected area the bot never digs to get somewhere (spec 0.1). */
 export const NO_DIG_NEAR_AREA = 8;
+/** After each tree the drops are picked up for at least this long, also when the time of the tree is over (v0.1.4.8, E3). */
+export const DROP_PICKUP_MS = 30000;
 
 const MAX_TREES_PER_SEARCH = 8;
 const MAX_LOG_CANDIDATES = 512;
@@ -68,9 +72,18 @@ function sum(counts) {
     return Object.values(counts).reduce((s, n) => s + n, 0);
 }
 
-// Breaks a block of the tree (a log by default), holding the best axe for logs.
-function digAt(bot, pos, run, accept = isTrunkLog) {
-    return digBlock(bot, pos, run.clock, accept, isTrunkLog(nameAt(bot, pos)) ? 'axe' : null);
+// Breaks a block of the tree (a log by default), holding the best axe or an empty hand, never a
+// pickaxe (v0.1.4.8, E3). A dig is progress for the reflex unstuck (I1).
+async function digAt(bot, pos, run, accept = isTrunkLog) {
+    const ok = await digBlock(bot, pos, run.clock, accept, 'axe', { handIfNone: true });
+    if (ok) {
+        try {
+            bot.modes?.noteProgress?.('wood');
+        } catch {
+            // the modes are optional
+        }
+    }
+    return ok;
 }
 
 // Movements: never place; dig only leaves, and only far from protected areas.
@@ -335,12 +348,14 @@ async function getInReach(bot, step, tree, state, run) {
 }
 
 /**
- * Cuts one tree by its plan. The pillar is taken away at the end and the drops are picked up.
- * @returns {Promise<{broken: number, leftover: number, stopped: string|null}>}
+ * Cuts one tree by its plan. The pillar is taken away at the end and the drops are picked up, also
+ * when the time of the tree is over (v0.1.4.8, E3); `cut` counts the logs broken by name.
+ * @returns {Promise<{broken: number, cut: Object<string, number>, leftover: number, stopped: string|null}>}
  */
 async function cutTree(bot, tree, run) {
     const plan = chopPlan(tree, DEFAULT_REACH);
     const state = { pillar: [], pillarFailed: false };
+    const cut = {};
     let broken = 0;
     let leftover = plan.leftover.length;
     let stopped = null;
@@ -352,7 +367,8 @@ async function cutTree(bot, tree, run) {
         if (run.clock.now() >= run.deadline) {
             stopped = 'time';
         }
-        if (!isTrunkLog(nameAt(bot, step.log))) {
+        const name = nameAt(bot, step.log);
+        if (!isTrunkLog(name)) {
             continue;
         }
         if (stopped || !(await getInReach(bot, step, tree, state, run))) {
@@ -361,18 +377,52 @@ async function cutTree(bot, tree, run) {
         }
         if (await digAt(bot, step.log, run)) {
             broken++;
+            cut[name] = (cut[name] ?? 0) + 1;
         } else if (isTrunkLog(nameAt(bot, step.log))) {
             leftover++;
         }
     }
     await takePillarDown(bot, state, run);
+    const pick = { ...run, deadline: Math.max(run.deadline, run.clock.now() + DROP_PICKUP_MS) };
     if (!bot.interrupt_code) {
-        await collectDrops(bot, [tree.base], run);
+        await collectDrops(bot, [tree.base], pick);
     }
     if (!bot.interrupt_code && broken > 0) {
-        await waitForLogDrops(bot, tree, run);
+        await waitForLogDrops(bot, tree, pick);
     }
-    return { broken, leftover, stopped: stopped ?? (bot.interrupt_code ? 'interrupted' : null), pillarLeft: state.pillar.length };
+    return { broken, cut, leftover, stopped: stopped ?? (bot.interrupt_code ? 'interrupted' : null), pillarLeft: state.pillar.length };
+}
+
+// The axe before the first tree (v0.1.4.8, E3): ctx.tools.ensureTool from what the bot carries and
+// what the chests hold, never by cutting trees or breaking stone for it. Without it: by hand.
+async function getAxe(bot, ctx, options) {
+    if (options.axe === false || bestTool(inventoryOf(bot), 'axe') || typeof ctx?.tools?.ensureTool !== 'function') {
+        return;
+    }
+    try {
+        const r = await ctx.tools.ensureTool(bot, ctx, 'axe', '', { collect: false, now: options.now, wait: options.wait });
+        if (!r?.ok && r?.text) {
+            logTo(ctx, `I cut by hand. ${r.text}`);
+        }
+    } catch (err) {
+        console.warn('Wood pack: getting an axe failed:', err?.message ?? err);
+    }
+}
+
+/**
+ * The arguments of chopTrees in either order (spec v0.1.4.8 E3, T5): `(8, 'oak')` and `('oak', 8)`,
+ * also `('', 8)`. Pure.
+ * @param {*} count
+ * @param {*} kind
+ * @returns {{count: *, kind: *}}
+ */
+export function chopArgs(count, kind) {
+    const isNum = v => (typeof v === 'number' && Number.isFinite(v)) || (typeof v === 'string' && /^\s*\d+\s*$/.test(v));
+    const isWord = v => v === undefined || v === null || (typeof v === 'string' && !isNum(v));
+    if (!isNum(count) && isWord(count) && isNum(kind)) {
+        return { count: kind, kind: count ?? '' };
+    }
+    return { count, kind };
 }
 
 function getBlockNameOf(bot) {
@@ -499,19 +549,26 @@ async function plantSaplings(bot, trees, run) {
  * of dirt or of logs it has cut and is taken away. It picks up the drops, waits up to 10 seconds
  * for saplings of leaves that decay, and plants one sapling where each tree stood. It holds the
  * best axe it has, or works by hand. Ends on bot.interrupt_code and after 10 minutes. Never throws.
+ * Since v0.1.4.8 (E3): `count` is the number of logs wanted (whole trees are cut until the
+ * inventory gained that many or more); the arguments are taken in either order (chopArgs); before
+ * the first tree it gets an axe through ctx.tools.ensureTool (from the inventory and the chests
+ * only) and without one it cuts by hand, never with a pickaxe; the drops are picked up after each
+ * tree; stopped, it says what it cut and what it picked up (I6).
  * @param {object} bot
- * @param {object} ctx { areas, log, now }
+ * @param {object} ctx { areas, log, now, tools? }
  * @param {number} [count] logs wanted, default 8
  * @param {string} [kind] kind of wood, empty for any
- * @param {{range?: number, timeoutMs?: number, now?: Function, wait?: Function}} [options]
- * @returns {Promise<{ok: boolean, reason: string|null, logs: number, trees: number, saplings: number, text: string}>}
- *   logs: the logs gained; trees: the trees cut; saplings: the saplings planted
+ * @param {{range?: number, timeoutMs?: number, now?: Function, wait?: Function, axe?: boolean}} [options]
+ *   axe: false leaves the axe out (ensureTool itself cuts trees for wood)
+ * @returns {Promise<{ok: boolean, reason: string|null, logs: number, cut: number, trees: number, saplings: number, text: string}>}
+ *   logs: the logs gained; cut: the logs broken; trees: the trees cut; saplings: the saplings planted
  */
 export async function chopTrees(bot, ctx = {}, count = 8, kind = '', options = {}) {
+    ({ count, kind } = chopArgs(count, kind));
     const wanted = Math.min(positiveInt(count, 8), 1024);
-    const request = normaliseWoodKind(kind);
+    const request = normaliseWoodKind(kind ?? '');
     if (!request.known) {
-        return { ok: false, reason: 'unknown_kind', logs: 0, trees: 0, saplings: 0, text: unknownWoodText(kind) };
+        return { ok: false, reason: 'unknown_kind', logs: 0, cut: 0, trees: 0, saplings: 0, text: unknownWoodText(kind) };
     }
     try {
         const clock = clockOf(ctx, options);
@@ -522,6 +579,7 @@ export async function chopTrees(bot, ctx = {}, count = 8, kind = '', options = {
         const before = logCounts(bot);
         const done = new Set();
         const cut = [];
+        const broken = {};
         let found = 0;
         let leftover = 0;
         let stopped = null;
@@ -540,12 +598,22 @@ export async function chopTrees(bot, ctx = {}, count = 8, kind = '', options = {
                 noMore = cut.length > 0;
                 break;
             }
+            if (found === 0) {
+                await getAxe(bot, ctx, options);
+                if (bot.interrupt_code) {
+                    stopped = 'interrupted';
+                    break;
+                }
+            }
             found++;
             done.add(treeKey(tree));
             logTo(ctx, `Cutting the ${tree.kind} tree at (${tree.base.x}, ${tree.base.y}, ${tree.base.z}).`);
             // A started tree is finished: its own limit, not the rest of the whole limit.
             const run = { clock, deadline: clock.now() + TREE_LIMIT_MS, movements: movementsFor(bot, tree, areas) };
             const res = await cutTree(bot, tree, run);
+            for (const [name, n] of Object.entries(res.cut ?? {})) {
+                broken[name] = (broken[name] ?? 0) + n;
+            }
             if (res.broken > 0) {
                 cut.push(tree);
                 leftover += res.leftover;
@@ -568,17 +636,19 @@ export async function chopTrees(bot, ctx = {}, count = 8, kind = '', options = {
             await quietInventory(bot, clock);
         }
         const logs = gainedLogs(bot, before);
-        const text = chopText({ trees: cut.map(t => t.kind), logs, planted, leftover, noMore, stopped, found, kind: request.kind, range });
+        // I6: stopped, the text says what was cut and what was picked up
+        const text = stopped === 'interrupted' ? chopStoppedText({ cut: broken, picked: sum(logs) })
+            : chopText({ trees: cut.map(t => t.kind), logs, planted, leftover, noMore, stopped, found, kind: request.kind, range });
         logTo(ctx, text);
         const ok = cut.length > 0 && stopped !== 'interrupted';
         let reason = null;
         if (!ok) {
             reason = stopped ?? (found > 0 ? 'unreachable' : 'no_tree');
         }
-        return { ok, reason, logs: sum(logs), trees: cut.length, saplings: planted, text };
+        return { ok, reason, logs: sum(logs), cut: sum(broken), trees: cut.length, saplings: planted, text };
     } catch (err) {
         console.warn('Wood pack: cutting trees failed:', err?.message ?? err);
         stopMoving(bot);
-        return { ok: false, reason: 'error', logs: 0, trees: 0, saplings: 0, text: `I could not cut trees: ${err?.message ?? err}` };
+        return { ok: false, reason: 'error', logs: 0, cut: 0, trees: 0, saplings: 0, text: `I could not cut trees: ${err?.message ?? err}` };
     }
 }

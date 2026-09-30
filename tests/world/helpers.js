@@ -26,6 +26,14 @@ export const NEW_FLAGS_OFF = {
     storage_pack: false, farming_pack: false, wood_pack: false, mining_pack: false,
 };
 
+// The switches of v0.1.4.6 and v0.1.4.7 as the owner plays (his settings.js of the play test of v0.1.4.7:
+// every pack on, protected areas and rules on, creeper_fighting off). The base of the scenarios of v0.1.4.8
+// in the base world; the settings of v0.1.4.8 come on top (FLAGS_0148_OFF, FLAGS_0148_ON).
+export const OWNER_SWITCHES = Object.freeze({
+    ...NEW_FLAGS_OFF, world_memory: true, protected_areas: true, player_rules: true, home_pack: true, creeper_fighting: false,
+    storage_pack: true, farming_pack: true, wood_pack: true, mining_pack: true, max_command_result_chars: 3000, keep_items: {},
+});
+
 // The commands of release v0.1.4.6 that the model may see only while their part is on.
 export const NEW_COMMANDS = {
     protected_areas: ['!rememberArea', '!setArea', '!forgetArea', '!areas', '!allowChanges'],
@@ -66,11 +74,15 @@ export async function giveItems(player, items, bot = null) {
 // (`ctx` is agent.packContext()), for the functions of the spec that have no command of their own.
 // Resolves with { result, action, ms }: the result object of the pack function, or
 // { ok: false, reason: 'threw', text } when it threw (the spec says it never throws).
+// v0.1.4.8, I1: the glue pauses the mode unstuck at the start of every pack command (runPack); a pack
+// function run here gets the same, so that with the modes of the owner on it runs as it would inside
+// its command (!mineOre runs descendToLevel, setupMineBase and digTunnel).
 export async function runSkill(agent, label, fn, ms = 300000) {
     const t0 = Date.now();
     let result = null;
     const action = await withTimeout(agent.actions.runAction(`action:${label}`, async () => {
         try {
+            if (agent.bot.modes?.exists?.('unstuck')) agent.bot.modes.pause('unstuck');
             result = await fn(agent.bot, agent.packContext());
         } catch (e) {
             result = { ok: false, reason: 'threw', text: errText(e) };
@@ -150,11 +162,28 @@ export function requireControl() {
 // options.usage(request): when given, every request of either fake model reports this usage
 // ({ model, input_tokens, output_tokens }) through reportUsage of src/agent/cost/usage_context.js,
 // the way the Claude adapter does (spec C4, amendment 1: fakes report usage themselves).
+//
+// v0.1.4.8: every started agent is recorded (see recordAgent): the messages it handles, what it says,
+// its behaviour log, its history and every line of its console (started.logs). options.killExpected:
+// cleanKill ends the process as in play; without this option it also prints a failed check first, so
+// the report says why the scenario ended. When the profile sets modes, a check proves that they are
+// set as asked (a mode that the settings leave out would otherwise go unnoticed).
 export async function startAgent(name, overrides = {}, options = {}) {
     requireControl();
     let reportUsage = null;
     if (options.usage) ({ reportUsage } = await importProject('src/agent/cost/usage_context.js'));
+    const logs = recordConsole('log'); // before the lockdown, which wraps console.log like the original
     const started = await startRealAgent(name, env.port, { ...overrides });
+    started.logs = logs;
+    recordAgent(started, options);
+    const wanted = overrides.profile?.modes;
+    if (wanted && typeof wanted === 'object') {
+        const modes = started.agent.bot.modes;
+        const wrong = Object.entries(wanted).filter(([m, on]) => (modes.exists(m) ? modes.isOn(m) !== on : on === true));
+        note(`modes of the agent: ${JSON.stringify(modes.getJson())}`);
+        check(wrong.length === 0, 'the modes of the agent are as the profile of the scenario sets them',
+            wrong.map(([m, on]) => `${m}: wanted ${on}, ${modes.exists(m) ? 'is ' + modes.isOn(m) : 'does not exist'}`).join('; '));
+    }
     // The 1.21.8 server ignores every action of a player (dig, place, use) until the client reports
     // that it has loaded the world (packet player_loaded, new in 1.21.4) or 60 ticks have passed.
     // mineflayer 4.33 never sends that packet: a dig in the first 3 s after the spawn is dropped
@@ -187,6 +216,185 @@ export async function startAgent(name, overrides = {}, options = {}) {
         };
     }
     return started;
+}
+
+// ------------------------------------------------------------------ v0.1.4.8: the modes of the owner
+
+// The reflexes of the home pack (settings.home_reflexes). The modes exist only while home_pack is on.
+export const HOME_REFLEXES = Object.freeze({ door_closing: true, night_shelter: true, creeper_safety: true, hunger: true });
+
+// The modes of profiles/defaults/assistant.json, the base profile of the owner, plus the home reflexes
+// (spec v0.1.4.8 section 12, T2.1). Every scenario that tests a skill runs with them.
+export const MODES_PROFILE = Object.freeze({
+    self_preservation: true, unstuck: true, cowardice: false, self_defense: true, hunting: false,
+    item_collecting: true, torch_placing: true, elbow_room: true, idle_staring: true, cheat: false,
+    ...HOME_REFLEXES,
+});
+
+// The settings of a scenario with the modes of the owner: home_pack on with all its reflexes (the pack
+// brings the reflexes), and MODES_PROFILE as the modes of the profile. `modes` changes single modes.
+export function withModes(settings = {}, modes = {}) {
+    return {
+        ...settings,
+        home_pack: true,
+        home_reflexes: { ...(settings.home_reflexes || {}), ...HOME_REFLEXES },
+        profile: { ...(settings.profile || {}), modes: { ...MODES_PROFILE, ...modes } },
+    };
+}
+
+// The new settings of v0.1.4.8 (spec section 2) with their defaults: the behaviour of v0.1.4.7. The
+// flags-off scenario and the base of the others; a scenario switches on what it tests.
+export const FLAGS_0148_OFF = Object.freeze({
+    stuck_restart_after: 1, protect_built_blocks: false, knowledge_in_prompt: false, knowledge_max_chars: 600,
+    repeat_guard: 0, restart_context: false, say_results: false, flee_below_health: 0, log_timestamps: false,
+    examples_by_last_request: false,
+});
+
+// Every setting of v0.1.4.8 on, as the owner will play with it (the long run W60).
+export const FLAGS_0148_ON = Object.freeze({
+    stuck_restart_after: 3, protect_built_blocks: true, knowledge_in_prompt: true, knowledge_max_chars: 600,
+    repeat_guard: 3, restart_context: true, say_results: true, flee_below_health: 8, log_timestamps: true,
+    examples_by_last_request: true,
+});
+
+// The commands of v0.1.4.8 by switch (spec section 11, 10). !chests and !mineOre existed before.
+export const COMMANDS_0148 = { always: ['!pickUpItems'], home_pack: ['!closeDoor'] };
+
+// The texts of the mode unstuck (spec A2).
+export const STUCK_SAID = "I'm stuck!";
+export const FREE_SAID = "I'm free.";
+
+// ------------------------------------------------------------------ v0.1.4.8: what the agent did
+
+// Records what a started agent does, without changing it (every wrapper calls the original):
+//   started.messages  every call of handleMessage: { source, message, t0, t1, done, value, error, result }
+//                     `result` is the text that a command typed by a player answered in the chat
+//   started.routeCalls every routeResponse: { to, message, t, claimed } (started.routes is the list of the
+//                     routed replies of the fake model, see startAgent)
+//   started.chats     every openChat (the chat of the bot, also the texts of the modes): { text, t }
+//   started.behavior  every line that went into the behaviour log of the modes: { text, t }
+//   started.added     every history.add: { name, content, t }
+//   started.killed    the text of cleanKill, or null
+// A rejection of handleMessage stays unhandled, as without the recorder.
+const USED_LINE = /^\*\S+ used \S+\*$/;
+
+function claimResult(started, m) {
+    const found = started.routeCalls.slice(m.routeFrom).filter((x) => x.to === m.source && !x.claimed && !USED_LINE.test(x.message));
+    const last = found[found.length - 1];
+    if (!last) return '';
+    last.claimed = true;
+    return last.message;
+}
+
+export function recordAgent(started, options = {}) {
+    const agent = started.agent;
+    if (started.messages) return started;
+    Object.assign(started, { messages: [], routeCalls: [], chats: [], behavior: [], added: [], killed: null });
+    const handle = agent.handleMessage;
+    agent.handleMessage = function recordedHandle(source, message, max) {
+        const m = { source, message: String(message), t0: Date.now(), t1: null, done: false, routeFrom: started.routeCalls.length, addedFrom: started.added.length };
+        started.messages.push(m);
+        const p = handle.call(this, source, message, max);
+        p.then((v) => { m.t1 = Date.now(); m.value = v; m.result = claimResult(started, m); m.done = true; },
+            (e) => { m.t1 = Date.now(); m.error = e; m.done = true; throw e; });
+        return p;
+    };
+    const route = agent.routeResponse;
+    agent.routeResponse = function recordedRoute(to, message) {
+        started.routeCalls.push({ to, message: String(message), t: Date.now(), claimed: false });
+        return route.call(this, to, message);
+    };
+    const open = agent.openChat;
+    agent.openChat = function recordedChat(message) {
+        started.chats.push({ text: String(message), t: Date.now() });
+        return open.call(this, message);
+    };
+    started.killExpected = Boolean(options.killExpected); // a scenario may set it before a kill it expects
+    const kill = agent.cleanKill;
+    agent.cleanKill = function recordedKill(msg, code) {
+        started.killed = String(msg ?? '');
+        console.log(`${started.killExpected ? 'NOTE' : 'CHECK FAIL'} the agent process was ended by cleanKill: ${msg}`);
+        return kill.call(this, msg, code);
+    };
+    const history = agent.history;
+    const add = history.add;
+    history.add = function recordedAdd(name, content) {
+        started.added.push({ name, content: String(content), t: Date.now() });
+        return add.apply(this, arguments);
+    };
+    const modes = agent.bot?.modes;
+    if (modes) {
+        let value = String(modes.behavior_log ?? '');
+        Object.defineProperty(modes, 'behavior_log', {
+            configurable: true, enumerable: true,
+            get() { return value; },
+            set(v) {
+                const s = String(v);
+                if (s.length > value.length && s.startsWith(value)) {
+                    for (const line of s.slice(value.length).split('\n')) if (line.trim()) started.behavior.push({ text: line, t: Date.now() });
+                }
+                value = s;
+            },
+        });
+    }
+    return started;
+}
+
+// Lines of the behaviour log (and of the chat of the bot) since t that contain `part`.
+export function saidSince(started, part, t = 0) {
+    const lines = [...started.behavior.filter((x) => x.t >= t).map((x) => x.text), ...started.chats.filter((x) => x.t >= t).map((x) => x.text)];
+    return lines.filter((l) => l.includes(part));
+}
+
+// ------------------------------------------------------------------ v0.1.4.8: orders in the chat
+
+// The player who gives the orders (spec section 12, T2.1: "gives the order as a chat command"): a plain
+// mineflayer bot types the command in the chat, and the agent runs it through its real path (respondFunc,
+// handleMessage, the branch of a command typed by a player: last_order is set, the model is not asked).
+//   ch.order(text, ms)      types a command and waits for its answer; resolves with the text the agent
+//                           answered in the chat, '' when it answered nothing, '(timeout)' when it did not
+//                           end within ms (it keeps running), '(not received)' when the agent never got it
+//   ch.orderInfo(text, ms)  the same with details: { reply, text, arrived, done, ms, stopped, record }
+//                           `stopped`: the history lines "... was stopped by ..." added while it ran (I5)
+//   ch.say(text)            a chat message (for the model); ch.player, ch.quit()
+// The player is in creative mode (monsters leave it alone) and stands at `at`.
+export async function orderChannel(started, { name = 'w_player', at = null, gamemode = 'creative' } = {}) {
+    recordAgent(started);
+    const player = await connectPlayer(name);
+    await command(`gamemode ${gamemode} ${name}`);
+    if (at) {
+        await tp(name, at);
+        await waitFor(() => player.entity && Math.hypot(player.entity.position.x - (at.x + 0.5), player.entity.position.z - (at.z + 0.5)) < 1, { ms: 5000, every: 50 });
+    }
+    const agentSees = await waitFor(() => Boolean(started.agent.bot.players?.[name]), { ms: 10000, every: 100 });
+    if (!agentSees.ok) note(`the agent does not list the player ${name} yet`);
+    const ch = { player, name, log: [] };
+    ch.say = (text) => player.chat(text);
+    ch.quit = () => quitPlayer(player);
+    ch.orderInfo = async (text, ms = 60000) => {
+        const from = started.messages.length;
+        const t0 = Date.now();
+        player.chat(text);
+        const got = await waitFor(() => started.messages.slice(from).find((m) => m.source === name && m.message === text), { ms: 15000, every: 50 });
+        if (!got.ok) {
+            const info = { text, reply: '(not received)', arrived: false, done: false, ms: Date.now() - t0, stopped: [], record: null };
+            ch.log.push(info);
+            note(`order ${text}: the agent did not receive it within 15 s`);
+            return info;
+        }
+        const m = got.value;
+        const done = await waitFor(() => m.done, { ms, every: 100 });
+        const stopped = started.added.slice(m.addedFrom).filter((a) => a.name === 'system' && /was stopped by/.test(a.content)).map((a) => a.content);
+        const info = {
+            text, arrived: true, done: done.ok, ms: Date.now() - t0, stopped, record: m,
+            reply: done.ok ? (m.result ?? '') : '(timeout)',
+        };
+        if (!done.ok) note(`order ${text}: no answer within ${ms} ms, it keeps running`);
+        ch.log.push(info);
+        return info;
+    };
+    ch.order = async (text, ms = 60000) => (await ch.orderInfo(text, ms)).reply;
+    return ch;
 }
 
 // ------------------------------------------------------------------ the player

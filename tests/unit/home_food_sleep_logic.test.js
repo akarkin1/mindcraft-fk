@@ -68,7 +68,7 @@ describe('food_logic: autoEatOptions', () => {
         assert.equal(opts.priority, 'foodPoints');
         assert.equal(opts.startAt, 14);
         assert.equal(opts.eatingTimeout, 3000);
-        assert.equal(opts.offhand, true);
+        assert.equal(opts.offhand, false, 'v0.1.4.8, C1: the food stays in the main hand');
         assert.equal(opts.equipOldItem, true);
         assert.equal(opts.checkOnItemPickup, true);
         assert.equal(opts.ignoreInventoryCheck, false);
@@ -196,18 +196,19 @@ describe('texts', () => {
 });
 
 describe('home_settings', () => {
+    // v0.1.4.8 (spec section 2): home_reflexes.hunger, default true
     test('defaults when the keys are absent', () => {
         assert.deepEqual(H.readHomeSettings({}), {
             home_pack: false,
-            reflexes: { door_closing: true, night_shelter: true, creeper_safety: true },
+            reflexes: { door_closing: true, night_shelter: true, creeper_safety: true, hunger: true },
             creeper_fighting: false,
         });
-        assert.deepEqual(H.readHomeSettings(undefined).reflexes, { door_closing: true, night_shelter: true, creeper_safety: true });
+        assert.deepEqual(H.readHomeSettings(undefined).reflexes, { door_closing: true, night_shelter: true, creeper_safety: true, hunger: true });
     });
 
     test('values of the settings are used, invalid ones count as the default', () => {
         const s = H.readHomeSettings({ home_pack: true, home_reflexes: { door_closing: false, night_shelter: 'no' }, creeper_fighting: true });
-        assert.deepEqual(s, { home_pack: true, reflexes: { door_closing: false, night_shelter: true, creeper_safety: true }, creeper_fighting: true });
+        assert.deepEqual(s, { home_pack: true, reflexes: { door_closing: false, night_shelter: true, creeper_safety: true, hunger: true }, creeper_fighting: true });
         assert.equal(H.readHomeSettings({ home_pack: 'yes', home_reflexes: [], creeper_fighting: 1 }).home_pack, false);
         assert.equal(H.readHomeSettings({ home_reflexes: null }).reflexes.creeper_safety, true);
     });
@@ -217,6 +218,6 @@ describe('home_settings', () => {
         assert.equal(H.reflexOn({ home_pack: false }, 'door_closing'), false);
         assert.equal(H.reflexOn({ home_pack: true, home_reflexes: { creeper_safety: false } }, 'creeper_safety'), false);
         assert.equal(H.reflexOn({ home_pack: true }, 'dancing'), false);
-        assert.deepEqual(Object.keys(H.HOME_REFLEX_DEFAULTS), ['door_closing', 'night_shelter', 'creeper_safety']);
+        assert.deepEqual(Object.keys(H.HOME_REFLEX_DEFAULTS), ['door_closing', 'night_shelter', 'creeper_safety', 'hunger']);
     });
 });

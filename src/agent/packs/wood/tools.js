@@ -5,17 +5,18 @@
 // - skills.craftRecipe(bot, name, times): crafting of the library (required);
 // - wood.chopTrees(bot, ctx, count): part T; without it the chopTrees of this pack;
 // - storage.fetchItem(bot, ctx, name, count): part S, optional: without it no chest is asked;
-// - chests: the chest index, optional: it tells which wood the chests hold.
+// - chests: the chest index, optional: it tells which wood the chests hold, and since v0.1.4.8
+//   (E3) what the choice of the material may count on.
 import { containsPos, expandBox } from '../home/box_math.js';
 import { clockOf, dimensionOf, entitiesWhere, listAreas, logTo } from '../home/context.js';
 import { goals, gotoGoal, makeMovements, walkNear } from '../home/motion.js';
 import { EXEC_REACH, digBlock, eyeOfBot, feetOf, isAirLike, nameAt } from './actions.js';
-import { countItems, inventoryOf } from './inventory.js';
+import { countItems, inventoryOf, itemCounts } from './inventory.js';
 import { chopTrees } from './wood.js';
-import { craftedSupplyText, craftedToolsText, haveToolText, needText, notCraftableText, unknownMaterialText,
+import { craftFailedText, craftedSupplyText, craftedToolsText, haveToolText, needText, notCraftableText, unknownMaterialText,
     unknownSupplyText, unknownToolText, withArticle } from './texts.js';
-import { bestTool, chooseMaterial, craftSteps, isWoodItem, normaliseSupply, normaliseToolRequest, supplySteps, toolName,
-    toolsOf, usesLeft } from './tool_logic.js';
+import { bestTool, chooseMaterial, craftSteps, isWoodItem, missingIngredient, normaliseSupply, normaliseToolRequest, parseTool,
+    supplySteps, toolName, toolsOf, usesLeft } from './tool_logic.js';
 import { WOOD_KINDS, inReach } from './tree_logic.js';
 
 /** Stone is broken for cobblestone within this distance. */
@@ -61,6 +62,30 @@ export function tableNear(bot) {
 function needFor(bot, missing, target) {
     const have = missing.name === 'coal' ? countItems(bot, n => n === 'coal' || n === 'charcoal') : countItems(bot, missing.name);
     return needText(missing.name, have + missing.count, have, target);
+}
+
+/**
+ * What the known chests of the dimension of the bot hold, added up by name (ctx.chests, the chest
+ * index). {} without an index. Never throws.
+ * @param {object} bot
+ * @param {object} ctx
+ * @returns {Object<string, number>}
+ */
+export function chestCounts(bot, ctx) {
+    const totals = {};
+    try {
+        const chests = typeof ctx?.chests?.list === 'function' ? ctx.chests.list(dimensionOf(bot)) : [];
+        for (const chest of Array.isArray(chests) ? chests : []) {
+            for (const [name, n] of Object.entries(chest?.items ?? {})) {
+                if (typeof n === 'number' && n > 0) {
+                    totals[name] = (totals[name] ?? 0) + n;
+                }
+            }
+        }
+    } catch {
+        return {};
+    }
+    return totals;
 }
 
 // Names of wood the chests of the index hold, most first; without an index the missing name.
@@ -187,7 +212,8 @@ export async function collectCobblestone(bot, ctx, need, options = {}) {
 }
 
 // Gets what the plan misses: from chests, then cobblestone by breaking stone (with a wooden
-// pickaxe made first when needed), then logs by cutting trees.
+// pickaxe made first when needed), then logs by cutting trees. With `run.options.collect` false
+// (v0.1.4.8, E3: the axe of chopTrees) only the chests are asked.
 async function gather(bot, ctx, planFn, target, run) {
     let plan = planFn();
     if (plan.missing.length === 0) {
@@ -200,6 +226,9 @@ async function gather(bot, ctx, planFn, target, run) {
     const hard = plan.missing.find(m => !isWoodItem(m.name) && m.name !== 'cobblestone');
     if (hard) {
         return { ok: false, reason: 'missing', text: needFor(bot, hard, target) };
+    }
+    if (run.options?.collect === false && plan.missing.length > 0) {
+        return { ok: false, reason: bot.interrupt_code ? 'interrupted' : 'missing', text: needFor(bot, plan.missing[0], target) };
     }
     const cobble = plan.missing.find(m => m.name === 'cobblestone');
     if (cobble) {
@@ -261,8 +290,28 @@ async function settledCount(bot, clock, item, ms = 2000) {
     return last;
 }
 
+// The inventory when its counts did not change for 400 ms, at most `ms` (v0.1.4.8, E3, M12: a stale
+// inventory right after a craft made the next step fail with "missing ingredient").
+async function settledInventory(bot, clock, ms = 2000) {
+    const snap = () => JSON.stringify(Object.entries(itemCounts(bot)).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
+    let last = snap();
+    let since = clock.now();
+    const start = clock.now();
+    while (clock.now() - start < ms && clock.now() - since < 400) {
+        await clock.wait(100);
+        const now = snap();
+        if (now !== last) {
+            last = now;
+            since = clock.now();
+        }
+    }
+    return inventoryOf(bot);
+}
+
 // Crafts the craft steps in order through ctx.skills.craftRecipe. A step that makes less than
-// planned is tried again with the rest (a recipe variant runs out: coal, then charcoal).
+// planned is tried again with the rest (a recipe variant runs out: coal, then charcoal). Since
+// v0.1.4.8 (E3, M12) the inventory is read again before each step, and a failed step names the
+// item and the ingredient it lacks.
 async function runSteps(bot, ctx, steps, clock) {
     const craft = ctx.skills?.craftRecipe;
     if (typeof craft !== 'function') {
@@ -273,7 +322,12 @@ async function runSteps(bot, ctx, steps, clock) {
             continue;
         }
         if (bot.interrupt_code) {
-            return { ok: false, reason: 'interrupted', text: 'I was interrupted.' };
+            return { ok: false, reason: 'interrupted', text: `I was stopped before I crafted ${s.item}.` };
+        }
+        const short = missingIngredient(s, await settledInventory(bot, clock));
+        if (short) {
+            console.warn(`Wood pack: crafting ${s.item} failed: missing ${short.name}, ${short.have} of ${short.need}.`);
+            return { ok: false, reason: 'craft_failed', text: craftFailedText(s.item, short) };
         }
         const per = s.makes / s.times;
         let made = 0;
@@ -283,7 +337,9 @@ async function runSteps(bot, ctx, steps, clock) {
             try {
                 done = await craft(bot, s.item, Math.ceil((s.makes - made) / per)) === true;
             } catch (err) {
-                console.warn('Wood pack: crafting failed:', err?.message ?? err);
+                const miss = missingIngredient({ ...s, times: Math.ceil((s.makes - made) / per) }, inventoryOf(bot));
+                console.warn(`Wood pack: crafting ${s.item} failed: ${err?.message ?? err}`
+                    + (miss ? ` (missing ${miss.name}, ${miss.have} of ${miss.need})` : ''));
             }
             const gained = (await settledCount(bot, clock, s.item)) - before;
             if (gained <= 0 || !done) {
@@ -293,7 +349,7 @@ async function runSteps(bot, ctx, steps, clock) {
             made += gained;
         }
         if (made === 0) {
-            return { ok: false, reason: 'craft_failed', text: `I could not craft ${s.item}.` };
+            return { ok: false, reason: bot.interrupt_code ? 'interrupted' : 'craft_failed', text: craftFailedText(s.item, missingIngredient(s, inventoryOf(bot))) };
         }
     }
     return { ok: true };
@@ -308,13 +364,16 @@ async function runSteps(bot, ctx, steps, clock) {
  * of protected areas (with a wooden pickaxe it crafts first). It does not smelt and does not mine
  * for iron or diamonds: `I need 3 iron_ingot for an iron_pickaxe and have 1.` Texts:
  * `I crafted a stone_pickaxe.`, `I crafted a wooden_pickaxe and a stone_pickaxe.` Never throws.
+ * Since v0.1.4.8 (E3): the material is chosen from what the bot carries and what the known chests
+ * hold, and an empty material chooses the best material up to stone.
  * @param {object} bot
  * @param {object} ctx { areas, log, now, skills: { craftRecipe }, wood?, storage?, chests? }
  * @param {string} kind pickaxe, axe, shovel, hoe or sword; a full name such as `iron_pickaxe` works too
- * @param {string} [minMaterial] wooden, stone, iron, diamond, netherite; empty: wooden
- * @param {{minUses?: number, count?: number, now?: Function, wait?: Function}} [options]
+ * @param {string} [minMaterial] wooden, stone, iron, diamond, netherite; empty: the best up to stone
+ * @param {{minUses?: number, count?: number, collect?: boolean, now?: Function, wait?: Function}} [options]
  *   minUses: a tool with fewer uses left does not count (default 1); count: how many such tools
- *   the bot wants (default 1), for a second pickaxe on a long trip
+ *   the bot wants (default 1), for a second pickaxe on a long trip; collect: false asks only the
+ *   chests, it cuts no tree and breaks no stone (the axe of chopTrees)
  * @returns {Promise<{ok: boolean, reason: string|null, tool: string|null, crafted: string[], text: string}>}
  *   reasons: unknown_kind, unknown_material, not_craftable, missing, craft_failed, interrupted, error
  */
@@ -338,7 +397,10 @@ export async function ensureTool(bot, ctx = {}, kind = '', minMaterial = '', opt
         if (request.material === 'netherite') {
             return toolResult(false, 'not_craftable', null, [], notCraftableText(toolName(request.kind, 'netherite')));
         }
-        const target = chooseMaterial(request.kind, request.material, inventoryOf(bot), { table: tableNear(bot) });
+        // v0.1.4.8, E3: the known chests count, and without a material the best up to stone
+        const word = typeof kind === 'string' ? kind.trim().toLowerCase().replace(/^minecraft:/, '').replace(/\s+/g, '_') : '';
+        const open = (typeof minMaterial !== 'string' || minMaterial.trim() === '') && !parseTool(word);
+        const target = chooseMaterial(request.kind, open ? '' : request.material, inventoryOf(bot), { table: tableNear(bot), chests: chestCounts(bot, ctx) });
         const name = toolName(request.kind, target);
         const planFn = () => craftSteps(request.kind, target, inventoryOf(bot), { table: tableNear(bot) });
         const got = await gather(bot, ctx, planFn, withArticle(name), { depth, crafted, options });

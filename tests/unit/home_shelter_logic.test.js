@@ -6,8 +6,9 @@ import { loadSrc } from '../helpers/load.js';
 
 const S = await loadSrc('src/agent/packs/home/shelter_logic.js');
 
+// v0.1.4.8, C4: only an area of type home is a shelter, so the areas of these tests are homes
 const area = (name, x1, z1, x2, z2, extra = {}) => ({
-    name, type: 'building', dimension: 'overworld', source: 'scan',
+    name, type: 'home', dimension: 'overworld', source: 'scan',
     min: { x: x1, y: 63, z: z1 }, max: { x: x2, y: 69, z: z2 }, entrances: [], ...extra,
 });
 const p = (x, z, y = 64) => ({ x, y, z });
@@ -16,8 +17,9 @@ const p = (x, z, y = 64) => ({ x, y, z });
 const HOUSE = area('cabin', 0, 0, 8, 8, { entrances: [{ x: 4, y: 64, z: 7, kind: 'door' }] });
 
 describe('isBuildingArea, isInsideArea, sameDimension', () => {
-    test('building or no type counts as building, farm does not', () => {
+    test('home, building or no type counts as building, farm does not', () => {
         assert.equal(S.isBuildingArea(HOUSE), true);
+        assert.equal(S.isBuildingArea({ ...HOUSE, type: 'building' }), true);
         assert.equal(S.isBuildingArea({ ...HOUSE, type: undefined }), true);
         assert.equal(S.isBuildingArea({ ...HOUSE, type: 'farm' }), false);
         assert.equal(S.isBuildingArea(null), false);
@@ -41,41 +43,43 @@ describe('isBuildingArea, isInsideArea, sameDimension', () => {
     });
 });
 
-describe('chooseShelter: the order of the spec', () => {
+describe('chooseShelter: the order of the spec (v0.1.4.8, C4)', () => {
     const home = { x: 30.5, y: 64, z: 30.5, dimension: 'overworld' };
     const homeHouse = area('villa', 26, 26, 36, 36);
     const named = area('home', 100, 100, 108, 108);
     const near = area('shed', -10, -10, -4, -4);
 
-    test('1. the building area that contains the place home', () => {
+    test('1. the home area that contains the place home', () => {
         const r = S.chooseShelter({ areas: [near, named, homeHouse], home, botPos: p(-7, -7), dimension: 'overworld' });
         assert.equal(r.kind, 'area');
         assert.equal(r.area.name, 'villa');
         assert.equal(r.why, 'contains_home');
     });
 
-    test('2. the building area named home', () => {
+    test('the name home has no rule of its own any more: the nearest home area', () => {
         const r = S.chooseShelter({ areas: [near, named], home, botPos: p(-7, -7), dimension: 'overworld' });
-        assert.equal(r.area.name, 'home');
-        assert.equal(r.why, 'named_home');
+        assert.equal(r.area.name, 'shed');
+        assert.equal(r.why, 'nearest');
     });
 
-    test('3. the nearest building area within 128 blocks', () => {
+    test('2. the nearest home area within 96 blocks', () => {
         const far = area('far', 110, 0, 118, 8);
         const r = S.chooseShelter({ areas: [far, near], home: null, botPos: p(70, 0), dimension: 'overworld' });
         assert.equal(r.area.name, 'far');
         assert.equal(r.why, 'nearest');
         const none = S.chooseShelter({ areas: [far], home: null, botPos: p(-200, 0), dimension: 'overworld' });
-        assert.equal(none.kind, 'emergency', 'beyond 128 blocks');
+        assert.equal(none.kind, 'emergency', 'beyond 96 blocks: no home');
+        const beyond = S.chooseShelter({ areas: [far], home: null, botPos: p(10, 0), dimension: 'overworld' });
+        assert.equal(beyond.kind, 'emergency', '100 blocks away');
     });
 
-    test('4. the place home without an area', () => {
+    test('3. the place home without an area', () => {
         const r = S.chooseShelter({ areas: [area('far', 500, 500, 508, 508)], home, botPos: p(0, 0), dimension: 'overworld' });
         assert.equal(r.kind, 'place');
         assert.deepEqual(r.place, home);
     });
 
-    test('5. an emergency shelter', () => {
+    test('no home at all: the kind emergency, why nothing', () => {
         assert.deepEqual(S.chooseShelter({ areas: [], home: null, botPos: p(0, 0), dimension: 'overworld' }), { kind: 'emergency', why: 'nothing' });
         assert.equal(S.chooseShelter(undefined).kind, 'emergency');
     });

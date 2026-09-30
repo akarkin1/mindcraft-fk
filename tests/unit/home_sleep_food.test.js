@@ -39,11 +39,11 @@ describe('sleepInBed', () => {
         assert.equal(res.text, 'I slept. It is morning.');
     });
 
-    test('by day: the text for day, no walking', async () => {
+    test('by day: the text for day with the time until the night (v0.1.4.8, C6), no walking', async () => {
         const { bot, ctx, world } = scene({ time: 6000 });
         world.bed(10, 64, 10);
         const res = await Z.sleepInBed(bot, ctx, QUICK);
-        assert.equal(res.text, 'I cannot sleep now, it is not night.');
+        assert.equal(res.text, 'I cannot sleep now, it is day. The night starts in about 5 minutes.');
         assert.equal(bot.calls.filter(c => c[0] === 'goto').length, 0);
     });
 
@@ -157,32 +157,36 @@ describe('eatBestFood', () => {
         return bot;
     }
 
+    // v0.1.4.8, C1: the texts name the food level and the health
     test('full: not hungry', async () => {
         const res = await F.eatBestFood(eater(20, [['bread', 3]]), {}, QUICK);
-        assert.deepEqual(res, { ok: true, ate: 0, text: 'I am not hungry.' });
+        assert.deepEqual(res, { ok: true, ate: 0, reason: 'not_hungry', text: 'I am not hungry. Food 20 of 20, health 20 of 20.' });
     });
 
     test('eats until the food level is at least 18', async () => {
         const bot = eater(10, [['bread', 5]]);
         const res = await F.eatBestFood(bot, {}, QUICK);
-        assert.deepEqual(res, { ok: true, ate: 2, text: 'I ate 2 bread.' });
+        assert.deepEqual(res, { ok: true, ate: 2, reason: null, text: 'I ate 2 bread. Food 20 of 20, health 20 of 20.' });
         assert.equal(bot.food, 20);
     });
 
     test('the most food points first, banned food never', async () => {
         const bot = eater(2, [['rotten_flesh', 9], ['bread', 5], ['cooked_beef', 1], ['golden_apple', 2]]);
         const res = await F.eatBestFood(bot, {}, QUICK);
-        assert.equal(res.text, 'I ate 1 cooked_beef and 2 bread.');
+        assert.equal(res.text, 'I ate 1 cooked_beef and 2 bread. Food 20 of 20, health 20 of 20.');
         assert.equal(bot.calls.some(c => c[0] === 'consume' && (c[1] === 'rotten_flesh' || c[1] === 'golden_apple')), false);
     });
 
-    test('at 19 it still eats one', async () => {
-        assert.equal((await F.eatBestFood(eater(19, [['apple', 1]]), {}, QUICK)).text, 'I ate 1 apple.');
+    test('at 19 and unhurt it is not hungry; hurt it eats one (v0.1.4.8, C1; before it always ate one)', async () => {
+        assert.equal((await F.eatBestFood(eater(19, [['apple', 1]]), {}, QUICK)).text, 'I am not hungry. Food 19 of 20, health 20 of 20.');
+        const hurt = eater(19, [['apple', 1]]);
+        hurt.health = 15;
+        assert.equal((await F.eatBestFood(hurt, {}, QUICK)).text, 'I ate 1 apple. Food 20 of 20, health 15 of 20.');
     });
 
     test('no food, only banned food: the text', async () => {
-        assert.deepEqual(await F.eatBestFood(eater(10, []), {}, QUICK), { ok: false, ate: 0, text: 'I have no food.' });
-        assert.equal((await F.eatBestFood(eater(10, [['spider_eye', 3], ['dirt', 5]]), {}, QUICK)).text, 'I have no food.');
+        assert.deepEqual(await F.eatBestFood(eater(10, []), {}, QUICK), { ok: false, ate: 0, reason: 'no_food', text: 'I carry no food and know no chest with food.' });
+        assert.equal((await F.eatBestFood(eater(10, [['spider_eye', 3], ['dirt', 5]]), {}, QUICK)).text, 'I carry no food and know no chest with food.');
     });
 
     test('picks up food that lies within 8 blocks first', async () => {
@@ -200,14 +204,14 @@ describe('eatBestFood', () => {
             }
         };
         const res = await F.eatBestFood(bot, {}, QUICK);
-        assert.equal(res.text, 'I ate 1 bread.');
+        assert.equal(res.text, 'I ate 1 bread. Food 17 of 20, health 20 of 20.');
         assert.ok(bot.entities[far.id], 'the far item was left');
     });
 
     test('an error while eating', async () => {
         const bot = eater(10, [['bread', 2]]);
         bot.consume = async () => { throw new Error('Consuming cancelled'); };
-        assert.deepEqual(await F.eatBestFood(bot, {}, QUICK), { ok: false, ate: 0, text: 'I could not eat: Consuming cancelled' });
+        assert.deepEqual(await F.eatBestFood(bot, {}, QUICK), { ok: false, ate: 0, reason: 'error', text: 'I could not eat: Consuming cancelled' });
     });
 
     test('auto-eat is paused while eating and restored after', async () => {

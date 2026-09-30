@@ -1,16 +1,40 @@
 // Protected areas of one world (spec v0.1.4.6, A2), persisted as
-// { version: 1, areas: { <name>: area } } in <worldDir>/areas.json.
+// { version: 1, migrated: 1, areas: { <name>: area } } in <worldDir>/areas.json.
+// v0.1.4.8 (D1): five types, names normalised, doubles merged on load, and the one-time changes
+// of an old file (a building named "mine" becomes a mine, a box thinner than 2 blocks is dropped).
 import { readJsonSafe, writeJsonAtomic } from '../../utils/safe_json.js';
 import { normalizeBox, boxSize, contains, distanceToBox, horizontalDistanceToBox } from './area_geometry.js';
 
 const FILE_VERSION = 1;
 const NAME_MAX = 64;
+// The one-time changes of v0.1.4.8 ran on the file. A file without it gets them on load; every write
+// sets it, so an area that the player saves later is never changed by them.
+const MIGRATION = 1;
 
-/** Types of an area. A farm allows planting and harvesting, a building nothing. */
-export const AREA_TYPES = Object.freeze(['building', 'farm']);
+/**
+ * Types of an area (v0.1.4.8, I4). A home, a building and a pen allow nothing, a farm planting and
+ * harvesting, a mine breaking natural blocks and placing.
+ */
+export const AREA_TYPES = Object.freeze(['home', 'building', 'farm', 'pen', 'mine']);
 
-/** Where an area came from: a scan, !setArea, or a box around the bot. */
-export const AREA_SOURCES = Object.freeze(['scan', 'manual', 'radius']);
+/**
+ * The rules per type (v0.1.4.8, D2). break: 'none', 'crops' or 'natural'; place: 'none', 'seeds' or
+ * 'all'; pathDig: what the path search may dig ('none' or 'natural'); shelter: the home pack may use
+ * it as a shelter; defended: the creeper reflex defends it.
+ */
+export const AREA_RULES = Object.freeze({
+    home: Object.freeze({ break: 'none', place: 'none', pathDig: 'none', shelter: true, defended: true }),
+    building: Object.freeze({ break: 'none', place: 'none', pathDig: 'none', shelter: false, defended: true }),
+    pen: Object.freeze({ break: 'none', place: 'none', pathDig: 'none', shelter: false, defended: true }),
+    farm: Object.freeze({ break: 'crops', place: 'seeds', pathDig: 'none', shelter: false, defended: true }),
+    mine: Object.freeze({ break: 'natural', place: 'all', pathDig: 'natural', shelter: false, defended: false }),
+});
+
+/** Where an area came from: a scan, !setArea, a box around the bot, or autoHome. */
+export const AREA_SOURCES = Object.freeze(['scan', 'manual', 'radius', 'auto']);
+
+/** Smallest side of an area in x and z (v0.1.4.8, D1 and D7). */
+export const MIN_AREA_SIDE = 2;
 
 /** Kinds of an entrance: the lower block of a door, or a fence gate. */
 export const ENTRANCE_KINDS = Object.freeze(['door', 'gate']);
@@ -37,8 +61,113 @@ function compareNames(a, b) {
     return a > b ? 1 : 0;
 }
 
+/**
+ * The name of an area as it is saved and looked up (v0.1.4.8, D1): trimmed, lower case, every run
+ * of spaces one "_". "Mining Area" and "mining_area" are the same area.
+ * @param {*} name
+ * @returns {string|null} null for anything that is not a string
+ */
+export function normalizeAreaName(name) {
+    return typeof name === 'string' ? name.trim().toLowerCase().replace(/\s+/g, '_') : null;
+}
+
 function lookupName(name) {
-    return typeof name === 'string' ? name.trim() : null;
+    return normalizeAreaName(name);
+}
+
+/**
+ * True for the type of an area in which the home pack may shelter (D2): only home.
+ * @param {string} type
+ * @returns {boolean}
+ */
+export function isShelterType(type) {
+    return AREA_RULES[type]?.shelter === true;
+}
+
+/**
+ * True for the type of an area that the creeper reflex defends (D2): all but mine.
+ * @param {string} type
+ * @returns {boolean}
+ */
+export function isDefendedType(type) {
+    return AREA_RULES[type]?.defended === true;
+}
+
+// Rank of a type where areas overlap: the first area decides. A farm first (as in v0.1.4.6), then a
+// mine, then the types that allow nothing. So the work that the player saved an area for can be done
+// where it lies inside another area.
+const TYPE_RANK = Object.freeze({ farm: 0, mine: 1 });
+
+/**
+ * Rank of a type where areas overlap: 0 farm, 1 mine, 2 every other type. Lower decides first.
+ * @param {string} type
+ * @returns {number}
+ */
+export function typeRank(type) {
+    return TYPE_RANK[type] ?? 2;
+}
+
+function volumeOf(box) {
+    const size = boxSize(box);
+    return size.x * size.y * size.z;
+}
+
+/**
+ * Why a new box may not replace an area (v0.1.4.8, D7), or null when it may. Only a command that the
+ * player typed may save a box with a side (x or z) of less than 2 blocks, or replace an area by a box
+ * of less than half its volume.
+ * @param {{name: string, min: object, max: object}|null|undefined} old the area of that name, if any
+ * @param {{min: object, max: object}} box the new box, both corners whole or not
+ * @param {boolean} byPlayer the player typed the command
+ * @returns {null|{reason: 'too_thin'|'too_small', text: string}}
+ */
+export function replaceRefusal(old, box, byPlayer) {
+    if (byPlayer === true || box === null || typeof box !== 'object') {
+        return null;
+    }
+    let clean;
+    try {
+        clean = normalizeBox(box.min, box.max);
+    } catch {
+        return null; // the store refuses bad corners with its own error
+    }
+    const size = boxSize(clean);
+    if (size.x < MIN_AREA_SIDE || size.z < MIN_AREA_SIDE) {
+        const thin = Math.min(size.x, size.z);
+        return {
+            reason: 'too_thin',
+            text: `The new box is only ${thin} block${thin === 1 ? '' : 's'} wide. An area needs at least `
+                + `${MIN_AREA_SIDE} blocks in x and z. The player can type !setArea in the chat to do it.`,
+        };
+    }
+    if (old && typeof old === 'object' && old.min && old.max) {
+        let oldVolume;
+        try {
+            oldVolume = volumeOf(normalizeBox(old.min, old.max));
+        } catch {
+            return null;
+        }
+        if (volumeOf(clean) * 2 < oldVolume) {
+            return {
+                reason: 'too_small',
+                text: `The new box is much smaller than the area "${old.name}" that I know. `
+                    + 'The player can type !setArea in the chat to do it.',
+            };
+        }
+    }
+    return null;
+}
+
+/**
+ * False when the model wants a box with a side (x or z) of less than 2 blocks, or replaces an area by
+ * a box of less than half its volume (v0.1.4.8, D7). The player may, by typing the command.
+ * @param {object|null|undefined} old the area of that name, if any
+ * @param {{min: object, max: object}} box
+ * @param {boolean} byPlayer
+ * @returns {boolean}
+ */
+export function canReplace(old, box, byPlayer) {
+    return replaceRefusal(old, box, byPlayer) === null;
 }
 
 /**
@@ -93,7 +222,7 @@ function validateArea(area, nowIso) {
     if (typeof area.name !== 'string') {
         throw new TypeError('Area name must be a string');
     }
-    const name = area.name.trim();
+    const name = normalizeAreaName(area.name);
     if (name.length < 1 || name.length > NAME_MAX) {
         throw new TypeError(`Area name must have 1 to ${NAME_MAX} characters`);
     }
@@ -118,12 +247,24 @@ function validateArea(area, nowIso) {
     };
 }
 
-// A farm before a building, then by name.
+// A farm first, then a mine, then the other types; then by name.
 function compareAreas(a, b) {
-    if (a.type !== b.type) {
-        return a.type === 'farm' ? -1 : 1;
+    return typeRank(a.type) - typeRank(b.type) || compareNames(a.name, b.name);
+}
+
+// Time of the last change of an area in ms, NaN when it has none.
+function changedAt(area) {
+    const updated = Date.parse(area.updated);
+    return Number.isNaN(updated) ? Date.parse(area.created) : updated;
+}
+
+// The one-time change of the type (D1): null when the area keeps its type. "mine" or "mining" at the
+// start of a word of the name ("mining_area", "iron_mine", "mineshaft"), not inside one ("jasmine").
+function migratedType(area) {
+    if (area.type === 'building' && /(^|_)min(e|ing)/.test(area.name)) {
+        return 'mine';
     }
-    return compareNames(a.name, b.name);
+    return null;
 }
 
 export class AreaStore {
@@ -147,6 +288,10 @@ export class AreaStore {
     /**
      * Reads the file. Missing: empty. Corrupt: set aside by readJsonSafe, empty.
      * Invalid entries are skipped with one warning. Never throws.
+     * v0.1.4.8 (D1): names are normalised; two areas of the same normalised name become one, the newer
+     * wins. A file that has not had them yet gets the one-time changes: a building whose name holds
+     * "mine" or "mining" becomes a mine, an area thinner than 2 blocks in x or z is dropped. Each change
+     * is written to the console, and the file is written again when something changed.
      * @returns {number} number of areas
      */
     load() {
@@ -155,7 +300,7 @@ export class AreaStore {
         try {
             const result = readJsonSafe(this.filePath, { expect: 'object', now: this.now });
             if (result.status === 'ok') {
-                this._loadAreas(result.data.areas);
+                this._loadAreas(result.data.areas, result.data.migrated);
             } else if (result.status !== 'missing') {
                 let warning = `Area file ${this.filePath} could not be read (${result.status}: ${result.error?.message}).`;
                 if (result.quarantinedTo) {
@@ -170,7 +315,7 @@ export class AreaStore {
         return this._areas.size;
     }
 
-    _loadAreas(areas) {
+    _loadAreas(areas, migrated) {
         if (!isPlainObject(areas)) {
             if (areas !== undefined) {
                 console.warn(`Area file ${this.filePath} has no "areas" object, starting empty.`);
@@ -179,30 +324,77 @@ export class AreaStore {
         }
         const skipped = [];
         const nowIso = this._nowIso();
+        const keys = new Map(); // normalised name -> key in the file
+        let changed = false;
         for (const [name, entry] of Object.entries(areas)) {
+            let clean;
             try {
-                const clean = validateArea({ ...(isPlainObject(entry) ? entry : {}), name }, nowIso);
-                if (clean.name !== name) {
-                    throw new TypeError('name with spaces around it');
-                }
-                this._areas.set(clean.name, clean);
+                clean = validateArea({ ...(isPlainObject(entry) ? entry : {}), name }, nowIso);
             } catch {
                 skipped.push(name);
+                continue;
             }
+            if (clean.name !== name) {
+                changed = true;
+            }
+            const previous = this._areas.get(clean.name);
+            if (previous) {
+                // D1: two areas whose normalised names are equal become one, the newer wins
+                changed = true;
+                const newer = !(changedAt(previous) > changedAt(clean));
+                const kept = newer ? name : keys.get(clean.name);
+                console.log(`Area file ${this.filePath}: "${keys.get(clean.name)}" and "${name}" are the same `
+                    + `area "${clean.name}". I keep the newer one, "${kept}".`);
+                if (!newer) {
+                    continue;
+                }
+            }
+            keys.set(clean.name, name);
+            this._areas.set(clean.name, clean);
         }
         if (skipped.length > 0) {
             console.warn(`Area file ${this.filePath}: skipped ${skipped.length} invalid area(s): ${skipped.join(', ')}`);
         }
+        if (migrated !== MIGRATION && this._migrate()) {
+            changed = true;
+        }
+        if (changed) {
+            this._save();
+        }
+    }
+
+    // The one-time changes of v0.1.4.8 (D1), each written to the console. True when one was made.
+    _migrate() {
+        let changed = false;
+        for (const [name, area] of [...this._areas]) {
+            const size = boxSize(area);
+            if (size.x < MIN_AREA_SIDE || size.z < MIN_AREA_SIDE) {
+                this._areas.delete(name);
+                changed = true;
+                console.log(`Area "${name}" is ${size.x} x ${size.y} x ${size.z} blocks. An area needs at least `
+                    + `${MIN_AREA_SIDE} blocks in x and z, so I dropped it.`);
+                continue;
+            }
+            const type = migratedType(area);
+            if (type) {
+                area.type = type;
+                changed = true;
+                console.log(`Area "${name}" was of type building. Its name says it is a mine, so it is of type ${type} now.`);
+            }
+        }
+        return changed;
     }
 
     /**
      * Creates or replaces an area and writes the file. Replacing keeps "created".
      * The box is normalised (floored, min <= max). A missing dimension is the overworld,
-     * invalid entrances are left out, an unknown source becomes "manual".
-     * @param {{name: string, type: 'building'|'farm', min: object, max: object, dimension?: string,
+     * invalid entrances are left out, an unknown source becomes "manual". The name is normalised
+     * (normalizeAreaName), so "Mining Area" replaces "mining_area". The store takes any box up to the
+     * size limit; canReplace decides what the model may save.
+     * @param {{name: string, type: 'home'|'building'|'farm'|'pen'|'mine', min: object, max: object, dimension?: string,
      *   entrances?: {x: number, y: number, z: number, kind: 'door'|'gate'}[], source?: string}} area
      * @returns {object} a copy of the saved area
-     * @throws {TypeError} for a name that is not 1 to 64 characters after trim, an unknown type or bad corners
+     * @throws {TypeError} for a name that is not 1 to 64 characters after normalising, an unknown type or bad corners
      * @throws {RangeError} for a box larger than 64 blocks in x or z, or 48 in y
      */
     set(area) {
@@ -218,7 +410,7 @@ export class AreaStore {
         return copyArea(clean);
     }
 
-    /** @returns {object|undefined} a copy of the area */
+    /** @returns {object|undefined} a copy of the area; the name is normalised */
     get(name) {
         const area = this._areas.get(lookupName(name));
         return area === undefined ? undefined : copyArea(area);
@@ -258,7 +450,7 @@ export class AreaStore {
 
     /**
      * Areas whose box contains the position, in the dimension (default overworld).
-     * A farm comes before a building, then by name.
+     * A farm first, then a mine, then the other types (the first one decides); then by name.
      * @param {{x: number, y: number, z: number}} pos
      * @param {string} [dimension]
      * @returns {object[]} copies
@@ -271,10 +463,32 @@ export class AreaStore {
     }
 
     /**
+     * The smallest area whose box contains the position (v0.1.4.8, I3); ties by name.
+     * @param {{x: number, y: number, z: number}} pos
+     * @param {string} [dimension]
+     * @returns {object|null} a copy, null outside of every area
+     */
+    areaAt(pos, dimension) {
+        let best = null;
+        let bestVolume = Infinity;
+        for (const area of this._inDimension(dimension)) {
+            if (!contains(area, pos)) {
+                continue;
+            }
+            const volume = volumeOf(area);
+            if (volume < bestVolume || (volume === bestVolume && compareNames(area.name, best.name) < 0)) {
+                best = area;
+                bestVolume = volume;
+            }
+        }
+        return best ? copyArea(best) : null;
+    }
+
+    /**
      * The nearest area, measured with distanceToBox; ties by name.
      * @param {{x: number, y: number, z: number}} pos
      * @param {string} [dimension]
-     * @param {'building'|'farm'} [type] only areas of this type
+     * @param {'home'|'building'|'farm'|'pen'|'mine'} [type] only areas of this type
      * @returns {{area: object, distance: number}|null} null without a matching area
      */
     nearest(pos, dimension, type) {
@@ -312,7 +526,8 @@ export class AreaStore {
 
     _toJson() {
         const names = [...this._areas.keys()].sort(compareNames);
-        return { version: FILE_VERSION, areas: Object.fromEntries(names.map(name => [name, this._areas.get(name)])) };
+        return { version: FILE_VERSION, migrated: MIGRATION,
+            areas: Object.fromEntries(names.map(name => [name, this._areas.get(name)])) };
     }
 
     _save() {

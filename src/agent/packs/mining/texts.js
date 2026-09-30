@@ -22,17 +22,19 @@ export const STOP_REASONS = Object.freeze({
     no_path: 'I found no way there',
     ladder: 'I could not place a ladder',
     no_entrance: 'I found no place for a mine',
+    underground: 'I am underground and start a new mine only from the surface',
     error: 'something went wrong',
 });
 
 /** Fixed texts. */
 export const TEXTS = Object.freeze({
     noMine: 'I know no mine here.',
-    noEntrance: 'I found no place for a mine within 48 blocks that is at least 8 blocks from every protected area.',
+    noEntrance: 'I found no place for a mine within 48 blocks that is at least 16 blocks from your house and the areas I protect.',
     onSurface: 'I am on the surface already.',
     noStorage: 'I cannot store things: I have no storage skills.',
     noTools: 'I cannot craft: I have no tool skills.',
     carryOnly: 'I know no chests and cannot craft, so I go with what I carry.',
+    underground: 'I am underground. I start a new mine only from the surface.',
 });
 
 function listWords(words) {
@@ -117,6 +119,69 @@ export function mineOreText(r) {
         parts.push(r.extra);
     }
     return parts.join(' ');
+}
+
+/**
+ * The question of mineOre when it knows no mine for the ore (spec v0.1.4.8 E4):
+ * `I know no mine for iron. I can dig a new one at (x, y, z), N blocks from your house. Tell me to do it, or show me your mine.`
+ * Without a house the part `, N blocks from your house` is left out. Without a place for a new
+ * mine: `I know no mine for iron. <TEXTS.noEntrance> Show me your mine.`
+ * @param {string} ore
+ * @param {{x,y,z}|null} entrance the place of a new mine, null when there is none
+ * @param {number|null} [houseDistance] blocks from the house, null without a house
+ * @returns {string}
+ */
+export function askMineText(ore, entrance, houseDistance = null) {
+    if (!entrance) {
+        return `I know no mine for ${ore}. ${TEXTS.noEntrance} Show me your mine.`;
+    }
+    const house = Number.isFinite(houseDistance) ? `, ${Math.round(houseDistance)} blocks from your house` : '';
+    return `I know no mine for ${ore}. I can dig a new one at ${posText(entrance)}${house}. Tell me to do it, or show me your mine.`;
+}
+
+// One missing supply of tripNeeds as words: `16 ladders`, `1 torch`, `a chest`, `a stone pickaxe`.
+function supplyWords(m) {
+    const n = Number.isFinite(m?.count) && m.count > 0 ? Math.ceil(m.count) : 1;
+    switch (m?.name) {
+    case 'pickaxe':
+        return `${m.spare ? 'a second' : article(m.material ?? 'stone')} ${m.material ?? 'stone'} pickaxe`;
+    case 'ladder':
+        return n === 1 ? '1 ladder' : `${n} ladders`;
+    case 'torch':
+        return n === 1 ? '1 torch' : `${n} torches`;
+    case 'chest':
+        return n === 1 ? 'a chest' : `${n} chests`;
+    case 'food':
+        return `${n} food`;
+    default:
+        return typeof m?.name === 'string' ? `${n} ${m.name}` : '';
+    }
+}
+
+/**
+ * What the bot gets before a trip (spec v0.1.4.8 E4), from the missing list of tripNeeds:
+ * `I get my supplies: 16 ladders, 8 torches, a chest.` Cobblestone is left out (the way down
+ * gives it). '' when nothing is missing.
+ * @param {{name: string, count: number, material?: string, spare?: boolean}[]} missing
+ * @returns {string}
+ */
+export function suppliesText(missing) {
+    const order = ['pickaxe', 'ladder', 'torch', 'food', 'chest'];
+    const words = (Array.isArray(missing) ? missing : []).filter(m => order.includes(m?.name))
+        .sort((a, b) => order.indexOf(a.name) - order.indexOf(b.name)).map(supplyWords).filter(w => w.length > 0);
+    return words.length > 0 ? `I get my supplies: ${words.join(', ')}.` : '';
+}
+
+/**
+ * The text of a trip stopped while the bot got its supplies (spec v0.1.4.8 I6):
+ * `I was stopped while I got my supplies. I still lack 16 ladders, a chest.` or
+ * `I was stopped while I got my supplies. I have all of them.`
+ * @param {object[]} missing the missing list of tripNeeds at the stop
+ * @returns {string}
+ */
+export function suppliesStoppedText(missing) {
+    const lack = suppliesText(missing).replace(/^I get my supplies: /, '');
+    return `I was stopped while I got my supplies. ${lack ? `I still lack ${lack}` : 'I have all of them.'}`;
 }
 
 /**

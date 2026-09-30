@@ -6,6 +6,9 @@ import { Vec3 } from 'vec3';
 import {ESLint} from "eslint";
 import settings from './settings.js';
 import { extractTask } from './skills/skill_review.js';
+import { withTimeLimit } from '../utils/kill_timer.js';
+
+const MODEL_POLL_MS = 200; // how often the wait for the code model looks for an interrupt
 
 export class Coder {
     constructor(agent) {
@@ -45,9 +48,14 @@ export class Coder {
             if (this.agent.bot.interrupt_code)
                 return null;
             const messages_copy = JSON.parse(JSON.stringify(messages));
-            let res = await this.agent.prompter.promptCoding(messages_copy);
-            if (this.agent.bot.interrupt_code)
+            // v0.1.4.8, A6: the wait for the model ends when the action is interrupted; the late answer is dropped
+            const answer = await withTimeLimit(0, () => this.agent.prompter.promptCoding(messages_copy),
+                { until: () => this.agent.bot.interrupt_code, pollMs: MODEL_POLL_MS });
+            if (!answer.done || this.agent.bot.interrupt_code)
                 return null;
+            if (answer.error)
+                throw answer.error;
+            let res = answer.value;
             let contains_code = res.indexOf('```') !== -1;
             if (!contains_code) {
                 if (res.indexOf('!newAction') !== -1) {

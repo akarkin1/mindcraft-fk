@@ -10,9 +10,12 @@
 //   2. A house of logs with leaves on its roof and no tree within 48 blocks. !chopTrees(4): the bot
 //      takes nothing and says "I found no tree within 48 blocks. Logs of buildings are not mine to
 //      take." Every block of the log house is there.
+// v0.1.4.8 (W30): the modes of the owner are on (MODES_PROFILE, with the home reflexes) and !chopTrees is typed
+// by the player in the chat (the real path of a typed command), as in play.
+// v0.1.4.8 E3: the number of !chopTrees is the number of logs wanted; a tree that was started is finished.
 import {
     scenarioMain, check, note, exitSoon, startAgent, stopRealAgent, NEW_FLAGS_OFF, placeBot, resetBot, command_,
-    giveItems, waitFor,
+    giveItems, waitFor, withModes, orderChannel,
 } from './helpers.js';
 import {
     region, prepareRegion, releaseRegion, housePlan, buildHouse, treePlan, buildTree, treeBox, logHousePlan, buildLogHouse,
@@ -35,11 +38,12 @@ await scenarioMain({
         const lh = logHousePlan(r.ox + 40, r.oz - 2, g);
         await buildLogHouse(lh);
 
-        let agent = null;
+        let agent = null, orders = null;
         const snaps = [];
         try {
-            const s = await startAgent(NAME, { ...NEW_FLAGS_OFF, protected_areas: true, world_memory: true, wood_pack: true });
+            const s = await startAgent(NAME, withModes({ ...NEW_FLAGS_OFF, protected_areas: true, world_memory: true, wood_pack: true }));
             agent = s.agent;
+            orders = await orderChannel(s, { at: { x: r.ox, y: g + 1, z: r.oz + 30 } });
             const snapHouse = await snapshotBox(h.box);
             snaps.push(snapHouse);
 
@@ -47,7 +51,7 @@ await scenarioMain({
             await resetBot(NAME);
             await placeBot(agent, { x: h.box.min.x - 2, y: g + 1, z: h.box.min.z + 3 }, 90);
             await giveItems(NAME, [['oak_sapling', 1]], agent.bot);
-            const reply = await command_(agent, '!chopTrees(4)', 240000);
+            const reply = await orders.order('!chopTrees(4)', 240000);
             note(`1: !chopTrees(4) answered ${JSON.stringify(reply)}`);
             const trunk = await blockNames(tree.logs, ['oak_log']);
             const inv = await stableInventory(NAME);
@@ -75,7 +79,7 @@ await scenarioMain({
             snaps.push(snapLog);
             await resetBot(NAME);
             await placeBot(agent, { x: lh.door.x, y: g + 1, z: lh.door.z - 3 }, 0);
-            const reply2 = await command_(agent, '!chopTrees(4)', 120000);
+            const reply2 = await orders.order('!chopTrees(4)', 120000);
             note(`2: !chopTrees(4) answered ${JSON.stringify(reply2)}`);
             const inv2 = await stableInventory(NAME);
             const cmp2 = await compareSnapshot(snapLog, agent.bot);
@@ -84,6 +88,7 @@ await scenarioMain({
             check(cmp2.same, '2: every block of the log house and of the leaves on its roof is there', describeDifferences(cmp2.differences));
             check(s.realCalls.length === 0, 'no request reached a real model class', JSON.stringify(s.realCalls));
         } finally {
+            if (orders) await orders.quit();
             await stopRealAgent(agent);
             for (const sn of snaps) await dropSnapshot(sn).catch(() => {});
             await releaseRegion(r);

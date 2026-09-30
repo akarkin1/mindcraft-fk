@@ -98,6 +98,10 @@ export const queryList = [
             else if (agent.bot.game.gameMode === 'creative') {
                 res += '\n(You have infinite items in creative mode. You do not need to gather resources!!)';
             }
+            // v0.1.4.8 (E1, B2): what the off-hand holds, it is counted in the list above once
+            const offhand = world.getOffhandText(bot);
+            if (offhand)
+                res += `\n${offhand}`;
 
             let helmet = bot.inventory.slots[5];
             let chestplate = bot.inventory.slots[6];
@@ -278,11 +282,12 @@ export const queryList = [
                     const entrances = Array.isArray(area.entrances) ? area.entrances : [];
                     const doors = entrances.filter(e => e.kind !== 'gate').length;
                     const gates = entrances.length - doors;
-                    // "1 door" for a building, "1 gate" for a farm; the other kind only when there is one
-                    const parts = area.type === 'farm' ? [count(gates, 'gate')] : [count(doors, 'door')];
-                    if (area.type === 'farm' && doors > 0)
+                    // "1 door" for a house, "1 gate" for a farm or a pen (v0.1.4.8); the other kind only when there is one
+                    const gated = area.type === 'farm' || area.type === 'pen';
+                    const parts = gated ? [count(gates, 'gate')] : [count(doors, 'door')];
+                    if (gated && doors > 0)
                         parts.push(count(doors, 'door'));
-                    if (area.type !== 'farm' && gates > 0)
+                    if (!gated && gates > 0)
                         parts.push(count(gates, 'gate'));
                     lines.push(`- ${area.name} (${area.type}): from ${point(area.min)} to ${point(area.max)}, ${parts.join(', ')}`);
                 }
@@ -302,7 +307,7 @@ export const queryList = [
     },
     {
         name: '!cost',
-        description: 'Get what you cost in this session: calls to the model, tokens, dollars and the budget.',
+        description: 'Get what you cost in this session, in dollars, and the budget.',
         perform: function (agent) {
             if (!agent.cost_meter)
                 return 'The cost meter is off.';
@@ -316,16 +321,20 @@ export const queryList = [
     },
     {
         name: '!chests',
-        description: 'List the chests you know and what is in them.',
-        perform: function (agent) {
+        description: 'List the chests you know and what is in them, or which ones hold an item. From memory, no walk.',
+        params: {
+            'item': { type: 'string', description: 'An item to look for, empty for all chests.', default: '' }
+        },
+        perform: function (agent, item) {
             // v0.1.4.7, S4: the text of chestsText of the storage pack, for the dimension of the bot
+            // v0.1.4.8 (C2): with an item, the chests that hold it
             if (!settings.storage_pack)
                 return 'The storage pack is off.';
             const storage = agent.work_packs?.storage;
             if (!storage)
                 return 'The storage pack could not be loaded.';
             try {
-                return storage.chestsText(agent.packContext(), agent.bot.game?.dimension);
+                return storage.chestsText(agent.packContext(), item ?? '', agent.bot.game?.dimension);
             } catch (error) {
                 console.warn('Could not list the chests:', error);
                 return 'Could not list the chests.';

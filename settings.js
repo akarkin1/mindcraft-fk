@@ -63,7 +63,7 @@ const settings = {
     "player_rules": false, // save lasting rules of the players with !rememberRule and put them into every prompt
     "rules_max": 20, // with player_rules: most rules kept
     "home_pack": false, // commands and reflexes for home: shelter at night, doors, beds, food and creepers
-    "home_reflexes": { "door_closing": true, "night_shelter": true, "creeper_safety": true }, // with home_pack: which reflexes are on
+    "home_reflexes": { "door_closing": true, "night_shelter": true, "creeper_safety": true, "hunger": true }, // with home_pack: which reflexes are on
     "creeper_fighting": false, // with home_pack: fight a creeper that was led away from the base instead of running from it
     "storage_pack": false, // store and fetch items with the chests the bot knows: !storeItems, !fetchItem, !chests
     "farming_pack": false, // harvest, plant and fertilize a farm with !farmCycle and more; !collectBlocks on crops harvests and plants again
@@ -71,6 +71,16 @@ const settings = {
     "mining_pack": false, // mine an ore in a mine with a shaft and a tunnel: !mineOre, !goToMine, !leaveMine
     "mining_max_minutes": 30, // with mining_pack: the longest time of one mining trip
     "keep_items": {}, // items the bot keeps when it stores into chests, e.g. {"wheat_seeds": 32, "iron_ingot": -1}, -1 for all
+    "stuck_restart_after": 1, // failed escapes of the unstuck reflex in a row before the process restarts. 0 for never
+    "protect_built_blocks": false, // never break blocks that players build with (fences, doors, planks ...), also outside saved areas
+    "knowledge_in_prompt": false, // put what the bot knows (chests, areas, mines, places) into the chat prompt
+    "knowledge_max_chars": 600, // with knowledge_in_prompt: the longest that block may be
+    "repeat_guard": 0, // refuse the Nth try in a row of a command of the model that keeps giving the same result. 0 for off
+    "restart_context": false, // after a restart tell the model the last order and why the process ended
+    "say_results": false, // when the model answers nothing after a work skill, say the text of the skill in the chat
+    "flee_below_health": 0, // below this health the bot does not fight, it retreats. 0 for off
+    "log_timestamps": false, // [HH:MM:SS] before each line of the console
+    "examples_by_last_request": false, // choose the prompt examples by the last request of the player, not by the whole conversation
     "allow_vision": false, // allows vision model to interpret screenshots as inputs
     "blocked_actions" : ["!checkBlueprint", "!checkBlueprintLevel", "!getBlueprint", "!getBlueprintLevel", "!restart"] , // commands to disable and remove from docs. Ex: ["!setMode"]
     "code_timeout_mins": -1, // minutes code is allowed to run. -1 for no timeout

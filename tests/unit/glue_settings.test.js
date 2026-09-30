@@ -27,7 +27,7 @@ const NEW_KEYS = [
     ['player_rules', 'boolean', false],
     ['rules_max', 'number', 20],
     ['home_pack', 'boolean', false],
-    ['home_reflexes', 'object', { door_closing: true, night_shelter: true, creeper_safety: true }],
+    ['home_reflexes', 'object', { door_closing: true, night_shelter: true, creeper_safety: true, hunger: true }], // hunger: v0.1.4.8
     ['creeper_fighting', 'boolean', false],
 ];
 const KEYS = NEW_KEYS.map(([key]) => key);

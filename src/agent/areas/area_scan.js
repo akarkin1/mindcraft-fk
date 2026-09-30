@@ -17,7 +17,19 @@ const BUILT_NAMES = new Set(['cobblestone', 'bookshelf', 'crafting_table', 'furn
     'torch', 'wall_torch', 'lantern',
     'mossy_cobblestone', 'trapped_chest', 'ender_chest', 'blast_furnace', 'smoker', 'soul_torch', 'soul_wall_torch',
     'redstone_torch', 'redstone_wall_torch', 'soul_lantern',
-    'iron_bars', 'hay_block', 'scaffolding']);
+    'iron_bars', 'hay_block', 'scaffolding',
+    // v0.1.4.8 (D3)
+    'composter', 'rail', 'powered_rail', 'detector_rail', 'activator_rail', 'lever', 'flower_pot', 'hopper', 'bell',
+    'lectern', 'loom']);
+
+// v0.1.4.8 (D3): endings of built names: signs and hanging signs, banners, pressure plates, buttons,
+// beds, campfires, anvils (chipped and damaged too), cauldrons with or without content, shulker boxes.
+// Stairs and slabs of every material are the parts "stairs" and "slab" above.
+const BUILT_ENDINGS = ['_bed', '_sign', '_banner', '_pressure_plate', '_button', 'campfire', 'anvil', 'cauldron',
+    'shulker_box'];
+
+// A flower pot with a plant in it is a block of its own: potted_poppy, potted_oak_sapling ...
+const BUILT_START = 'potted_';
 
 // Matched by a part or a prefix above, but they occur in a natural world: moss carpets grow in
 // lush caves and pale gardens, smooth basalt is the shell of a geode, quartz ore is nether ground.
@@ -49,6 +61,8 @@ function baseName(name) {
  * torch, wall_torch, lantern and their variants (soul and redstone torches, soul_lantern,
  * trapped and ender chest, blast_furnace, smoker, mossy_cobblestone); iron_bars, hay_block,
  * scaffolding; names that end with _bed.
+ * v0.1.4.8 (D3): also signs, banners, composter, pressure plates, buttons, rails, lever, flower_pot
+ * and potted plants, campfires, anvils, cauldrons, hopper, bell, lectern, loom and shulker boxes.
  * Natural and not counted: plain and coloured terracotta (badlands), moss_carpet and
  * pale_moss_carpet, smooth_basalt (geodes), nether_quartz_ore.
  * @param {string|null} name a block name, with or without "minecraft:"
@@ -59,7 +73,7 @@ export function isBuiltBlock(name) {
     if (n === null || NATURAL_NAMES.has(n)) {
         return false;
     }
-    if (BUILT_NAMES.has(n) || n.endsWith('_bed')) {
+    if (BUILT_NAMES.has(n) || BUILT_ENDINGS.some(ending => n.endsWith(ending)) || n.startsWith(BUILT_START)) {
         return true;
     }
     return BUILT_PARTS.some(part => n.includes(part)) || BUILT_PREFIXES.some(prefix => n.startsWith(prefix));
@@ -148,8 +162,10 @@ const BUILDING_DEFAULTS = Object.freeze({ radius: 24, height: 16, gap: 2, minBlo
  * @param {{x: number, y: number, z: number}} origin usually the position of the bot
  * @param {{radius?: number, height?: number, gap?: number, minBlocks?: number, startRadius?: number}} [options]
  *   defaults: radius 24, height 16, gap 2, minBlocks 12, startRadius 6
- * @returns {{found: boolean, min: {x: number, y: number, z: number}|null, max: {x: number, y: number, z: number}|null,
+ * @returns {{found: boolean, reason: null|'no_built_blocks'|'too_few_blocks', text: string,
+ *   min: {x: number, y: number, z: number}|null, max: {x: number, y: number, z: number}|null,
  *   blocks: number, entrances: {x: number, y: number, z: number, kind: 'door'|'gate'}[], clipped: boolean}}
+ *   reason and text (v0.1.4.8, D5): why nothing was found and what to do; null and '' when found.
  *   min and max: the bounding box of the blocks found, grown by 1 on every side (null when not found).
  *   blocks: the number of blocks of the building. entrances: doors (lower block) and fence gates, sorted
  *   by x, z, y. clipped: the search hit its limit.
@@ -350,10 +366,14 @@ export function scanBuilding(getBlockName, origin, options = {}) {
     const best = pickGroup(groups, origin, minBlocks);
     if (!best) {
         const largest = groups.reduce((n, g) => Math.max(n, g.count), 0);
-        return { found: false, min: null, max: null, blocks: largest, entrances: [], clipped: false };
+        const reason = largest === 0 ? 'no_built_blocks' : 'too_few_blocks';
+        return { found: false, reason, text: scanText(reason, { range: startRadius, count: largest, minBlocks }),
+            min: null, max: null, blocks: largest, entrances: [], clipped: false };
     }
     return {
         found: true,
+        reason: null,
+        text: '',
         min: { x: best.minX - 1, y: best.minY - 1, z: best.minZ - 1 },
         max: { x: best.maxX + 1, y: best.maxY + 1, z: best.maxZ + 1 },
         blocks: best.count,
@@ -393,45 +413,81 @@ function gapTo(lo, hi, value) {
     return value >= hi + 1 ? value - (hi + 1) : 0;
 }
 
-// --- scanFarm -----------------------------------------------------------------------------
+// --- fenced ground: scanFarm, scanPen, findFencedGroundNear ------------------------------
 
 const FARM_DEFAULTS = Object.freeze({ radius: 24 });
 
-/**
- * Finds the ground inside a fence around a position.
- *
- * The ground height is the block under the origin (the block the origin is in when that is
- * not passable, for example farmland). Ground cells are columns x, z whose ground lies at that
- * height, one below or one above: a block that is not passable with a passable block above it.
- * The search starts at the origin and spreads to the four neighbours. A cell stops the search
- * if it holds a fence, a fence gate or a wall block at the height of the origin or one below,
- * or if it has no ground within one block of the height (a house wall, a hole). Reaching more
- * than `radius` blocks from the origin means the ground is not enclosed.
- *
- * @param {(x: number, y: number, z: number) => string|null} getBlockName
- * @param {{x: number, y: number, z: number}} origin usually the position of the bot
- * @param {{radius?: number}} [options] default radius 24
- * @returns {{found: boolean, reason: null|'not_enclosed'|'no_ground'|'not_loaded',
- *   min: {x: number, y: number, z: number}|null, max: {x: number, y: number, z: number}|null,
- *   cells: number, entrances: {x: number, y: number, z: number, kind: 'gate'}[]}}
- *   min and max cover the cells and the fence around them, from one block below the ground to
- *   3 blocks above (null when not found). cells: the number of ground cells. entrances: the fence
- *   gates of the fence, sorted by x, z, y.
- * @throws {TypeError} when getBlockName is not a function or the origin has no finite x, y, z
- */
-export function scanFarm(getBlockName, origin, options = {}) {
-    checkArgs(getBlockName, origin, 'scanFarm');
-    const radius = positiveInt((options ?? {}).radius, FARM_DEFAULTS.radius);
-    const read = reader(getBlockName);
+// v0.1.4.8 (D5): plants that stand only where someone planted them. One of them, or one block of
+// farmland, makes fenced ground a farm.
+const CROP_NAMES = new Set(['wheat', 'carrots', 'potatoes', 'beetroots', 'melon_stem', 'pumpkin_stem',
+    'attached_melon_stem', 'attached_pumpkin_stem', 'sweet_berry_bush', 'nether_wart', 'torchflower_crop',
+    'pitcher_crop']);
 
+// A cell has a roof when a block that is not passable lies 1 to 4 blocks above its ground.
+const ROOF_HEIGHT = 4;
+
+// The widest ground of an area: 64 blocks with the fence on both sides.
+const MAX_SPAN = 62;
+
+// findFencedGroundNear: how far from the position the ground behind a fence may start, and how much
+// further the search goes to tell a fence that is too big for an area from one that is open.
+const NEAR_DEFAULT = 6;
+const NEAR_MAX = 16;
+const EXTENDED_SPAN = 3 * MAX_SPAN;
+const EXTENDED_CHECKS = 2;
+
+// The text of every reason of a scan: what went wrong and what to do.
+const SCAN_TEXTS = Object.freeze({
+    no_built_blocks: (i) => `I find no built blocks within ${i.range} blocks of me. Stand inside the building and try again.`,
+    too_few_blocks: (i) => `I find only ${i.count} built blocks here, and a building has at least ${i.minBlocks}. `
+        + 'Stand inside the building and try again.',
+    not_loaded: () => 'Part of the ground around me is not loaded yet. Wait a moment and try again.',
+    no_ground: () => 'I find no ground under me. Stand on the ground inside the fence and try again.',
+    not_enclosed: (i) => `I find no closed fence around me within ${i.radius} blocks. `
+        + 'Stand inside the fence, or close the gap in it, and try again.',
+    no_fence: (i) => `The ground around me is closed by walls, not by a fence. This is a room, not ${i.what}.`,
+    no_crops: () => 'The fenced ground has no farmland and no crop, so it is no farm. Till one block of it, or save it as a pen.',
+    roofed: () => 'Half or more of the fenced ground has a roof over it. This is a room, not a farm.',
+    farmland: () => 'The fenced ground has farmland, so it is a farm, not a pen. Save it as a farm.',
+    no_fence_near: (i) => `I see no fence within ${i.range} blocks of me. Stand inside the fence or next to its gate and try again.`,
+    not_closed: () => 'The fence near me is not closed. Close the gap in it and try again.',
+    too_big: () => 'The fenced ground is too big for one area. An area has at most 64 x 48 x 64 blocks. '
+        + 'Use !setArea to save a part of it.',
+});
+
+/**
+ * The text for the reason of a failed scan (v0.1.4.8, D5): what went wrong and what to do.
+ * Reasons: no_built_blocks, too_few_blocks (scanBuilding); not_loaded, no_ground, not_enclosed,
+ * no_fence, no_crops, roofed, farmland (scanFarm, scanPen); no_fence_near, not_closed, too_big
+ * (findFencedGroundNear). An unknown reason gives ''.
+ * @param {string} reason
+ * @param {{range?: number, radius?: number, count?: number, minBlocks?: number, what?: string}} [info]
+ *   range: the reach of findFencedGroundNear (6) or the start radius of scanBuilding; radius: of
+ *   scanFarm (24); count and minBlocks: built blocks found and needed; what: 'a farm', 'a pen' ...
+ * @returns {string}
+ */
+export function scanText(reason, info = {}) {
+    const make = Object.hasOwn(SCAN_TEXTS, reason) ? SCAN_TEXTS[reason] : null;
+    if (!make) {
+        return '';
+    }
+    return make({ range: NEAR_DEFAULT, radius: FARM_DEFAULTS.radius, count: 0, minBlocks: BUILDING_DEFAULTS.minBlocks,
+        what: 'a farm', ...(info ?? {}) });
+}
+
+// The flood of the fenced scans from the column of the origin. Returns the ground cells
+// [x, z, surface], the gates, how many columns bound the ground and how many of them are a fence, a
+// fence gate or a wall block, every column it looked at, and a reason when it stopped: not_loaded,
+// no_ground or not_enclosed (more than `radius` blocks from the origin, or wider than `maxSpan` in x or z).
+function floodFenced(read, origin, radius, maxSpan) {
     const ox = Math.floor(origin.x);
     const oz = Math.floor(origin.z);
     const feetY = Math.floor(origin.y);
     const feet = read(ox, feetY, oz);
     const groundY = feet !== null && !isPassable(feet) ? feetY : feetY - 1;
     const levelY = groundY + 1;
-
-    const notFound = (reason, cells = 0) => ({ found: false, reason, min: null, max: null, cells, entrances: [] });
+    const flood = { reason: null, cells: [], gates: new Map(), fences: 0, barriers: 0, visited: new Set([`${ox},${oz}`]),
+        barrier: null, minX: ox, maxX: ox, minZ: oz, maxZ: oz };
 
     function column(x, z) {
         for (const y of [levelY, levelY - 1]) {
@@ -440,7 +496,7 @@ export function scanFarm(getBlockName, origin, options = {}) {
                 return { kind: 'unloaded' };
             }
             if (isFenceLike(name)) {
-                return { kind: 'barrier', gate: name.endsWith('_fence_gate') ? { x, y, z, kind: 'gate' } : null };
+                return { kind: 'barrier', fence: true, gate: name.endsWith('_fence_gate') ? { x, y, z, kind: 'gate' } : null };
             }
         }
         let above = read(x, groundY + 2, z);
@@ -454,64 +510,341 @@ export function scanFarm(getBlockName, origin, options = {}) {
             }
             above = name;
         }
-        return { kind: 'barrier', gate: null };
+        return { kind: 'barrier', fence: false, gate: null };
     }
 
     const start = column(ox, oz);
-    if (start.kind === 'unloaded') {
-        return notFound('not_loaded');
-    }
     if (start.kind !== 'cell') {
-        return notFound('no_ground');
+        flood.reason = start.kind === 'unloaded' ? 'not_loaded' : 'no_ground';
+        flood.barrier = start.kind === 'barrier' ? start : null;
+        return flood;
     }
-
-    const visited = new Set([`${ox},${oz}`]);
-    const gates = new Map();
-    const queue = [[ox, oz, start.surface]];
-    let minX = ox;
-    let maxX = ox;
-    let minZ = oz;
-    let maxZ = oz;
-    let minSurface = start.surface;
-    let maxSurface = start.surface;
+    const queue = flood.cells;
+    queue.push([ox, oz, start.surface]);
     for (let head = 0; head < queue.length; head++) {
-        const [x, z, surface] = queue[head];
-        if (x < minX) minX = x;
-        if (x > maxX) maxX = x;
-        if (z < minZ) minZ = z;
-        if (z > maxZ) maxZ = z;
-        if (surface < minSurface) minSurface = surface;
-        if (surface > maxSurface) maxSurface = surface;
+        const [x, z] = queue[head];
         for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
             const nx = x + dx;
             const nz = z + dz;
             const key = `${nx},${nz}`;
-            if (visited.has(key)) {
+            if (flood.visited.has(key)) {
                 continue;
             }
-            visited.add(key);
+            flood.visited.add(key);
             const state = column(nx, nz);
             if (state.kind === 'unloaded') {
-                return notFound('not_loaded', queue.length);
+                flood.reason = 'not_loaded';
+                return flood;
             }
             if (state.kind === 'barrier') {
+                flood.barriers++;
+                if (state.fence) {
+                    flood.fences++;
+                }
                 if (state.gate) {
-                    gates.set(key, state.gate);
+                    flood.gates.set(key, state.gate);
                 }
                 continue;
             }
             if (Math.max(Math.abs(nx - ox), Math.abs(nz - oz)) > radius) {
-                return notFound('not_enclosed', queue.length);
+                flood.reason = 'not_enclosed';
+                return flood;
+            }
+            if (nx < flood.minX) flood.minX = nx;
+            if (nx > flood.maxX) flood.maxX = nx;
+            if (nz < flood.minZ) flood.minZ = nz;
+            if (nz > flood.maxZ) flood.maxZ = nz;
+            if (flood.maxX - flood.minX + 1 > maxSpan || flood.maxZ - flood.minZ + 1 > maxSpan) {
+                flood.reason = 'not_enclosed';
+                return flood;
             }
             queue.push([nx, nz, state.surface]);
         }
     }
+    return flood;
+}
+
+// Farmland cells, crop cells and cells with a roof (a solid block 1 to 4 above the ground).
+function groundStats(read, cells) {
+    let farmland = 0;
+    let crops = 0;
+    let roofed = 0;
+    for (const [x, z, surface] of cells) {
+        if (read(x, surface, z) === 'farmland') {
+            farmland++;
+        }
+        if (CROP_NAMES.has(read(x, surface + 1, z))) {
+            crops++;
+        }
+        for (let y = surface + 1; y <= surface + ROOF_HEIGHT; y++) {
+            const name = read(x, y, z);
+            if (name !== null && !isPassable(name)) {
+                roofed++;
+                break;
+            }
+        }
+    }
+    return { farmland, crops, roofed };
+}
+
+// Why enclosed ground is not of the type (null: it is). Ground closed only by walls is a room, not
+// fenced ground. A farm needs farmland or a crop and fewer than half of its cells under a roof (a
+// field on the edge of a cliff is still a farm). A pen has no farmland, and at least half of what
+// bounds it is a fence, a gate or a wall block: a room with a fence post in it is no pen.
+function typeFailure(flood, stats, type) {
+    if (flood.fences === 0 || (type === 'pen' && flood.fences * 2 < flood.barriers)) {
+        return 'no_fence';
+    }
+    if (type === 'farm') {
+        if (stats.farmland + stats.crops === 0) {
+            return 'no_crops';
+        }
+        if (stats.roofed * 2 >= flood.cells.length) {
+            return 'roofed';
+        }
+    } else if (type === 'pen' && stats.farmland > 0) {
+        return 'farmland';
+    }
+    return null;
+}
+
+function whatOf(type) {
+    return type ? `a ${type}` : 'fenced ground';
+}
+
+function fencedFound(flood, stats) {
+    let minSurface = Infinity;
+    let maxSurface = -Infinity;
+    for (const [, , surface] of flood.cells) {
+        if (surface < minSurface) minSurface = surface;
+        if (surface > maxSurface) maxSurface = surface;
+    }
     return {
         found: true,
         reason: null,
-        min: { x: minX - 1, y: minSurface - 1, z: minZ - 1 },
-        max: { x: maxX + 1, y: maxSurface + 3, z: maxZ + 1 },
-        cells: queue.length,
-        entrances: [...gates.values()].sort(compareEntrances),
+        text: '',
+        min: { x: flood.minX - 1, y: minSurface - 1, z: flood.minZ - 1 },
+        max: { x: flood.maxX + 1, y: maxSurface + 3, z: flood.maxZ + 1 },
+        cells: flood.cells.length,
+        entrances: [...flood.gates.values()].sort(compareEntrances),
+        farmland: stats.farmland,
+        crops: stats.crops,
+        roofed: stats.roofed,
     };
+}
+
+function fencedNotFound(reason, cells, info) {
+    return { found: false, reason, text: scanText(reason, info), min: null, max: null, cells, entrances: [] };
+}
+
+function scanFenced(getBlockName, origin, options, type, fn) {
+    checkArgs(getBlockName, origin, fn);
+    const radius = positiveInt((options ?? {}).radius, FARM_DEFAULTS.radius);
+    const read = reader(getBlockName);
+    const info = { radius, what: whatOf(type) };
+    const flood = floodFenced(read, origin, radius, Infinity);
+    if (flood.reason) {
+        return fencedNotFound(flood.reason, flood.cells.length, info);
+    }
+    const stats = groundStats(read, flood.cells);
+    const failure = typeFailure(flood, stats, type);
+    if (failure) {
+        return fencedNotFound(failure, flood.cells.length, info);
+    }
+    return fencedFound(flood, stats);
+}
+
+/**
+ * Finds the farm inside a fence around a position.
+ *
+ * The ground height is the block under the origin (the block the origin is in when that is
+ * not passable, for example farmland). Ground cells are columns x, z whose ground lies at that
+ * height, one below or one above: a block that is not passable with a passable block above it.
+ * The search starts at the origin and spreads to the four neighbours. A cell stops the search
+ * if it holds a fence, a fence gate or a wall block at the height of the origin or one below,
+ * or if it has no ground within one block of the height (a house wall, a hole). Reaching more
+ * than `radius` blocks from the origin means the ground is not enclosed.
+ *
+ * v0.1.4.8 (D5): the ground is a farm only when a fence, gate or wall block bounds it (not only the
+ * walls of a room), it holds at least one block of farmland or one crop, and fewer than half of its
+ * cells have a solid block 1 to 4 blocks above the ground. Every failure has a reason and a text.
+ *
+ * @param {(x: number, y: number, z: number) => string|null} getBlockName
+ * @param {{x: number, y: number, z: number}} origin usually the position of the bot
+ * @param {{radius?: number}} [options] default radius 24
+ * @returns {{found: boolean, reason: null|'not_enclosed'|'no_ground'|'not_loaded'|'no_fence'|'no_crops'|'roofed',
+ *   text: string, min: {x: number, y: number, z: number}|null, max: {x: number, y: number, z: number}|null,
+ *   cells: number, entrances: {x: number, y: number, z: number, kind: 'gate'}[],
+ *   farmland?: number, crops?: number, roofed?: number}}
+ *   text: what to do (scanText), '' when found. min and max cover the cells and the fence around
+ *   them, from one block below the ground to 3 blocks above (null when not found). cells: the number
+ *   of ground cells. entrances: the fence gates of the fence, sorted by x, z, y. farmland, crops,
+ *   roofed: numbers of cells, when found.
+ * @throws {TypeError} when getBlockName is not a function or the origin has no finite x, y, z
+ */
+export function scanFarm(getBlockName, origin, options = {}) {
+    return scanFenced(getBlockName, origin, options, 'farm', 'scanFarm');
+}
+
+/**
+ * Finds the pen inside a fence around a position (v0.1.4.8, D5): the ground as scanFarm finds it,
+ * without farmland, and at least half of the columns that bound it are fences, gates or wall blocks
+ * (a room with a fence post in it is no pen). A roof does not matter (a barn is a pen).
+ * @param {(x: number, y: number, z: number) => string|null} getBlockName
+ * @param {{x: number, y: number, z: number}} origin
+ * @param {{radius?: number}} [options] default radius 24
+ * @returns {object} as scanFarm; reasons not_loaded, no_ground, not_enclosed, no_fence, farmland
+ * @throws {TypeError} when getBlockName is not a function or the origin has no finite x, y, z
+ */
+export function scanPen(getBlockName, origin, options = {}) {
+    return scanFenced(getBlockName, origin, options, 'pen', 'scanPen');
+}
+
+// A fence, fence gate or wall block within `reach` blocks in x and z, 2 below the feet to 1 above.
+function fenceWithin(read, px, py, pz, reach) {
+    for (let dx = -reach; dx <= reach; dx++) {
+        for (let dz = -reach; dz <= reach; dz++) {
+            for (let y = py - 2; y <= py + 1; y++) {
+                const name = read(px + dx, y, pz + dz);
+                if (name !== null && isFenceLike(name)) {
+                    return true;
+                }
+            }
+        }
+    }
+    return false;
+}
+
+function nearestGate(entrances, pos) {
+    let best = null;
+    let bestDistance = Infinity;
+    for (const gate of entrances) {
+        const d = (gate.x + 0.5 - pos.x) ** 2 + (gate.y - pos.y) ** 2 + (gate.z + 0.5 - pos.z) ** 2;
+        if (d < bestDistance) {
+            best = gate;
+            bestDistance = d;
+        }
+    }
+    return best ? { x: best.x, y: best.y, z: best.z } : null;
+}
+
+const pointText = (p) => `(${p.x}, ${p.y}, ${p.z})`;
+
+/**
+ * The fenced ground at or near a position (v0.1.4.8, D5). First the ground at the position itself.
+ * When the position is outside, on the fence or in the gate, the walkable cells within `range` are
+ * tried, nearest first, and the first ground that is enclosed (and of the type, when one is given)
+ * is returned, with the gate nearest to the position. Ground wider than an area (62 blocks inside
+ * the fence) does not count.
+ *
+ * Reasons when nothing is found: the reason of the ground at the position when it is enclosed but of
+ * another type (no_fence, no_crops, roofed, farmland); no_fence_near (no fence, gate or wall block
+ * within range); the reason of the nearest enclosed ground of another type; too_big (a fence that
+ * closes, but farther than an area reaches); not_closed; not_loaded; no_ground.
+ *
+ * @param {(x: number, y: number, z: number) => string|null} getBlockName
+ * @param {{x: number, y: number, z: number}} pos usually the position of the bot
+ * @param {number} [range] default 6, at most 16
+ * @param {{type?: 'farm'|'pen'}} [options] type: the rules of scanFarm or scanPen; none: any fenced ground
+ * @returns {{found: boolean, reason: string|null, text: string, min: object|null, max: object|null, cells: number,
+ *   entrances: object[], gate: {x: number, y: number, z: number}|null, start: {x: number, y: number, z: number}|null,
+ *   inside: boolean}}
+ *   inside: the position is on the ground found. start: a block to stand in on the ground found.
+ *   gate: the gate nearest to the position. text: '' when inside, else
+ *   `I stand outside the fence. The gate is at (x, y, z). I can save the ground behind it.`;
+ *   for a failure, what to do (scanText).
+ * @throws {TypeError} when getBlockName is not a function or the position has no finite x, y, z
+ */
+export function findFencedGroundNear(getBlockName, pos, range = NEAR_DEFAULT, options = {}) {
+    checkArgs(getBlockName, pos, 'findFencedGroundNear');
+    const reach = Number.isFinite(range) && range >= 0 ? Math.min(Math.floor(range), NEAR_MAX) : NEAR_DEFAULT;
+    const type = options?.type === 'farm' || options?.type === 'pen' ? options.type : null;
+    const read = reader(getBlockName);
+    const px = Math.floor(pos.x);
+    const py = Math.floor(pos.y);
+    const pz = Math.floor(pos.z);
+    const seen = new Set();
+    const leaked = [];
+    let otherType = null;
+    let unloaded = false;
+
+    const fail = (reason) => ({ found: false, reason, text: scanText(reason, { range: reach, what: whatOf(type) }),
+        min: null, max: null, cells: 0, entrances: [], gate: null, start: null, inside: false });
+
+    // null, or the result when the ground from x, z is enclosed and of the type
+    const attempt = (x, z) => {
+        const flood = floodFenced(read, { x, y: pos.y, z }, MAX_SPAN, MAX_SPAN);
+        for (const key of flood.visited) {
+            seen.add(key);
+        }
+        if (flood.reason === 'not_enclosed') {
+            leaked.push({ x, y: pos.y, z });
+        } else if (flood.reason === 'not_loaded') {
+            unloaded = true;
+        }
+        if (flood.reason) {
+            return { flood, result: null };
+        }
+        const stats = groundStats(read, flood.cells);
+        const failure = typeFailure(flood, stats, type);
+        if (failure) {
+            otherType ??= failure;
+            return { flood, result: null };
+        }
+        const result = fencedFound(flood, stats);
+        const [cx, cz, surface] = flood.cells[0];
+        result.gate = nearestGate(result.entrances, pos);
+        result.start = { x: cx, y: surface + 1, z: cz };
+        return { flood, result };
+    };
+
+    const own = attempt(px, pz);
+    if (own.result) {
+        own.result.inside = true;
+        return own.result;
+    }
+    const ownFailure = otherType;
+    if (!fenceWithin(read, px, py, pz, reach)) {
+        return fail(ownFailure ?? 'no_fence_near');
+    }
+    const candidates = [];
+    for (let dx = -reach; dx <= reach; dx++) {
+        for (let dz = -reach; dz <= reach; dz++) {
+            const d = Math.hypot(dx, dz);
+            if (d > 0 && d <= reach) {
+                candidates.push({ x: px + dx, z: pz + dz, d });
+            }
+        }
+    }
+    candidates.sort((a, b) => a.d - b.d || a.x - b.x || a.z - b.z);
+    for (const c of candidates) {
+        if (seen.has(`${c.x},${c.z}`)) {
+            continue;
+        }
+        const { result } = attempt(c.x, c.z);
+        if (result) {
+            result.inside = false;
+            const gateOfBot = own.flood.barrier?.gate ?? null;
+            if (gateOfBot) {
+                result.text = `I stand in the gate at ${pointText(gateOfBot)}. I can save the ground behind it.`;
+            } else if (result.gate) {
+                result.text = `I stand outside the fence. The gate is at ${pointText(result.gate)}. I can save the ground behind it.`;
+            } else {
+                result.text = 'I stand outside the fence, and it has no gate. I can save the ground behind it.';
+            }
+            return result;
+        }
+    }
+    if (ownFailure) {
+        return fail(ownFailure);
+    }
+    if (otherType) {
+        return fail(otherType);
+    }
+    if (leaked.length > 0) {
+        const closes = leaked.slice(0, EXTENDED_CHECKS)
+            .some(start => floodFenced(read, start, EXTENDED_SPAN, EXTENDED_SPAN).reason === null);
+        return fail(closes ? 'too_big' : 'not_closed');
+    }
+    return fail(unloaded ? 'not_loaded' : 'no_ground');
 }

@@ -1,6 +1,7 @@
 // W10 sleep (spec section 8 "Sleep", H4 sleepInBed, G5 goToBed): home_pack and protected_areas on,
 // world_memory on, peaceful. The house has a red bed; the bot saves it with !rememberArea.
-//   1. At day (6000) inside the house: !goToBed answers "I cannot sleep now, it is not night.".
+//   1. At day (6000) inside the house: !goToBed answers "I cannot sleep now, it is day. The night starts in
+//      about N minutes." (v0.1.4.8, C6; the night starts at 12000, 6000 ticks = 5 minutes later).
 //   2. At night (13000), 60 blocks from the house, with blocks of bedrock around the bot (and the
 //      bedrock floor of the flat world 4 blocks below it): !goToBed answers "I found no bed nearby."
 //      and the bot does not walk to the bedrock.
@@ -42,7 +43,9 @@ await scenarioMain({
             // ---------------------------------------------------------- 1. day
             const r1 = await command_(agent, '!goToBed', 30000);
             note(`1: ${JSON.stringify(r1)}`);
-            check(r1.includes('I cannot sleep now, it is not night.'), '1: at day !goToBed answers "I cannot sleep now, it is not night."', JSON.stringify(r1.slice(0, 200)));
+            const day = /I cannot sleep now, it is day\. The night starts in about (\d+) minutes?\./.exec(r1);
+            check(Boolean(day) && [5, 6].includes(Number(day[1])),
+                '1: at day (6000) !goToBed answers "I cannot sleep now, it is day. The night starts in about 5 minutes." (C6; 5 or 6 by the rounding)', JSON.stringify(r1.slice(0, 200)));
 
             // ---------------------------------------------------------- 2. bedrock is no bed
             const lone = { x: r.ox + 30, y: g + 1, z: r.oz + 30 };

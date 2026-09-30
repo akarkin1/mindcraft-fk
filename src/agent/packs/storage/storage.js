@@ -8,9 +8,9 @@ import { Vec3 } from 'vec3';
 import { botPos, clockOf, dimensionOf, logTo } from '../home/context.js';
 import { walkNear } from '../home/motion.js';
 import { ChestIndex } from './chest_index.js';
-import { chestKey, chooseChest, cleanName, comparePositions, countIn, distanceTo, isContainerKind, keepPlan, keyHalf,
+import { chestKey, chooseChest, cleanName, comparePositions, countIn, distanceTo, isContainerKind, isDimensionName, keepPlan, keyHalf,
     normalizeDimension, otherHalfOf, roomFor, summarizeSlots } from './storage_logic.js';
-import { TEXTS, chestLine, chestListText, fetchText, posText, storeText } from './texts.js';
+import { TEXTS, chestLine, chestListText, fetchText, itemChestsText, notFoundText, posText, storeText } from './texts.js';
 
 /** The bot walks to within this many blocks of a container before it opens it. */
 export const REACH = 3;
@@ -18,10 +18,20 @@ export const REACH = 3;
 export const OPEN_TIMEOUT_MS = 5000;
 /** Default range of lookIntoChests. */
 export const LOOK_RANGE = 16;
-/** Range of storeItems, and of the look of fetchItem when the index knows no chest with the item. */
+/** Range of storeItems. */
 export const STORE_RANGE = 32;
+/** fetchItem, for an item no known chest holds, looks into chests it does not know within this range (v0.1.4.8, E1). */
+export const FETCH_LOOK_RANGE = 16;
+/** ... and into at most this many of them. */
+export const FETCH_LOOK_LIMIT = 3;
 /** lookIntoChests opens at most this many containers. */
 export const LOOK_LIMIT = 12;
+/**
+ * storeItems uses at most this many containers within its range, the nearest first (v0.1.4.8, X8: with
+ * the 12 of lookIntoChests it said "The chests are full now" while 12 more chests with room stood 3
+ * blocks away).
+ */
+export const STORE_LIMIT = 27;
 /** Upper limit of time of lookIntoChests and lookIntoChest. */
 export const LOOK_TIMEOUT_MS = 120000;
 /** Upper limit of time of storeItems. */
@@ -82,6 +92,15 @@ function stopReason(state) {
 function finish(ctx, result) {
     logTo(ctx, result.text);
     return result;
+}
+
+// Progress for the reflex unstuck (v0.1.4.8, I1): a walk to a chest and an open are work, not being stuck.
+function progress(bot) {
+    try {
+        bot?.modes?.noteProgress?.('chest');
+    } catch {
+        // the modes are optional
+    }
 }
 
 function nearestFirst(me, list) {
@@ -145,7 +164,8 @@ function describeContainer(bot, pos) {
     return { loaded: true, x: key.x, y: key.y, z: key.z, kind: block.name, halves: other ? [at, other] : [at] };
 }
 
-// A chest does not open with a solid block above one of its halves; a barrel always opens.
+// A chest does not open with a solid block above one of its halves; a barrel always opens. Since
+// v0.1.4.8 (E1, C4) this only explains an open that failed: it does not decide alone.
 function isBlocked(bot, info) {
     if (info.kind === 'barrel') {
         return false;
@@ -245,15 +265,19 @@ async function openWithin(bot, block, clock, ms) {
     return settled;
 }
 
-function walkTo(state, target) {
+async function walkTo(state, target) {
     const left = state.deadline - state.clock.now();
     const d = distanceTo(botPos(state.bot), target);
     const perTry = Math.max(1000, Math.min(left, 20000 + (isFiniteNumber(d) ? d * 500 : 0)));
-    return walkNear(state.bot, target, REACH, { clock: state.clock, timeoutMs: perTry });
+    progress(state.bot);
+    const walk = await walkNear(state.bot, target, REACH, { clock: state.clock, timeoutMs: perTry });
+    progress(state.bot);
+    return walk;
 }
 
 // Walks to a container, opens it, runs the work, records what it holds and closes it.
-// Reasons: interrupted, timeout, unreachable (no path, blocked, did not open), gone, error.
+// Reasons: interrupted, timeout, unreachable (no path, did not open, blocked), gone, error.
+// Since v0.1.4.8 (E1, C4) a chest counts as blocked only after its open failed.
 async function withOpen(state, target, work) {
     const bot = state.bot;
     const stop = stopReason(state);
@@ -269,18 +293,22 @@ async function withOpen(state, target, work) {
         state.index.remove(target);
         return { ok: false, reason: 'gone' };
     }
-    if (!info.loaded || isBlocked(bot, info)) {
+    if (!info.loaded) {
         return { ok: false, reason: 'unreachable' };
     }
     if (chestKey(info) !== chestKey(target)) {
         state.index.remove(target);
     }
+    progress(bot);
     const opened = await openWithin(bot, bot.blockAt(vec(info)), state.clock, OPEN_TIMEOUT_MS);
+    progress(bot);
     if (!opened.ok) {
-        if (opened.error) {
-            console.warn(`Storage pack: the container at ${posText(info)} did not open:`, opened.error?.message ?? opened.error);
+        const blocked = opened.reason !== 'interrupted' && isBlocked(bot, info);
+        if (opened.error || blocked) {
+            console.warn(`Storage pack: the container at ${posText(info)} did not open${blocked ? ', a solid block is above it' : ''}:`,
+                opened.error?.message ?? opened.error ?? opened.reason);
         }
-        return { ok: false, reason: opened.reason === 'interrupted' ? 'interrupted' : 'unreachable' };
+        return { ok: false, reason: opened.reason === 'interrupted' ? 'interrupted' : 'unreachable', blocked };
     }
     const key = chestKey(info);
     state.opened.add(key);
@@ -292,6 +320,7 @@ async function withOpen(state, target, work) {
         error = err;
         console.warn(`Storage pack: work at the container at ${posText(info)} failed:`, err?.message ?? err);
     }
+    progress(bot);
     let chest = null;
     try {
         chest = record(state, info, window);
@@ -301,8 +330,8 @@ async function withOpen(state, target, work) {
     return { ok: error === null, reason: error === null ? null : 'error', error, chest, key };
 }
 
-async function lookInto(state, targets) {
-    const pending = targets.slice(0, LOOK_LIMIT);
+async function lookInto(state, targets, limit = LOOK_LIMIT) {
+    const pending = targets.slice(0, limit);
     const chests = [];
     while (pending.length > 0 && !stopReason(state)) {
         const target = nearestFirst(botPos(state.bot), pending)[0];
@@ -445,6 +474,7 @@ async function depositAll(state, window, names, job) {
                 await window.deposit(item?.type ?? bot.registry?.itemsByName?.[name]?.id, null, n);
             }
         } finally {
+            progress(bot);
             const moved = Math.max(0, countIn(box(), name) - before);
             if (moved > 0) {
                 job.stored[name] = (job.stored[name] ?? 0) + moved;
@@ -473,6 +503,7 @@ async function storeLoop(state, job, opts) {
     const origin = botPos(bot);
     const range = isFiniteNumber(opts.range) && opts.range > 0 ? opts.range : STORE_RANGE;
     let single = null;
+    let allowed = null;
     if (opts.chest !== undefined && opts.chest !== null) {
         const info = isPoint(opts.chest) ? describeContainer(bot, opts.chest) : null;
         if (info === null) {
@@ -480,16 +511,25 @@ async function storeLoop(state, job, opts) {
         }
         single = info.loaded ? { x: info.x, y: info.y, z: info.z } : floored(opts.chest);
     } else {
+        // v0.1.4.8, X8: the containers of the job are the 27 nearest within the range, those the index
+        // knows and those found; when there are more, state.tried says how many were used.
         const found = scanContainers(state, range);
         prune(state, found, range);
-        const known = new Set(state.index.list(state.dimension).map(chestKey));
-        await lookInto(state, found.filter(f => !known.has(chestKey(f))));
+        const known = state.index.list(state.dimension).filter(c => distanceTo(origin, c) <= range + 1);
+        const knownKeys = new Set(known.map(chestKey));
+        const all = nearestFirst(origin, [...known, ...found.filter(f => !knownKeys.has(chestKey(f)))]);
+        const chosen = all.slice(0, STORE_LIMIT);
+        allowed = new Set(chosen.map(chestKey));
+        if (all.length > chosen.length) {
+            state.tried = chosen.length;
+        }
+        await lookInto(state, chosen.filter(f => !knownKeys.has(chestKey(f))), STORE_LIMIT);
     }
     const candidates = () => {
         if (single) {
             return [state.index.get(single) ?? { ...single, dimension: state.dimension, kind: 'chest', items: {}, free_slots: 1 }];
         }
-        return state.index.list(state.dimension).filter(c => distanceTo(origin, c) <= range + 1);
+        return state.index.list(state.dimension).filter(c => allowed.has(chestKey(c)));
     };
     const excluded = new Set();
     let full = false;
@@ -512,7 +552,7 @@ async function storeLoop(state, job, opts) {
             const unseen = pool.filter(c => !state.opened.has(chestKey(c)));
             if (!refreshed && unseen.length > 0) {
                 refreshed = true;
-                await lookInto(state, unseen);
+                await lookInto(state, unseen, STORE_LIMIT);
                 continue;
             }
             full = full || pool.length > 0;
@@ -555,7 +595,8 @@ async function storeLoop(state, job, opts) {
 /**
  * Stores what the bot carries by the keep plan (keepPlan with `options.only`, `options.keep` and
  * the setting keep_items). The chests come from the index within 32 blocks and from a look into the
- * containers within 32 blocks that the index does not know yet. Each item goes to a chest that
+ * containers within 32 blocks that the index does not know yet, at most the 27 nearest of both
+ * (v0.1.4.8, X8); with more, a text of `full` names the number tried. Each item goes to a chest that
  * already holds it, otherwise to the nearest with space. A chest that is full is left and the next
  * one takes the rest; when the index says all are full, they are looked into once more.
  * `options.chest` ({x, y, z}, either half of a double chest) stores into that container only,
@@ -586,7 +627,7 @@ export async function storeItems(bot, ctx = {}, options = {}) {
         const state = makeState(bot, ctx, opts, STORE_TIMEOUT_MS);
         const reason = stopReason(state) ?? await storeLoop(state, job, opts);
         const left = Object.fromEntries(job.remaining);
-        const text = storeText({ stored: job.stored, left, chests: job.used, reason });
+        const text = storeText({ stored: job.stored, left, chests: job.used, reason, tried: state.tried ?? null });
         return finish(ctx, { ok: reason === null, reason, stored: job.stored, left, chests: job.used, text });
     } catch (err) {
         console.warn('Storage pack: storing failed:', err?.message ?? err);
@@ -617,6 +658,7 @@ async function takeFrom(state, window, name, need, tally) {
             }
         }
     } finally {
+        progress(bot);
         tally.moved = Math.max(0, countIn(inv(), name) - before);
         tally.full = tally.moved < Math.min(need, available);
     }
@@ -624,9 +666,11 @@ async function takeFrom(state, window, name, need, tally) {
 
 /**
  * Takes an item from the chests of the index, the nearest first, from several when one is not
- * enough. Without a chest in the index that holds it, it first looks into the containers within 32
- * blocks. `count` -1 takes all there is. What the bot sees in a chest updates the index. Never
- * throws; ends on bot.interrupt_code and after 4 minutes.
+ * enough. Without a chest in the index that holds it, the answer comes from the index: it looks
+ * only into the containers within 16 blocks that the index does not know, at most 3, the nearest
+ * first (v0.1.4.8, E1; v0.1.4.7 opened every container within 32 blocks). `count` -1 takes all
+ * there is. What the bot sees in a chest updates the index. Never throws; ends on
+ * bot.interrupt_code and after 4 minutes.
  * @param {object} bot
  * @param {object} ctx { chests, log, now }
  * @param {string} name item name, `minecraft:` and case do not matter
@@ -656,9 +700,13 @@ export async function fetchItem(bot, ctx = {}, name, count = 1, options = {}) {
             return done(stop);
         }
         if (holders().length === 0) {
-            const found = scanContainers(state, STORE_RANGE);
-            prune(state, found, STORE_RANGE);
-            await lookInto(state, found);
+            const found = scanContainers(state, FETCH_LOOK_RANGE);
+            prune(state, found, FETCH_LOOK_RANGE);
+            const known = new Set(state.index.list(state.dimension).map(chestKey));
+            const unknown = found.filter(f => !known.has(chestKey(f))).slice(0, FETCH_LOOK_LIMIT);
+            if (unknown.length > 0) {
+                await lookInto(state, unknown);
+            }
         }
         if (holders().length === 0) {
             return done('not_found');
@@ -708,17 +756,32 @@ export async function fetchItem(bot, ctx = {}, name, count = 1, options = {}) {
 }
 
 /**
- * The text of the command !chests: the chests of the index in the dimension (all without one),
- * at most 10, with what they hold and their free slots. Never throws.
- * @param {object} ctx { chests }
+ * The text of the command !chests (spec v0.1.4.8 E1). Without an item: the chests of the index in
+ * the dimension (all without one), at most 10, each with up to 10 kinds by count and its free
+ * slots. With an item: `wheat: 28 in the chest at (11, 67, 53). Total 28.` or
+ * `I know no chest with wheat.` The first argument is the chest index or a ctx with `chests`.
+ * The call of v0.1.4.7, chestsText(ctx, dimension), still works: a dimension name in the place of
+ * the item is taken as the dimension. Never throws.
+ * @param {object} source the ChestIndex, or ctx { chests }
+ * @param {string} [item] '' for all chests
  * @param {string} [dimension]
  * @returns {string}
  */
-export function chestsText(ctx, dimension) {
+export function chestsText(source, item = '', dimension = undefined) {
+    let name = item;
+    let dim = dimension;
+    if (dim === undefined && isDimensionName(item)) {
+        dim = item;
+        name = '';
+    }
+    const clean = cleanName(name);
     try {
-        const index = indexOf(ctx);
-        return index ? chestListText(index.list(dimension)) : TEXTS.noChests;
+        const index = indexOf(source) ?? indexOf({ chests: source });
+        if (clean !== null) {
+            return itemChestsText(clean, index ? index.find(clean, dim) : []);
+        }
+        return index ? chestListText(index.list(dim)) : TEXTS.noChests;
     } catch {
-        return TEXTS.noChests;
+        return clean !== null ? notFoundText(clean) : TEXTS.noChests;
     }
 }

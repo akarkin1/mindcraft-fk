@@ -10,9 +10,11 @@
 // digTunnel(24): the tunnel is straight up to the cave, 1 wide and 2 high, with a torch every 8
 // steps; the whole vein of 5 is in the inventory; the lava is closed and the bot was never hurt; the
 // cave is closed where the tunnel met it and the tunnel turned to the side and went on.
+// v0.1.4.8 (W30): the modes of the owner are on (MODES_PROFILE, with the home reflexes). descendToLevel, setupMineBase and
+// digTunnel have no command and run through runSkill, which pauses unstuck as the glue does for a pack command (I1).
 import {
     scenarioMain, check, note, exitSoon, startAgent, stopRealAgent, placeBot, resetBot, giveItems, entityPos, fmt,
-    startTrace, printTrace, runSkill, MINING_SETTINGS, MINING_KIT, watchHealth, largestDrop, env,
+    startTrace, printTrace, runSkill, MINING_SETTINGS, MINING_KIT, watchHealth, largestDrop, env, withModes,
 } from './helpers.js';
 import {
     region, prepareRegion, releaseRegion, blockNames, findBlocks, lavaPocket, carve, placeVein, veinBeside, stableInventory,
@@ -31,7 +33,7 @@ await scenarioMain({
 
         let agent = null;
         try {
-            const s = await startAgent(NAME, MINING_SETTINGS);
+            const s = await startAgent(NAME, withModes(MINING_SETTINGS));
             agent = s.agent;
             const mining = agent.work_packs?.mining;
             check(Boolean(mining), 'precondition: the mining pack is loaded');

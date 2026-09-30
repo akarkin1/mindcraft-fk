@@ -3,7 +3,6 @@
 //
 // Coordinates: the region of a scenario has its origin at (env.ox, env.oz). `g` is the y of the
 // top block of the flat ground (grass); a bot standing on the ground has its feet at g + 1.
-import { Vec3 } from 'vec3';
 import { commands, command, env } from './control.js';
 
 export const MC = (name) => (name.includes(':') ? name : 'minecraft:' + name);
@@ -546,22 +545,57 @@ export async function setOpen(p, open, kind = 'oak_door') {
     return commands([`setblock ${P(p)} minecraft:${kind}[facing=south,open=${open}]`]);
 }
 
-const BACKUP_Y = 280; // snapshots are cloned high above the region, out of reach of every search
+// Snapshots (v0.1.4.8): a copy of a box lies 100 blocks and more south of it, at the same height, not above it.
+// Since v0.1.4.8 the bot reads the ground of the columns around it from the top of the world down (spec I2,
+// ground_logic.js); copies of natural blocks high above the region (y 280, the place of v0.1.4.7) were taken
+// for the ground there and made the bot "underground" on the surface (seen in w28 and W54: "I am underground.
+// I start a new mine only from the surface."). The chunks of a copy are force-loaded while it lives
+// (dropSnapshot releases them); the names of changed blocks are read from the server, since the bot does not
+// see that far. Up to SNAP_SLOTS snapshots of one scenario lie side by side (each SNAP_STEP further south).
+const SNAP_DZ = 100;
+const SNAP_STEP = 48;
+const SNAP_SLOTS = 3;
+let snapSlot = 0;
 
-// Takes a snapshot of a box: the server clones it to a place high above the same columns (from y 280
-// on, or `y` for a second snapshot over the same columns). Returns { box, at } for compareSnapshot.
-export async function snapshotBox(box, { y = BACKUP_Y } = {}) {
-    const at = { x: box.min.x, y, z: box.min.z };
+// Names that a changed block of a snapshot may have; the first that the server confirms is reported.
+const SNAPSHOT_NAMES = ['air', 'cave_air', 'oak_planks', 'oak_log', 'glass', 'oak_door', 'red_bed', 'chest', 'torch', 'wall_torch',
+    'ladder', 'oak_trapdoor', 'oak_fence', 'oak_fence_gate', 'crafting_table', 'composter', 'farmland', 'dirt', 'grass_block',
+    'stone', 'cobblestone', 'water', 'lava', 'wheat', 'oak_leaves', 'oak_sapling', 'coal_ore', 'iron_ore', 'bedrock', 'short_grass',
+    'gravel', 'deepslate', 'dirt_path', 'coarse_dirt'];
+
+// The first name of SNAPSHOT_NAMES that the block at p has (states left out), or null.
+async function nameOnServer(p) {
+    const got = await blockNames([p], SNAPSHOT_NAMES);
+    return got[0];
+}
+
+// Takes a snapshot of a box: the server clones it to a place SNAP_DZ (+ SNAP_STEP per slot) blocks south of
+// the box, at the same height, with its chunks force-loaded. options.slot chooses the place; without it the
+// slots are used in turn. The option `y` of v0.1.4.7 (a second snapshot over the same columns) is not needed
+// any more and is ignored. Returns { box, at, forceload } for compareSnapshot and dropSnapshot.
+export async function snapshotBox(box, { slot = null } = {}) {
+    const k = Number.isInteger(slot) ? slot : (snapSlot++ % SNAP_SLOTS);
+    const at = { x: box.min.x, y: box.min.y, z: box.max.z + SNAP_DZ + k * SNAP_STEP };
+    const far = { x: at.x + box.max.x - box.min.x, y: at.y + box.max.y - box.min.y, z: at.z + box.max.z - box.min.z };
+    const forceload = `${at.x} ${at.z} ${far.x} ${far.z}`;
+    await command(`forceload add ${forceload}`);
+    const loaded = async () => passed(await command(`execute if loaded ${P(at)}`)) && passed(await command(`execute if loaded ${P(far)}`));
+    const t0 = Date.now();
+    while (!(await loaded())) {
+        if (Date.now() - t0 > 20000) throw new Error(`snapshot: the chunks at ${P(at)} did not load within 20 s`);
+        await new Promise((r) => setTimeout(r, 100));
+    }
     const out = await command(`clone ${P(box.min)} ${P(box.max)} ${P(at)} replace force`);
     if (!out.some((l) => /Successfully cloned/.test(l))) throw new Error('snapshot failed: ' + out.join(' | '));
-    return { box, at, count: (box.max.x - box.min.x + 1) * (box.max.y - box.min.y + 1) * (box.max.z - box.min.z + 1) };
+    return { box, at, forceload, count: (box.max.x - box.min.x + 1) * (box.max.y - box.min.y + 1) * (box.max.z - box.min.z + 1) };
 }
 
 // Compares the box with its snapshot on the server. Returns { same, differences } where every
-// difference is { pos, now, was, stateOnly } (names read through `viewBot`, a mineflayer bot near
-// the box, when one is given). `same` counts only changed block names: a door that was opened and
-// closed again is the same; one that is still open is a state difference (stateOnly true).
+// difference is { pos, now, was, stateOnly } (names read from the server, see SNAPSHOT_NAMES; `viewBot` is
+// no longer needed and is ignored). `same` counts only changed block names: a door that was opened and closed
+// again is the same; one that is still open is a state difference (stateOnly true).
 export async function compareSnapshot(snap, viewBot = null) {
+    void viewBot;
     const { box, at } = snap;
     const whole = await command(`execute if blocks ${P(box.min)} ${P(box.max)} ${P(at)} all`);
     if (passed(whole)) return { same: true, identical: true, differences: [] };
@@ -574,19 +608,14 @@ export async function compareSnapshot(snap, viewBot = null) {
     const back = (p) => ({ x: at.x + p.x - box.min.x, y: at.y + p.y - box.min.y, z: at.z + p.z - box.min.z });
     const out = await commands(positions.map((p) => `execute if blocks ${P(p)} ${P(p)} ${P(back(p))} all`), 60000);
     const differing = positions.filter((p, i) => !passed(out[i]));
-    // names: the server can test a name without its states; the names come from the view of the bot
     const differences = [];
-    for (const p of differing) {
-        const b = back(p);
-        let now = null, was = null;
-        if (viewBot) {
-            try { now = viewBot.blockAt(new Vec3(p.x, p.y, p.z))?.name ?? null; } catch { /* not loaded */ }
-            try { was = viewBot.blockAt(new Vec3(b.x, b.y, b.z))?.name ?? null; } catch { /* not loaded */ }
-        }
-        let stateOnly = false;
-        if (was) stateOnly = await blockIs(p, was);
+    for (const p of differing.slice(0, 200)) {
+        const now = await nameOnServer(p);
+        const was = await nameOnServer(back(p));
+        const stateOnly = Boolean(was) && now === was;
         differences.push({ pos: p, now, was, stateOnly });
     }
+    for (const p of differing.slice(200)) differences.push({ pos: p, now: null, was: null, stateOnly: false });
     return { same: differences.every((d) => d.stateOnly), identical: false, differences };
 }
 
@@ -596,11 +625,13 @@ export function describeDifferences(diffs, max = 12) {
         + (diffs.length > max ? `; and ${diffs.length - max} more` : '');
 }
 
-// Removes the snapshot copy.
+// Removes the snapshot copy and releases its chunks.
 export async function dropSnapshot(snap) {
     const { box, at } = snap;
     const max = { x: at.x + box.max.x - box.min.x, y: at.y + box.max.y - box.min.y, z: at.z + box.max.z - box.min.z };
-    return command(`fill ${P(at)} ${P(max)} minecraft:air`);
+    const out = await command(`fill ${P(at)} ${P(max)} minecraft:air`);
+    if (snap.forceload) await command(`forceload remove ${snap.forceload}`);
+    return out;
 }
 
 // ------------------------------------------------------------------ entities through the console

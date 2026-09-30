@@ -5,9 +5,11 @@
 // !chopTrees(9): all 9 logs are gone, no pillar is left (no log, dirt or cobblestone stands in the
 // column of the trunk or beside it above the ground), the bot stands on the ground unhurt and carries
 // the 9 logs, the text of T2.
+// v0.1.4.8 (W30): the modes of the owner are on (MODES_PROFILE, with the home reflexes) and !chopTrees is typed
+// by the player in the chat (the real path of a typed command), as in play.
 import {
     scenarioMain, check, note, exitSoon, startAgent, stopRealAgent, NEW_FLAGS_OFF, placeBot, resetBot, command_,
-    entityPos, fmt, startTrace, printTrace, waitFor,
+    entityPos, fmt, startTrace, printTrace, waitFor, withModes, orderChannel,
 } from './helpers.js';
 import {
     region, prepareRegion, releaseRegion, treePlan, buildTree, blockNames, findBlocks, stableInventory, itemsText, entityNumber,
@@ -24,16 +26,17 @@ await scenarioMain({
         const tree = treePlan(r.ox + 5, r.oz, g, 9);
         await buildTree(tree, { natural: true });
 
-        let agent = null;
+        let agent = null, orders = null;
         try {
-            const s = await startAgent(NAME, { ...NEW_FLAGS_OFF, protected_areas: true, world_memory: true, wood_pack: true });
+            const s = await startAgent(NAME, withModes({ ...NEW_FLAGS_OFF, protected_areas: true, world_memory: true, wood_pack: true }));
             agent = s.agent;
+            orders = await orderChannel(s, { at: { x: r.ox - 16, y: g + 1, z: r.oz + 16 } });
             await resetBot(NAME);
             await placeBot(agent, { x: r.ox, y: g + 1, z: r.oz }, -90);
             check((await blockNames(tree.logs, ['oak_log'])).every(Boolean), 'precondition: a trunk of 9 oak logs stands 5 blocks from the bot');
 
             const trace = startTrace(async () => ({ pos: await entityPos(NAME), hp: await entityNumber(NAME, 'Health') }), 400);
-            const reply = await command_(agent, '!chopTrees(9)', 300000);
+            const reply = await orders.order('!chopTrees(9)', 300000);
             const rows = await trace.stop();
             printTrace('!chopTrees(9) on a tree of 9 logs', rows, { pos: (x) => fmt(x.pos), hp: (x) => String(x.hp) });
             note(`!chopTrees(9) answered ${JSON.stringify(reply)}`);
@@ -63,6 +66,7 @@ await scenarioMain({
             check(/^I cut 1 oak tree and got 9 oak_log\./.test(reply) && !/too high/.test(reply), 'the text of T2 "I cut 1 oak tree and got 9 oak_log." without logs that were too high', JSON.stringify(reply));
             check(s.realCalls.length === 0, 'no request reached a real model class', JSON.stringify(s.realCalls));
         } finally {
+            if (orders) await orders.quit();
             await stopRealAgent(agent);
             await releaseRegion(r);
         }

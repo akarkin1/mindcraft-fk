@@ -35,6 +35,20 @@ function withRules(agent, prompt) {
     return prompt;
 }
 
+// v0.1.4.8 (C1, I9): the block "what you know" of the agent (agent.knowledgeBlock, knowledgeText of
+// src/agent/knowledge), with the setting knowledge_in_prompt; '' without it. Never throws.
+function knowledgeOf(agent) {
+    if (!settings.knowledge_in_prompt || typeof agent?.knowledgeBlock !== 'function')
+        return '';
+    try {
+        const text = agent.knowledgeBlock();
+        return typeof text === 'string' ? text : '';
+    } catch (error) {
+        console.warn('Could not add what the bot knows to the prompt:', error);
+        return '';
+    }
+}
+
 export class Prompter {
     constructor(agent, profile) {
         this.agent = agent;
@@ -134,6 +148,8 @@ export class Prompter {
         try {
             this.convo_examples = new Examples(this.embedding_model, settings.num_examples);
             this.coding_examples = new Examples(this.embedding_model, settings.num_examples);
+            this.convo_examples.by_last_request = settings.examples_by_last_request === true;
+            this.coding_examples.by_last_request = settings.examples_by_last_request === true;
             
             // examples that use a hidden command are left out (v0.1.4.6, R5): a blocked command or one that does not exist
             const isHidden = (name) => (this.agent?.blocked_actions ?? []).includes(name) || !getCommand(name);
@@ -220,6 +236,10 @@ export class Prompter {
                 prompt = prompt.replaceAll('$BLUEPRINTS', blueprints.slice(0, -2));
             }
         }
+        // v0.1.4.8 (C1): what the bot knows, with knowledge_in_prompt, else nothing. Last, and without
+        // replacement patterns, so a name in the block is never read as a placeholder.
+        if (prompt.includes('$KNOWLEDGE'))
+            prompt = prompt.split('$KNOWLEDGE').join(knowledgeOf(this.agent));
 
         // check if there are any remaining placeholders with syntax $<word>, except $CUSTOM_SKILLS which the caller fills
         let remaining = prompt.match(/\$(?!CUSTOM_SKILLS(?![A-Z_]))[A-Z_]+/g);
@@ -248,6 +268,8 @@ export class Prompter {
             }
 
             let prompt = this.profile.conversing;
+            // v0.1.4.8: a profile without $KNOWLEDGE (the profile of the owner) gets the block like the rules
+            const knowledge_placeholder = typeof prompt === 'string' && prompt.includes('$KNOWLEDGE');
             prompt = await this.replaceStrings(prompt, messages, this.convo_examples);
             if (this.agent?.skill_manager) {
                 try {
@@ -260,6 +282,8 @@ export class Prompter {
                 prompt = insertSection(prompt, ''); // no manager: only the placeholder is removed
             }
             prompt = withRules(this.agent, prompt);
+            if (!knowledge_placeholder && settings.knowledge_in_prompt)
+                prompt = insertSection(prompt, knowledgeOf(this.agent)); // '' leaves the prompt as it is
             let generation;
 
             try {

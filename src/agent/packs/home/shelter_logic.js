@@ -1,9 +1,12 @@
-// The choices of the shelter part (spec v0.1.4.6 H3), pure: which shelter, which entrance, where
-// to stand inside, and which block closes the hole of an emergency shelter.
+// The choices of the shelter part (spec v0.1.4.6 H3, v0.1.4.8 C4), pure: which shelter, which
+// entrance, where to stand inside, and which block closes the hole of an emergency shelter.
+import { hasWalls, isShelterArea } from './area_kinds.js';
 import { boxCenter, containsPos, distanceToBox, interiorBox, isBox } from './box_math.js';
 
-/** Nearest building area that counts as shelter (rule 3 of H3). */
-export const SHELTER_RANGE = 128;
+export { isShelterArea };
+
+/** The nearest area of type home within this distance is the shelter (v0.1.4.8, C4). */
+export const SHELTER_RANGE = 96;
 /** The standing place inside is at most this far from the entrance. */
 export const STANDING_RANGE = 8;
 
@@ -36,13 +39,13 @@ export function sameDimension(a, b) {
 }
 
 /**
- * True for an area with a valid box whose type is `building` or not given.
+ * True for an area with a valid box that is a building with walls: type `home` (v0.1.4.8), `building`,
+ * or not given. Only a `home` is a shelter (see isShelterArea).
  * @param {object} area
  * @returns {boolean}
  */
 export function isBuildingArea(area) {
-    return area !== null && typeof area === 'object' && isBox(area)
-        && (area.type === undefined || area.type === null || area.type === 'building');
+    return hasWalls(area);
 }
 
 /**
@@ -58,10 +61,10 @@ export function isInsideArea(area, pos) {
 }
 
 /**
- * The shelter of the bot, in the order of the spec: 1. the building area that contains the place
- * `home`, 2. the building area named `home`, 3. the nearest building area within 128 blocks,
- * 4. the place `home` without an area, 5. an emergency shelter. Areas and the place of another
- * dimension are left out.
+ * The shelter of the bot (v0.1.4.8, C4): 1. the area of type `home` that holds the place `home`,
+ * 2. the nearest area of type `home` within 96 blocks, 3. the place `home`. Never another type: a
+ * building, a pen or a mine is no shelter. Areas and the place of another dimension are left out.
+ * Without any of them the kind is `emergency` (why `nothing`): the bot knows no home.
  * @param {{areas: object[], home: {x,y,z,dimension}|null, botPos: {x,y,z}, dimension: string, maxDistance?: number}} input
  * @returns {{kind: 'area'|'place'|'emergency', area?: object, place?: object, why: string}}
  */
@@ -69,25 +72,21 @@ export function chooseShelter(input) {
     const i = input && typeof input === 'object' ? input : {};
     const dimension = i.dimension ?? null;
     const maxDistance = isFiniteNumber(i.maxDistance) ? i.maxDistance : SHELTER_RANGE;
-    const buildings = (Array.isArray(i.areas) ? i.areas : [])
-        .filter(isBuildingArea)
+    const homes = (Array.isArray(i.areas) ? i.areas : [])
+        .filter(isShelterArea)
         .filter(area => sameDimension(area.dimension, dimension));
     const home = isPoint(i.home) && sameDimension(i.home.dimension, dimension) ? i.home : null;
 
     if (home) {
-        const around = buildings.find(area => containsPos(area, home));
+        const around = homes.find(area => containsPos(area, home));
         if (around) {
             return { kind: 'area', area: around, why: 'contains_home' };
         }
     }
-    const named = buildings.find(area => area.name === 'home');
-    if (named) {
-        return { kind: 'area', area: named, why: 'named_home' };
-    }
     if (isPoint(i.botPos)) {
         let best = null;
         let bestDistance = Infinity;
-        for (const area of buildings) {
+        for (const area of homes) {
             const d = distanceToBox(area, i.botPos);
             if (d <= maxDistance && d < bestDistance) {
                 best = area;

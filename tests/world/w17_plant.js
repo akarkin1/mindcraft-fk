@@ -9,9 +9,12 @@
 //      sentence about the missing hoe.
 // In both: nothing was dug. Everything around the field, down to 2 blocks under the ground, is as it
 // was, except the cells of the field (tilled, planted).
+// v0.1.4.8 (W30): the modes of the owner are on (MODES_PROFILE, with the home reflexes) and !plant is typed by
+// the player in the chat. The text of A says how many blocks were tilled (spec v0.1.4.8 E2, plantText):
+// "I tilled 21 blocks and planted 48 wheat_seeds." (14 grass and 7 dirt were tilled).
 import {
     scenarioMain, check, note, exitSoon, startAgent, stopRealAgent, NEW_FLAGS_OFF, placeBot, resetBot, command_,
-    giveItems,
+    giveItems, withModes, orderChannel,
 } from './helpers.js';
 import {
     region, prepareRegion, releaseRegion, fieldPlan, buildField, cropAges, blockNames, isOpen, stableInventory, itemsText,
@@ -29,7 +32,7 @@ function strayChanges(cmp, f) {
     return cmp.differences.filter((d) => !d.stateOnly && !cells.has(key(d.pos)));
 }
 
-async function plantPart(agent, label, f, name, hoe) {
+async function plantPart(agent, orders, label, f, name, hoe) {
     const { min, max } = f.box;
     const g = min.y;
     await resetBot(NAME);
@@ -40,7 +43,7 @@ async function plantPart(agent, label, f, name, hoe) {
     await giveItems(NAME, hoe ? [['wheat_seeds', 64], ['iron_hoe', 1]] : [['wheat_seeds', 64]], agent.bot);
     const snap = await snapshotBox({ min: { x: min.x - 3, y: g - 2, z: min.z - 3 }, max: { x: max.x + 3, y: g + 2, z: max.z + 3 } });
     try {
-        const reply = await command_(agent, `!plant("wheat_seeds", "${name}")`, 240000);
+        const reply = await orders.order(`!plant("wheat_seeds", "${name}")`, 240000);
         note(`${label}: !plant answered ${JSON.stringify(reply)}`);
         const ground = await blockNames(f.cells.map((c) => c.ground), ['farmland', 'grass_block', 'dirt', 'air']);
         const ages = await cropAges(f.cells.map((c) => c.above));
@@ -52,7 +55,7 @@ async function plantPart(agent, label, f, name, hoe) {
         const soil = f.cells.filter((c) => c.spec.ground === 'farmland');
         const other = f.cells.filter((c) => c.spec.ground !== 'farmland');
         if (hoe) {
-            check(reply === 'I planted 48 wheat_seeds.', `${label}: the text of F2 "I planted 48 wheat_seeds."`, JSON.stringify(reply));
+            check(reply === 'I tilled 21 blocks and planted 48 wheat_seeds.', `${label}: the text of F2 with the tilled blocks (v0.1.4.8 E2) "I tilled 21 blocks and planted 48 wheat_seeds."`, JSON.stringify(reply));
             check(planted.length === 48, `${label}: with a hoe all 48 cells are planted (farmland with wheat of age 0), the grass and the dirt were tilled first`,
                 `${planted.length} planted; not planted: ${JSON.stringify(f.cells.filter((c, i) => !(ground[i] === 'farmland' && ages[i] === 0)).map((c) => [c.i, c.j, c.spec.ground]))}`);
             check((inv.items.wheat_seeds || 0) === 16, `${label}: the bot used 48 of its 64 seeds`, `wheat_seeds ${inv.items.wheat_seeds || 0}`);
@@ -87,14 +90,16 @@ await scenarioMain({
         check(fa.cells.filter((c) => c.spec.ground === 'farmland').length === 27 && fa.cells.length === 48,
             'precondition: each field has 48 cells, 27 of them farmland, 14 grass and 7 dirt');
 
-        let agent = null;
+        let agent = null, orders = null;
         try {
-            const s = await startAgent(NAME, { ...NEW_FLAGS_OFF, protected_areas: true, world_memory: true, farming_pack: true });
+            const s = await startAgent(NAME, withModes({ ...NEW_FLAGS_OFF, protected_areas: true, world_memory: true, farming_pack: true }));
             agent = s.agent;
-            await plantPart(agent, 'A (hoe)', fa, 'field_a', true);
-            await plantPart(agent, 'B (no hoe)', fb, 'field_b', false);
+            orders = await orderChannel(s, { at: { x: r.ox - 4, y: g + 1, z: r.oz + 20 } });
+            await plantPart(agent, orders, 'A (hoe)', fa, 'field_a', true);
+            await plantPart(agent, orders, 'B (no hoe)', fb, 'field_b', false);
             check(s.realCalls.length === 0, 'no request reached a real model class', JSON.stringify(s.realCalls));
         } finally {
+            if (orders) await orders.quit();
             await stopRealAgent(agent);
             await releaseRegion(r);
         }

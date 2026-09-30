@@ -100,9 +100,10 @@ export function makeWorld({ groundY = 63 } = {}) {
 
 /**
  * The house of the tests: walls of planks x, z 1..7, floor at y 63, roof at 68, door in the south
- * wall at (4, 64, 7). Its area box is (0, 63, 0) to (8, 69, 8), like a scan grown by one.
+ * wall at (4, 64, 7). Its area box is (0, 63, 0) to (8, 69, 8), like a scan grown by one. The area is
+ * of type `home` (v0.1.4.8, C4: only a home is a shelter); `type` gives another.
  */
-export function buildHouse(world, { name = 'home', doorOpen = false, withDoor = true } = {}) {
+export function buildHouse(world, { name = 'home', doorOpen = false, withDoor = true, type = 'home' } = {}) {
     world.fill(1, 63, 1, 7, 63, 7, 'oak_planks');
     world.fill(1, 68, 1, 7, 68, 7, 'oak_planks');
     for (let y = 64; y <= 67; y++) {
@@ -115,7 +116,7 @@ export function buildHouse(world, { name = 'home', doorOpen = false, withDoor = 
     }
     if (withDoor) world.door(4, 64, 7, { facing: 'south', open: doorOpen });
     return {
-        name, type: 'building', dimension: 'overworld', source: 'scan',
+        name, type, dimension: 'overworld', source: 'scan',
         min: { x: 0, y: 63, z: 0 }, max: { x: 8, y: 69, z: 8 },
         entrances: withDoor ? [{ x: 4, y: 64, z: 7, kind: 'door' }] : [],
     };
@@ -314,7 +315,8 @@ export function makeFakeBot({ world = makeWorld(), pos = [0.5, 64, 0.5] } = {}) 
         if (!(bot.isRaining && bot.thunderState > 0) && !(t >= 12541 && t <= 23458)) throw new Error("it's not night and it's not a thunderstorm");
         if (block.getProperties().occupied) throw new Error('the bed is occupied');
         bot.isSleeping = true;
-        setTimeout(() => {
+        bot.sleepTimer = setTimeout(() => {
+            bot.sleepTimer = null;
             if (!bot.isSleeping) return;
             bot.isSleeping = false;
             bot.emit('wake');
@@ -325,6 +327,9 @@ export function makeFakeBot({ world = makeWorld(), pos = [0.5, 64, 0.5] } = {}) 
     bot.wake = async () => {
         bot.calls.push(['wake']);
         bot.isSleeping = false;
+        // the night of a bot that got up does not pass any more; the file ends without waiting for it
+        clearTimeout(bot.sleepTimer);
+        bot.sleepTimer = null;
     };
     bot.attack = (entity) => {
         bot.calls.push(['attack', entity.id]);

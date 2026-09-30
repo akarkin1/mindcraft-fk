@@ -69,8 +69,9 @@ function farm(extra = {}) {
 describe('constants', () => {
     test('limits of an area: 64 x 48 x 64 blocks', () => {
         assert.deepEqual({ ...S.MAX_AREA_SIZE }, { x: 64, y: 48, z: 64 });
-        assert.deepEqual([...S.AREA_TYPES], ['building', 'farm']);
-        assert.deepEqual([...S.AREA_SOURCES], ['scan', 'manual', 'radius']);
+        // v0.1.4.8, I4 and D6: five types, and the source "auto" of autoHome
+        assert.deepEqual([...S.AREA_TYPES], ['home', 'building', 'farm', 'pen', 'mine']);
+        assert.deepEqual([...S.AREA_SOURCES], ['scan', 'manual', 'radius', 'auto']);
     });
 });
 
@@ -230,10 +231,12 @@ describe('load()', () => {
             ' spaced ': { ...good, name: ' spaced ' },
         } }));
         const store = newStore();
-        assert.equal(store.load(), 1);
+        // v0.1.4.8, D1: names are normalised on load, so " spaced " is the area "spaced" now
+        assert.equal(store.load(), 2);
         const area = store.get('home');
         assert.equal(area.created, '2026-01-01T00:00:00.000Z');
         assert.equal(area.updated, '2026-01-02T00:00:00.000Z');
+        assert.equal(store.get('spaced').name, 'spaced');
         assert.ok(cap.of('warn').length >= 1, 'skipped entries are reported');
     });
 
@@ -296,9 +299,10 @@ describe('get, remove, list, size, revision', () => {
         store.set(home({ name: 'zeta' }));
         store.set(home({ name: 'alpha' }));
         store.set(farm({ name: 'Mid' }));
-        assert.deepEqual(store.list().map(a => a.name), ['Mid', 'alpha', 'zeta']);
+        // v0.1.4.8, D1: names are saved in lower case, so "Mid" is "mid"
+        assert.deepEqual(store.list().map(a => a.name), ['alpha', 'mid', 'zeta']);
         store.list()[0].name = 'changed';
-        assert.equal(store.list()[0].name, 'Mid');
+        assert.equal(store.list()[0].name, 'alpha');
     });
 
     test('revision changes on every load, set and remove (the guard refreshes its cache with it)', () => {

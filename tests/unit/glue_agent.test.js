@@ -138,7 +138,10 @@ describe('handleMessage: last_order (G3) and the shortened result (G2)', () => {
         assert.equal(seen[0].command, '!modes');
         assert.equal(seen[0].atTimeOfDay, 13000);
         assert.ok(seen[0].at >= before && seen[0].at <= Date.now());
-        assert.deepEqual(Object.keys(seen[0]).sort(), ['at', 'atTimeOfDay', 'by', 'command']);
+        // v0.1.4.8 (part G): text is the whole command, typed marks an order typed in the chat
+        assert.deepEqual(Object.keys(seen[0]).sort(), ['at', 'atTimeOfDay', 'by', 'command', 'text', 'typed']);
+        assert.equal(seen[0].text, '!modes');
+        assert.equal(seen[0].typed, true);
         assert.equal(agent.last_order, null);
     });
 
@@ -148,6 +151,8 @@ describe('handleMessage: last_order (G3) and the shortened result (G2)', () => {
         assert.equal(seen.length, 1);
         assert.equal(seen[0].by, 'bob');
         assert.equal(seen[0].command, '!modes');
+        assert.equal(seen[0].text, '!modes');
+        assert.equal(seen[0].typed, false, 'the model ran it (v0.1.4.8)');
         assert.equal(agent.last_order, null);
     });
 
@@ -274,7 +279,8 @@ describe('the area store of the current world (G5)', () => {
     test('homeContext: what the home pack gets', () => {
         const agent = Object.assign(Object.create(Agent.prototype), { memory_bank: { recallPlaceInfo() {} }, area_store: { list: () => [] }, bot: { output: '' } });
         const ctx = agent.homeContext();
-        assert.deepEqual(Object.keys(ctx).sort(), ['areas', 'log', 'now', 'places', 'settings', 'skills', 'world']);
+        // v0.1.4.8 (part G): say (C2) and whereAmI (I2), tested in stg_agent.test.js
+        assert.deepEqual(Object.keys(ctx).sort(), ['areas', 'log', 'now', 'places', 'say', 'settings', 'skills', 'whereAmI', 'world']);
         assert.equal(ctx.areas, agent.area_store);
         assert.equal(ctx.places, agent.memory_bank);
         assert.equal(ctx.settings, settings);

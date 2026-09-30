@@ -107,13 +107,17 @@ describe('installAreaGuard(bot, options)', () => {
     test('returns the full guard; bot.areaGuard is a frozen view without permits (Amendment 2, F2)', () => {
         const { bot } = fakeBot();
         const guard = install(bot);
-        for (const member of ['canBreak', 'canPlace', 'canUse', 'permit', 'revoke', 'permits', 'explain', 'protectMovements', 'inBuilding']) {
+        for (const member of ['canBreak', 'canPlace', 'canUse', 'permit', 'revoke', 'permits', 'explain', 'protectMovements', 'inBuilding',
+            'areaAt', 'refusal', 'isBuilt', 'placedByBot', 'setPlayerOrder', 'flushPlaced']) {
             assert.equal(typeof guard[member], 'function', member);
         }
         assert.notEqual(bot.areaGuard, guard);
-        assert.deepEqual(Object.keys(bot.areaGuard).sort(), ['canBreak', 'canPlace', 'canUse', 'explain', 'inBuilding', 'protectMovements']);
+        // v0.1.4.8, I3: the view gains areaAt, refusal, isBuilt and placedByBot, not setPlayerOrder
+        assert.deepEqual(Object.keys(bot.areaGuard).sort(), ['areaAt', 'canBreak', 'canPlace', 'canUse', 'explain', 'inBuilding',
+            'isBuilt', 'placedByBot', 'protectMovements', 'refusal']);
         assert.ok(Object.isFrozen(bot.areaGuard));
-        for (const member of ['canBreak', 'canPlace', 'canUse', 'explain', 'protectMovements', 'inBuilding']) {
+        for (const member of ['canBreak', 'canPlace', 'canUse', 'explain', 'protectMovements', 'inBuilding', 'areaAt', 'refusal',
+            'isBuilt', 'placedByBot']) {
             assert.equal(bot.areaGuard[member], guard[member], member);
         }
         assert.throws(() => { bot.areaGuard.permit = () => 0; }, TypeError, 'ES modules are strict: a frozen object refuses new members');

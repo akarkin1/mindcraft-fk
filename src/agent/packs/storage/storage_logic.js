@@ -74,6 +74,19 @@ export function normalizeDimension(value) {
     return name.length > 0 ? name : 'overworld';
 }
 
+/** The dimensions of the game, without the `minecraft:` prefix. */
+export const DIMENSIONS = Object.freeze(['overworld', 'the_nether', 'the_end']);
+
+/**
+ * True for the name of a dimension, with or without `minecraft:` (v0.1.4.8, E1: chestsText takes
+ * an item where v0.1.4.7 took the dimension, and tells the two apart).
+ * @param {*} value
+ * @returns {boolean}
+ */
+export function isDimensionName(value) {
+    return typeof value === 'string' && DIMENSIONS.includes(value.trim().toLowerCase().replace(/^minecraft:/, ''));
+}
+
 /**
  * The key of a chest in the index: `"<x>,<y>,<z>"` of the floored coordinates.
  * @param {{x: number, y: number, z: number}} pos

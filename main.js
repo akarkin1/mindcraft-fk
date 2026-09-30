@@ -3,6 +3,11 @@ import settings from './settings.js';
 import yargs from 'yargs';
 import { hideBin } from 'yargs/helpers';
 import { readFileSync } from 'fs';
+import { installLogTime } from './src/utils/log_time.js';
+
+// v0.1.4.8, F2: one id per start of the bot; the agent processes inherit it, so the cost meter
+// counts the sessions of all their restarts together
+process.env.MINDCRAFT_LAUNCH_ID = new Date().toISOString();
 
 function parseArguments() {
     return yargs(hideBin(process.argv))
@@ -70,6 +75,8 @@ if (process.env.SETTINGS_JSON) {
     }
 }
 
+// v0.1.4.8, F4: [HH:MM:SS] before each line of the console, once the settings are final
+installLogTime(settings.log_timestamps ?? false);
 
 Mindcraft.init(false, settings.mindserver_port, settings.auto_open_ui);
 

@@ -160,7 +160,9 @@ describe('goToShelter', () => {
         const ctx = { areas: [shed, cabin], places: { recall: n => (n === 'home' ? { x: 4.5, y: 64, z: 4.5, dimension: 'overworld' } : undefined) } };
         assert.equal(S.findShelter(bot, ctx).area.name, 'cabin');
         assert.equal(S.findShelter(bot, { areas: [shed, cabin] }).area.name, 'shed', 'without the place: the nearest');
-        assert.equal(S.findShelter(bot, { areas: [shed, area] }).area.name, 'home', 'the area named home beats the nearest');
+        // v0.1.4.8, C4: the name "home" has no rule of its own any more; the nearest area of type home wins
+        assert.equal(S.findShelter(bot, { areas: [shed, area] }).area.name, 'shed', 'the nearest home, whatever its name');
+        assert.equal(S.findShelter(bot, { areas: [{ ...shed, type: 'building' }, area] }).area.name, 'home', 'a building is no shelter');
     });
 
     test('the place home without an area', async () => {
@@ -173,12 +175,12 @@ describe('goToShelter', () => {
         assert.ok(bot.entity.position.distanceTo({ x: 50.5, y: 64, z: 50.5 }) < 2);
     });
 
-    test('nothing at all: an emergency shelter', async () => {
+    test('no home at all: nothing happens (v0.1.4.8, C4; before: an emergency shelter)', async () => {
         const { bot, ctx } = scene({ house: false, botAt: [20.5, 64, 20.5] });
         give(bot, 'dirt', 4);
         const res = await S.goToShelter(bot, ctx, FAST);
-        assert.equal(res.ok, true);
-        assert.equal(res.where, 'emergency');
+        assert.deepEqual({ ok: res.ok, reason: res.reason, text: res.text }, { ok: false, reason: 'no_home', text: 'I know no home. Tell me where home is.' });
+        assert.equal(bot.calls.filter(c => c[0] === 'dig' || c[0] === 'goto').length, 0, 'nothing dug, nothing walked');
     });
 
     test('a broken context never throws', async () => {

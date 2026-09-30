@@ -43,8 +43,8 @@ await scenarioMain({
             agent = s.agent;
             await resetBot(NAME);
             await placeBot(agent, h.inside, 0);
-            const saved = await command_(agent, '!rememberArea("home", "building")', 30000);
-            check(/Area "home" \(building\) saved: .*\b1 door\b/.test(saved), 'precondition: !rememberArea saved the house as "home" with its door', JSON.stringify(saved.slice(0, 200)));
+            const saved = await command_(agent, '!rememberArea("home", "home")', 30000); // v0.1.4.8: a shelter is an area of type home (C4)
+            check(/Area "home" \(home\) saved: .*\b1 door\b/.test(saved), 'precondition: !rememberArea saved the house as "home" with its door', JSON.stringify(saved.slice(0, 200)));
             snap = await snapshotBox(h.box);
             const K = await importProject('src/agent/packs/home/creeper.js');
 

@@ -135,6 +135,37 @@ export function needText(name, need, have, target) {
 }
 
 /**
+ * The text of a craft step that failed (spec v0.1.4.8 E3, M12): with the missing ingredient
+ * `I could not craft stone_pickaxe: I need 2 stick and have 1.`, without `I could not craft stone_pickaxe.`
+ * @param {string} item
+ * @param {{name: string, need: number, have: number}|null} [short]
+ * @returns {string}
+ */
+export function craftFailedText(item, short = null) {
+    if (!short) {
+        return `I could not craft ${item}.`;
+    }
+    return `I could not craft ${item}: I need ${short.need} ${short.name} and have ${short.have > 0 ? short.have : 'none'}.`;
+}
+
+/**
+ * The text of chopTrees when it was stopped (spec v0.1.4.8 I6): what it cut and what it picked up.
+ * `I cut 3 oak_log and picked up 2. I was stopped before I picked up the rest.` or, with all of it
+ * picked up, `I cut 3 oak_log and picked up 3. I was stopped.` Before any log: `I stopped before I cut a tree.`
+ * @param {{cut?: Object<string, number>, picked?: number}} s cut: the logs broken by name; picked: logs gained
+ * @returns {string}
+ */
+export function chopStoppedText(s) {
+    const cut = Object.values(s?.cut ?? {}).filter(n => typeof n === 'number' && n > 0).reduce((a, n) => a + n, 0);
+    if (cut === 0) {
+        return 'I stopped before I cut a tree.';
+    }
+    const picked = typeof s?.picked === 'number' && s.picked > 0 ? s.picked : 0;
+    const head = `I cut ${countList(s.cut)} and picked up ${picked}.`;
+    return picked < cut ? `${head} I was stopped before I picked up the rest.` : `${head} I was stopped.`;
+}
+
+/**
  * `I crafted 9 ladder.`
  * @param {number} count
  * @param {string} item

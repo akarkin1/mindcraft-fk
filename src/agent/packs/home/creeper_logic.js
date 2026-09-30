@@ -2,7 +2,10 @@
 // does next when a creeper is near it or near a protected area. The owner's rule: the bot is slow
 // at doors, so it never goes for the shelter with a creeper near. It first lures the creeper to a
 // safe distance from the buildings, then runs, and enters only when the creeper is gone.
-import { boxCenter, containsPos, distanceToBox, expandBox, interiorBox, isBox, nearestPointOnBox, segmentCrossesBox } from './box_math.js';
+// v0.1.4.8 (C3): a creeper counts only at the height of the bot or of an area that the reflex defends.
+import { hasWalls, isDefendedArea } from './area_kinds.js';
+import { boxCenter, containsPos, distanceToBox, expandBox, horizontalDistanceToBox, interiorBox, isBox, nearestPointOnBox,
+    segmentCrossesBox } from './box_math.js';
 import { standingCreeperText } from './texts.js';
 
 /** Numbers of the creeper procedure. */
@@ -28,6 +31,10 @@ export const CREEPER_RULES = Object.freeze({
     lureStep: 6,           // one lure step
     runDistance: 32,       // run this far
     helpTries: 3,          // lure attempts before asking for help
+    // v0.1.4.8, C3
+    botHeight: 4,          // a creeper counts for the bot only within this height difference ...
+    botClose: 6,           // ... and within this distance or in sight of the bot
+    areaHeight: 3,         // a creeper counts for an area only between min.y - 3 and max.y + 3
 });
 
 const HELP_TEXT = 'A creeper keeps following me near the base. I stay away from the buildings. Can you help?';
@@ -81,17 +88,103 @@ function pointAt(bot, dir, step) {
 
 // ---- areas ----
 
-function isShelterArea(area) {
-    return area.type === undefined || area.type === null || area.type === 'building';
-}
-
 // The walls and the room of an area, the part nobody walks through.
 function hardBox(area) {
     return expandBox(interiorBox(area), 1) ?? area;
 }
 
+// Inside the walls of a building (home, building): the walls protect the bot.
 function botIsSheltered(area, pos) {
-    return isShelterArea(area) && containsPos(interiorBox(area), pos);
+    return hasWalls(area) && containsPos(interiorBox(area), pos);
+}
+
+// ---- which creepers count (v0.1.4.8, C3) ----
+
+/**
+ * True when a creeper counts for the bot: at most 4 blocks higher or lower (`dy` = creeper y minus bot
+ * y), and within 6 blocks or in sight (`sight`: no solid block on the line from the eyes of the bot to
+ * the middle of the creeper). Also within the notice distance of 16. A creeper without `sight` (not
+ * measured) counts as in sight.
+ * @param {{dBot: number, dy: number, sight?: boolean}} c
+ * @returns {boolean}
+ */
+export function countsForBot(c) {
+    if (!c || !isFiniteNumber(c.dBot) || !isFiniteNumber(c.dy)) {
+        return false;
+    }
+    return c.dBot <= CREEPER_RULES.noticeDistance && Math.abs(c.dy) <= CREEPER_RULES.botHeight
+        && (c.dBot <= CREEPER_RULES.botClose || c.sight !== false);
+}
+
+/**
+ * True when a creeper at `pos` counts for the area: the type is defended (all but mine), the
+ * horizontal distance to the box is 16 or less, and its y is between min.y - 3 and max.y + 3.
+ * @param {object} area
+ * @param {{x,y,z}} pos
+ * @returns {boolean}
+ */
+export function countsForArea(area, pos) {
+    if (!isDefendedArea(area) || !isPoint(pos)) {
+        return false;
+    }
+    return horizontalDistanceToBox(area, pos) <= CREEPER_RULES.areaDanger
+        && pos.y >= area.min.y - CREEPER_RULES.areaHeight && pos.y <= area.max.y + CREEPER_RULES.areaHeight;
+}
+
+/**
+ * True when no solid block lies on the line from `from` to `to` (the blocks of both ends left out).
+ * Visits every block the line crosses. A block that is not loaded (null) blocks the sight.
+ * @param {{x,y,z}} from the eyes of the bot
+ * @param {{x,y,z}} to the middle of the creeper
+ * @param {(x: number, y: number, z: number) => boolean|null} isSolidAt true for a solid block, null when not loaded
+ * @returns {boolean}
+ */
+export function lineOfSight(from, to, isSolidAt) {
+    if (!isPoint(from) || !isPoint(to) || typeof isSolidAt !== 'function') {
+        return false;
+    }
+    let x = Math.floor(from.x);
+    let y = Math.floor(from.y);
+    let z = Math.floor(from.z);
+    const end = { x: Math.floor(to.x), y: Math.floor(to.y), z: Math.floor(to.z) };
+    const d = { x: to.x - from.x, y: to.y - from.y, z: to.z - from.z };
+    const step = { x: Math.sign(d.x), y: Math.sign(d.y), z: Math.sign(d.z) };
+    const tDelta = { x: d.x !== 0 ? Math.abs(1 / d.x) : Infinity, y: d.y !== 0 ? Math.abs(1 / d.y) : Infinity, z: d.z !== 0 ? Math.abs(1 / d.z) : Infinity };
+    const first = (p, v, s) => (s > 0 ? (Math.floor(p) + 1 - p) / v : s < 0 ? (p - Math.floor(p)) / -v : Infinity);
+    const tMax = { x: first(from.x, d.x, step.x), y: first(from.y, d.y, step.y), z: first(from.z, d.z, step.z) };
+    for (let i = 0; i < 512; i++) {
+        let axis = 'x';
+        if (tMax.y < tMax[axis]) {
+            axis = 'y';
+        }
+        if (tMax.z < tMax[axis]) {
+            axis = 'z';
+        }
+        if (tMax[axis] > 1) {
+            return true; // the end of the line
+        }
+        if (axis === 'x') {
+            x += step.x;
+        } else if (axis === 'y') {
+            y += step.y;
+        } else {
+            z += step.z;
+        }
+        tMax[axis] += tDelta[axis];
+        if (x === end.x && y === end.y && z === end.z) {
+            return true;
+        }
+        let solid;
+        try {
+            solid = isSolidAt(x, y, z);
+        } catch {
+            solid = null;
+        }
+        if (solid !== false) {
+            return false;
+        }
+    }
+    return false;
 }
 
 // Unit vector pointing away from the areas, the nearest weighing most. null without areas.
@@ -388,14 +481,17 @@ export class CreeperWatch {
 }
 
 /**
- * Decides the next step of the creeper procedure. Steps, first match wins:
- * - none: no creeper within 16 blocks of the bot and none within 16 blocks of an area that is
- *   within 32 blocks of the bot. Also none when the bot is inside a building (within its walls)
- *   and no such creeper is inside it: the walls protect the bot, and going out would mean
- *   opening the door with a creeper near (reason 'in_shelter').
+ * Decides the next step of the creeper procedure. A creeper counts (v0.1.4.8, C3) when it counts for
+ * the bot (countsForBot: within 16, at most 4 blocks higher or lower, within 6 or in sight) or for a
+ * defended area within 32 blocks of the bot (countsForArea: horizontally within 16 of the box, between
+ * min.y - 3 and max.y + 3). With `underground` only the creepers that count for the bot count. Steps,
+ * first match wins:
+ * - none: no creeper counts (reason 'no_creeper', underground 'underground'). Also none when the bot
+ *   is inside a building (within its walls) and no such creeper is inside it: the walls protect the
+ *   bot, and going out would mean opening the door with a creeper near (reason 'in_shelter').
  * - back_off: a creeper within 5 blocks, or a burning fuse. 12 blocks away, sprinting.
  * - help: `tries` is 3 or more. Moves away like run, with the text for the player.
- * - lure: a creeper within 16 blocks of an area. The bot walks away from the area and from the
+ * - lure: a creeper that counts for an area (not underground). The bot walks away from the area and from the
  *   creeper, keeping it 5 to 10 blocks behind (reason lead). Beyond 10 it waits (moveTo is its own
  *   position, reason wait) while the creeper follows, that is came at least 1 block closer during the
  *   last 3 s. Otherwise it walks towards the creeper to 9 blocks from it (reason attention, F3).
@@ -404,11 +500,12 @@ export class CreeperWatch {
  * - fight: the lure is done, `fighting` and `canFight` are true. `creeper` names the target.
  * - run: the lure is done, no fight. 32 blocks away from the creeper, not towards an area.
  * A creeper in `standing` counts only within 10 blocks of the bot.
- * @param {{botPos: {x,y,z}, creepers: {id, pos: {x,y,z}, fuse}[], areas: object[], fighting: boolean,
+ * @param {{botPos: {x,y,z}, creepers: {id, pos: {x,y,z}, fuse, sight?: boolean}[], areas: object[], fighting: boolean,
  *   canFight: boolean, tries: number, fuseBurning: boolean, now: number, following?: *[],
- *   attention?: number, attending?: boolean, standing?: *[]}} state
+ *   attention?: number, attending?: boolean, standing?: *[], underground?: boolean}} state
  *   areas are the boxes of the areas within 48 blocks ({min, max}, optional name and type);
- *   following, attention and standing come from CreeperWatch.facts (F3)
+ *   following, attention and standing come from CreeperWatch.facts (F3); sight and underground from
+ *   the context (C3), a creeper without sight counts as in sight
  * @returns {{step: string, moveTo: {x,y,z}|null, sprint: boolean, creeper: *, text: string|null,
  *   area: string|null, reason: string|null}}
  */
@@ -418,32 +515,39 @@ export function decide(state) {
         return result('none', { reason: 'no_bot' });
     }
     const bot = { x: s.botPos.x, y: s.botPos.y, z: s.botPos.z };
+    const underground = s.underground === true;
     const areas = (Array.isArray(s.areas) ? s.areas : []).filter(isBox)
         .filter(area => distanceToBox(area, bot) <= CREEPER_RULES.areaRange);
     const nearAreas = areas.filter(area => distanceToBox(area, bot) <= CREEPER_RULES.areaRelevance);
     const creepers = (Array.isArray(s.creepers) ? s.creepers : [])
         .filter(c => c && typeof c === 'object' && isPoint(c.pos))
         .map(c => {
+            const dBot = dist3(bot, c.pos);
+            const forBot = countsForBot({ dBot, dy: c.pos.y - bot.y, sight: c.sight });
+            // C3: only an area that the creeper counts for; underground no area counts
             let nearest = null;
             let dArea = Infinity;
-            for (const area of areas) {
-                const d = distanceToBox(area, c.pos);
-                if (d < dArea) {
-                    dArea = d;
-                    nearest = area;
+            for (const area of underground ? [] : areas) {
+                if (countsForArea(area, c.pos)) {
+                    const d = horizontalDistanceToBox(area, c.pos);
+                    if (d < dArea) {
+                        dArea = d;
+                        nearest = area;
+                    }
                 }
             }
-            return { id: c.id ?? null, pos: c.pos, burning: fuseIsBurning(c), dBot: dist3(bot, c.pos), dArea, nearest };
+            const forArea = !underground && nearAreas.some(area => countsForArea(area, c.pos));
+            return { id: c.id ?? null, pos: c.pos, burning: fuseIsBurning(c), dBot, dArea, nearest, forBot, forArea };
         });
     // F3: a creeper that stands counts only when it is within 10 blocks of the bot
     const standing = idList(s.standing);
     const following = idList(s.following);
     const attention = isFiniteNumber(s.attention) ? s.attention : 0;
-    const relevant = creepers.filter(c => (c.dBot <= CREEPER_RULES.noticeDistance
-        || nearAreas.some(area => distanceToBox(area, c.pos) <= CREEPER_RULES.areaDanger))
+    const relevant = creepers.filter(c => (c.forBot || c.forArea)
         && !(standing.has(c.id) && c.dBot > CREEPER_RULES.standingNear));
     if (relevant.length === 0) {
-        return result('none', { reason: 'no_creeper' });
+        // C3: underground with no creeper that counts for the bot: nothing happens and nothing is said
+        return result('none', { reason: underground ? 'underground' : 'no_creeper' });
     }
 
     const shelter = areas.find(area => botIsSheltered(area, bot));

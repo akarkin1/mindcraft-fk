@@ -93,6 +93,19 @@ const NEW_EXAMPLES = [
     ['find some iron', '!mineOre'],
     ['go down into the mine', '!goToMine'],
     ['come back up to the surface', '!leaveMine'],
+    // v0.1.4.8, part G: the new commands and types, and the commands of the parts that had no example
+    ['this is the mine', '!rememberArea'],
+    ['this is the pen for the animals', '!rememberArea'],
+    ['close the door', '!closeDoor'],
+    ['do you remember what is in the chest', '!chests'],
+    ['do we have wheat', '!chests'],
+    ['yes, dig a new mine', '!mineOre'],
+    ['what rules did I give you?', '!rules'],
+    ['forget the rule about the cows', '!forgetRule'],
+    ['which places do you protect?', '!areas'],
+    ['we tore down the old barn, forget it', '!forgetArea'],
+    ['the farm goes from 10 63 20 to 25 67 35', '!setArea'],
+    ['please fix the hole in the roof of the house', '!allowChanges'],
 ];
 
 const exampleOf = (sentence) => PROFILE.conversation_examples.find((example) => example.some((t) => t.role === 'user' && t.content.endsWith(': ' + sentence)));

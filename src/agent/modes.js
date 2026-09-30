@@ -3,15 +3,28 @@ import * as world from './library/world.js';
 import * as mc from '../utils/mcdata.js';
 import settings from './settings.js'
 import convoManager from './conversation.js';
-import { withKillTimer } from '../utils/kill_timer.js';
-import { DoorTracker, closeDoorsBehind, isInShelter, isNight, shouldShelter, nightShelterRoutine, creeperCheck, runCreeperProcedure } from './packs/home/index.js';
-import { isBuiltBlock, isLogBlock } from './areas/area_scan.js';
-import { Vec3 } from 'vec3';
+import { withKillTimer, withTimeLimit } from '../utils/kill_timer.js';
+import { DoorTracker, closeDoorsBehind, isInShelter, isNight, shouldShelter, nightShelterRoutine, creeperCheck, runCreeperProcedure, findShelter } from './packs/home/index.js';
+// v0.1.4.8: functions of the home pack that come with part C (createDoorService, hungerStep); always called with ?.
+import * as home from './packs/home/index.js';
+import { STUCK_RULES, STUCK_TEXT, FREE_TEXT, KILL_TEXT, newStuckState, stuckStep, inventoryKey, distance, escapeOutcome, restartAfter,
+    failureStep, giveUpEnds, nearestOpenable, stuckText, isLegacyEscape, escapeLimitMs, legacyOutcome } from './reflex/stuck_logic.js';
+import { whereAmI, areaAt, blockNameReader } from './reflex/where_am_i.js';
+import { mayTryItem, afterItemTry, isOwnDropSpawn, isRecentOwnDrop } from './reflex/item_logic.js';
+import { STARVING_TEXT, STARVING_LOG_MS, HOSTILE_RANGE, PLAYER_RANGE, isHungerDamage, shouldRetreat, hurtText, retreatTarget } from './reflex/health_logic.js';
+import { HOLE_RULES, holeAt, escapeSides, walkControls, leftHole } from './reflex/hole_logic.js';
+import { sleepIsProgress } from './reflex/wake_logic.js';
 
 async function say(agent, message) {
     agent.bot.modes.behavior_log += message + '\n';
     if (agent.shut_up || !settings.narrate_behavior) return;
     agent.openChat(message);
+}
+
+// v0.1.4.8: a line only for the behaviour log (the model reads it with the next message) and the console.
+function note(agent, message) {
+    agent.bot.modes.behavior_log += message + '\n';
+    console.log(message);
 }
 
 // a mode is a function that is called every tick to respond immediately to the world
@@ -33,6 +46,7 @@ const modes_list = [
         on: true,
         active: false,
         fall_blocks: ['sand', 'gravel', 'concrete_powder'], // includes matching substrings like 'sandstone' and 'red_sand'
+        starving_noted_at: 0, // v0.1.4.8, A9: when 'I am starving.' went into the behaviour log
         update: async function (agent) {
             const bot = agent.bot;
             let block = bot.blockAt(bot.entity.position);
@@ -81,6 +95,14 @@ const modes_list = [
                 }
             }
             else if (Date.now() - bot.lastDamageTime < 3000 && (bot.health < 5 || bot.lastDamageTaken >= bot.health)) {
+                if (isStarving(bot, block, blockAbove)) {
+                    // v0.1.4.8, A9: running away does not help against hunger; the hunger reflex feeds the bot
+                    if (Date.now() - this.starving_noted_at >= STARVING_LOG_MS) {
+                        this.starving_noted_at = Date.now();
+                        note(agent, STARVING_TEXT);
+                    }
+                    return;
+                }
                 say(agent, 'I\'m dying!');
                 execute(this, agent, async () => {
                     await skills.moveAway(bot, 20);
@@ -97,47 +119,47 @@ const modes_list = [
         interrupts: ['all'],
         on: true,
         active: false,
-        prev_location: null,
-        distance: 2,
-        stuck_time: 0,
-        last_time: Date.now(),
-        max_stuck_time: 20,
-        prev_dig_block: null,
+        state: newStuckState(), // v0.1.4.8, A1: see stuckStep of reflex/stuck_logic.js
+        failed_escapes: 0, // A2: failed escapes in a row
+        failed_at: null, // where the last escape failed; 2 blocks away from it the row ends
+        given_up: null, // { pos, serial }: the reflex gave up there, while the command number serial ran
+        action_serial: null, // v0.1.4.8, X3: the action (ActionManager.action_serial) the stuck time belongs to
         update: async function (agent) {
-            if (agent.isIdle()) { 
-                this.prev_location = null;
-                this.stuck_time = 0;
+            const bot = agent.bot;
+            const pos = bot.entity.position;
+            if (this.failed_at && distance(pos, this.failed_at) >= STUCK_RULES.moveBlocks) {
+                this.failed_escapes = 0; // the bot got away by another way
+                this.failed_at = null;
+            }
+            if (this.given_up) {
+                if (!giveUpEnds(this.given_up, { pos, serial: commandSerial(agent) }))
+                    return; // paused until a new command starts or the bot moved 2 blocks
+                this.given_up = null;
+                this.state = newStuckState();
+            }
+            if (agent.isIdle()) {
+                this.state = newStuckState();
                 return; // don't get stuck when idle
             }
-            const bot = agent.bot;
-            const cur_dig_block = bot.targetDigBlock;
-            if (cur_dig_block && !this.prev_dig_block) {
-                this.prev_dig_block = cur_dig_block;
+            // v0.1.4.8, X3: the stuck time starts from zero when a new action starts, so a new command always
+            // has its full 20 s (also after the reflex gave up)
+            const serial = actionSerial(agent);
+            if (serial !== this.action_serial) {
+                this.action_serial = serial;
+                this.state = newStuckState();
             }
-            if (this.prev_location && this.prev_location.distanceTo(bot.entity.position) < this.distance && cur_dig_block == this.prev_dig_block) {
-                this.stuck_time += (Date.now() - this.last_time) / 1000;
-            }
-            else {
-                this.prev_location = bot.entity.position.clone();
-                this.stuck_time = 0;
-                this.prev_dig_block = null;
-            }
-            const max_stuck_time = cur_dig_block?.name === 'obsidian' ? this.max_stuck_time * 2 : this.max_stuck_time;
-            if (this.stuck_time > max_stuck_time) {
-                say(agent, 'I\'m stuck!');
-                this.stuck_time = 0;
+            const step = stuckStep(this.state, stuckSample(bot, agent.actions?.currentActionLabel), Date.now());
+            this.state = step.state;
+            if (step.stuck) {
+                say(agent, STUCK_TEXT);
+                const from = pos.clone();
                 execute(this, agent, async () => {
-                    // the timer is cleared also when moveAway throws (e.g. PathStopped after !stop)
-                    await withKillTimer(() => { agent.cleanKill("Got stuck and couldn't get unstuck") }, 10000, () => skills.moveAway(bot, 5));
-                    say(agent, 'I\'m free.');
+                    await escape(this, agent, from);
                 });
             }
-            this.last_time = Date.now();
         },
         unpause: function () {
-            this.prev_location = null;
-            this.stuck_time = 0;
-            this.prev_dig_block = null;
+            this.state = newStuckState();
         }
     },
     {
@@ -165,6 +187,14 @@ const modes_list = [
         update: async function (agent) {
             const enemy = world.getNearestEntityWhere(agent.bot, entity => mc.isHostile(entity) && !leftToCreeperSafety(entity), 8);
             if (enemy && await world.isClearPath(agent.bot, enemy)) {
+                if (shouldRetreat(agent.bot.health, settings.flee_below_health ?? 0)) {
+                    // v0.1.4.8, A10: too hurt to fight
+                    note(agent, hurtText(agent.bot.health));
+                    execute(this, agent, async () => {
+                        await retreat(agent);
+                    });
+                    return;
+                }
                 say(agent, `Fighting ${enemy.name}!`);
                 execute(this, agent, async () => {
                     await skills.defendSelf(agent.bot, 8, entity => !leftToCreeperSafety(entity));
@@ -196,21 +226,30 @@ const modes_list = [
         active: false,
 
         wait: 2, // number of seconds to wait after noticing an item to pick it up
-        prev_item: null,
         noticed_at: -1,
+        tries: new Map(), // v0.1.4.8, A8: entity id -> { tries, nextAt, done } (see reflex/item_logic.js)
+        own_drops: new Map(), // entity id -> when the bot dropped it
         update: async function (agent) {
-            let item = world.getNearestEntityWhere(agent.bot, entity => entity.name === 'item', 8);
+            const now = Date.now();
+            forgetItems(this, agent.bot, now);
+            if (ownDropNear(this, agent.bot, 8)) {
+                this.noticed_at = -1;
+                return; // pickupNearbyItems takes every item within 8 blocks: nothing while the bot's own drop lies there
+            }
+            let item = world.getNearestEntityWhere(agent.bot, entity => entity.name === 'item' && mayTryItem(this.tries.get(entity.id), now), 8);
             let empty_inv_slots = agent.bot.inventory.emptySlotCount();
-            if (item && item !== this.prev_item && await world.isClearPath(agent.bot, item) && empty_inv_slots > 1) {
-                if (this.noticed_at === -1) {
-                    this.noticed_at = Date.now();
+            if (item && await world.isClearPath(agent.bot, item) && empty_inv_slots > 1) {
+                if (this.tries.has(item.id)) {
+                    pickUpItem(this, agent, item); // a try again: the 3 s after the last try are over
+                    this.noticed_at = -1;
+                    return;
                 }
-                if (Date.now() - this.noticed_at > this.wait * 1000) {
+                if (this.noticed_at === -1) {
+                    this.noticed_at = now;
+                }
+                if (now - this.noticed_at > this.wait * 1000) {
                     say(agent, `Picking up item!`);
-                    this.prev_item = item;
-                    execute(this, agent, async () => {
-                        await skills.pickupNearbyItems(agent.bot);
-                    });
+                    pickUpItem(this, agent, item);
                     this.noticed_at = -1;
                 }
             }
@@ -316,41 +355,347 @@ function torchAllowed(bot) {
     }
 }
 
-const AIR_NAMES = ['air', 'cave_air', 'void_air'];
-
-// v0.1.4.7 Amendment 2, I4: a tree or a roof above the bot is no surface.
-function isNoSurface(name) {
-    return AIR_NAMES.includes(name) || name.endsWith('_leaves') || isLogBlock(name) || isBuiltBlock(name);
+// v0.1.4.8, A1: what the mode unstuck sees of the bot in one tick (see stuckStep of reflex/stuck_logic.js).
+// X5: sleeping is progress only while !goToBed (or the night reflex) runs; a command that runs while the
+// bot still lies in bed is stuck (label: the running action).
+function stuckSample(bot, label = '') {
+    const dig = bot.targetDigBlock;
+    return {
+        pos: bot.entity.position,
+        digTarget: dig ? { name: dig.name, position: dig.position } : null,
+        inventoryKey: inventoryKey(bot.inventory?.slots),
+        windowOpen: Boolean(bot.currentWindow),
+        sleeping: Boolean(bot.isSleeping) && sleepIsProgress(label),
+        usingItem: Boolean(bot.usingHeldItem),
+        notedAt: bot.modes?.progress_at ?? 0,
+    };
 }
 
-// v0.1.4.7, part G: how many blocks the bot stands under the surface of its column. The surface is the
-// highest block above the head that is not air, leaves, a log or a built block (Amendment 2, I4), below
-// the height limit `top` of the world; the depth is its y minus the y of the feet, 0 when there is no
-// such block. getBlockName(x, y, z) returns a name, or null for a block that is not loaded, which counts
-// as air. Pure.
-export function depthUnderSurface(getBlockName, pos, top) {
-    const x = Math.floor(pos.x), feet = Math.floor(pos.y), z = Math.floor(pos.z);
-    for (let y = Math.floor(top) - 1; y > feet + 1; y--) {
-        const name = getBlockName(x, y, z);
-        if (typeof name === 'string' && !isNoSurface(name))
-            return y - feet;
-    }
-    return 0;
+// The number of the last command that started (ActionManager.command_serial).
+function commandSerial(agent) {
+    return agent.actions?.command_serial ?? 0;
 }
 
-// v0.1.4.7, part G: while the bot is more than 8 blocks under the surface, night_shelter waits. Pure.
-export function nightShelterWaits(depth) {
-    return depth > 8;
+// v0.1.4.8, X3: the number of the last action that really started (ActionManager.action_serial), else the
+// label of the running action.
+function actionSerial(agent) {
+    const serial = agent.actions?.action_serial;
+    return Number.isFinite(serial) ? serial : (agent.actions?.currentActionLabel ?? '');
 }
 
-// The depth of the bot under the surface, from bot.world; 0 when it cannot be read. Never throws.
-function depthOfBot(bot) {
+// The hard stop of the path search (a goto rejects at once). Never throws.
+function stopWalking(bot) {
     try {
-        const top = (bot.game?.minY ?? -64) + (bot.game?.height ?? 384);
-        return depthUnderSurface((x, y, z) => bot.blockAt(new Vec3(x, y, z))?.name ?? null, bot.entity.position, top);
+        bot.pathfinder?.setGoal?.(null);
     } catch (error) {
-        return 0;
+        console.warn('Could not stop the path search:', error);
     }
+}
+
+// Waits up to ms for the bot to be 2 blocks from `from` (a teleport of the cheat mode arrives a little later).
+async function waitForMove(bot, from, ms) {
+    const end = Date.now() + ms;
+    while (distance(bot.entity.position, from) < STUCK_RULES.moveBlocks && Date.now() < end && !bot.interrupt_code)
+        await new Promise(resolve => setTimeout(resolve, 100));
+}
+
+// v0.1.4.8, A2: the escape of the mode unstuck, moveAway(5); an interrupt (!stop, a newer action) ends it
+// at once. With stuck_restart_after 1 it is judged as in v0.1.4.7 (legacyEscape). Otherwise: a time
+// limit of 20 s; free: 'I'm free.' and the row of failed escapes ends; a failure (time over, an error,
+// still within 2 blocks) first gets the last step of X1 (out of a hole or a hollow block by hand, see
+// holeEscape), then either ends the process (stuck_restart_after reached, 0 never) or the reflex
+// gives up: it stops the path search, writes where the bot is stuck into the behaviour log (execute
+// tells the model) and pauses itself until a new command starts or the bot moved 2 blocks.
+async function escape(mode, agent, from) {
+    const bot = agent.bot;
+    const limit = restartAfter(settings.stuck_restart_after ?? 1);
+    if (isLegacyEscape(limit)) {
+        await legacyEscape(mode, agent);
+        return;
+    }
+    let walk = null; // the walk of moveAway, kept for the last step (X1): it may still run when the time is over
+    const result = await withTimeLimit(escapeLimitMs(limit), () => (walk = skills.moveAway(bot, STUCK_RULES.escapeDistance)),
+        { until: () => bot.interrupt_code, pollMs: 250 });
+    const threw = result.done && 'error' in result;
+    if (!result.done)
+        stopWalking(bot); // the time is over or a stop came: the walk must not go on
+    if (threw)
+        console.warn('The escape of unstuck failed:', result.error?.message ?? result.error);
+    if (result.done && !threw && !bot.interrupt_code)
+        await waitForMove(bot, from, 1000);
+    const outcome = escapeOutcome({ done: result.done, error: threw, interrupted: Boolean(bot.interrupt_code), from, to: bot.entity.position });
+    if (outcome === 'stopped')
+        return;
+    if (outcome === 'free') {
+        mode.failed_escapes = 0;
+        mode.failed_at = null;
+        say(agent, FREE_TEXT);
+        return;
+    }
+    // v0.1.4.8, X1: the last step before the reflex gives up, for a bot in a hole or a hollow block
+    if (await holeEscape(agent, result.done ? null : walk)) {
+        mode.failed_escapes = 0;
+        mode.failed_at = null;
+        say(agent, FREE_TEXT);
+        return;
+    }
+    if (bot.interrupt_code)
+        return; // a stop came during the last step: no failure
+    const failure = failureStep(mode.failed_escapes, limit);
+    const pos = bot.entity.position.clone();
+    mode.failed_escapes = failure.count;
+    mode.failed_at = pos;
+    if (failure.kill) {
+        agent.cleanKill(KILL_TEXT);
+        return;
+    }
+    stopWalking(bot);
+    mode.given_up = { pos, serial: commandSerial(agent) };
+    note(agent, stuckText({ pos, area: areaAt(bot, pos), door: nearestOpenable(blockNameReader(bot), pos, STUCK_RULES.doorRange) }));
+}
+
+const pause = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+// True when somebody asked the action manager to stop the running action (the escape): someone noted
+// who stops it, or a new action or a stop from outside took a ticket since `ticket` (X3).
+function stopAsked(agent, ticket) {
+    const actions = agent.actions;
+    return (typeof actions?.stopped_by === 'string' && actions.stopped_by !== '') || actions?.start_ticket !== ticket;
+}
+
+// v0.1.4.8, X1: one try towards a side: look there, jump and walk forward about 1 s by the controls
+// (walkControls), then wait until the bot stands on the ground again. stopped() ends it at once.
+async function jumpTowards(bot, hole, side, stopped) {
+    try {
+        await bot.look(side.yaw, 0, true);
+    } catch (error) {
+        console.warn('Could not turn to the side:', error?.message ?? error);
+    }
+    const start = Date.now();
+    while (!stopped()) {
+        const controls = walkControls({ hole, pos: bot.entity.position, onGround: bot.entity.onGround, elapsedMs: Date.now() - start });
+        bot.setControlState('forward', controls.forward);
+        bot.setControlState('jump', controls.jump);
+        if (controls.done)
+            break;
+        await pause(HOLE_RULES.tickMs);
+    }
+    bot.setControlState('forward', false);
+    bot.setControlState('jump', false);
+    const landing = Date.now();
+    while (!stopped() && bot.entity.onGround === false && Date.now() - landing < HOLE_RULES.landMs)
+        await pause(HOLE_RULES.tickMs);
+}
+
+// v0.1.4.8, X1: the last step of the escape before the reflex gives up. A bot in a hole of one block or
+// inside a hollow block (a composter, a cauldron: the path search cannot plan from there) jumps and walks
+// towards each side in turn whose column is safe (no lava, fire, or drop of more than 3 blocks; see
+// escapeSides of reflex/hole_logic.js), and after each try looks whether it got out (leftHole). walk: the
+// walk of moveAway when it may still run (its time was over): the interrupt flag stays set during the
+// whole step, so that walk and its door help end and start no new walk while the bot is steered by hand;
+// the flag is given back afterwards, unless a real stop came. true when the bot got out. A stop (a new
+// action, !stop) ends it at once.
+async function holeEscape(agent, walk) {
+    const bot = agent.bot;
+    const read = blockNameReader(bot);
+    const from = bot.entity.position.clone();
+    const hole = holeAt(read, from);
+    if (!hole)
+        return false;
+    const sides = escapeSides(read, from);
+    console.log(`The escape: I am in ${hole.kind === 'hollow' ? `a ${hole.block}` : 'a hole'} at (${hole.x}, ${hole.y}, ${hole.z}); ${sides.length} safe sides to jump to.`);
+    if (sides.length === 0)
+        return false;
+    const was = Boolean(bot.interrupt_code);
+    const ticket = agent.actions?.start_ticket;
+    const stopped = () => stopAsked(agent, ticket) || (!walk && Boolean(bot.interrupt_code));
+    try {
+        if (walk) {
+            bot.interrupt_code = true; // goToGoal and the door help of moveAway end at once
+            stopWalking(bot);
+            await withTimeLimit(HOLE_RULES.endWalkMs, () => walk, { until: stopped, pollMs: 100 });
+            stopWalking(bot);
+        }
+        for (const side of sides) {
+            if (stopped())
+                return false;
+            await jumpTowards(bot, hole, side, stopped);
+            if (leftHole(read, hole, from, bot.entity.position, bot.entity.onGround)) {
+                console.log(`The escape: I jumped out towards (${side.x}, ${side.landY}, ${side.z}).`);
+                return true;
+            }
+        }
+    } catch (error) {
+        console.warn('The last step of the escape failed:', error?.message ?? error);
+    } finally {
+        try {
+            bot.clearControlStates();
+        } catch (error) {
+            // nothing to release
+        }
+        if (walk)
+            bot.interrupt_code = was || stopped();
+    }
+    return false;
+}
+
+// The escape of v0.1.4.7, for stuck_restart_after 1 (decision of the tech lead: "1: as today"). The
+// timer of 10 s ends the process; an error of moveAway is passed on to the action manager; a moveAway
+// that returns says "I'm free.", wherever the bot stands. New in v0.1.4.8 only: an interrupt ends the
+// wait at once and stops the path search, so !stop during the escape ends no process.
+async function legacyEscape(mode, agent) {
+    const bot = agent.bot;
+    const result = await withKillTimer(() => { agent.cleanKill(KILL_TEXT) }, STUCK_RULES.escapeMs,
+        () => withTimeLimit(0, () => skills.moveAway(bot, STUCK_RULES.escapeDistance), { until: () => bot.interrupt_code, pollMs: 250 }));
+    const outcome = legacyOutcome({ ...result, error: result.done && 'error' in result, interrupted: Boolean(bot.interrupt_code) });
+    if (outcome === 'stopped') {
+        stopWalking(bot);
+        return;
+    }
+    if (outcome === 'throw')
+        throw result.error;
+    mode.failed_escapes = 0;
+    mode.failed_at = null;
+    say(agent, FREE_TEXT);
+}
+
+// v0.1.4.8, A9: the damage is hunger (food 0, no lava, fire or water over the head, no hostile mob within 16).
+function isStarving(bot, block, blockAbove) {
+    const names = [block?.name, blockAbove?.name];
+    const flags = bot.entity?.metadata?.[0];
+    return isHungerDamage({
+        food: bot.food,
+        inLava: names.includes('lava'),
+        inFire: names.includes('fire') || names.includes('soul_fire'),
+        burning: typeof flags === 'number' && (flags & 0x01) === 0x01,
+        waterOverHead: blockAbove?.name === 'water',
+        hostileNear: Boolean(world.getNearestEntityWhere(bot, entity => mc.isHostile(entity), HOSTILE_RANGE)),
+    });
+}
+
+// Where the bot is (I2): agent.whereAmI() of the glue when it exists, else the same functions here.
+function whereOf(agent) {
+    try {
+        if (typeof agent.whereAmI === 'function')
+            return agent.whereAmI() ?? whereAmI(agent.bot);
+    } catch (error) {
+        console.warn('Could not ask where the bot is:', error);
+    }
+    return whereAmI(agent.bot);
+}
+
+// v0.1.4.8, A10: the retreat of self_defense at low health: to the nearest player within 32 blocks, else
+// into the shelter of the home pack (only while home_pack is on and it knows one), else moveAway(10).
+async function retreat(agent) {
+    const bot = agent.bot;
+    const player = world.getNearestEntityWhere(bot, entity => entity.type === 'player' && entity.username !== bot.username, PLAYER_RANGE);
+    let shelter = false;
+    if (!player && settings.home_pack && typeof home.goToShelter === 'function') {
+        const choice = home.findShelter?.(bot, agent.homeContext());
+        shelter = choice?.kind === 'area' || choice?.kind === 'place';
+    }
+    const target = retreatTarget({ player: Boolean(player?.username), shelter });
+    if (target === 'player') {
+        await skills.goToPlayer(bot, player.username, 3);
+    }
+    else if (target === 'shelter') {
+        const result = await home.goToShelter(bot, agent.homeContext());
+        if (result?.text)
+            skills.log(bot, result.text);
+    }
+    else {
+        await skills.moveAway(bot, 10);
+    }
+}
+
+// All items of the inventory, the off-hand included.
+function itemCount(bot) {
+    const slots = bot.inventory?.slots;
+    if (Array.isArray(slots))
+        return slots.reduce((sum, item) => sum + (item && Number.isFinite(item.count) ? item.count : 0), 0);
+    return (bot.inventory?.items?.() ?? []).reduce((sum, item) => sum + (item?.count ?? 0), 0);
+}
+
+// v0.1.4.8, A8: picks up the items near the bot as the mode item_collecting. A pick-up that gained
+// nothing is tried again after 3 s, at most 3 times (see reflex/item_logic.js).
+function pickUpItem(mode, agent, item) {
+    const bot = agent.bot;
+    const id = item.id;
+    const record = mode.tries.get(id);
+    const before = itemCount(bot);
+    mode.tries.set(id, { tries: record?.tries ?? 0, nextAt: Infinity, done: false }); // no candidate while it runs
+    execute(mode, agent, async () => {
+        try {
+            await skills.pickupNearbyItems(bot);
+        } finally {
+            mode.tries.set(id, afterItemTry(record, itemCount(bot) > before, Date.now()));
+        }
+    });
+}
+
+// Forgets the tries of items that are gone and the drops of the bot that are older than 10 s.
+function forgetItems(mode, bot, now) {
+    for (const [id, at] of mode.own_drops) {
+        if (!isRecentOwnDrop(at, now))
+            mode.own_drops.delete(id);
+    }
+    if (bot.entities && typeof bot.entities === 'object') {
+        for (const id of mode.tries.keys()) {
+            if (!bot.entities[id])
+                mode.tries.delete(id);
+        }
+    }
+}
+
+// True while an item that the bot dropped in the last 10 s lies within range (forgetItems left only those).
+function ownDropNear(mode, bot, range) {
+    for (const id of mode.own_drops.keys()) {
+        const entity = bot.entities?.[id];
+        if (entity?.position && entity.position.distanceTo(bot.entity.position) < range)
+            return true;
+    }
+    return false;
+}
+
+// v0.1.4.8, A8: notes the items that the bot throws, when they appear. Once per bot.
+const watched_bots = new WeakSet();
+function watchOwnDrops(bot) {
+    if (!bot || typeof bot.on !== 'function' || watched_bots.has(bot))
+        return;
+    watched_bots.add(bot);
+    bot.on('entitySpawn', (entity) => {
+        try {
+            if (entity?.name === 'item' && isOwnDropSpawn(entity.position, bot.entity?.position))
+                modes_map.item_collecting?.own_drops?.set(entity.id, Date.now());
+        } catch (error) {
+            // the item is collected as before
+        }
+    });
+}
+
+// True while a mode before `mode` in the list (a higher priority) runs an action.
+function modeBeforeActive(mode) {
+    for (const other of modes_list) {
+        if (other === mode)
+            return false;
+        if (other.active)
+            return true;
+    }
+    return false;
+}
+
+// v0.1.4.8, C4: said once per night when night_shelter finds no home
+const NO_HOME_TEXT = 'I know no home. Tell me where home is.';
+
+// v0.1.4.8, A3 and I8: the door service of the home pack, one per agent: the one of the glue
+// (agent.door_service) when it exists, else one made here once and given to the glue in the same field.
+// null with the home pack of v0.1.4.7.
+function doorService(agent) {
+    if (agent.door_service === undefined && typeof home.createDoorService === 'function') {
+        const ctx = { ...agent.homeContext(), log: (text) => console.log(text) }; // not into the output of the action
+        agent.door_service = home.createDoorService(agent.bot, ctx) ?? null;
+    }
+    return agent.door_service ?? null;
 }
 
 // v0.1.4.6, G4: while the mode creeper_safety is on, a creeper is no target for self_defense and cowardice.
@@ -362,6 +707,50 @@ function leftToCreeperSafety(entity) {
 // settings.home_pack is on and their entry in settings.home_reflexes is not false. Their updates never
 // throw into the update loop.
 const home_modes = [
+    {
+        // v0.1.4.8, A11: every 2 s hungerStep of the home pack (C2) decides: eat, fetch food from a known
+        // chest, or say that there is no food. Eating runs beside the action; only the walk to a chest is
+        // a mode action: hungerStep gets it as state.walk(fn), which runs fn through execute and resolves
+        // true, or false without running fn while a mode before this one is active.
+        name: 'hunger',
+        description: 'Eat when hungry, fetch food from a known chest.',
+        interrupts: ['all'],
+        on: true,
+        active: false,
+        interval: 2000,
+        last_step: 0,
+        busy: false, // a step of hungerStep runs
+        state: {}, // kept between the steps; hungerStep keeps its own notes in it
+        update: function (agent) {
+            try {
+                const now = Date.now();
+                if (this.busy || now - this.last_step < this.interval || typeof home.hungerStep !== 'function')
+                    return;
+                this.last_step = now;
+                const bot = agent.bot;
+                const ctx = typeof agent.packContext === 'function' ? agent.packContext() : agent.homeContext();
+                Object.assign(this.state, {
+                    now,
+                    idle: agent.isIdle(),
+                    playerOrder: Boolean(agent.last_order),
+                    walk: async (fn) => {
+                        if (modeBeforeActive(this))
+                            return false; // a mode of higher priority runs (unstuck, self_defense ...): no walk now
+                        await execute(this, agent, fn);
+                        return true;
+                    },
+                });
+                this.busy = true;
+                Promise.resolve()
+                    .then(() => home.hungerStep(bot, ctx, this.state))
+                    .catch(error => console.warn('Mode hunger failed:', error))
+                    .finally(() => { this.busy = false; });
+            } catch (error) {
+                this.busy = false;
+                console.warn('Mode hunger failed:', error);
+            }
+        }
+    },
     {
         name: 'creeper_safety',
         description: 'Back off from creepers and lead them away from the base. Interrupts all actions.',
@@ -391,12 +780,15 @@ const home_modes = [
         active: false,
         last_attempt: null,
         sheltered_at: null, // where the last shelter of this night succeeded (a place or a hole without an area)
+        no_home_said: false, // v0.1.4.8: 'I know no home.' was said this night
         update: async function (agent) {
             try {
                 const bot = agent.bot;
                 const ctx = agent.homeContext();
-                if (!isNight(bot.time.timeOfDay))
+                if (!isNight(bot.time.timeOfDay)) {
                     this.sheltered_at = null;
+                    this.no_home_said = false;
+                }
                 const stayed = this.sheltered_at !== null && bot.entity.position.distanceTo(this.sheltered_at) < 2;
                 const decision = shouldShelter({
                     timeOfDay: bot.time.timeOfDay,
@@ -409,8 +801,17 @@ const home_modes = [
                 });
                 if (!decision?.go)
                     return;
-                if (settings.mining_pack && nightShelterWaits(depthOfBot(bot)))
-                    return; // v0.1.4.7: deep under the surface, in the mine, the night reflex waits
+                if (whereOf(agent).underground)
+                    return; // v0.1.4.8, A7: underground or in a mine the night reflex waits, with or without mining_pack
+                const shelter = findShelter(bot, ctx);
+                if (shelter?.kind !== 'area' && shelter?.kind !== 'place') {
+                    // v0.1.4.8, A7 and C4: no home, nothing to do; the text once per night
+                    if (!this.no_home_said) {
+                        this.no_home_said = true;
+                        say(agent, NO_HOME_TEXT);
+                    }
+                    return;
+                }
                 this.last_attempt = Date.now();
                 say(agent, 'It is getting dark. I go to the shelter.');
                 execute(this, agent, async () => {
@@ -432,12 +833,19 @@ const home_modes = [
         interrupts: ['all'],
         on: true,
         active: false,
+        background: true, // v0.1.4.8, A3: updated on every tick, also while an action or another mode runs
         tracker: null,
-        // without execute, so the running action goes on. closeDoorsBehind feeds the DoorTracker and
-        // closes the doors it returns; it does nothing while passThrough runs or while it still closes.
-        // It is not awaited, so the update loop does not wait for the doors.
+        // without execute, so the running action goes on. With the door service of the home pack (I8) its
+        // tick() does the work. Without it (v0.1.4.7), closeDoorsBehind feeds the DoorTracker and closes
+        // the doors it returns; it does nothing while passThrough runs or while it still closes. It is
+        // not awaited, so the update loop does not wait for the doors.
         update: function (agent) {
             try {
+                const service = doorService(agent);
+                if (typeof service?.tick === 'function') {
+                    service.tick();
+                    return;
+                }
                 if (this.tracker === null)
                     this.tracker = new DoorTracker({ now: () => Date.now() });
                 const ctx = { ...agent.homeContext(), log: (text) => console.log(text) }; // not into the output of the action
@@ -454,9 +862,13 @@ function addHomeModes() {
         return;
     const reflexes = settings.home_reflexes !== null && typeof settings.home_reflexes === 'object' ? settings.home_reflexes : {};
     const wanted = home_modes.filter(mode => reflexes[mode.name] !== false && !modes_map[mode.name]);
-    // creeper_safety and night_shelter directly after self_preservation, door_closing at the end
+    // creeper_safety and night_shelter directly after self_preservation, hunger (v0.1.4.8) directly after
+    // self_defense (decision of the tech lead: the modes before it may interrupt its walk to a chest, and
+    // unstuck watches the walk), door_closing at the end
     const after = modes_list.findIndex(mode => mode.name === 'self_preservation') + 1;
-    modes_list.splice(after, 0, ...wanted.filter(mode => mode.name !== 'door_closing'));
+    modes_list.splice(after, 0, ...wanted.filter(mode => mode.name === 'creeper_safety' || mode.name === 'night_shelter'));
+    const hunger = wanted.filter(mode => mode.name === 'hunger');
+    modes_list.splice(modes_list.findIndex(mode => mode.name === 'self_defense') + 1, 0, ...hunger);
     modes_list.push(...wanted.filter(mode => mode.name === 'door_closing'));
     for (const mode of wanted)
         modes_map[mode.name] = mode;
@@ -503,6 +915,15 @@ class ModeController {
     */
     constructor() {
         this.behavior_log = '';
+        this.progress_at = 0; // v0.1.4.8, I1: the time of the last noteProgress
+        this.progress_reason = '';
+    }
+
+    // v0.1.4.8, I1: a skill made progress (a chest opened, the path search moved ...). unstuck does not
+    // count the time before it.
+    noteProgress(reason) {
+        this.progress_at = Date.now();
+        this.progress_reason = typeof reason === 'string' ? reason : '';
     }
 
     exists(mode_name) {
@@ -559,7 +980,14 @@ class ModeController {
         if (_agent.isIdle()) {
             this.unPauseAll();
         }
+        // v0.1.4.8, A3: a background mode is updated on every tick, also while another mode is active and
+        // while an action runs. It never calls execute. The other modes keep the exclusive chain below.
         for (let mode of modes_list) {
+            if (mode.background && mode.on && !mode.paused)
+                await mode.update(_agent);
+        }
+        for (let mode of modes_list) {
+            if (mode.background) continue;
             let interruptible = mode.interrupts.some(i => i === 'all') || mode.interrupts.some(i => i === _agent.actions.currentActionLabel);
             if (mode.on && !mode.paused && !mode.active && (_agent.isIdle() || interruptible)) {
                 await mode.update(_agent);
@@ -594,6 +1022,7 @@ class ModeController {
 export function initModes(agent) {
     _agent = agent;
     addHomeModes(); // v0.1.4.6: before the profile sets which modes are on
+    watchOwnDrops(agent.bot); // v0.1.4.8, A8
     // the mode controller is added to the bot object so it is accessible from anywhere the bot is used
     agent.bot.modes = new ModeController();
     if (agent.task) {
