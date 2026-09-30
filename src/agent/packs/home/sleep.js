@@ -100,6 +100,7 @@ export async function sleepInBed(bot, ctx = {}, options = {}) {
         const areas = listAreas(ctx, dimensionOf(bot)).filter(isBuildingArea);
         let taken = 0;
         let lastFailure = null;
+        let routeFailure = null; // v0.1.4.9 (I5): the text of a learned route that failed
         for (const bed of beds.slice(0, 5)) {
             if (bot.interrupt_code) {
                 return { ok: false, reason: 'interrupted', text: 'I stopped going to bed.' };
@@ -120,8 +121,16 @@ export async function sleepInBed(bot, ctx = {}, options = {}) {
                 if (walk.reason === 'interrupted') {
                     return { ok: false, reason: 'interrupted', text: 'I stopped going to bed.' };
                 }
-                lastFailure = 'I found no way to the bed.';
-                continue;
+                // v0.1.4.9 (I5): a learned route where the path search finds no way
+                const viaRoute = await ctx?.routes?.walkTo?.(bot, bed, { clock });
+                if (viaRoute?.reason === 'interrupted') {
+                    return { ok: false, reason: 'interrupted', text: viaRoute.text };
+                }
+                if (!viaRoute?.ok) {
+                    routeFailure = viaRoute && viaRoute.reason !== 'no_route' ? viaRoute.text : routeFailure;
+                    lastFailure = 'I found no way to the bed.';
+                    continue;
+                }
             }
             if (!(await waitForSleepTime(bot, clock, 40000))) {
                 if (bot.interrupt_code) {
@@ -178,7 +187,7 @@ export async function sleepInBed(bot, ctx = {}, options = {}) {
             return { ok: false, reason: 'woke_up', text: 'I woke up before the morning.' };
         }
         if (lastFailure) {
-            return { ok: false, reason: 'no_path', text: couldNotSleepText(lastFailure) };
+            return { ok: false, reason: 'no_path', text: routeFailure ?? couldNotSleepText(lastFailure) };
         }
         return { ok: false, reason: taken > 0 ? 'taken' : 'no_bed', text: taken > 0 ? TEXTS.bedsTaken : TEXTS.noBed };
     } catch (err) {

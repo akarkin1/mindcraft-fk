@@ -313,6 +313,17 @@ export async function goToShelter(bot, ctx = {}, options = {}) {
             if (entered.reason === 'creeper_standing' && isNight(bot.time?.timeOfDay) && !bot.interrupt_code) {
                 return await digInAwayFrom(bot, entered.creeper, ctx, options, clock); // F3
             }
+            if (!entered.ok && entered.reason === 'no_path' && !bot.interrupt_code) {
+                // v0.1.4.9 (I5): a learned route into the building where the path search finds no way
+                const viaRoute = await ctx?.routes?.walkTo?.(bot, choice.area, { clock });
+                if (viaRoute?.ok) {
+                    return isInsideArea(choice.area, botPos(bot)) ? await walkToRoom(bot, choice.area, ctx, options, clock)
+                        : await enterBuilding(bot, choice.area, ctx, options);
+                }
+                if (viaRoute && viaRoute.reason !== 'no_route') {
+                    return { ...entered, reason: viaRoute.reason === 'interrupted' ? 'interrupted' : entered.reason, text: viaRoute.text };
+                }
+            }
             return entered;
         }
         if (choice.kind === 'place') {
@@ -322,7 +333,7 @@ export async function goToShelter(bot, ctx = {}, options = {}) {
             }
             const walk = await walkToHomePlace(bot, floorPos(choice.place), ctx, options, clock);
             if (!walk.ok) {
-                return { ok: false, where: 'home', reason: walk.reason, text: 'I could not get to the place "home".' };
+                return { ok: false, where: 'home', reason: walk.reason, text: walk.text ?? 'I could not get to the place "home".' };
             }
             const text = 'I am at the place "home". I know no building around it.';
             return { ok: true, where: 'home', reason: 'no_area', text: walk.door ? `${walk.door} ${text}` : text };
@@ -342,7 +353,8 @@ export const PLACE_DOOR_RANGE = 12;
 // within its time and led the bot to the point nearest to the place. Then the bot goes through the
 // nearest door or gate within 12 blocks of the place with passThrough, towards the place, and walks on.
 // Digging (outside the areas) comes last, as before. Returns { ok, reason, door } where door is the
-// text of passThrough when the bot went through a door.
+// text of passThrough when the bot went through a door; v0.1.4.9: a learned route comes before the digging,
+// and when it fails, nothing is dug and `text` is its text.
 async function walkToHomePlace(bot, place, ctx, options, clock) {
     const areas = listAreas(ctx, dimensionOf(bot));
     const timeoutMs = options.timeoutMs ?? 120000;
@@ -356,6 +368,14 @@ async function walkToHomePlace(bot, place, ctx, options, clock) {
     }
     if (bot.interrupt_code) {
         return { ok: false, reason: 'interrupted' };
+    }
+    // v0.1.4.9 (I5): a learned route before digging; a route that fails digs nothing and gives its text
+    const viaRoute = await ctx?.routes?.walkTo?.(bot, place, { clock });
+    if (viaRoute?.ok) {
+        return { ok: true, reason: null };
+    }
+    if (viaRoute && viaRoute.reason !== 'no_route') {
+        return { ok: false, reason: viaRoute.reason === 'interrupted' ? 'interrupted' : 'no_path', text: viaRoute.text };
     }
     const center = { x: place.x + 0.5, y: place.y, z: place.z + 0.5 };
     const dig = await gotoGoal(bot, new goals.GoalNear(place.x, place.y, place.z, 1), {
