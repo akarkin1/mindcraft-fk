@@ -14,25 +14,11 @@ Rules that hold for every release:
 | Release | Name | State |
 |---|---|---|
 | 0.1.4.8 | Stability | Released |
-| 0.1.4.8.1 | Model comparison | Planned, small |
-| 0.1.4.9 | The mine and the routes of the player | Planned |
+| 0.1.4.9 | The mine, the routes of the player, and the model comparison | Planned |
 | 0.1.4.10 | Understanding and watching | Planned, both trials passed |
 | Later | See the backlog | Not decided |
 
-## 0.1.4.8.1 Model comparison
-
-A small release of tools. It changes nothing while Claude is the chat model.
-
-| Part | Content |
-|---|---|
-| Cost meter | Models of OpenAI report their tokens. Prices for GPT-6 Luna. |
-| Routing check | A model of OpenAI can be chosen. The table also shows the time per answer and the measured cost. |
-| Launch script | It takes a profile and loads the key that the profile needs. |
-| Profile | The prompt of the owner with GPT-6 Luna as chat model. |
-
-Why: a first play with GPT-6 Luna showed answers after about 3 seconds against 1 second with Haiku 4.5, at a tenth of the price. The choice of commands was not measured. The routing check measures it with the same sentences for both models.
-
-## 0.1.4.9 The mine and the routes of the player
+## 0.1.4.9 The mine, the routes of the player, and the model comparison
 
 The bot learns a place by walking through it with the player. Code stores it as a route. The language model never has to understand what a tunnel is.
 
@@ -47,6 +33,17 @@ The bot learns a place by walking through it with the player. Code stores it as 
 | Setting `ore_sense_range` | 0: only ore that touches the tunnel. 3: also ore within 3 blocks of the wall. Default 0. The bot knows every block of the loaded area, also behind rock; this setting decides how much of that it uses in a mine. |
 | Own code of the model | `!newAction` is refused for digging where a skill exists. |
 | Where am I | One line in the prompt: area, tunnel, depth. |
+
+The same release brings the tools for a comparison of chat models. They change nothing while Claude is the chat model.
+
+| Part | Content |
+|---|---|
+| Cost meter | Models of OpenAI report their tokens. Prices for GPT-6 Luna. |
+| Routing check | A model of OpenAI can be chosen. The table also shows the time per answer and the measured cost. |
+| Launch script | It takes a profile and loads the key that the profile needs. |
+| Profile | The prompt of the owner with GPT-6 Luna as chat model. |
+
+Why: a first play with GPT-6 Luna showed answers after about 3 seconds against 1 second with Haiku 4.5, at a tenth of the price. The choice of commands was not measured. The routing check measures it with the same sentences for both models.
 
 ## 0.1.4.10 Understanding and watching
 
