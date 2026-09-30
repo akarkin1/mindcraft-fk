@@ -1,3 +1,4 @@
+import assert from 'node:assert';
 import { MAX_OUT, outputSummary, stopperText } from './reflex/output_logic.js';
 
 // v0.1.4.8, I5: who stopped an action when nobody said it (for example the death of the bot)

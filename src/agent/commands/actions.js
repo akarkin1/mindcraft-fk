@@ -341,6 +341,37 @@ async function runPack(agent, label, pack, name, fn) {
     return await runForText(agent, label, async () => await fn(pack, agent.bot, agent.packContext()), -1, { pack: true });
 }
 
+// v0.1.4.9 (decision of the tech lead): a command of a pack that does not move the bot is no action: its
+// perform awaits fn(pack) and returns the text of the result ({ ok, reason, text } or a text) word for word, so a
+// running action (!followPlayer into the mine) keeps running. Like runForText it notes the text for say_results
+// and the result on the entry of the command for the repeat guard. The caller builds the pack context. Never throws.
+async function runPlain(agent, pack, name, fn) {
+    if (!pack)
+        return `The ${name} pack could not be loaded.`;
+    const entry = Array.isArray(agent.running_commands) ? agent.running_commands[agent.running_commands.length - 1] ?? null : null;
+    let result = null;
+    let text = null;
+    try {
+        const value = await fn(pack);
+        if (value !== null && typeof value === 'object') {
+            result = value;
+            text = typeof value.text === 'string' ? value.text : null;
+        } else if (typeof value === 'string') {
+            text = value;
+        }
+    } catch (error) {
+        console.warn(`The ${name} pack failed:`, error);
+        text = `The ${name} pack failed: ${error?.message ?? error}`;
+        result = { ok: false, reason: 'error', text };
+    }
+    if (entry)
+        entry.pack = { ok: result ? result.ok : undefined, reason: result?.reason ?? null, text };
+    if (typeof text !== 'string' || text === '')
+        return '';
+    agent.last_pack_text = text;
+    return text;
+}
+
 // S4: the position of the chest that !putInChest, !takeFromChest and !viewChest will use, the nearest
 // chest within 32 blocks as skills.js finds it; null while storage_pack is off. Never throws.
 function chestToRecord(agent) {
@@ -1303,7 +1334,8 @@ export const actionsList = [
             return await runPack(agent, 'leaveMine', agent.work_packs?.mining, 'mining', (pack, bot, ctx) => pack.climbToSurface(bot, ctx));
         }
     },
-    // v0.1.4.9 (I10): the ways of the player (routes_pack) and the mine of the player (mine_routes)
+    // v0.1.4.9 (I10): the ways of the player (routes_pack) and the mine of the player (mine_routes). All but
+    // !collectPassedOre (it walks) are plain commands that do not move the bot and stop no running action.
     {
         name: '!rememberRoute',
         description: 'Remember the way you walked here from a place you know. Use this when the player says "remember this way".',
@@ -1311,7 +1343,8 @@ export const actionsList = [
         perform: async function (agent, name) {
             if (!settings.routes_pack)
                 return ROUTES_OFF;
-            return await runPack(agent, 'rememberRoute', agent.work_packs?.routes, 'routes', (pack, bot, ctx) => pack.rememberRoute(bot, ctx, name));
+            // no action: a running !followPlayer keeps running (decision of the tech lead)
+            return await runPlain(agent, agent.work_packs?.routes, 'routes', (pack) => pack.rememberRoute(agent.bot, agent.packContext(), name));
         }
     },
     {
@@ -1320,7 +1353,7 @@ export const actionsList = [
         perform: async function (agent) {
             if (!settings.routes_pack)
                 return ROUTES_OFF;
-            return await runPack(agent, 'routes', agent.work_packs?.routes, 'routes', (pack, bot, ctx) => pack.routesText(ctx, bot.game?.dimension));
+            return await runPlain(agent, agent.work_packs?.routes, 'routes', (pack) => pack.routesText(agent.packContext(), agent.bot.game?.dimension));
         }
     },
     {
@@ -1330,7 +1363,7 @@ export const actionsList = [
         perform: async function (agent, name) {
             if (!settings.routes_pack)
                 return ROUTES_OFF;
-            return await runPack(agent, 'forgetRoute', agent.work_packs?.routes, 'routes', (pack, bot, ctx) => pack.forgetRoute(ctx, name, bot.game?.dimension));
+            return await runPlain(agent, agent.work_packs?.routes, 'routes', (pack) => pack.forgetRoute(agent.packContext(), name, agent.bot.game?.dimension));
         }
     },
     {
@@ -1341,7 +1374,7 @@ export const actionsList = [
             if (!mineRoutesOn())
                 return MINE_ROUTES_OFF;
             const playerYaw = orderPlayerYaw(agent);
-            return await runPack(agent, 'rememberMine', agent.work_packs?.mining, 'mining', (pack, bot, ctx) => pack.rememberMine(bot, ctx, name, { playerYaw }));
+            return await runPlain(agent, agent.work_packs?.mining, 'mining', (pack) => pack.rememberMine(agent.bot, agent.packContext(), name, { playerYaw }));
         }
     },
     {
@@ -1352,7 +1385,7 @@ export const actionsList = [
             if (!mineRoutesOn())
                 return MINE_ROUTES_OFF;
             const playerYaw = orderPlayerYaw(agent);
-            return await runPack(agent, 'rememberTunnel', agent.work_packs?.mining, 'mining', (pack, bot, ctx) => pack.rememberTunnel(bot, ctx, name, { playerYaw }));
+            return await runPlain(agent, agent.work_packs?.mining, 'mining', (pack) => pack.rememberTunnel(agent.bot, agent.packContext(), name, { playerYaw }));
         }
     },
     {

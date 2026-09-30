@@ -1,10 +1,11 @@
 // Part G of v0.1.4.9 (E5): the commands in src/agent/commands/actions.js.
 //   - the six commands of I10: names, parameters, types and defaults; short descriptions that say when to use
 //     them; each answers that its part is off and touches no pack while the switch is off;
-//   - with the switches on they run through runPack: rememberRoute(bot, ctx, name), routesText(ctx, dimension),
-//     forgetRoute(ctx, name, dimension) of the routes pack; rememberMine and rememberTunnel(bot, ctx, name,
-//     { playerYaw }) with the yaw of the player of agent.last_order, collectPassedOre(bot, ctx, ore, num) of the
-//     mining pack; their texts word for word; unstuck is paused;
+//   - with the switches on: rememberRoute(bot, ctx, name), routesText(ctx, dimension), forgetRoute(ctx, name,
+//     dimension) of the routes pack, rememberMine and rememberTunnel(bot, ctx, name, { playerYaw }) with the yaw
+//     of the player of agent.last_order are plain commands (decision of the tech lead): no action, a running
+//     action such as !followPlayer keeps running; collectPassedOre(bot, ctx, ore, num) walks, so it is an action
+//     through runPack that pauses unstuck; the texts word for word;
 //   - !goToRememberedPlace: a way of the player (ctx.routes.walkTo) when the path search did not arrive;
 //   - !newAction with skills_over_code: a digging request gets digRefusalText with the commands that are on,
 //     before the cost check, and the code model is never called; a typed !newAction runs.
@@ -130,7 +131,7 @@ describe('the six commands of I10: names, parameters and defaults', () => {
             const cmd = command(name);
             assert.deepEqual(Object.entries(cmd.params ?? {}).map(([n, p]) => [n, p.type, p.default]), params);
             for (const p of Object.values(cmd.params ?? {})) assert.ok(typeof p.description === 'string' && p.description.length > 0);
-            assert.ok(M.index.isAction(name), 'an action');
+            assert.ok(M.index.isAction(name), 'in the list of actions, like !forgetPlace (only !collectPassedOre runs as one)');
         });
     }
 
@@ -199,7 +200,7 @@ describe('the routes pack: !rememberRoute, !routes, !forgetRoute', () => {
         };
     }
 
-    test('each through runPack: the text of the pack word for word, the pack context, unstuck paused', async () => {
+    test('plain commands: the text of the pack word for word, the pack context; no action runs, nothing is paused', async () => {
         M.settingsModule.setSettings({ ...BASE, ...ROUTES_ON });
         const agent = makeAgent();
         agent.work_packs = { routes: routesPack(agent) };
@@ -215,13 +216,74 @@ describe('the routes pack: !rememberRoute, !routes, !forgetRoute', () => {
         assert.equal(remember[4], 0, 'no options');
         assert.deepEqual(list.slice(1), [{ marker: 'ctx' }, 'overworld']);
         assert.deepEqual(forget.slice(1), [{ marker: 'ctx' }, 'bed', 'overworld']);
-        assert.deepEqual(agent.runs.map((r) => r.label), ['action:rememberRoute', 'action:routes', 'action:forgetRoute']);
-        assert.deepEqual(agent.pauses, ['unstuck', 'unstuck', 'unstuck']);
+        assert.deepEqual(agent.runs, [], 'no action');
+        assert.deepEqual(agent.pauses, [], 'the bot does not move: unstuck is not paused');
     });
 
-    test('the pack could not be loaded: the text of runPack', async () => {
+    test('the text is noted for say_results and the result for the repeat guard, as runForText does', async () => {
         M.settingsModule.setSettings({ ...BASE, ...ROUTES_ON });
-        assert.equal(await command('!routes').perform(makeAgent()), 'The routes pack could not be loaded.');
+        const agent = makeAgent();
+        agent.work_packs = { routes: routesPack(agent) };
+        const entry = { name: '!forgetRoute', typed: false };
+        agent.running_commands = [entry];
+        assert.equal(await command('!forgetRoute').perform(agent, 'bed'), 'I know no route "bed".');
+        assert.equal(agent.last_pack_text, 'I know no route "bed".');
+        assert.deepEqual(entry.pack, { ok: false, reason: 'unknown', text: 'I know no route "bed".' });
+        agent.work_packs.routes.forgetRoute = () => { throw new Error('broken store'); };
+        assert.equal(await command('!forgetRoute').perform(agent, 'bed'), 'The routes pack failed: broken store');
+        assert.deepEqual(entry.pack, { ok: false, reason: 'error', text: 'The routes pack failed: broken store' });
+    });
+
+    test('the pack could not be loaded: the text of runPack, no action', async () => {
+        M.settingsModule.setSettings({ ...BASE, ...ROUTES_ON });
+        const agent = makeAgent();
+        assert.equal(await command('!routes').perform(agent), 'The routes pack could not be loaded.');
+        assert.equal(await command('!rememberRoute').perform(agent, 'bed'), 'The routes pack could not be loaded.');
+        assert.deepEqual(agent.runs, []);
+    });
+
+    test('a running action (!followPlayer) is not stopped by !rememberRoute; it keeps running until it is stopped', async () => {
+        M.settingsModule.setSettings({ ...BASE, ...ROUTES_ON });
+        const AM = await loadSrc('src/agent/action_manager.js');
+        const agent = makeAgent();
+        agent.work_packs = { routes: routesPack(agent) };
+        const requests = [];
+        Object.assign(agent, {
+            requestInterrupt(by) { requests.push(by); agent.bot.interrupt_code = true; },
+            clearBotLogs() { agent.bot.output = ''; agent.bot.interrupt_code = false; },
+            isIdle: () => !agent.actions.executing,
+            cleanKill() { throw new Error('no kill'); },
+            self_prompter: { isActive: () => false },
+        });
+        agent.bot.emit = () => {};
+        agent.actions = new AM.ActionManager(agent);
+        let ticks = 0;
+        const follow = async () => {
+            while (!agent.bot.interrupt_code) {
+                ticks++;
+                await new Promise((r) => setTimeout(r, 5));
+            }
+        };
+        // as a resume action (!followPlayer), without the global assert of the SES lockdown that _executeResume needs
+        const following = agent.actions.runAction('action:followPlayer', follow);
+        agent.actions.resume_func = follow;
+        agent.actions.resume_name = 'action:followPlayer';
+        await new Promise((r) => setTimeout(r, 30));
+        assert.equal(agent.actions.currentActionLabel, 'action:followPlayer');
+        const text = await command('!rememberRoute').perform(agent, 'bed');
+        assert.match(text, /^I remember the way "bed"/);
+        const before = ticks;
+        await new Promise((r) => setTimeout(r, 30));
+        assert.equal(agent.actions.executing, true, 'still following');
+        assert.equal(agent.actions.currentActionLabel, 'action:followPlayer');
+        assert.equal(agent.actions.resume_name, 'action:followPlayer', 'its resume is kept');
+        assert.ok(ticks > before, 'the action went on');
+        assert.deepEqual(requests, [], 'nobody asked to interrupt');
+        assert.equal(agent.bot.interrupt_code, false);
+        await agent.actions.stop('!stop');
+        const result = await following;
+        assert.equal(result.interrupted, true);
+        agent.actions.cancelResume();
     });
 
     test('the real routes pack in memory: remembered, listed and forgotten with the texts of A2 and A3', async () => {
@@ -255,7 +317,7 @@ describe('the mine of the player: !rememberMine, !rememberTunnel, !collectPassed
         };
     }
 
-    test('each through runPack with the pack context; the texts word for word; unstuck paused', async () => {
+    test('!rememberMine and !rememberTunnel plain, !collectPassedOre an action through runPack; the texts word for word', async () => {
         M.settingsModule.setSettings({ ...BASE, ...MINE_ON });
         const agent = makeAgent();
         agent.work_packs = { mining: miningPack(agent) };
@@ -267,8 +329,8 @@ describe('the mine of the player: !rememberMine, !rememberTunnel, !collectPassed
         assert.equal(mine[1], agent.bot);
         assert.deepEqual(tunnel.slice(2), [{ marker: 'ctx' }, '', { playerYaw: undefined }]);
         assert.deepEqual(ore.slice(2), [{ marker: 'ctx' }, 'coal', 8, 0]);
-        assert.deepEqual(agent.runs.map((r) => r.label), ['action:rememberMine', 'action:rememberTunnel', 'action:collectPassedOre']);
-        assert.deepEqual(agent.pauses, ['unstuck', 'unstuck', 'unstuck']);
+        assert.deepEqual(agent.runs.map((r) => r.label), ['action:collectPassedOre'], 'only the command that walks is an action');
+        assert.deepEqual(agent.pauses, ['unstuck'], 'it pauses unstuck');
     });
 
     test('playerYaw: the yaw of the player of agent.last_order, when he is in bot.players with an entity', async () => {
@@ -293,6 +355,8 @@ describe('the mine of the player: !rememberMine, !rememberTunnel, !collectPassed
     test('the pack could not be loaded: the text of runPack', async () => {
         M.settingsModule.setSettings({ ...BASE, ...MINE_ON });
         assert.equal(await command('!collectPassedOre').perform(makeAgent(), 'coal', 8), 'The mining pack could not be loaded.');
+        assert.equal(await command('!rememberMine').perform(makeAgent(), 'mine'), 'The mining pack could not be loaded.');
+        assert.equal(await command('!rememberTunnel').perform(makeAgent(), ''), 'The mining pack could not be loaded.');
     });
 });
 
