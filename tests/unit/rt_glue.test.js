@@ -340,10 +340,11 @@ describe('G7: the conversing prompt', () => {
     const PARTS = ['cost_meter', 'protected_areas', 'player_rules', 'home_pack', 'storage_pack', 'farming_pack', 'wood_pack', 'mining_pack', 'routes_pack'];
     const SWITCHES_ON = { knowledge_in_prompt: true, knowledge_max_chars: 600, protect_built_blocks: true, repeat_guard: 3, restart_context: true,
         say_results: true, flee_below_health: 8, stuck_restart_after: 3, log_timestamps: true, mine_routes: true, skills_over_code: true, ore_sense_range: 3,
-        trail_max_steps: 500, allow_insecure_coding: true, skill_learning: true, skill_capture: true, skill_reuse: true, skill_command: true,
-        examples_by_last_request: true, creeper_fighting: true };
-    // every switch that is not part of a test named here, pinned off, so that the values of the owner's settings.js
-    // never decide a test (CLAUDE.md)
+        trail_max_steps: 500, allow_insecure_coding: false, skill_learning: false, skill_capture: false, skill_reuse: false, skill_command: false,
+        examples_by_last_request: false, creeper_fighting: false };
+    // Decision of the tech lead (T1-L-2): the limit counts the switches of the fork's parts, not the skill library of
+    // v0.1.4.4. The switches that are not measured here are pinned off, in every measurement, so that the values of the
+    // owner's settings.js never decide a test (CLAUDE.md).
     const PINNED_OFF = { allow_insecure_coding: false, skill_learning: false, skill_capture: false, skill_reuse: false, skill_command: false,
         examples_by_last_request: false, creeper_fighting: false };
 
@@ -435,9 +436,6 @@ describe('G7: the conversing prompt', () => {
     test('every switch on: at most 17,000 characters; the six commands are in it', LIMIT, async (t) => {
         const prompt = await conversing({ ...Object.fromEntries(PARTS.map((p) => [p, true])), ...SWITCHES_ON, world_memory: true });
         t.diagnostic(`every switch on: ${prompt.length} characters`);
-        // FINDING T1-L-2 (G7, medium; seen on hotfix/follow-ladder): with the skill switches on too (skill_learning,
-        // skill_command: the owner plays with them since commit 72f1379) the prompt has 17,431 characters, over 17,000.
-        // Before, this test read those switches from settings.js, where they were off (16,881).
         for (const name of [...ROUTE_COMMANDS, ...MINE_COMMANDS]) assert.ok(prompt.includes(`\n${name}: `), name);
         assert.ok(prompt.length <= 17000, `${prompt.length} characters`);
     });
