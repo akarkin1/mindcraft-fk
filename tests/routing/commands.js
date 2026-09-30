@@ -2,7 +2,7 @@
 // (tests/unit/examples_valid.test.js) and the routing check (scripts/routing_check.js).
 // Pure data, no imports, no side effects.
 //
-// SPEC_COMMANDS are the commands of releases v0.1.4.6 to v0.1.4.8 that belong to a part, TAKEN FROM THE SPECS,
+// SPEC_COMMANDS are the commands of releases v0.1.4.6 to v0.1.4.9 that belong to a part, TAKEN FROM THE SPECS,
 // because they do not exist in the code while the parts are written. At the join the real
 // definitions in src/agent/commands/actions.js and queries.js take over: the example check
 // prefers a real definition over an entry of this table, and has a switch to use only the real
@@ -30,6 +30,12 @@ export const SPEC_SETTINGS = {
     mining_pack: 'boolean',
     mining_max_minutes: 'number',
     keep_items: 'object',
+    // v0.1.4.9, section 2 of its spec
+    routes_pack: 'boolean',
+    trail_max_steps: 'number',
+    mine_routes: 'boolean',
+    ore_sense_range: 'number',
+    skills_over_code: 'boolean',
 };
 
 // The switches of the parts whose commands are hidden while the switch is off.
@@ -47,6 +53,9 @@ export const PART_COMMANDS = {
     farming_pack: ['!farmCycle', '!harvest', '!plant', '!makeBoneMeal', '!fertilize'],
     wood_pack: ['!chopTrees', '!getTool', '!craftSupplies'],
     mining_pack: ['!mineOre', '!goToMine', '!leaveMine'],
+    // v0.1.4.9: the commands of the routes pack and of the mine routes (I10 of its spec)
+    routes_pack: ['!rememberRoute', '!routes', '!forgetRoute'],
+    mine_routes: ['!rememberMine', '!rememberTunnel', '!collectPassedOre'],
 };
 
 // Commands of this release, from the spec. `params` in order; `default` where the spec gives one.
@@ -101,6 +110,14 @@ export const SPEC_COMMANDS = [
     { name: '!goToMine', section: 'M5', part: 'mining_pack', params: [{ name: 'ore', type: 'string', default: '' }],
         description: 'Go down into your mine.' },
     { name: '!leaveMine', section: 'M5', part: 'mining_pack', params: [], description: 'Come up from the mine to the surface.' },
+    // v0.1.4.9 (I10 of its spec): names, parameters and defaults; the descriptions are the glue's
+    { name: '!rememberRoute', section: 'I10', part: 'routes_pack', assumed: 'type of the parameter (string)', params: [{ name: 'name', type: 'string' }] },
+    { name: '!routes', section: 'I10', part: 'routes_pack', params: [] },
+    { name: '!forgetRoute', section: 'I10', part: 'routes_pack', assumed: 'type of the parameter (string)', params: [{ name: 'name', type: 'string' }] },
+    { name: '!rememberMine', section: 'I10', part: 'mine_routes', assumed: 'type of the parameter (string)', params: [{ name: 'name', type: 'string', default: 'mine' }] },
+    { name: '!rememberTunnel', section: 'I10', part: 'mine_routes', assumed: 'type of the parameter (string)', params: [{ name: 'name', type: 'string', default: '' }] },
+    { name: '!collectPassedOre', section: 'I10', part: 'mine_routes', assumed: 'types of the parameters (string, int)',
+        params: [{ name: 'ore', type: 'string' }, { name: 'num', type: 'int', default: 8 }] },
 ];
 
 // The commands that exist in the code before this release (actions.js and queries.js of v0.1.4.5).

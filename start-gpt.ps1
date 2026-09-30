@@ -1,6 +1,6 @@
 # Starts the bot with the gpt profile.
-# The API key comes from the PowerShell secret vault and is passed to the bot as an
-# environment variable, so no keys.json is needed.
+# The API keys come from the PowerShell secret vault and are passed to the bot as
+# environment variables, so no keys.json is needed.
 #
 #   .\start-gpt.ps1          start the bot
 #   .\start-gpt.ps1 -Log     also save the output under %LOCALAPPDATA%\Mindcraft\logs
@@ -14,6 +14,9 @@ if (Get-Command fnm -ErrorAction SilentlyContinue) {
 Push-Location $PSScriptRoot
 try {
     $env:OPENAI_API_KEY = Get-Secret -Name OpenaiApiKey -AsPlainText -ErrorAction Stop
+    # The code model of profiles/gpt.json is a Claude model (claude-sonnet-5): the bot makes it
+    # at the start and does not start without the Anthropic key.
+    $env:ANTHROPIC_API_KEY = Get-Secret -Name AnthropicsApiKey -AsPlainText -ErrorAction Stop
     if ($Log) {
         $dir = New-Item -ItemType Directory -Force "$env:LOCALAPPDATA\Mindcraft\logs"
         $file = Join-Path $dir ("gpt-{0:yyyyMMdd-HHmmss}.log" -f (Get-Date))
@@ -26,5 +29,6 @@ try {
 }
 finally {
     Remove-Item Env:OPENAI_API_KEY -ErrorAction SilentlyContinue
+    Remove-Item Env:ANTHROPIC_API_KEY -ErrorAction SilentlyContinue
     Pop-Location
 }

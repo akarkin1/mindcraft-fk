@@ -11,6 +11,7 @@ import fs from 'node:fs';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
+import { defaultDir } from '../../scripts/get_test_server_logic.js';
 
 export const OWNER_PORT = 55916; // the owner's own world: never used
 export const DEFAULT_PORT = 25599;
@@ -20,10 +21,11 @@ const DEFAULT_JAVA = path.join(os.homedir(), 'AppData', 'Local', 'Packages', 'Mi
     'LocalCache', 'Local', 'runtime', 'java-runtime-delta', 'windows-x64', 'java-runtime-delta', 'bin', 'java.exe');
 
 // Where the server and Java are, from MC_TEST_SERVER_DIR and MC_TEST_JAVA or the defaults.
+// The default folder is the one of scripts/get_test_server.js (v0.1.4.9): %LOCALAPPDATA%\Mindcraft\test-server
+// on Windows, ~/.local/share/mindcraft/test-server on Linux and macOS.
 // Returns { serverDir, jar, java, eula } or { missing: '<what>' }.
-export function locateServer(env = process.env) {
-    const localAppData = env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local');
-    const serverDir = env.MC_TEST_SERVER_DIR || path.join(localAppData, 'Mindcraft', 'test-server');
+export function locateServer(env = process.env, platform = process.platform) {
+    const serverDir = defaultDir(platform, env);
     const jar = path.join(serverDir, JAR_NAME);
     const eula = path.join(serverDir, 'eula.txt');
     const java = env.MC_TEST_JAVA || DEFAULT_JAVA;
@@ -31,6 +33,16 @@ export function locateServer(env = process.env) {
     if (!fs.existsSync(eula) || !/^\s*eula\s*=\s*true\s*$/m.test(fs.readFileSync(eula, 'utf8'))) return { missing: `accepted eula.txt in ${serverDir}` };
     if (!fs.existsSync(java)) return { missing: `java ${java}` };
     return { serverDir, jar, java, eula };
+}
+
+// The environment of the server process: that of the runner without JAVA_TOOL_OPTIONS (v0.1.4.9),
+// which the server must not get (the cloud container sets it for the Java tools of its proxy).
+export function serverEnv(env = process.env) {
+    const copy = { ...env };
+    for (const key of Object.keys(copy)) {
+        if (key.toUpperCase() === 'JAVA_TOOL_OPTIONS') delete copy[key];
+    }
+    return copy;
 }
 
 // True when nothing listens on 127.0.0.1:port.
@@ -210,7 +222,7 @@ export class McServer {
     async start(timeoutMs = 180000) {
         const t0 = Date.now();
         const args = [`-Xms512M`, `-Xmx${this.memory}`, '-jar', this.jar, 'nogui'];
-        this.child = spawn(this.java, args, { cwd: this.dir, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
+        this.child = spawn(this.java, args, { cwd: this.dir, env: serverEnv(), stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
         this.pid = this.child.pid;
         this.exited = new Promise((resolve) => this.child.on('exit', (code, signal) => {
             this.exitInfo = { code, signal };

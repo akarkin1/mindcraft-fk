@@ -1,13 +1,42 @@
 import OpenAIApi from 'openai';
 import { getKey, hasKey } from '../utils/keys.js';
 import { strictFormat } from '../utils/text.js';
+import { reportUsage } from '../agent/cost/usage_context.js';
+
+function tokenCount(value) {
+    return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : 0;
+}
+
+// cost meter (v0.1.4.9, I9): the usage of a successful request, reported like claude.js does.
+// OpenAI counts the cached input tokens inside the input tokens; the meter counts them apart.
+// The reasoning tokens are inside the output tokens. Without a usage object nothing is reported.
+function reportOpenAIUsage(model, usage, input, output, cached) {
+    if (usage === null || typeof usage !== 'object')
+        return;
+    const cache_read_tokens = tokenCount(cached);
+    reportUsage({
+        model: model,
+        input_tokens: Math.max(0, tokenCount(input) - cache_read_tokens),
+        output_tokens: tokenCount(output),
+        cache_read_tokens: cache_read_tokens,
+        cache_write_tokens: 0,
+    });
+}
 
 export class GPT {
     static prefix = 'openai';
-    constructor(model_name, url, params) {
+    // options.client: an object with the methods of the OpenAI client that this adapter calls
+    // (responses.create, chat.completions.create, embeddings.create), used instead of a client made
+    // with the key; for the tests (v0.1.4.9, D1). Without it the key is needed, as before.
+    constructor(model_name, url, params, options = {}) {
         this.model_name = model_name;
         this.params = params;
         this.url = url; // store so that we know whether a custom URL has been set
+
+        if (options?.client) {
+            this.openai = options.client;
+            return;
+        }
 
         let config = {};
         if (url)
@@ -48,6 +77,9 @@ export class GPT {
                     delete pack.stop;
                 }
                 let completion = await this.openai.chat.completions.create(pack);
+                // counted before the length check: a cut answer is paid for as well
+                const usage = completion?.usage;
+                reportOpenAIUsage(model, usage, usage?.prompt_tokens, usage?.completion_tokens, usage?.prompt_tokens_details?.cached_tokens);
                 if (completion.choices[0].finish_reason == 'length')
                     throw new Error('Context length exceeded'); 
                 console.log('Received.');
@@ -66,6 +98,8 @@ export class GPT {
                     input: messages,
                     ...(this.params || {})
                 });
+                const usage = response?.usage;
+                reportOpenAIUsage(model, usage, usage?.input_tokens, usage?.output_tokens, usage?.input_tokens_details?.cached_tokens);
                 console.log('Received.');
                 res = response.output_text;
                 let stop_seq_index = res.indexOf(stop_seq);
@@ -106,11 +140,14 @@ export class GPT {
     async embed(text) {
         if (text.length > 8191)
             text = text.slice(0, 8191);
+        const model = this.model_name || "text-embedding-3-small";
         const embedding = await this.openai.embeddings.create({
-            model: this.model_name || "text-embedding-3-small",
+            model: model,
             input: text,
             encoding_format: "float",
         });
+        // usage_context has no purpose for embeddings: the purpose is the one of the caller
+        reportOpenAIUsage(model, embedding?.usage, embedding?.usage?.prompt_tokens, 0, 0);
         return embedding.data[0].embedding;
     }
 

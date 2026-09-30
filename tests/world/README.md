@@ -25,12 +25,39 @@ passed and nothing was left behind (see "Hygiene").
 
 | Variable | Meaning | Default |
 |---|---|---|
-| `MC_TEST_SERVER_DIR` | folder with `server-1.21.8.jar` and the accepted `eula.txt` | `%LOCALAPPDATA%\Mindcraft\test-server` |
-| `MC_TEST_JAVA` | `java.exe` of Java 21 | the Java of the Minecraft launcher (see `mc_server.js`) |
+| `MC_TEST_SERVER_DIR` | folder with `server-1.21.8.jar` and the accepted `eula.txt` | Windows: `%LOCALAPPDATA%\Mindcraft\test-server`; Linux and macOS (since v0.1.4.9): `~/.local/share/mindcraft/test-server` |
+| `MC_TEST_JAVA` | the `java` of Java 21 (`java.exe` on Windows) | Windows: the Java of the Minecraft launcher (see `mc_server.js`); Linux and macOS: none, set it (for example `/usr/bin/java`) |
 | `MCW_LOG_DIR` | if set, the runner copies the output of every scenario run and the server log there | not set: nothing is kept |
+| `JAVA_TOOL_OPTIONS` | must not reach the server; `mc_server.js` removes it from the environment of the server process (since v0.1.4.9), so the runner may be started with it set | - |
 
 Without the jar, an accepted `eula.txt` or Java the runner prints
 `World tests skipped: no test server found.` and exits with 0.
+
+### Getting the server (v0.1.4.9)
+
+```
+node scripts/get_test_server.js                  download the server jar into the folder of the test server
+node scripts/get_test_server.js --accept-eula    the same, and write eula.txt with eula=true
+node scripts/get_test_server.js --dir <folder>   another folder
+```
+
+The script reads Mojang's version manifest (`https://piston-meta.mojang.com/mc/game/version_manifest_v2.json`),
+finds 1.21.8 and its server download, and refuses a server whose SHA-1 is not
+`6bce4ef400e4efaa63a13d5e6f6b500be969ef81` (the file the tests were made with, 57,555,044 bytes). It downloads
+to `server-1.21.8.jar.part`, checks SHA-1 and size and renames it to `server-1.21.8.jar`; a jar that is there
+already with the right SHA-1 is kept. The folder is `--dir`, else `MC_TEST_SERVER_DIR`, else the default of the
+table above, the same that the runner uses. `--accept-eula` means that you accept the EULA of Minecraft
+(`https://aka.ms/MinecraftEULA`); without it the script says how to accept it (the flag, or `eula=true` in
+`eula.txt` by hand). It uses the `fetch` of Node, no package; Node's fetch uses `HTTPS_PROXY` only with
+`NODE_USE_ENV_PROXY=1` (Node 22.21 and later). Exit codes: 0 done, 1 network or file error, 2 bad arguments,
+3 wrong checksum. Java 21 is not part of it: install it and set `MC_TEST_JAVA`.
+
+A Linux machine, for example the cloud container (OpenJDK 21 at `/usr/bin/java`):
+
+```
+node scripts/get_test_server.js --accept-eula
+MC_TEST_JAVA=/usr/bin/java node tests/world/run.js <name>
+```
 
 ## World types
 
