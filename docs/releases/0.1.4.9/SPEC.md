@@ -608,3 +608,69 @@ digging request too; the spec accepts that), the usage numbers of the three Open
 | 1 | A (E1), B (E2), C (E3) | tech lead reads the reports, `npm test`, `HANDOFF.md` |
 | 2 | D+E (E4), G (E5), TU (T1) | `npm test`, `npm run test:e2e` |
 | 3 | TW (T2), and a fix engineer for what the tests found | `npm run test:world`, `DECISIONS.md`, fix round, fresh checkout, PR |
+
+## 13. Addendum after the play test of 2026-10-01: the follow down a ladder (F14)
+
+The owner's play (`docs/releases/0.1.4.9/DECISIONS.md`, F14): `!followPlayer` and `!goToPlayer` use the
+path search, which climbs a ladder but never descends one and stops in the cell of an open trapdoor above
+a ladder. So the bot cannot follow the player down into the basement, and the way into the mine cannot be
+learned. This is a fix of v0.1.4.9, on the branch `hotfix/follow-ladder`; the tag `v0.1.4.9` goes on its
+merge commit.
+
+### Part L: the ladder in the follow (E3, owner of `skills.js`)
+
+Files: `src/agent/library/skills.js` (`followPlayer`, `goToPlayer` and their helpers only), new
+`src/agent/library/ladder_logic.js` (pure), new `src/agent/library/ladder_pass.js` (executing), unit tests
+`tests/unit/rtl_*.test.js`. The signatures and the return values of `followPlayer` and `goToPlayer` do not
+change.
+
+Behind `routes_pack` (read like `ore_sense_range`: the agent settings first, then the file). With the
+switch off nothing changes.
+
+`ladder_logic.js`, pure:
+
+```js
+export function ladderColumnAt(getName, feet, { reach = 2, maxHeight = 64 })
+// -> { x, z, top, bottom, facing, trapdoor: {x,y,z,name}|null } | null
+//    the ladder column whose top or bottom cell is within `reach` blocks of the feet (horizontally 2, vertically 2),
+//    with a trapdoor directly above its top when there is one
+export function ladderWay(column, feet, target)
+// -> 'down' | 'up' | null : down when the target is 2 or more blocks below the feet and within 3 blocks
+//    horizontally of the column; up when 2 or more above; null otherwise
+```
+
+`ladder_pass.js`: `passLadder(bot, column, way, { clock, timeoutMs = 30000 })` -> `{ ok, reason, text }`,
+never throws. It imports `slideDown`, `climbUp`, `enterColumn` and `footOf` from
+`src/agent/packs/mining/ladder.js` with a dynamic `import()` (the library must load without the pack).
+Down: when the trapdoor is closed, walk to the cell beside it, open it with `bot.activateBlock` (no
+sneak), then `slideDown` with a leg `{ kind: 'ladder', x, z, top, bottom, face: facing, entry: <the cell
+beside the top on the open side> }`. Up: `enterColumn` from the foot, `climbUp`; a closed trapdoor at the
+top is opened from below as `replay.js` does (`climbToOpen`: press forward, click without sneak). The door
+service closes the trapdoor behind the bot as it closes doors.
+
+In `followPlayer`: in the loop, when the bot has not moved for 3 s (the existing `stuck_since`) or the
+path search has no goal, and `ladderWay(ladderColumnAt(...), feet, player.position)` is not null: stop the
+path search (`setGoal(null)`), `passLadder`, then set the follow goal again. At most 3 ladder passes per
+minute; a failed pass writes its text to the log once. In `goToPlayer`: before the path search, when the
+player is 2 or more blocks below or above and a column is within reach, `passLadder` first, then the path
+search as today. `bot.modes?.noteProgress?.('ladder')` after a pass.
+
+Texts (log): `I go down the ladder at (13, 66, 51) after MartyByrde2.`, `I climb up the ladder at (13, 66, 51) after MartyByrde2.`,
+`I could not go down the ladder at (13, 66, 51): <reason of passLadder>.`
+
+The console line of an interrupted action: `Agent executed: !followPlayer and got: undefined` becomes
+`Agent executed: !followPlayer and was stopped.` (part G's file `src/agent/agent.js` or wherever the
+line is printed; E3 may change that one line and names it).
+
+### Tests
+
+- TU: `tests/unit/rt_ladder_follow.test.js` from this section: `ladderColumnAt` (a column with and
+  without a trapdoor, out of reach, a column of one ladder), `ladderWay` (down, up, null), `passLadder` on
+  the fake bot of the mining pack (down through a closed trapdoor, up, interrupted), `followPlayer` on a
+  fake bot with a player below (the pass is called once, the goal is set again), the switch off.
+- TW: `w75_follow_ladder.js`: in the base world, with `MODES_PROFILE` and the owner's switches, a second
+  bot (`connectPlayer`) stands in the house; `!followPlayer` typed; the second bot goes down the ladder
+  cell by cell with the test control to the room at y 41; within 60 s the bot is within 4 blocks of it at
+  y 41, the trapdoor was opened by the bot (the move recorder shows the click), the trail holds the
+  ladder run; then the second bot climbs up and the bot follows to the house. Then `!goToPlayer` typed
+  with the player in the room and the bot in the house: the bot arrives. W60 stays green.
