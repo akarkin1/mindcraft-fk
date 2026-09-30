@@ -26,9 +26,13 @@ const CLAUDE = JSON.parse(fs.readFileSync(repoPath('profiles/claude.json'), 'utf
 const LIMIT_ALL_ON = 17000;
 const PLAYER = 'steve';
 // every switch of the fork that changes the conversing prompt
-const PARTS = ['cost_meter', 'protected_areas', 'player_rules', 'home_pack', 'storage_pack', 'farming_pack', 'wood_pack', 'mining_pack'];
+// v0.1.4.9: routes_pack and mine_routes are parts too (they hide commands); trail_max_steps, ore_sense_range and
+// skills_over_code are switches without commands
+const PARTS = ['cost_meter', 'protected_areas', 'player_rules', 'home_pack', 'storage_pack', 'farming_pack', 'wood_pack', 'mining_pack',
+    'routes_pack', 'mine_routes'];
 const NEW_SWITCHES = { knowledge_in_prompt: true, knowledge_max_chars: 600, protect_built_blocks: true, repeat_guard: 3, restart_context: true,
-    say_results: true, flee_below_health: 8, stuck_restart_after: 3, log_timestamps: true };
+    say_results: true, flee_below_health: 8, stuck_restart_after: 3, log_timestamps: true, trail_max_steps: 500, ore_sense_range: 3, skills_over_code: true };
+const COMMANDS_0149 = ['!rememberRoute', '!routes', '!forgetRoute', '!rememberMine', '!rememberTunnel', '!collectPassedOre'];
 
 let workDir;
 let originalCwd;
@@ -191,6 +195,7 @@ describe('the size of the conversing prompt (section 11, item 12)', () => {
         assert.ok(!prompt.includes('WHAT YOU KNOW'));
         assert.ok(prompt.includes('\n!pickUpItems: '), 'always offered');
         assert.ok(!prompt.includes('\n!closeDoor: '));
+        for (const name of COMMANDS_0149) assert.ok(!prompt.includes(`\n${name}: `), `${name} hidden`);
         assert.ok(prompt.length <= 11000, `${prompt.length} characters`);
     });
 
@@ -201,7 +206,7 @@ describe('the size of the conversing prompt (section 11, item 12)', () => {
         const prompt = await conversingPrompt({ ...on, ...NEW_SWITCHES, world_memory: true }, block);
         t.diagnostic(`all switches on: ${prompt.length} characters (the block of knowledge ${block.length})`);
         assert.ok(prompt.includes(`${block}\nConversation Begin:`), 'the block before the conversation');
-        for (const name of ['!pickUpItems', '!closeDoor', '!chests', '!mineOre', '!rememberArea']) assert.ok(prompt.includes(`\n${name}: `), name);
+        for (const name of ['!pickUpItems', '!closeDoor', '!chests', '!mineOre', '!rememberArea', ...COMMANDS_0149]) assert.ok(prompt.includes(`\n${name}: `), name);
         assert.ok(prompt.length <= LIMIT_ALL_ON, `${prompt.length} characters`);
     });
 });

@@ -48,8 +48,10 @@ describe('section 2: the new keys in settings_spec.json', () => {
         assert.match(SPEC.home_reflexes.description, /hunger/);
     });
 
-    test('ore_sense_range is not part of this release', () => {
-        assert.equal(SPEC.ore_sense_range, undefined);
+    // v0.1.4.9 brought ore_sense_range (section 2 of its spec; tests/unit/rtg_settings.test.js)
+    test('ore_sense_range is not part of this release: it came with v0.1.4.9, 0 by default', () => {
+        assert.equal(SPEC.ore_sense_range.type, 'number');
+        assert.equal(SPEC.ore_sense_range.default, 0);
     });
 
     test('the defaults of the spec file are valid values of the table', () => {
@@ -70,8 +72,9 @@ describe('section 2: the new keys in settings.js (the values of the owner are no
         assert.equal(typeof settings.home_reflexes.hunger, 'boolean');
     });
 
-    test('ore_sense_range is not part of this release', () => {
-        assert.equal(Object.hasOwn(settings, 'ore_sense_range'), false);
+    // v0.1.4.9 brought ore_sense_range: a valid value of the owner, 0 or 3
+    test('ore_sense_range is not part of this release: it came with v0.1.4.9, 0 or 3', () => {
+        assert.ok([0, 3].includes(settings.ore_sense_range), `ore_sense_range: ${settings.ore_sense_range}`);
     });
 
     test('the comment of each new key in settings.js says what it does', () => {

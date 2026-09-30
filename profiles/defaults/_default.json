@@ -511,6 +511,48 @@
             {"role": "assistant", "content": "I'll cook it in the furnace. !smeltItem(\"beef\", 4)"},
             {"role": "system", "content": "Action output:\nSuccessfully smelted beef, got 4 cooked_beef."},
             {"role": "assistant", "content": "Cooked 4 beef."}
+        ],
+
+        [
+            {"role": "user", "content": "hal_7: this is the mine, remember this"},
+            {"role": "assistant", "content": "I'll learn the way in and the mine. !rememberMine(\"mine\")"},
+            {"role": "system", "content": "I remember the mine \"mine\": the entrance at (30, 60, 4), the way in has 6 steps with 1 ladder and 1 trapdoor, the room at level 41 with a chest and a crafting table, one tunnel at level 25, 12 blocks long, going south."},
+            {"role": "assistant", "content": "I know the mine now: the way in, the room at level 41 and a tunnel at level 25."}
+        ],
+
+        [
+            {"role": "user", "content": "uma_3: dig here"},
+            {"role": "assistant", "content": "I'll measure this tunnel. !rememberTunnel"},
+            {"role": "system", "content": "I measured the tunnel: it starts at (22, 25, 2), goes south, and ends at (22, 25, 13) after 12 blocks, at level 25. I dig on at its end when you ask for ore."},
+            {"role": "assistant", "content": "Got it. I dig on at the end of this tunnel when you ask for ore."}
+        ],
+
+        [
+            {"role": "user", "content": "jan_5: remember this way to the bed"},
+            {"role": "assistant", "content": "I'll remember it. !rememberRoute(\"bed\")"},
+            {"role": "system", "content": "I remember the way \"bed\": from the place \"storage\" to here, 7 steps, 1 ladder, 1 trapdoor. I walk it in both directions."},
+            {"role": "assistant", "content": "I know the way to the bed now, up the ladder and through the trapdoor."}
+        ],
+
+        [
+            {"role": "user", "content": "kai_2: collect the coal you passed"},
+            {"role": "assistant", "content": "I'll get it. !collectPassedOre(\"coal\")"},
+            {"role": "system", "content": "I collected 4 coal_ore that I had passed."},
+            {"role": "assistant", "content": "Got the 4 coal ore I had left behind."}
+        ],
+
+        [
+            {"role": "user", "content": "lia_9: which ways do you know"},
+            {"role": "assistant", "content": "Here they are. !routes"},
+            {"role": "system", "content": "I know 2 routes: \"bed\" from the place \"storage\" to (12, 45, 8), 7 steps; \"mine\" from the area \"home\" to (30, 41, 4), 12 steps."},
+            {"role": "assistant", "content": "I know the way to the bed and the way to the mine."}
+        ],
+
+        [
+            {"role": "user", "content": "moe_4: forget the way to the bed"},
+            {"role": "assistant", "content": "Okay. !forgetRoute(\"bed\")"},
+            {"role": "system", "content": "Forgot the route \"bed\"."},
+            {"role": "assistant", "content": "I forgot the way to the bed."}
         ]
     ],
 

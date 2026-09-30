@@ -81,6 +81,11 @@ const settings = {
     "flee_below_health": 0, // below this health the bot does not fight, it retreats. 0 for off
     "log_timestamps": false, // [HH:MM:SS] before each line of the console
     "examples_by_last_request": false, // choose the prompt examples by the last request of the player, not by the whole conversation
+    "routes_pack": false, // record the trail and remember the ways the player shows: !rememberRoute, !routes, !forgetRoute; beds and places by a way
+    "trail_max_steps": 500, // with routes_pack: the steps of the trail that are kept, 50 or more
+    "mine_routes": false, // with mining_pack and routes_pack: the mine of the player: !rememberMine, !rememberTunnel, !collectPassedOre
+    "ore_sense_range": 0, // 0: only ore that touches the tunnel or the open air is taken. 3: also ore within 3 blocks of the wall
+    "skills_over_code": false, // !newAction writes no code for digging while a command can do it
     "allow_vision": false, // allows vision model to interpret screenshots as inputs
     "blocked_actions" : ["!checkBlueprint", "!checkBlueprintLevel", "!getBlueprint", "!getBlueprintLevel", "!restart"] , // commands to disable and remove from docs. Ex: ["!setMode"]
     "code_timeout_mins": -1, // minutes code is allowed to run. -1 for no timeout
