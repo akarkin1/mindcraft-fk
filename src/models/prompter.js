@@ -119,11 +119,15 @@ export class Prompter {
                 embedding_model_profile = null;
             }
         }
-        if (embedding_model_profile) {
-            this.embedding_model = createModel(embedding_model_profile);
-        }
-        else {
-            this.embedding_model = createModel({api: chat_model_profile.api});
+        // v0.1.4.8: an embedding model that cannot be created (for example a key that is missing) must
+        // not stop the start of the bot. Without it the examples are chosen by word overlap.
+        try {
+            this.embedding_model = embedding_model_profile
+                ? createModel(embedding_model_profile)
+                : createModel({api: chat_model_profile.api});
+        } catch (error) {
+            console.warn('Could not create the embedding model, using word-overlap instead:', error?.message ?? error);
+            this.embedding_model = null;
         }
 
         this.skill_libary = new SkillLibrary(agent, this.embedding_model);
