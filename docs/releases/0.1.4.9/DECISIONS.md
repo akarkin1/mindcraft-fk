@@ -34,6 +34,12 @@ flake). The test base (`tests/world/base_world.js`) now has a furnace in the roo
 | F9 | w47 `creeper_in_sight` hung twice as the 14th scenario of a long session: the server dropped both bots with `Timed out`. Alone and in the full run it passes, with v0.1.4.8 as well. | one session | Not reproduced. Known flake, watched in the next full run. | none |
 | F10 | w21 `trees` left one log on the ground in the full run; alone it passes. The wood pack did not change. | one run | Known flake. | none |
 
+State after the fix round: F1 to F8 are corrected in the tree (unit tests 6078, 0 failures). Beyond the
+decisions: the patch also switches on `climbUsingJump` for 1.21 (a jump climbs a ladder, which the
+second way out of `climbUp` needs) and adds the pale oak trapdoor; the mine store keeps the `foot` of a
+ladder leg. The tester's test `rt_trail` 113 expected the sky light to decide; it now expects the
+column, by F5. The re-run on the real server follows.
+
 Notes of T2 that are accepted as they are: a route from the trapdoor to the bed starts at the place
 `home` when it passes within 2 blocks of it (A2 as written); W60 replaces 8 repeated queries by 8 orders
 of the new commands so that it stays under 45 minutes; the hidden commands answer

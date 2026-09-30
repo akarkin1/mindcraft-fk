@@ -266,8 +266,32 @@ Where this text and the spec disagree, this text wins.
 - `action_manager.js` now imports `assert` (the resume of `!followPlayer` used a global that only the
   sandbox lockdown supplies). Corrected by the tech lead.
 
+## After the fix rounds (T1 and the real server)
+
+- A ladder leg has `foot` (the cell beside the column at the bottom) as it has `entry` (the top). Walk
+  legs end at `foot` or `entry`, never in a column. `ladder.js` exports `footOf(bot, leg)` and
+  `enterColumn(bot, leg, options)`; `climbUp` uses `enterColumn`; `followUp` skips its walk when the
+  leg has a `foot`. The mine store keeps `foot`.
+- `climbUp` has a second way out at the top (`jumpOut`): after 1.5 s without rising, jump and hold
+  forward towards the entry for 1 s, up to 3 times, then the path search.
+- `patches/prismarine-physics+1.10.0.patch`: `climbableTrapdoor` and `climbUsingJump` for 1.21, the
+  bamboo, pale oak and copper trapdoors in the set. `rta_physics_patch.test.js` proves it by behaviour.
+- The trail: `sky` is `columnIsOpen` (64 blocks) and not on a ladder and 2 of 4 neighbours at head
+  height open; the light is never read. `viaOf` looks at every cell on the line between two steps
+  (`lineCells`); the interval is 100 ms (`TRAIL_RULES`).
+- The legs follow the order of the trail (down: walk, door, ladder, walk); a door leg ends past the
+  openable; `too_short` when fewer than 2 steps since the known place.
+- `tunnelDirection` ignores a yaw that points towards the anchor; `rememberTunnel` needs a corridor of
+  4 cells (`MIN_TUNNEL_CELLS`) with at most 2 open neighbours per cell (`corridorTunnel`, shared with
+  `rememberMine`).
+- `!goToRememberedPlace`: `routeFirst` walks a route (when `routeFor` finds one) before the path search,
+  with `unstuck` paused; a failed route is the whole answer. `collectWork` decides ore in sight with
+  `oreInSight` and `sightRange`; underground it never goes to `!mineOre`.
+
 ## State of the unit tests
 
 After parts A, B and C: E2 reports `npm test` with 5476 tests, 1 failure (the pack list, corrected by
 the tech lead). After parts D, E and G: E5 reports 5965 tests, 2 failures, both in the tester's files
-against part A (`rt_route_logic` trapdoor leg, `rt_routes_pack` `too_short`).
+against part A (`rt_route_logic` trapdoor leg, `rt_routes_pack` `too_short`). After the tester T1:
+6041 tests, 8 failures (T1-1 to T1-5). After both fix rounds: 6078 tests, 0 failures, 1 skipped
+(Windows only). End-to-end: 17 of 17.

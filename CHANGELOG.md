@@ -37,12 +37,18 @@ Every new switch is off by default. Corrections have no switch.
 
 ### Changed
 
-- **`!collectBlocks` with an ore takes only ore in sight**: an ore block needs a face towards an open cell. Before, the bot saw ore through the rock and dug to it. When every ore is inside the rock it says so and, with `mining_pack`, points to `!mineOre`. This holds with every switch off; `ore_sense_range` 3 widens it to ore within 3 blocks of an open cell.
+- **`!collectBlocks` with an ore takes only ore in sight**: an ore block needs a face towards an open cell. Before, the bot saw ore through the rock and dug to it. When every ore is inside the rock it says so and, with `mining_pack`, points to `!mineOre`. This holds with every switch off; `ore_sense_range` 3 widens it to ore within 3 blocks of an open cell. In a tunnel the bot no longer sends an ore beside it to `!mineOre` because a ray from its eyes did not reach it, and underground it never does.
+- **`!goToRememberedPlace` walks a learned route first** when one leads to the place, then the path search does the rest. With `routes_pack`.
 - **`!mineOre` no longer breaks an ore its pickaxe cannot harvest** beside the tunnel; it is listed as passed. With `mine_routes`.
 - The block "what I know" shows a mine of the player by its name.
+- The remembering, listing and forgetting of routes and mines are plain commands: a running `!followPlayer` keeps running, so "follow me, this is the mine" works.
 
 ### Fixed
 
+- **The bot could not climb out of a shaft through an open trapdoor.** `prismarine-physics` 1.10.0 treats an open trapdoor above a ladder as climbable only up to Minecraft 1.20, and knows no trapdoor newer than mangrove. Corrected by `patches/prismarine-physics+1.10.0.patch`, which also lets a jump climb a ladder in 1.21; `npm install` applies it. The climb has a second way out at the top: jump and walk towards the entry.
+- **The path search climbed any ladder it entered**, so a walk to the foot of a ladder hung in the column. The bot now walks to the cell beside the column and steps in.
+- **The sky light the bot reads is stale** on a chunk border (15 inside a house). Open sky is decided by the column above the bot, never by the light.
+- **A resume action such as `!followPlayer` used a global `assert`** that only the sandbox lockdown supplies. The action manager imports it.
 - Nothing of a play test: `0.1.4.8` was not played before this release.
 
 ## [0.1.4.8] - 2026-09-30

@@ -34,7 +34,7 @@ This is a fork of [Mindcraft](https://github.com/mindcraft-bots/mindcraft) for M
 
 Every scenario that tests a skill runs with the reflexes of the profile on and gives its order as a chat command. A test file must end by itself: no timer, interval or listener may stay open.
 
-The test server: the jar of the 1.21.8 server and an accepted `eula.txt` in `%LOCALAPPDATA%\Mindcraft\test-server` on the owner's machine, or in the folder that `MC_TEST_SERVER_DIR` names. The owner accepted the EULA on 2026-09-28.
+The test server: the jar of the 1.21.8 server and an accepted `eula.txt` in `%LOCALAPPDATA%\Mindcraft\test-server` on the owner's machine, `~/.local/share/mindcraft/test-server` elsewhere, or in the folder that `MC_TEST_SERVER_DIR` names. `node scripts/get_test_server.js --accept-eula` downloads and checks the jar and writes `eula.txt`. The owner accepted the EULA on 2026-09-28. In the cloud set `MC_TEST_JAVA=/usr/bin/java`.
 
 ## Code
 
