@@ -9,6 +9,7 @@ import { AREA_TYPES, normalizeAreaName, replaceRefusal } from '../areas/area_sto
 import { goToShelter, sleepInBed, eatBestFood, enterBuilding, passThrough, closeNear } from '../packs/home/index.js';
 import { REMEMBER_RULE_DESCRIPTION, rememberRuleReply, forgetRuleReply } from '../rules/rule_commands.js';
 import { isDiggingRequest, digRefusalText } from '../dig_request_logic.js';
+import { oreInSight, sightRange } from '../library/ore_sight_logic.js';
 
 
 // v0.1.4.8, I5 (S3, S4): a command that was stopped starts no turn of the model. What it did so far goes
@@ -399,19 +400,44 @@ async function recordChest(agent, pos) {
     }
 }
 
-// M5: true when a block of the ore, in stone or deepslate, is within 16 blocks and the bot can see it.
-function oreInSight(bot, type) {
+// M5: true when a block of the ore, in stone or deepslate, is within 16 blocks and in sight. v0.1.4.9 (F4, decision
+// of the tech lead): in sight by the rule of part C (oreInSight of library/ore_sight_logic.js, the range of
+// ore_sense_range): 0 a face in the open, 3 an open cell within 3 blocks. The ray from the eyes of v0.1.4.7
+// (bot.canSeeBlock) missed an ore in the wall at the height of the feet. Never throws.
+function oreVisible(bot, type) {
     try {
         const base = type.replace(/^deepslate_/, '');
-        return world.getNearestBlocks(bot, [base, `deepslate_${base}`], 16, 32).some((block) => bot.canSeeBlock(block));
+        const range = sightRange(settings.ore_sense_range);
+        const read = blockNameOf(bot);
+        const nameAt = (x, y, z) => {
+            try {
+                return read(x, y, z);
+            } catch (error) {
+                return null; // not loaded: rock
+            }
+        };
+        return world.getNearestBlocks(bot, [base, `deepslate_${base}`], 16, 32)
+            .some((block) => Boolean(block?.position) && oreInSight(nameAt, block.position, range));
     } catch (error) {
         console.warn('Could not look for the ore:', error);
         return false;
     }
 }
 
+// v0.1.4.9 (F4): true when agent.whereAmI() says the bot is underground (deep, in a mine area or a mine). Never throws.
+function isUnderground(agent) {
+    try {
+        return typeof agent?.whereAmI === 'function' && agent.whereAmI()?.underground === true;
+    } catch (error) {
+        console.warn('Could not ask where the bot is:', error);
+        return false;
+    }
+}
+
 // F3, T5, M5: the skill of a work pack that !collectBlocks leads to for a block, or null for the old
-// collecting. Decided by the name of the block and the switches. Never throws.
+// collecting. Decided by the name of the block and the switches. Never throws. v0.1.4.9 (F4): an ore out of sight
+// goes to !mineOre only on the surface; underground the old collecting runs, and the text of the library (C1) is
+// the answer (!mineOre starts no mine underground).
 function collectWork(agent, type) {
     try {
         if (settings.farming_pack && agent.work_packs?.farming?.harvestTarget(type))
@@ -419,7 +445,7 @@ function collectWork(agent, type) {
         if (settings.wood_pack && agent.work_packs?.wood?.woodKind(type))
             return { name: 'wood', pack: agent.work_packs.wood, run: (pack, bot, ctx, num) => pack.chopTrees(bot, ctx, num, pack.woodKind(type)) };
         const ore = settings.mining_pack ? agent.work_packs?.mining?.oreOf(type) : null;
-        if (ore && !oreInSight(agent.bot, type))
+        if (ore && !oreVisible(agent.bot, type) && !isUnderground(agent))
             return { name: 'mining', pack: agent.work_packs.mining, run: (pack, bot, ctx, num) => pack.mineOre(bot, ctx, ore.ore ?? type, num) };
     } catch (error) {
         console.warn('Could not choose the skill for !collectBlocks:', error);
@@ -458,6 +484,31 @@ function orderPlayerYaw(agent) {
         return typeof yaw === 'number' && Number.isFinite(yaw) ? yaw : undefined;
     } catch (error) {
         return undefined;
+    }
+}
+
+// v0.1.4.9 (F2, decision of the tech lead): !goToRememberedPlace with routes_pack walks a way that the player showed
+// FIRST when ctx.routes.routeFor finds one for the place (one end within 4 blocks of the place, the other within 32
+// of the bot); the path search only does the rest (the path search alone stood on the closed trapdoor until the
+// reflex unstuck stopped the command). Unstuck is paused from here to the end of the command, as runPack does. The
+// text of the route goes into the output. Returns 'none' without such a route (the command goes on as before),
+// 'walked' when the route arrived, 'failed' when it failed or was stopped: then nothing else is tried. Never throws.
+async function routeFirst(agent, pos) {
+    try {
+        const routes = agent.homeContext().routes;
+        const place = { x: pos[0], y: pos[1], z: pos[2] };
+        if (typeof routes?.routeFor !== 'function' || typeof routes.walkTo !== 'function' || !routes.routeFor(place))
+            return 'none';
+        pauseUnstuck(agent);
+        const result = await routes.walkTo(agent.bot, place);
+        if (!result || result.reason === 'no_route')
+            return 'none';
+        if (typeof result.text === 'string' && result.text !== '')
+            skills.log(agent.bot, result.text);
+        return result.ok === true && !agent.bot.interrupt_code ? 'walked' : 'failed';
+    } catch (error) {
+        console.warn('Could not walk the way to the place:', error);
+        return 'none';
     }
 }
 
@@ -777,6 +828,15 @@ export const actionsList = [
             const current_dimension = agent.bot.game?.dimension;
             if (place_dimension && typeof current_dimension === 'string' && current_dimension !== '' && place_dimension !== current_dimension) {
                 skills.log(agent.bot, `"${name}" is in the dimension ${place_dimension}, but you are in ${current_dimension}. You cannot travel between dimensions by yourself.`);
+                return;
+            }
+            // v0.1.4.9 (F2): a way that the player showed to the place goes first (it knows the doors, so no
+            // enterBuildingAround before it); after it the path search does the rest; a failed way is the answer
+            const way = settings.routes_pack ? await routeFirst(agent, pos) : 'none';
+            if (way === 'failed' || agent.bot.interrupt_code)
+                return;
+            if (way === 'walked') {
+                await skills.goToPosition(agent.bot, pos[0], pos[1], pos[2], 1);
                 return;
             }
             if (settings.home_pack && agent.area_store) {

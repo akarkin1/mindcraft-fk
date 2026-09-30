@@ -6,7 +6,9 @@
 //     of the player of agent.last_order are plain commands (decision of the tech lead): no action, a running
 //     action such as !followPlayer keeps running; collectPassedOre(bot, ctx, ore, num) walks, so it is an action
 //     through runPack that pauses unstuck; the texts word for word;
-//   - !goToRememberedPlace: a way of the player (ctx.routes.walkTo) when the path search did not arrive;
+//   - !goToRememberedPlace: a way of the player (ctx.routes.walkTo) when the path search did not arrive; F2: a way
+//     that routeFor finds for the place goes first, with unstuck paused, and a failed way is the answer;
+//   - F4: !collectBlocks decides whether an ore is in sight by the rule of part C; underground never !mineOre;
 //   - !newAction with skills_over_code: a digging request gets digRefusalText with the commands that are on,
 //     before the cost check, and the code model is never called; a typed !newAction runs.
 import { describe, test, before, after, beforeEach, afterEach } from 'node:test';
@@ -391,6 +393,145 @@ describe('!goToRememberedPlace: a way of the player where the path search did no
         const without = placeAgent({ walk: null });
         await command('!goToRememberedPlace').perform(without, 'bed');
         assert.equal(without.calls.length, 0);
+    });
+});
+
+describe('F2: !goToRememberedPlace walks a way of the player first, when routeFor finds one for the place', () => {
+    // The events in order: the pause of unstuck, walkTo of the routes, the path search (the /tp of goToPosition in cheat
+    // mode), enterBuilding of the home pack (areasAt of the area store).
+    function routeAgent({ route = { name: 'bed' }, walk = { ok: true, reason: null, text: 'I followed the route "bed", 4 steps.', route: 'bed' }, stuck = true } = {}) {
+        const agent = placeAgent({ stuck, walk });
+        agent.events = [];
+        const target = [];
+        agent.homeContext = () => ({
+            routes: {
+                routeFor: (place) => { target.push(place); return route === null ? null : { route, reverse: true, distance: 3 }; },
+                walkTo: async (bot, place) => { agent.events.push('walkTo'); agent.calls.push(['walkTo', bot, place]); return walk; },
+            },
+        });
+        agent.bot.modes.pause = (name) => agent.events.push(`pause ${name}`);
+        const chat = agent.bot.chat;
+        agent.bot.chat = (text) => { agent.events.push('goToPosition'); chat(text); };
+        agent.area_store = { areasAt: () => { agent.events.push('enterBuilding'); return []; } };
+        agent.target = target;
+        return agent;
+    }
+
+    test('with a route: unstuck paused, walkTo before the path search; the text of the route in the output; no enterBuilding before it', async () => {
+        M.settingsModule.setSettings({ ...BASE, ...ROUTES_ON, home_pack: true });
+        const agent = routeAgent();
+        const output = await command('!goToRememberedPlace').perform(agent, 'bed');
+        assert.deepEqual(agent.events, ['pause unstuck', 'walkTo', 'goToPosition']);
+        assert.deepEqual(agent.target, [{ x: 12, y: 45, z: 8 }], 'routeFor asked for the place');
+        assert.deepEqual(agent.calls[0][2], { x: 12, y: 45, z: 8 });
+        assert.equal(agent.calls[0][1], agent.bot);
+        assert.ok(output.includes('I followed the route "bed", 4 steps.'), output);
+    });
+
+    test('a route that fails (not no_route): its text is the output, nothing else is tried', async () => {
+        M.settingsModule.setSettings({ ...BASE, ...ROUTES_ON, home_pack: true });
+        const text = 'I could not follow the route "bed" at step 3 of 4, at (2, 61, -3). Show me the way again.';
+        const agent = routeAgent({ walk: { ok: false, reason: 'no_path', text, route: 'bed' } });
+        const output = await command('!goToRememberedPlace').perform(agent, 'bed');
+        assert.deepEqual(agent.events, ['pause unstuck', 'walkTo'], 'no path search, no second walk');
+        assert.equal(output, `Action output:\n${text}\n`);
+    });
+
+    test('a route that was stopped: its text, nothing else', async () => {
+        M.settingsModule.setSettings({ ...BASE, ...ROUTES_ON });
+        const agent = routeAgent({ walk: { ok: false, reason: 'interrupted', text: 'I was stopped on the route "bed" at step 2 of 4.', route: 'bed' } });
+        const output = await command('!goToRememberedPlace').perform(agent, 'bed');
+        assert.deepEqual(agent.events, ['pause unstuck', 'walkTo']);
+        assert.ok(output.includes('I was stopped on the route "bed" at step 2 of 4.'), output);
+    });
+
+    test('without a route for the place: as before (enterBuilding, the path search, then a way only when it did not arrive), nothing paused first', async () => {
+        M.settingsModule.setSettings({ ...BASE, ...ROUTES_ON, home_pack: true });
+        const agent = routeAgent({ route: null, walk: { ok: false, reason: 'no_route', text: '', route: null } });
+        await command('!goToRememberedPlace').perform(agent, 'bed');
+        assert.deepEqual(agent.events, ['enterBuilding', 'goToPosition', 'pause unstuck', 'walkTo']);
+        const arrived = routeAgent({ route: null, stuck: false });
+        await command('!goToRememberedPlace').perform(arrived, 'bed');
+        assert.deepEqual(arrived.events, ['enterBuilding', 'goToPosition'], 'arrived: no way is walked');
+    });
+
+    test('routes_pack off: no route is asked for, as in v0.1.4.8', async () => {
+        const agent = routeAgent();
+        await command('!goToRememberedPlace').perform(agent, 'bed');
+        assert.deepEqual(agent.events, ['goToPosition']);
+        assert.deepEqual(agent.target, []);
+    });
+});
+
+describe('F4: !collectBlocks and an ore, by the sight rule of part C (oreInSight with ore_sense_range)', () => {
+    // A fake world: the ore at (3, 60, 0), stone around it, air where `open` says. runAction gives the old collecting
+    // (timeout 10) without running it, and runs a pack command.
+    function oreAgent({ open = [], underground = false, where = true } = {}) {
+        const asked = [];
+        const bot = {
+            findBlocks(options) {
+                asked.push(options);
+                return [vec(3, 60, 0)];
+            },
+            blockAt: (pos) => {
+                const key = `${pos.x},${pos.y},${pos.z}`;
+                const name = key === '3,60,0' ? 'iron_ore' : (open.includes(key) ? 'air' : 'stone');
+                return { name, position: pos };
+            },
+            canSeeBlock() { throw new Error('the ray from the eyes is no longer asked'); },
+        };
+        const agent = makeAgent({ bot });
+        agent.asked = asked;
+        if (where)
+            agent.whereAmI = () => ({ area: null, depth: underground ? 30 : 0, underground, mine: null });
+        agent.work_packs = {
+            mining: {
+                oreOf: (type) => (/iron/.test(type) ? { ore: 'iron' } : null),
+                mineOre: async (b, ctx, ore, num) => { agent.calls.push(['mineOre', ore, num]); return { ok: true, reason: null, text: 'mineOre text' }; },
+            },
+        };
+        agent.actions.runAction = async (label, fn, options) => {
+            agent.runs.push({ label, options });
+            if (options.timeout === 10)
+                return { success: true, message: 'Action output:\nold collecting', interrupted: false, timedout: false };
+            await fn();
+            return { success: true, message: 'Action output:\n', interrupted: false, timedout: false };
+        };
+        return agent;
+    }
+
+    test('an ore with a face in the open (at the height of the feet): the old collecting, never !mineOre', async () => {
+        M.settingsModule.setSettings({ ...BASE, mining_pack: true, ore_sense_range: 0 });
+        const agent = oreAgent({ open: ['2,60,0'] });
+        assert.equal(await command('!collectBlocks').perform(agent, 'iron_ore', 2), 'Action output:\nold collecting');
+        assert.deepEqual(agent.calls, []);
+        assert.equal(agent.asked[0].maxDistance, 16);
+        for (const id of ['iron_ore', 'deepslate_iron_ore'].map((n) => M.mcdata.getBlockId(n))) assert.ok(agent.asked[0].matching.includes(id));
+    });
+
+    test('none in sight, underground: the old collecting (the text of C1 of the library is the answer), never !mineOre', async () => {
+        M.settingsModule.setSettings({ ...BASE, mining_pack: true, ore_sense_range: 0 });
+        const agent = oreAgent({ underground: true });
+        assert.equal(await command('!collectBlocks').perform(agent, 'iron_ore', 2), 'Action output:\nold collecting');
+        assert.deepEqual(agent.calls, []);
+        assert.deepEqual(agent.runs, [{ label: 'action:collectBlocks', options: { timeout: 10, resume: false } }]);
+    });
+
+    test('none in sight, on the surface: !mineOre with the ore and the number, as before', async () => {
+        M.settingsModule.setSettings({ ...BASE, mining_pack: true, ore_sense_range: 0 });
+        for (const agent of [oreAgent({ underground: false }), oreAgent({ where: false })]) {
+            assert.equal(await command('!collectBlocks').perform(agent, 'iron_ore', 3), 'mineOre text');
+            assert.deepEqual(agent.calls, [['mineOre', 'iron', 3]]);
+        }
+    });
+
+    test('ore_sense_range 3: an ore 2 blocks inside the wall of an open cell is in sight; with 0 it is not', async () => {
+        M.settingsModule.setSettings({ ...BASE, mining_pack: true, ore_sense_range: 3 });
+        const near = oreAgent({ open: ['5,60,0'] });
+        assert.equal(await command('!collectBlocks').perform(near, 'iron_ore', 1), 'Action output:\nold collecting');
+        M.settingsModule.setSettings({ ...BASE, mining_pack: true, ore_sense_range: 0 });
+        const far = oreAgent({ open: ['5,60,0'] });
+        assert.equal(await command('!collectBlocks').perform(far, 'iron_ore', 1), 'mineOre text');
     });
 });
 

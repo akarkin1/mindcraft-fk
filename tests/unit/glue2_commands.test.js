@@ -259,7 +259,9 @@ describe('!collectBlocks leads to the new skills while their switch is on', () =
         }
     });
 
-    test('an ore within 16 blocks that the bot can see: the old collecting; one it cannot see: mineOre', async () => {
+    // v0.1.4.9 (F4, decision of the tech lead): "in sight" is the rule of part C (a face in the open with
+    // ore_sense_range 0), not bot.canSeeBlock from the eyes; the fake world has air east of the ore or not
+    test('an ore within 16 blocks that is in sight: the old collecting; one that is not: mineOre', async () => {
         for (const [see, expected] of [[true, 'Action output:\nold collecting'], [false, 'mineOre text']]) {
             const asked = [];
             const bot = {
@@ -267,8 +269,11 @@ describe('!collectBlocks leads to the new skills while their switch is on', () =
                     asked.push(options);
                     return [vec(3, 60, 0)];
                 },
-                blockAt: (pos) => ({ name: 'deepslate_iron_ore', position: pos }),
-                canSeeBlock: () => see,
+                blockAt: (pos) => {
+                    const name = pos.x === 3 && pos.y === 60 && pos.z === 0 ? 'deepslate_iron_ore' : (see && pos.x === 4 && pos.y === 60 && pos.z === 0 ? 'air' : 'stone');
+                    return { name, position: pos };
+                },
+                canSeeBlock: () => !see, // no longer asked
             };
             const agent = makeAgent({ bot });
             assert.equal(await command('!collectBlocks').perform(agent, 'deepslate_iron_ore', 2), expected);
