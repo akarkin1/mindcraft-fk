@@ -192,17 +192,17 @@ describe('whereAmI(bot) of where_am_i.js', () => {
 
     test('deep under the ground: underground, the depth, no area', () => {
         const where = W.whereAmI(makeBot(world()), 1000);
-        assert.deepEqual(where, { area: null, depth: 34, underground: true });
+        assert.deepEqual(where, { area: null, depth: 34, underground: true, mine: null });
     });
 
     test('on the surface: not underground', () => {
-        assert.deepEqual(W.whereAmI(makeBot(world(), { pos: vec(0.5, 64, 0.5) }), 1000), { area: null, depth: 0, underground: false });
+        assert.deepEqual(W.whereAmI(makeBot(world(), { pos: vec(0.5, 64, 0.5) }), 1000), { area: null, depth: 0, underground: false, mine: null });
     });
 
     test('inside an area of type mine: underground also on the surface; other types: by the depth', () => {
         const mine = { areaAt: () => ({ name: 'mining_area', type: 'mine', box: {} }) };
         assert.deepEqual(W.whereAmI(makeBot(world(), { pos: vec(0.5, 64, 0.5), guard: mine }), 1000),
-            { area: { name: 'mining_area', type: 'mine' }, depth: 0, underground: true });
+            { area: { name: 'mining_area', type: 'mine' }, depth: 0, underground: true, mine: null });
         const farm = { areaAt: () => ({ name: 'farm', type: 'farm' }) };
         assert.equal(W.whereAmI(makeBot(world(), { pos: vec(0.5, 64, 0.5), guard: farm }), 1000).underground, false);
     });
@@ -242,10 +242,10 @@ describe('whereAmI(bot) of where_am_i.js', () => {
     });
 
     test('never throws: no bot, no entity, a broken world', () => {
-        assert.deepEqual(W.whereAmI(null), { area: null, depth: 0, underground: false });
-        assert.deepEqual(W.whereAmI({}), { area: null, depth: 0, underground: false });
+        assert.deepEqual(W.whereAmI(null), { area: null, depth: 0, underground: false, mine: null });
+        assert.deepEqual(W.whereAmI({}), { area: null, depth: 0, underground: false, mine: null });
         const broken = { entity: { position: vec(0, 30, 0) }, blockAt: () => { throw new Error('no world'); } };
-        assert.deepEqual(W.whereAmI(broken), { area: null, depth: 0, underground: false });
+        assert.deepEqual(W.whereAmI(broken), { area: null, depth: 0, underground: false, mine: null });
         assert.equal(W.blockNameReader({ blockAt: () => ({}) })(0, 0, 0), null);
     });
 });

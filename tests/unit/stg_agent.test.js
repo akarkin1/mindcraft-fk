@@ -127,7 +127,7 @@ describe('whereAmI and the contexts (I2, C2, I7)', () => {
         assert.deepEqual(agent.whereAmI(), WHERE.whereAmI(bot));
         assert.deepEqual(agent.whereAmI().area, { name: 'mine', type: 'mine' });
         assert.equal(agent.whereAmI().underground, true, 'in a mine');
-        assert.deepEqual(fakeAgent({ bot: {} }).whereAmI(), { area: null, depth: 0, underground: false });
+        assert.deepEqual(fakeAgent({ bot: {} }).whereAmI(), { area: null, depth: 0, underground: false, mine: null });
     });
 
     test('ctx.whereAmI and ctx.say on the home context and on the pack context', () => {
