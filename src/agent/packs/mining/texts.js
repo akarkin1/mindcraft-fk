@@ -248,6 +248,10 @@ export function mineLabel(mine) {
  */
 export function noEntranceText(steps) {
     const n = Number.isFinite(steps) ? steps : 0;
+    if (n < 2) {
+        // the fix round of v0.1.4.9: "my last 0 steps" read oddly
+        return 'I have no trail yet. Walk with me from the entrance of the mine and tell me again.';
+    }
     return `I was not under open sky in my last ${n} steps. Walk with me from the entrance of the mine and tell me again.`;
 }
 
