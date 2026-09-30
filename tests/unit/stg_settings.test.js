@@ -67,8 +67,12 @@ describe('settings.js: the settings of v0.1.4.8', () => {
         assert.equal(settingProblems({ home_reflexes: { hunger: 'no' } }, ['home_reflexes']).length, 1);
     });
 
-    test('the file keeps its CRLF line endings', () => {
-        assert.equal(settingsSource.split('\r\n').length, settingsSource.split('\n').length);
+    test('the file keeps one kind of line ending', () => {
+        // The repository stores LF; a Windows checkout with core.autocrlf=true turns every line into CRLF.
+        // Either is fine, a mix of the two is not.
+        const crlf = settingsSource.split('\r\n').length - 1;
+        const lf = settingsSource.split('\n').length - 1;
+        assert.ok(crlf === lf || crlf === 0, `every line ends with CRLF or every line ends with LF (${crlf} of ${lf})`);
     });
 });
 

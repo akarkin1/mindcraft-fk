@@ -218,9 +218,13 @@ describe('profiles/claude.json (section 11, item 12 of the task)', () => {
         assert.deepEqual(Object.keys(CLAUDE), ['name', 'model', 'speak_model', 'conversing', 'code_model']);
     });
 
-    test('the file keeps its CRLF line endings', () => {
+    test('the file keeps one kind of line ending', () => {
+        // The repository stores LF; a Windows checkout with core.autocrlf=true turns every line into CRLF.
+        // Either is fine, a mix of the two is not.
         const text = fs.readFileSync(repoPath('profiles/claude.json'), 'utf8');
-        assert.equal(text.split('\r\n').length, text.split('\n').length);
+        const crlf = text.split('\r\n').length - 1;
+        const lf = text.split('\n').length - 1;
+        assert.ok(crlf === lf || crlf === 0, `every line ends with CRLF or every line ends with LF (${crlf} of ${lf})`);
     });
 });
 
