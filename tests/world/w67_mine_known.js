@@ -20,7 +20,8 @@
 // storing and the ore worked; the way out did not: the ladder leg up through the trapdoor failed as in W62 and the
 // bot stayed in the room at y 41, "I could not follow the route "mine" at step 5 of 6, at (x, 41, z). Show me the
 // way again." W68, W69 and W73 now check the way up too.
-// F11 of T2 (the re-run after the fix round, left failing): the bot climbs the ladder to y 56.6 and clicks the closed
+// F11 of T2 (the re-run after the fix round; corrected in the second fix round, where climbToOpen clicks without
+// sneaking): the bot climbs the ladder to y 56.6 and clicks the closed
 // trapdoor 3 times, "activateBlock oak_trapdoor (x, 60, z) open=false from (x, 56.6, z) holding iron_pickaxe sneak
 // true", and it stays closed: "I could not follow the route "mine" at step 5 of 8, at (x, 56, z)." climbToOpen of
 // replay.js holds sneak while it clicks; a player who sneaks with an item in the hand does not use the block. In W62

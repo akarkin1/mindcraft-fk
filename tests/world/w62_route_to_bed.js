@@ -13,9 +13,11 @@
 //   2. The player types !rememberRoute("bed"): the answer is the text of A2 with 1 ladder and 1 trapdoor,
 //      `I remember the way "bed": from the place "storage" to here, N steps, 1 ladder, 1 trapdoor. I walk it in
 //      both directions.`; routes.json holds the route with its ladder leg and its trapdoor leg.
-//   3. The bot is put back into the room. At night the player types !goToBed: the bot climbs the ladder (server
-//      positions in the shaft), sleeps in the bed (the server says so), and after the morning comes the answer
-//      is "I slept. It is morning."; nothing in the house, the shaft and the room was dug or placed.
+//   3. The bot is put back into the room with an iron pickaxe in its hand (the owner's bot always holds a tool; F11 of
+//      T2: a click while sneaking with an item in the hand does not open the trapdoor). At night the player types
+//      !goToBed: the bot climbs the ladder (server positions in the shaft), sleeps in the bed (the server says so),
+//      and after the morning comes the answer is "I slept. It is morning."; nothing in the house, the shaft and the
+//      room was dug or placed.
 // The place "home" of the base is not saved here: the walk from the trapdoor to the bed passes within 2 blocks of
 // it, and by A2 the way would then start at "home" (see the report of T2).
 // Findings F1, F3, F8 of T2 (the first run, 2026-09-30; corrected in the fix round, DECISIONS.md):
@@ -31,6 +33,7 @@
 import {
     scenarioMain, check, note, exitSoon, startAgent, stopRealAgent, settings0149, placeBot, resetBot, waitFor, entityPos,
     fmt, env, orderChannel, commands, startTrace, printTrace, serverSleeping, routesInFile, walkUpToBed, sleep, recordMoves, runSkill,
+    giveItems,
 } from './helpers.js';
 import { region, prepareRegion, releaseRegion, inBox, isOpen, snapshotBox, compareSnapshot, describeDifferences, dropSnapshot } from './world.js';
 import { basePlan, buildBase, BASE_RADIUS } from './base_world.js';
@@ -81,6 +84,10 @@ await scenarioMain({
 
             // ---------------------------------------------------------- 3. !goToBed from the room at night
             await placeBot(agent, b.room.middle, 0);
+            await giveItems(NAME, [['iron_pickaxe', 1]], agent.bot);
+            const pick = agent.bot.inventory.items().find((i) => i.name === 'iron_pickaxe');
+            if (pick) await agent.bot.equip(pick, 'hand').catch((e) => note(`equip: ${e.message}`));
+            check(agent.bot.heldItem?.name === 'iron_pickaxe', 'precondition: the bot holds an iron pickaxe in its hand before !goToBed', String(agent.bot.heldItem?.name));
             await commands(['time set 13000']);
             await sleep(1000);
             const t0 = Date.now();

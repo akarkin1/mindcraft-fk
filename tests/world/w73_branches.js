@@ -14,7 +14,8 @@
 //     (the stone north and south of it stands) and 2 high (the stone above and below it stands); nothing was dug to
 //     the right (west) there; mines.json has the branch at 4 on the left; the tunnel itself is still 32 long;
 //   - the trip ends with the way up: the bot is on the surface at the end (the fix round of F1).
-// F11 of T2 (the re-run after the fix round, left failing): the way up stops at y 55 under the closed trapdoor, as in
+// F11 of T2 (the re-run after the fix round; corrected in the second fix round, where climbToOpen clicks without
+// sneaking): the way up stops at y 55 under the closed trapdoor, as in
 // W67. The checks of the branch pass.
 import {
     scenarioMain, check, note, exitSoon, startAgent, stopRealAgent, settings0149, resetBot, fmt, env, orderChannel, commands,

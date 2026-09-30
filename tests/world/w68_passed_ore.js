@@ -13,7 +13,8 @@
 //   2. The bot gets an iron pickaxe; !collectPassedOre("gold") answers "I collected 2 gold_ore that I had passed.";
 //      both gold blocks are gone, the bot has 2 raw_gold (inventory and the chest of the room), `passed` is empty.
 // Both orders start outside and end with the way up: after each the bot is on the surface (the fix round of F1).
-// F11 of T2 (the re-run after the fix round, left failing): both ways up stop at y 52 to 56 under the closed trapdoor,
+// F11 of T2 (the re-run after the fix round; corrected in the second fix round, where climbToOpen clicks without
+// sneaking): both ways up stop at y 52 to 56 under the closed trapdoor,
 // as in W67 (climbToOpen of replay.js clicks the trapdoor while it sneaks with a pickaxe in the hand). F12: the answer
 // of !collectPassedOre, "I collected 2 gold_ore that I had passed.", does not say that the way out failed.
 import {
