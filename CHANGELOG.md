@@ -6,6 +6,92 @@ This fork is based on [Mindcraft](https://github.com/mindcraft-bots/mindcraft) `
 
 Each release lists new settings and feature flags with their default value.
 
+## [0.1.4.8] - 2026-09-30
+
+Stability. The answer to the first play test of the work skills: 20 restarts of the process in two hours, a bot that starved with food in its hand, a broken fence, reflexes that did not know where the bot was. This release corrects defects of `0.1.4.6` and `0.1.4.7` and adds switches for new behaviour.
+
+Every new switch is off by default. Corrections have no switch.
+
+The scenarios on the real Minecraft server now run with the reflexes of the profile on, in a test base with a house, a mine under the house, a farm and a pen. Their first full run found 15 more defects, among them a bot that got into a composter and never came out. They are corrected in this release too.
+
+### Added
+
+- **Setting `stuck_restart_after`**, default `1`. The number of failed escapes of the reflex `unstuck` in a row before the process restarts. `1` is the behaviour of `0.1.4.7`. With `3` the reflex gives up twice: it first tries to jump out of a hole or a hollow block, then stops the command, tells the model where the bot is stuck, names the area and the nearest door, and waits for the next command. `0` means never.
+- **Setting `protect_built_blocks`**, default `false`. The bot never breaks blocks that players build with: fences, gates, doors, planks, glass, chests, beds and the like. This holds outside saved areas too, for `!collectBlocks`, for code that the model writes, and for the path search. Exceptions: blocks that the bot placed itself, and a command that the player types in the chat.
+- **Area types `home`, `pen` and `mine`**, next to `building` and `farm`. Only a `home` is a shelter. In a `mine` the bot may dig natural blocks and never breaks what was placed. An area of type `building` with `mine` or `mining` in its name becomes a `mine` when the file is loaded; an area with a side of less than 2 blocks is dropped.
+- **The house becomes an area.** At the start the bot scans the building at the place `home` and saves it as the area `home`. With `protected_areas`.
+- **Hunger reflex**, setting `home_reflexes.hunger`, default `true`, part of `home_pack`. The bot eats by itself. With no food it fetches food from a chest it knows. With no food anywhere it tells the player, once at "hungry" and once at "starving". No call of the model.
+- **Setting `flee_below_health`**, default `0`. Below this health the bot does not attack a monster, it retreats to the player or into the shelter.
+- **Setting `knowledge_in_prompt`**, default `false`, with `knowledge_max_chars`, default `600`. A short block in the chat prompt: where the bot is, the chests it knows with their main content, the areas, the mines. It also reaches a profile that has its own prompt text.
+- **Setting `examples_by_last_request`**, default `false`. The examples of the prompt are chosen by the last request of the player, not by the whole conversation. In a session about farming the example "get back to farming" was shown for "get to the shelter", with an embedding model and without.
+- **Setting `repeat_guard`**, default `0`. With `3`, the third try in a row of a command of the model that failed twice with the same result is refused, and the bot is told to ask the player. Only failures count. Looking at the inventory in between does not end the row. Commands typed by the player are never refused.
+- **Setting `restart_context`**, default `false`. After a restart the bot is told the last order and why the process ended.
+- **Setting `say_results`**, default `false`. When the model answers nothing after a skill, the text of the skill goes to the chat.
+- **Setting `log_timestamps`**, default `false`. `[HH:MM:SS]` before each line of the console.
+- **Command `!pickUpItems`**. Picks up items that lie on the ground, and waits for the pick-up delay of a thrown item.
+- **Command `!closeDoor`**, with `home_pack`. Closes the open doors, gates and trapdoors within 6 blocks.
+- **`!chests` with an item.** `!chests("wheat")` answers from memory where the item lies and how many.
+- **`!mineOre` asks first.** Without a known mine the bot digs nothing and asks. `!mineOre("iron", 8, true)` starts a new mine.
+- Examples for 14 commands that had none, among them `!goToBed` and `!givePlayer`, and for the new commands and area types. 23 more sentences in the routing list.
+- 506 unit tests written from the spec by an independent tester. 29 more scenarios on the real server, 58 in all, among them a long run of 30 minutes with 60 orders.
+- `docs/ROADMAP.md`: the releases that are planned and the backlog.
+
+### Changed
+
+- **The model cannot switch off a safety reflex.** `!setMode` refuses the model for `self_preservation`, `creeper_safety`, `night_shelter`, `door_closing` and `hunger`. A command that the player types in the chat runs.
+- **The chat of the bot has a limit**: 6 lines at once, then 1 line per 1.2 seconds. Lines wait in their order, nothing is lost. The server kicked the bot for spamming after 11 lines in 2 seconds.
+- **A command wakes a sleeping bot.** A command that is not `!goToBed` gets the bot out of the bed first.
+- **`!chopTrees` takes the number of logs**, not of trees. The bot cuts whole trees until it gained that many logs. It gets an axe first and picks up the logs after each tree.
+- **`!farmCycle` does the whole round**: harvest, plant, store, bone meal, fertilize, harvest what got ripe, close the gate. Bone meal and compost come from the inventory, then from the chests the bot knows, then from the composter of the farm. Leaf litter is compost. Seeds, crops and food never are.
+- **In a farm the bot walks carefully**: no sprint, no jump, no diagonal step past a corner, and it never stands in or on a composter, a chest, a fence or a closed gate.
+- **`!getTool` counts the chests.** Without a material it makes the best tool it can, up to stone.
+- **`!eat`** eats until health can come back (food level 18), and until full when the bot is hurt. Its text counts what left the inventory.
+- **The shelter** is only an area of type `home`. With no home the shelter reflex says so and no longer digs the bot in.
+- **A new mine** keeps 16 blocks from house, farm and pen, and never starts underground.
+- **`!rememberArea`** finds the fenced ground when the bot stands outside the gate, and says why when it fails. The model cannot shrink a saved area with `!setArea`.
+- **`!storeItems`** tries the 27 nearest chests.
+- A chest view is one line, added up and ordered by count. The output of an action is cut at 1500 characters, at whole lines.
+- The cost limit per session and `!cost` count all processes since the bot was started.
+- An embedding model that cannot be created, for example because its key is missing, no longer stops the start. The examples are then chosen by word overlap.
+- A kick prints the reason that the server gave.
+- The house rules in `profiles/claude.json` shrink to the one that code does not cover.
+
+### Fixed
+
+- **Chat kick after 21 messages.** The server kicked the bot with `Checksum mismatch on last seen update` at its first chat after the 21st message of a player. `minecraft-protocol` 1.62.0 computed the checksum of the last seen messages in the order of its ring, not in the order of the window. Corrected by `patches/minecraft-protocol+1.62.0.patch`; `npm install` applies it.
+- **The bot starved with food in its hand.** The home pack left the food in the off-hand, where `!eat`, `!consume` and `!discard` did not look. A defect of `0.1.4.6`.
+- **`unstuck` stopped work skills.** Storage, wood and mining did not pause the reflex while they worked in one place. 11 restarts in the play test. A defect of `0.1.4.7`.
+- **The bot got into a composter and never came out.** A walk to a bone meal that lay on the rim of the composter ended on top of it, and the bot fell in; the path search plans no way out of a hollow block. In 6 of 10 runs before, in 0 of 20 after. A defect of `0.1.4.7`.
+- **The bot stayed in the bed** and said that it got up. `bot.wake()` of mineflayer 4.33 sends the action 2, which means "stop sprinting" since Minecraft 1.21.6. The home pack sends `leave_bed` itself.
+- **A new order was stopped after 0.2 seconds** when `unstuck` had fired before: an action that waited for a stop started after a newer one.
+- **A stopped command returned nothing.** It now writes into the history what it did and who stopped it, and an order that the player typed answers in the chat. No second turn of the model starts.
+- **Shelter reflex in a shaft.** The depth was measured in the column above the bot, which in a shaft is air and ladders. It is now measured against the ground around the bot. A defect of `0.1.4.7`.
+- **Creepers through rock.** The creeper reflex used the plain distance. A creeper now counts only at about the same height and with no solid block in between. A defect of `0.1.4.6`.
+- **Doors left open.** The door reflex did not run while another reflex moved the bot. It now runs beside every reflex and command, and closes gates and trapdoors too. A defect of `0.1.4.6`.
+- **Swinging in a doorway.** With `home_pack` off, the old door timer closed a door that the path search had just opened. It only opens now.
+- **The shelter was the nearest building**, also a mine or a pen. A home that is only a place was not entered through its door. Defects of `0.1.4.6`.
+- **`!eat` beside the hunger reflex** said that it failed while the bot ate: two eaters called the game at the same moment.
+- **`!mineOre` wanted ladders for the whole way** also when the shaft had ladders. A defect of `0.1.4.7`.
+- **The chest at a fence never opened** for the storage pack. `!storeItems` looked into 12 chests only and then said that all were full. Defects of `0.1.4.7`.
+- **The farm scan took a room for a farm.** A defect of `0.1.4.6`.
+- **`!collectBlocks` counted broken blocks as collected**, and broke more blocks than asked on its way to a drop. Tall grass broken by hand gave "Collected 10 tall_grass". It now reports what the inventory gained.
+- **The harvest counted a crop that stayed on the ground.** It counts what reached the inventory, and picks up once more at the end.
+- `!consume` with full food threw an exception. `!givePlayer` printed a stray number. A gate was called a door.
+- A stop did not stop a walk; the writing of new code could not be stopped.
+- An older `!followPlayer` came back after a newer command.
+- Dropped items were tried once and never again.
+- Two unit tests failed in a checkout with LF line endings.
+
+### Known limitations
+
+- The correction of the chat kick is proven by unit tests. The test server does not sign chat, so the proof against a real server is the play of the owner.
+- The bot finds no way between two floors that are joined by a ladder with a trapdoor. It then says so and digs nothing. Routes that the bot learns by walking with the player come with `0.1.4.9`.
+- A command that the player typed loses its right to break built blocks when the model runs another command while it still works. It then is refused, to the safe side.
+- `!useOn` still toggles a door without reading its state. `!closeDoor` reads it.
+- When a chat message is deleted by the server, the network library forgets which messages it has seen.
+- The area `home` that the bot saves at the start follows the ladders of a shaft down, so the house and the top of its shaft are one area.
+- The rest of mining comes with `0.1.4.9`: the mine of the player, tunnels on order, the list of ore.
+
 ## [0.1.4.7] - 2026-09-29
 
 Work skills. Four sets of skills that do a whole job with one command: storage, farming, wood and tools, mining. The language model chooses the command, code does the work.
