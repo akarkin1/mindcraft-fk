@@ -21,7 +21,13 @@ If `git stash pop` reports a conflict in `profiles/gpt.json`: keep the version o
 
 ## 2. Switch the parts on
 
-Your switches of last time stay. New in `settings.js`:
+Your switches of last time stay. Two things from your play of 2026-10-01 first:
+
+- `"stuck_restart_after": 3` in `settings.js`. Your file still has the default `1`, which killed the process 10 seconds after "I'm stuck!" twice. With `3` the bot gives up, tells you where it is stuck, and waits for you.
+- `"embedding": "openai",` after `speak_model` in `profiles/claude.json`. The line was lost when you pulled; without it the log says "Error with embedding model" three times at every start.
+- Delete the entry `"16"` from `bots\claude\worlds\seed-ce66bf80acdefa75\mines.json`, or the whole file. It is a mine the bot dug on 09-28, 6 blocks from your door, and `!mineOre` would choose it before yours.
+
+New in `settings.js`:
 
 ```js
 "routes_pack": true,
@@ -45,7 +51,7 @@ Do this once. The bot records where it walks from the moment it starts, so it mu
 | Step | What you do | What should happen |
 |---|---|---|
 | 1 | Stand outside, in the open, near the entrance. Say **"follow me"**. | The bot follows. |
-| 2 | Walk into the house, down the ladder through the trapdoor, into the entrance room, down to your tunnel, to its end. Walk, do not sprint far ahead. | The bot climbs down behind you. If it gets stuck at the trapdoor, wait, it opens it by itself. |
+| 2 | Walk into the house, down the ladder through the trapdoor, into the entrance room, down to your tunnel, to its end. Walk, do not sprint far ahead; wait at the foot of the ladder until the bot is down. | The bot opens the trapdoor, slides down the ladder and follows on: `I go down the ladder at (x, y, z) after MartyByrde2.` in the log. If it says `I could not go down the ladder ...`, stand still at the foot of the ladder and say "come here". |
 | 3 | At the end of the tunnel say **"this is the mine, remember this"**. | `I remember the mine "mine": the entrance at (x, y, z), the way in has N steps with 1 ladder and 1 trapdoor, the room at level 41 with a chest and a crafting table, one tunnel at level 25, 12 blocks long, going south.` The numbers are yours. |
 | 4 | If it says `I was not under open sky in my last N steps` | Start again from step 1, from further outside. |
 | 5 | Stand in another tunnel and say **"dig here"**. | `I measured the tunnel: it starts at (...), goes east, and ends at (...) after N blocks, at level L.` |
