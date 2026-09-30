@@ -218,11 +218,11 @@ describe('B3: rememberTunnel', () => {
         assert.equal(s.ctx.mines.byName('mine', 'overworld').tunnels.length, 2, 'a second tunnel');
     });
 
-    test('the yaw of the player: the direction nearest to it (yaw 0 looks north)', async () => {
+    test('the yaw of the player towards the room is ignored (F6: yaw 0 looks north, back to the room): away from the room', async () => {
         const s = await withMine();
         moveTo(s, 32, 41, 12);
         const r = await M.rememberTunnel(s.bot, s.ctx, '', { playerYaw: 0 });
-        assert.equal(r.text, 'I measured the tunnel: it starts at (32, 41, 19), goes north, and ends at (32, 41, 8) after 12 blocks, at level 41. I dig on at its end when you ask for ore.');
+        assert.equal(r.text, 'I measured the tunnel: it starts at (32, 41, 8), goes south, and ends at (32, 41, 19) after 12 blocks, at level 41. I dig on at its end when you ask for ore.');
     });
 
     test('in the tunnel of the mine: mineAt finds the mine; a start within 2 of a known start replaces that tunnel', async () => {

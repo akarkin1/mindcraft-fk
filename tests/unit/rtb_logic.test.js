@@ -234,6 +234,21 @@ describe('corridorDirections, measureTunnel, tunnelDirection, isCorridor (B3)', 
         assert.equal(L.tunnelDirection(dirs, feet, {}), 'north', 'the longest');
         assert.equal(L.tunnelDirection([], feet, { yaw: 0 }), null);
     });
+
+    test('F6: a yaw towards the anchor is ignored, the tunnel points away from it; without an anchor the yaw decides', () => {
+        const room = { x: 2, y: 41, z: 0 };
+        const end = { x: 22, y: 25, z: 13 };
+        assert.equal(L.tunnelDirection([{ dir: 'north', length: 14 }], end, { yaw: 0, anchor: room }), 'south', 'yaw 0 (north) looks back to the room');
+        assert.equal(L.tunnelDirection([{ dir: 'north', length: 14 }], end, { yaw: 0 }), 'north', 'no anchor: the yaw rule stays');
+        const middle = { x: 22, y: 25, z: 7 };
+        const both = [{ dir: 'north', length: 8 }, { dir: 'south', length: 6 }];
+        assert.equal(L.tunnelDirection(both, middle, { yaw: Math.PI, anchor: room }), 'south', 'a yaw away from the room is kept');
+        assert.equal(L.tunnelDirection(both, middle, { yaw: 0, anchor: room }), 'south', 'towards the room: ignored, away from it');
+        const behind = { x: 22, y: 41, z: 30 }; // an entrance south of the bot
+        assert.equal(L.tunnelDirection(both, middle, { yaw: 0, anchor: behind }), 'north', 'the yaw points away from this anchor');
+        assert.equal(L.tunnelDirection(both, middle, { yaw: Math.PI, anchor: behind }), 'north', 'towards this anchor: ignored');
+        assert.equal(L.tunnelDirection(both, middle, { yaw: Math.PI, anchor: { x: 40, y: 25, z: 7 } }), 'south', 'an anchor across the tunnel: the yaw decides');
+    });
 });
 
 describe('veinParts (B6)', () => {

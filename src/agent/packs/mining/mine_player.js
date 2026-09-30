@@ -19,6 +19,8 @@ export const ROOM_RANGE = 6;
 export const ROOM_THINGS = Object.freeze({ chest: Object.freeze(['chest']), table: Object.freeze(['crafting_table']), furnace: Object.freeze(['furnace']) });
 /** A tunnel of rememberMine is open this many blocks ahead in one direction at least (spec B2). */
 export const MIN_TUNNEL_AHEAD = 4;
+/** A tunnel of rememberMine and rememberTunnel has this many cells at least, start to end (fix round F7). */
+export const MIN_TUNNEL_CELLS = 4;
 /** A tunnel whose start is this near the start of a known one replaces it (spec B3). */
 export const SAME_TUNNEL = 2;
 /** The most points findRoom looks around. */
@@ -131,14 +133,20 @@ function mineAreaName(bot, ctx, feet) {
     }
 }
 
-// The tunnel at the feet for rememberMine: a corridor (no room) open 4 blocks or more ahead,
-// measured away from the room (or the entrance). null without one.
+// The tunnel measured at the feet in `dir` when it is a corridor (every cell at most 2 open
+// neighbours at the feet level: no room) of 4 cells or more (fix round F7), else null.
+function corridorTunnel(get, feet, dir) {
+    const m = dir ? measureTunnel(get, feet, dir) : null;
+    return m && m.length >= MIN_TUNNEL_CELLS && isCorridor(get, m)
+        ? { start: m.start, dir: m.dir, end: m.end, level: m.level, length: m.length, branches: [] } : null;
+}
+
+// The tunnel at the feet for rememberMine: a corridor open 4 blocks or more ahead, measured away
+// from the room (or the entrance). null without one.
 function tunnelHere(bot, feet, anchor, yaw) {
     const get = nameReader(bot);
     const dirs = corridorDirections(get, feet).filter(d => d.length >= MIN_TUNNEL_AHEAD);
-    const dir = tunnelDirection(dirs, feet, { anchor, yaw });
-    const m = dir ? measureTunnel(get, feet, dir) : null;
-    return m && isCorridor(get, m) ? { start: m.start, dir: m.dir, end: m.end, level: m.level, length: m.length, branches: [] } : null;
+    return corridorTunnel(get, feet, tunnelDirection(dirs, feet, { anchor, yaw }));
 }
 
 function near(a, b, range) {
@@ -214,8 +222,10 @@ function rememberMineNow(bot, ctx, name, options) {
  * "Dig here" (spec B3): the mine is the one named, else the one the bot is in (mineAt), else the
  * nearest within 64 blocks; the tunnel is measured where the bot stands (measureTunnel) in the
  * direction of the corridor nearest to the yaw of the player (`options.playerYaw`), else in the
- * longest corridor, pointing away from the room of the mine. A tunnel whose start is within 2
- * blocks of the start of a known one replaces it (its branches are kept when the direction is the same).
+ * longest corridor, pointing away from the room of the mine (a yaw towards the room is ignored,
+ * fix round F6). The tunnel is a corridor of 4 cells or more by the rule of rememberMine (fix
+ * round F7), else the text of no corridor. A tunnel whose start is within 2 blocks of the start of
+ * a known one replaces it (its branches are kept when the direction is the same).
  * @param {object} bot
  * @param {object} ctx
  * @param {string} [name] the name of the mine, '' for the mine here
@@ -242,12 +252,10 @@ function rememberTunnelNow(bot, ctx, name, options) {
         const get = nameReader(bot);
         const dirs = corridorDirections(get, feet);
         const anchor = mine.room?.center ?? mine.base ?? mine.entrance;
-        const dir = tunnelDirection(dirs, feet, { yaw: options?.playerYaw, anchor });
-        const m = dir ? measureTunnel(get, feet, dir) : null;
-        if (!m) {
+        const tunnel = corridorTunnel(get, feet, tunnelDirection(dirs, feet, { yaw: options?.playerYaw, anchor }));
+        if (!tunnel) {
             return { ok: false, reason: 'no_corridor', text: TEXTS.noCorridor, mine, tunnel: null };
         }
-        const tunnel = { start: m.start, dir: m.dir, end: m.end, level: m.level, length: m.length, branches: [] };
         mine = JSON.parse(JSON.stringify(mine));
         const list = tunnelsOf(mine);
         const same = list.findIndex(t => near(t.start, tunnel.start, SAME_TUNNEL));

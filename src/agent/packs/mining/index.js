@@ -32,4 +32,4 @@ export { climbUp, followDown, followUp, placeLadder, slideDown, waitStanding, ya
 export { BRANCH_BLOCKED, DEFAULT_MAX_MINUTES, MAX_SHAFT_MOVES, PROPOSAL_MS, TUNNEL_CHUNK, climbToSurface, currentMine, depositAtBase,
     descendToLevel, digTunnel, extendTunnel, goToMine, leaveMine, mineOre, prepareMiningTrip, setupMineBase, takePassedOre } from './mining.js';
 export { MINE_RANGE, chooseMine, hasDoorLeg, mineRoutesOn, routeEndOf, senseRangeOf, walksRoute, wayIn, wayOut } from './mine_way.js';
-export { MIN_TUNNEL_AHEAD, ROOM_RANGE, SAME_TUNNEL, collectPassedOre, findRoom, rememberMine, rememberTunnel } from './mine_player.js';
+export { MIN_TUNNEL_AHEAD, MIN_TUNNEL_CELLS, ROOM_RANGE, SAME_TUNNEL, collectPassedOre, findRoom, rememberMine, rememberTunnel } from './mine_player.js';

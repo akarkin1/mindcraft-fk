@@ -1500,11 +1500,19 @@ export function isCorridor(getName, tunnel) {
     return cells.length > 0 && typeof getName === 'function' && cells.every(c => openNeighbours(getName, c) <= 2);
 }
 
+// > 0: the direction points away from the anchor, as seen from the feet; < 0: towards it; 0: across.
+function awayFromAnchor(dir, feet, anchor) {
+    const v = dirVector(dir);
+    return v.x * (feet.x - anchor.x) + v.z * (feet.z - anchor.z);
+}
+
 /**
  * The direction of a tunnel (spec B3): with the yaw of the player (mineflayer: 0 is north, pi/2
  * west) the direction of the corridors, or its opposite, nearest to where the player looks (when it
  * is within 60 degrees); else the longest corridor, turned to point away from `anchor` (the room or
- * the way in of the mine: a tunnel goes on away from it). null without a corridor.
+ * the way in of the mine: a tunnel goes on away from it). Fix round F6: the yaw is ignored when the
+ * direction it chooses points towards the anchor (a stale yaw of a player who did not turn); without
+ * an anchor the yaw decides as before. null without a corridor.
  * @param {{dir: string, length: number}[]} dirs corridorDirections
  * @param {{x,y,z}} feet
  * @param {{yaw?: number, anchor?: {x,y,z}}} [options]
@@ -1516,22 +1524,19 @@ export function tunnelDirection(dirs, feet, options = {}) {
     if (list.length === 0) {
         return null;
     }
+    const a = cellOf(options?.anchor);
+    const f = cellOf(feet);
     if (isFiniteNumber(options?.yaw)) {
         const look = { x: -Math.sin(options.yaw), z: -Math.cos(options.yaw) };
         const axis = [...new Set(list.flatMap(d => [d.dir, backOf(d.dir)]))];
-        const scored = axis.map(d => ({ d, dot: dirVector(d).x * look.x + dirVector(d).z * look.z })).sort((a, b) => b.dot - a.dot);
-        if (scored[0].dot >= 0.5) {
+        const scored = axis.map(d => ({ d, dot: dirVector(d).x * look.x + dirVector(d).z * look.z })).sort((x, y) => y.dot - x.dot);
+        if (scored[0].dot >= 0.5 && !(a && f && awayFromAnchor(scored[0].d, f, a) < 0)) {
             return scored[0].d;
         }
     }
     const longest = list[0].dir;
-    const a = cellOf(options?.anchor);
-    const f = cellOf(feet);
-    if (a && f) {
-        const v = dirVector(longest);
-        if (v.x * (f.x - a.x) + v.z * (f.z - a.z) < 0) {
-            return backOf(longest);
-        }
+    if (a && f && awayFromAnchor(longest, f, a) < 0) {
+        return backOf(longest);
     }
     return longest;
 }

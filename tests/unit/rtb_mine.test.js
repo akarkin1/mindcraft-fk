@@ -179,11 +179,38 @@ describe('rememberTunnel (B3)', () => {
         assert.equal(s.ctx.mines.byName('mine').tunnels.length, 1);
     });
 
-    test('the yaw of the player decides the direction; a new start is a second tunnel', async () => {
+    test('the yaw of the player away from the room is kept; a new start is a second tunnel', async () => {
         const s = await known();
-        s.bot.entity.position = { x: 21.5, y: 34, z: 7.5 };
-        const r = await P.rememberTunnel(s.bot, s.ctx, 'mine', { playerYaw: 0 });
-        assert.equal(r.tunnel.dir, 'north');
+        s.world.fill(22, 34, 7, 27, 35, 7, 'air'); // a side corridor to the east of the tunnel
+        s.bot.entity.position = { x: 25.5, y: 34, z: 7.5 };
+        const r = await P.rememberTunnel(s.bot, s.ctx, 'mine', { playerYaw: -Math.PI / 2 });
+        assert.equal(r.text, 'I measured the tunnel: it starts at (22, 34, 7), goes east, and ends at (27, 34, 7) after 6 blocks, at level 34. I dig on at its end when you ask for ore.');
+        assert.equal(s.ctx.mines.byName('mine').tunnels.length, 2);
+    });
+
+    test('F6: a stale yaw that looks back to the room is ignored; the tunnel goes on away from it', async () => {
+        const s = await known();
+        s.bot.entity.position = { x: 21.5, y: 34, z: 13.5 };
+        const r = await P.rememberTunnel(s.bot, s.ctx, '', { playerYaw: 0 }); // yaw 0: north, to the landing and the room
+        assert.equal(r.text, 'I measured the tunnel: it starts at (21, 34, 2), goes south, and ends at (21, 34, 13) after 12 blocks, at level 34. I dig on at its end when you ask for ore.');
+        assert.equal(s.ctx.mines.byName('mine').tunnels.length, 1, 'no second tunnel into the landing');
+    });
+
+    test('F7: a room of 3 by 3 and a corridor of 3 are no tunnel; a corridor of 4 is one', async () => {
+        const s = await known();
+        s.world.fill(30, 40, 0, 32, 41, 2, 'air'); // a room of 3 x 3, 2 high
+        s.world.fill(40, 40, 0, 40, 41, 3, 'air'); // a corridor of 4
+        s.world.fill(44, 40, 0, 44, 41, 2, 'air'); // a corridor of 3
+        const refused = { ok: false, reason: 'no_corridor', text: 'I stand in no tunnel. A tunnel is 1 wide and 2 high and open ahead of me.' };
+        for (const [x, z, what] of [[30, 0, 'a corner of the room'], [31, 0, 'the middle of a wall'], [31, 1, 'the middle of the room'], [44, 0, 'a corridor of 3']]) {
+            s.bot.entity.position = { x: x + 0.5, y: 40, z: z + 0.5 };
+            const r = await P.rememberTunnel(s.bot, s.ctx, '', {});
+            assert.deepEqual({ ok: r.ok, reason: r.reason, text: r.text }, refused, what);
+        }
+        assert.equal(s.ctx.mines.byName('mine').tunnels.length, 1, 'nothing saved');
+        s.bot.entity.position = { x: 40.5, y: 40, z: 0.5 };
+        const r = await P.rememberTunnel(s.bot, s.ctx, '', {});
+        assert.equal(r.text, 'I measured the tunnel: it starts at (40, 40, 0), goes south, and ends at (40, 40, 3) after 4 blocks, at level 40. I dig on at its end when you ask for ore.');
         assert.equal(s.ctx.mines.byName('mine').tunnels.length, 2);
     });
 
