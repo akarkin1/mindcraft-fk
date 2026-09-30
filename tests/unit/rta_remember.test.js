@@ -56,13 +56,15 @@ describe('rememberRoute (A2)', () => {
         const s = scene();
         const r = P.rememberRoute(s.bot, s.ctx, 'Bed');
         assert.equal(r.ok, true);
-        assert.equal(r.text, 'I remember the way "bed": from the place "storage" to here, 4 steps, 1 ladder, 1 trapdoor. I walk it in both directions.');
+        assert.equal(r.text, 'I remember the way "bed": from the place "storage" to here, 3 steps, 1 ladder, 1 trapdoor. I walk it in both directions.');
         assert.equal(s.trail.ticks, 1, 'the cell of the bot is read first');
         const saved = s.store.get('bed');
         assert.deepEqual(saved.from, { name: 'storage', kind: 'place', x: 2, y: 41, z: -1 });
         assert.deepEqual(saved.to, { name: 'bed', x: -3, y: 61, z: 2 });
         assert.deepEqual({ steps: saved.steps, source: saved.source, dimension: saved.dimension }, { steps: 26, source: 'trail', dimension: 'overworld' });
-        assert.equal(saved.legs[1].face, 'south', 'the facing of the ladder, read from the world');
+        const ladder = saved.legs.find(l => l.kind === 'ladder');
+        assert.equal(ladder.face, 'south', 'the facing of the ladder, read from the world');
+        assert.deepEqual(ladder.foot, { x: 2, y: 41, z: -1 }, 'the foot: the step beside the column where the way starts');
         assert.deepEqual(r.route, saved);
     });
 
@@ -70,7 +72,7 @@ describe('rememberRoute (A2)', () => {
         const s = scene();
         P.rememberRoute(s.bot, s.ctx, 'bed');
         const r = P.rememberRoute(s.bot, s.ctx, 'bed');
-        assert.equal(r.text, 'I know a way "bed" already. I replace it. I remember the way "bed": from the place "storage" to here, 4 steps, 1 ladder, 1 trapdoor. I walk it in both directions.');
+        assert.equal(r.text, 'I know a way "bed" already. I replace it. I remember the way "bed": from the place "storage" to here, 3 steps, 1 ladder, 1 trapdoor. I walk it in both directions.');
         assert.equal(s.store.size, 1);
     });
 
@@ -126,9 +128,9 @@ describe('routesText and forgetRoute (A3)', () => {
         const s = scene();
         assert.equal(P.routesText(s.ctx, 'overworld'), 'I know no routes.');
         P.rememberRoute(s.bot, s.ctx, 'bed');
-        assert.equal(P.routesText(s.ctx, 'overworld'), 'I know 1 route: "bed" from the place "storage" to (-3, 61, 2), 4 steps.');
+        assert.equal(P.routesText(s.ctx, 'overworld'), 'I know 1 route: "bed" from the place "storage" to (-3, 61, 2), 3 steps.');
         assert.equal(P.routesText(s.ctx, 'the_nether'), 'I know no routes.');
-        assert.equal(P.routesText(s.store), 'I know 1 route: "bed" from the place "storage" to (-3, 61, 2), 4 steps.', 'the store itself');
+        assert.equal(P.routesText(s.store), 'I know 1 route: "bed" from the place "storage" to (-3, 61, 2), 3 steps.', 'the store itself');
         assert.deepEqual(P.forgetRoute(s.ctx, 'Bed', 'overworld'), { ok: true, reason: null, text: 'Forgot the route "bed".' });
         assert.deepEqual(P.forgetRoute(s.ctx, 'bed', 'overworld'), { ok: false, reason: 'unknown', text: 'I know no route "bed".' });
         assert.equal(P.routesText({}, 'overworld'), 'I know no routes.');

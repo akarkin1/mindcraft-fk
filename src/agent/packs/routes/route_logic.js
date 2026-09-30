@@ -4,8 +4,10 @@
 // A route is { name, dimension, from: { name, kind, x, y, z }, to: { name, x, y, z }, legs, steps, source,
 // created, updated }. The legs are the kinds of mines.json of v0.1.4.7 plus one:
 //   { kind: 'walk', from, to }                                    path search, at most 12 blocks apart
-//   { kind: 'ladder', x, z, top, bottom, face, entry }            face: the `facing` of the ladder blocks,
-//                                                                 the wall is behind it (as ladder.js reads it)
+//   { kind: 'ladder', x, z, top, bottom, face, entry, foot }      face: the `facing` of the ladder blocks,
+//                                                                 the wall is behind it (as ladder.js reads it);
+//                                                                 entry and foot: the cells beside the column at
+//                                                                 its top and its bottom (fix round 2, F3)
 //   { kind: 'stairs', from, to, dir }                             made only by the mining pack, from the top down
 //   { kind: 'door', kind2, name, x, y, z, from, to }              kind2: door, gate or trapdoor
 import { containsPos, distanceToBox, isBox } from '../home/box_math.js';
@@ -165,6 +167,19 @@ function topSideIndex(s, index, x, z, top, step) {
     return null;
 }
 
+// After `index` (step 1) or before it (step -1), past at most 2 more steps in the column at its bottom, the
+// step beside the column at the bottom: at most 1 block sideways and 1 up or down. The index or null.
+function bottomSideIndex(s, index, x, z, bottom, step) {
+    for (let k = index + step, n = 0; k >= 0 && k < s.length && n < 3; k += step, n++) {
+        const st = s[k];
+        if (st.x === x && st.z === z) {
+            continue;
+        }
+        return Math.max(Math.abs(st.x - x), Math.abs(st.z - z)) <= 1 && Math.abs(st.y - bottom) <= 1 ? k : null;
+    }
+    return null;
+}
+
 // A run of ladder steps in one column, a..b, as a ladder leg with the steps it covers, or null when the
 // bot did not climb (one height only).
 function ladderRun(s, a, b, faceAt) {
@@ -213,6 +228,8 @@ function ladderRun(s, a, b, faceAt) {
     }
     const entryIndex = down ? topSideIndex(s, start, x, z, top, -1) : topSideIndex(s, end, x, z, top, 1);
     const entryStep = entryIndex === null ? null : s[entryIndex];
+    const footIndex = down ? bottomSideIndex(s, end, x, z, bottom, 1) : bottomSideIndex(s, start, x, z, bottom, -1);
+    const footStep = footIndex === null ? null : s[footIndex];
     if (!face && entryStep) {
         // the step at the top beside the column stands on the wall: the ladders face away from it
         const d = directionTo(Math.sign(entryStep.x - x), Math.sign(entryStep.z - z));
@@ -220,9 +237,22 @@ function ladderRun(s, a, b, faceAt) {
     }
     if (!face) {
         // the step at the bottom beside the column: the bot left the ladder away from the wall
-        const foot = down ? s[end + 1] : s[start - 1];
-        const d = foot && !inColumn(foot) ? directionTo(Math.sign(foot.x - x), Math.sign(foot.z - z)) : null;
+        const d = footStep ? directionTo(Math.sign(footStep.x - x), Math.sign(footStep.z - z)) : null;
         face = d ?? 'north';
+    }
+    // fix round 2 (F3): the foot, the cell beside the column at the bottom where the bot stood before the climb
+    // or after the slide; the walk legs end and start there, never in the column
+    let foot;
+    if (footStep) {
+        foot = cell(footStep);
+        if (down) {
+            end = footIndex;
+        } else {
+            start = footIndex;
+        }
+    } else {
+        const open = dirVector(face);
+        foot = { x: x + open.x, y: bottom, z: z + open.z };
     }
     let entry;
     if (entryStep) {
@@ -240,7 +270,7 @@ function ladderRun(s, a, b, faceAt) {
     }
     // the order of the legs is the order of the trail: a run going down comes after what the trail passed
     // before its first ladder (a trapdoor over it), although the walk before it ends at the entry
-    return { key: down ? a : start, start, end, order: 1, leg: { kind: 'ladder', x, z, top, bottom, face, entry } };
+    return { key: down ? a : start, start, end, order: 1, leg: { kind: 'ladder', x, z, top, bottom, face, entry, foot } };
 }
 
 function ladderLegs(s, faceAt) {
@@ -699,10 +729,14 @@ export function cleanLeg(leg) {
         return null;
     }
     if (leg.kind === 'ladder' && [leg.x, leg.z, leg.top, leg.bottom].every(isFiniteNumber)) {
-        return {
+        const out = {
             kind: 'ladder', x: Math.floor(leg.x), z: Math.floor(leg.z), top: Math.floor(leg.top), bottom: Math.floor(leg.bottom),
             face: isDirection(leg.face) ? leg.face : 'north', entry: isPoint(leg.entry) ? cell(leg.entry) : null,
         };
+        if (isPoint(leg.foot)) {
+            out.foot = cell(leg.foot); // fix round 2 (F3)
+        }
+        return out;
     }
     if ((leg.kind === 'walk' || leg.kind === 'stairs') && isPoint(leg.from) && isPoint(leg.to)) {
         const out = { kind: leg.kind, from: cell(leg.from), to: cell(leg.to) };

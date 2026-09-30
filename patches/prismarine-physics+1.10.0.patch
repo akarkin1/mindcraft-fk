@@ -1,0 +1,39 @@
+diff --git a/node_modules/prismarine-physics/index.js b/node_modules/prismarine-physics/index.js
+index d7b8db5..1624044 100644
+--- a/node_modules/prismarine-physics/index.js
++++ b/node_modules/prismarine-physics/index.js
+@@ -48,6 +48,16 @@ function Physics (mcData, world) {
+   if (blocksByName.warped_trapdoor) { trapdoorIds.add(blocksByName.warped_trapdoor.id) } // 1.16+
+   if (blocksByName.mangrove_trapdoor) { trapdoorIds.add(blocksByName.mangrove_trapdoor.id) } // 1.19+
+   if (blocksByName.cherry_trapdoor) { trapdoorIds.add(blocksByName.cherry_trapdoor.id) } // 1.20+
++  if (blocksByName.bamboo_trapdoor) { trapdoorIds.add(blocksByName.bamboo_trapdoor.id) } // 1.20+
++  if (blocksByName.pale_oak_trapdoor) { trapdoorIds.add(blocksByName.pale_oak_trapdoor.id) } // 1.21.4+
++  if (blocksByName.copper_trapdoor) { trapdoorIds.add(blocksByName.copper_trapdoor.id) } // 1.21+
++  if (blocksByName.waxed_copper_trapdoor) { trapdoorIds.add(blocksByName.waxed_copper_trapdoor.id) } // 1.21+
++  if (blocksByName.exposed_copper_trapdoor) { trapdoorIds.add(blocksByName.exposed_copper_trapdoor.id) } // 1.21+
++  if (blocksByName.waxed_exposed_copper_trapdoor) { trapdoorIds.add(blocksByName.waxed_exposed_copper_trapdoor.id) } // 1.21+
++  if (blocksByName.weathered_copper_trapdoor) { trapdoorIds.add(blocksByName.weathered_copper_trapdoor.id) } // 1.21+
++  if (blocksByName.waxed_weathered_copper_trapdoor) { trapdoorIds.add(blocksByName.waxed_weathered_copper_trapdoor.id) } // 1.21+
++  if (blocksByName.oxidized_copper_trapdoor) { trapdoorIds.add(blocksByName.oxidized_copper_trapdoor.id) } // 1.21+
++  if (blocksByName.waxed_oxidized_copper_trapdoor) { trapdoorIds.add(blocksByName.waxed_oxidized_copper_trapdoor.id) } // 1.21+
+ 
+   const waterLike = new Set()
+   if (blocksByName.seagrass) waterLike.add(blocksByName.seagrass.id) // 1.13+
+diff --git a/node_modules/prismarine-physics/lib/features.json b/node_modules/prismarine-physics/lib/features.json
+index 708b22c..e6ba89b 100644
+--- a/node_modules/prismarine-physics/lib/features.json
++++ b/node_modules/prismarine-physics/lib/features.json
+@@ -22,11 +22,11 @@
+   {
+     "name": "climbUsingJump",
+     "description": "Entity can climb ladders and vines by pressing jump",
+-    "versions": ["1.14", "1.15", "1.16", "1.17", "1.18", "1.19", "1.20"]
++    "versions": ["1.14", "1.15", "1.16", "1.17", "1.18", "1.19", "1.20", "1.21"]
+   },
+   {
+     "name": "climbableTrapdoor",
+     "description": "Trapdoors placed directly above ladders become climbable",
+-    "versions": ["1.9", "1.10", "1.11", "1.12", "1.13", "1.14", "1.15", "1.16", "1.17", "1.18", "1.19", "1.20"]
++    "versions": ["1.9", "1.10", "1.11", "1.12", "1.13", "1.14", "1.15", "1.16", "1.17", "1.18", "1.19", "1.20", "1.21"]
+   }
+ ]

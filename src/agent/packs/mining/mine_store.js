@@ -84,9 +84,10 @@ function cleanLeg(leg) {
     }
     if (leg.kind === 'ladder' && isFiniteNumber(leg.x) && isFiniteNumber(leg.z) && isFiniteNumber(leg.top) && isFiniteNumber(leg.bottom)) {
         const entry = point(leg.entry);
+        const foot = point(leg.foot); // v0.1.4.9 (F3): the cell beside the column at the bottom, from the routes pack
         return {
             kind: 'ladder', x: Math.floor(leg.x), z: Math.floor(leg.z), top: Math.floor(leg.top), bottom: Math.floor(leg.bottom),
-            face: isDirection(leg.face) ? leg.face : 'north', entry,
+            face: isDirection(leg.face) ? leg.face : 'north', entry, ...(foot ? { foot } : {}),
         };
     }
     if ((leg.kind === 'walk' || leg.kind === 'stairs') && point(leg.from) && point(leg.to)) {

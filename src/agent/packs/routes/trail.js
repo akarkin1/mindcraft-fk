@@ -1,4 +1,4 @@
-// The trail of the bot (spec v0.1.4.9 I1, A1): every 250 ms the recorder reads the bot (position, on the
+// The trail of the bot (spec v0.1.4.9 I1, A1): every 100 ms (fix round 2, F8) the recorder reads the bot (position, on the
 // ground, the blocks at and under the feet, the sky, the openables around the feet) and keeps a step for
 // every new feet cell, the last 500. The file is <worldDir>/trail.json, { version: 1, dimension, steps },
 // written at most every 5 s and at stop(); without a file the trail lives in memory only. The rules of a
@@ -22,7 +22,7 @@ function isFiniteNumber(value) {
 
 /**
  * A block as the rules of the trail read it: { name, solid, skyLight, half, facing, open }, or null when it
- * is not loaded. Never throws.
+ * is not loaded. The sky light is passed on, but the rules do not use it (fix round 2, F5). Never throws.
  * @param {object} bot
  * @param {number} x
  * @param {number} y

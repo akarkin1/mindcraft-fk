@@ -36,20 +36,14 @@ describe('when a step is made', () => {
     });
 });
 
-describe('open sky', () => {
-    test('sky light 15 is open sky, 1 to 14 is not', () => {
-        assert.equal(L.isOpenSky(15, false), true);
-        assert.equal(L.isOpenSky(14, true), false);
-        assert.equal(L.isOpenSky(3, true), false);
-    });
-
-    test('without sky light (none, or 0 as a server without light gives it) the column of 64 blocks decides', () => {
-        assert.equal(L.isOpenSky(undefined, true), true);
-        assert.equal(L.isOpenSky(undefined, false), false);
-        assert.equal(L.isOpenSky(0, () => true), true);
-        assert.equal(L.isOpenSky(0, () => { throw new Error('x'); }), false);
-        const roof = world({ '0,70,0': stone });
+describe('open sky: the column of 64 blocks, never the sky light (fix round 2, F5)', () => {
+    test('a stale sky light of 15 under a roof is no open sky; a sky light of 0 under the open sky is', () => {
+        const roof = world({ '0,70,0': stone }, { skyLight: 15 });
         assert.equal(L.columnIsOpen(roof, { x: 0, y: 64, z: 0 }), false, 'a roof 6 above');
+        assert.equal(L.nextStep(null, { pos: { x: 0.5, y: 64, z: 0.5 }, onGround: true }, roof).sky, false, 'under the roof, the light says 15');
+        assert.equal(L.nextStep(null, { pos: { x: 0.5, y: 64, z: 0.5 }, onGround: true }, world({}, { skyLight: 0 })).sky, true, 'open, the light says 0');
+        assert.equal(L.stepSky(world({}, { skyLight: 3 }), { x: 0, y: 64, z: 0 }, { name: 'air', skyLight: 3 }), true);
+        assert.equal(L.isOpenSky, undefined, 'the light is not read at all');
     });
 
     test('the column looks exactly 64 blocks up; a block that is not loaded is air', () => {
@@ -114,6 +108,20 @@ describe('via: the openable passed with a step', () => {
         assert.deepEqual(L.cellBetween({ x: -1, y: 64, z: 0 }, { x: 1, y: 64, z: 0 }), { x: 0, y: 64, z: 0 });
     });
 
+    test('fix round 2, F8: every cell on the line between two steps, up to 4', () => {
+        const trap = { name: 'oak_trapdoor', solid: true };
+        // from the floor west of the hole onto the ladder 2 below: the line passes the trapdoor at (2, 60, -2)
+        assert.deepEqual(L.lineCells({ x: 1, y: 61, z: -2 }, { x: 2, y: 59, z: -2 }), [{ x: 1, y: 60, z: -2 }, { x: 2, y: 60, z: -2 }]);
+        assert.deepEqual(L.viaOf(world({ '2,60,-2': trap }), { x: 2, y: 59, z: -2 }, { x: 1, y: 61, z: -2 }),
+            { kind: 'trapdoor', name: 'oak_trapdoor', x: 2, y: 60, z: -2 });
+        // up the column and out to the north in one look: the trapdoor is on the line
+        assert.equal(L.viaOf(world({ '2,60,-2': trap }), { x: 2, y: 61, z: -3 }, { x: 2, y: 58, z: -2 })?.y, 60);
+        // a door 3 cells back on a straight run of 5
+        assert.equal(L.viaOf(world({ '4,64,7': { name: 'oak_door', half: 'lower' } }), { x: 4, y: 64, z: 5 }, { x: 4, y: 64, z: 10 })?.z, 7);
+        assert.deepEqual(L.lineCells({ x: 0, y: 64, z: 0 }, { x: 10, y: 64, z: 0 }).map(c => c.x), [1, 2, 8, 9], 'the first 2 and the last 2');
+        assert.deepEqual(L.lineCells({ x: 0, y: 64, z: 0 }, { x: 1, y: 64, z: 0 }), []);
+    });
+
     test('a gate; iron doors are no openables', () => {
         assert.equal(L.viaOf(world({ '0,64,0': { name: 'oak_fence_gate' } }), { x: 0, y: 64, z: 0 }, null).kind, 'gate');
         assert.equal(L.viaOf(world({ '0,64,0': { name: 'iron_door', half: 'lower' } }), { x: 0, y: 64, z: 0 }, null), null);
@@ -155,6 +163,6 @@ describe('jumps and the file', () => {
     });
 
     test('the numbers of the trail', () => {
-        assert.deepEqual({ ...L.TRAIL_RULES }, { maxSteps: 500, intervalMs: 250, saveMs: 5000, skyScan: 64, jump: 16 });
+        assert.deepEqual({ ...L.TRAIL_RULES }, { maxSteps: 500, intervalMs: 100, lineCells: 4, saveMs: 5000, skyScan: 64, jump: 16 });
     });
 });

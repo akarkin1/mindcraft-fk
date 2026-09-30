@@ -14,7 +14,7 @@ import { feetCell } from './trail_logic.js';
 import { ladderFacingReader } from './trail.js';
 import { walkByRoute, walkRoute } from './replay.js';
 
-export { TRAIL_RULES, WATER_NAMES, cellBetween, cleanStep, columnIsOpen, feetCell, inShaft, isJump, isOpenSky, mayStep, nextStep, openSides,
+export { TRAIL_RULES, WATER_NAMES, cellBetween, cleanStep, columnIsOpen, feetCell, inShaft, isJump, lineCells, mayStep, nextStep, openSides,
     sameCell, stepSky, viaOf } from './trail_logic.js';
 export { DIRECTIONS, OPENABLE_KINDS, ROUTE_RULES, backOf, cleanLeg, dirVector, directionTo, isDirection, knownThings, legCells, legCounts,
     nearCell, nearestRoute, normalizeRouteName, reverseRoute, routeEnds, routeFromSteps, routeStart, skyStart, startOffLadder,

@@ -31,8 +31,8 @@ describe('routeFromSteps', () => {
         assert.deepEqual(r.from, { x: 2, y: 41, z: 1 });
         assert.deepEqual(r.to, { x: -3, y: 61, z: 2 });
         assert.deepEqual(r.legs, [
-            { kind: 'walk', from: { x: 2, y: 41, z: 1 }, to: { x: 2, y: 41, z: -2 } },
-            { kind: 'ladder', x: 2, z: -2, top: 59, bottom: 41, face: 'south', entry: { x: 2, y: 61, z: -3 } },
+            { kind: 'walk', from: { x: 2, y: 41, z: 1 }, to: { x: 2, y: 41, z: -1 } },
+            { kind: 'ladder', x: 2, z: -2, top: 59, bottom: 41, face: 'south', entry: { x: 2, y: 61, z: -3 }, foot: { x: 2, y: 41, z: -1 } },
             { kind: 'door', kind2: 'trapdoor', name: 'oak_trapdoor', x: 2, y: 60, z: -2, from: { x: 2, y: 59, z: -2 }, to: { x: 2, y: 61, z: -3 } },
             { kind: 'walk', from: { x: 2, y: 61, z: -3 }, to: { x: -3, y: 61, z: 2 } },
         ]);
@@ -44,8 +44,8 @@ describe('routeFromSteps', () => {
         assert.deepEqual(r.legs, [
             { kind: 'walk', from: { x: 0, y: 61, z: 0 }, to: { x: 1, y: 61, z: -2 } },
             { kind: 'door', kind2: 'trapdoor', name: 'oak_trapdoor', x: 2, y: 60, z: -2, from: { x: 1, y: 61, z: -2 }, to: { x: 2, y: 59, z: -2 } },
-            { kind: 'ladder', x: 2, z: -2, top: 59, bottom: 41, face: 'south', entry: { x: 1, y: 61, z: -2 } },
-            { kind: 'walk', from: { x: 2, y: 41, z: -2 }, to: { x: 3, y: 41, z: 0 } },
+            { kind: 'ladder', x: 2, z: -2, top: 59, bottom: 41, face: 'south', entry: { x: 1, y: 61, z: -2 }, foot: { x: 2, y: 41, z: -1 } },
+            { kind: 'walk', from: { x: 2, y: 41, z: -1 }, to: { x: 3, y: 41, z: 0 } },
         ]);
     });
 
@@ -216,10 +216,11 @@ describe('reverseRoute, routeEnds, legCells', () => {
         assert.equal(JSON.stringify(route), before);
         assert.deepEqual(back.from, route.to);
         assert.deepEqual(back.to, route.from);
-        assert.deepEqual(back.legs.map(l => l.kind), ['walk', 'door', 'ladder', 'walk']);
+        // the trail starts at the foot of the ladder (2, 41, -1): no walk before the ladder
+        assert.deepEqual(back.legs.map(l => l.kind), ['walk', 'door', 'ladder']);
         assert.deepEqual(back.legs[0], { kind: 'walk', from: { x: -3, y: 61, z: 2 }, to: { x: 2, y: 61, z: -3 } });
         assert.deepEqual([back.legs[1].from, back.legs[1].to], [{ x: 2, y: 61, z: -3 }, { x: 2, y: 59, z: -2 }]);
-        assert.deepEqual(back.legs[2], route.legs[1], 'a ladder has no direction');
+        assert.deepEqual(back.legs[2], route.legs[0], 'a ladder has no direction');
         assert.deepEqual(R.reverseRoute(back), route);
     });
 

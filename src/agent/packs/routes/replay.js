@@ -11,7 +11,7 @@ import { botPos, clockOf, logTo, noteProgress } from '../home/context.js';
 import { sideOf } from '../home/door_logic.js';
 import { doorState, openDoor } from '../home/doors.js';
 import { goals, gotoGoal, isNear, makeMovements, walkNear } from '../home/motion.js';
-import { climbUp, slideDown, waitStanding, walkStairs, yawOf } from '../mining/ladder.js';
+import { climbUp, enterColumn, footOf, slideDown, waitStanding, walkStairs, yawOf } from '../mining/ladder.js';
 import { backOf, nearCell, nearestRoute, reverseRoute, routeEnds, trapdoorOverLadder } from './route_logic.js';
 import { TEXTS, emptyRouteText, noWayToStartText, routeDoneText, routeErrorText, routeFailedText, routeLabel, routeStoppedText,
     routeTimeText, stoppedBeforeRouteText } from './texts.js';
@@ -64,9 +64,33 @@ function doorOptions(ctx, clock) {
 
 // Walks to a cell (the bot is there when its feet are within 1 block): walkNear with doors allowed and no
 // digging, then once more with a goal GoalNear of 1.
+// Fix round 2 (F3): the cell to walk to instead of a cell with a ladder, where the path search would climb: the
+// free cell beside it with solid ground, nearest to the bot; null when there is none.
+function besideLadder(bot, target) {
+    const free = (x, y, z) => {
+        const b = readBlock(bot, x, y, z);
+        return Boolean(b) && b.solid === false && b.name !== 'water' && b.name !== 'lava';
+    };
+    const ground = (x, y, z) => {
+        const b = readBlock(bot, x, y, z);
+        return Boolean(b) && b.solid === true && b.name !== 'ladder';
+    };
+    const me = botPos(bot);
+    const cells = [[1, 0], [-1, 0], [0, 1], [0, -1]].map(([dx, dz]) => ({ x: target.x + dx, y: target.y, z: target.z + dz }))
+        .filter(c => free(c.x, c.y, c.z) && free(c.x, c.y + 1, c.z) && ground(c.x, c.y - 1, c.z));
+    if (me) {
+        cells.sort((a, b) => Math.hypot(a.x + 0.5 - me.x, a.z + 0.5 - me.z) - Math.hypot(b.x + 0.5 - me.x, b.z + 0.5 - me.z));
+    }
+    return cells[0] ?? null;
+}
+
 async function walkToCell(bot, target, clock, ms) {
     if (nearCell(botPos(bot), target)) {
         return OK;
+    }
+    if (readBlock(bot, target.x, target.y, target.z)?.name === 'ladder') {
+        const beside = besideLadder(bot, target);
+        return beside ? await walkToCell(bot, beside, clock, ms) : { ok: false, reason: 'no_path' };
     }
     const first = await walkNear(bot, target, 0, { clock, timeoutMs: ms, allowDoors: true, allowDig: false });
     if (first.reason === 'interrupted' || bot.interrupt_code) {
@@ -191,21 +215,21 @@ async function ladderLeg(bot, ctx, leg, clock, ms) {
             return r.reason === 'interrupted' || bot.interrupt_code ? INTERRUPTED : { ok: false, reason: 'no_path' };
         }
     } else {
+        // fix round 2 (F3): outside the column the bot goes to the foot and steps in (climbUp); no goal of the
+        // path search in the column, where the path search would climb on its own
         const inColumn = c.x === leg.x && c.z === leg.z && c.y >= leg.bottom - 1 && c.y <= leg.top + 1;
-        if (!inColumn) {
-            let movements;
-            try {
-                movements = makeMovements(bot, { dig: false, doors: true });
-            } catch {
-                return { ok: false, reason: 'error' };
+        const foot = inColumn ? null : footOf(bot, leg);
+        if (!inColumn && !foot) {
+            return { ok: false, reason: 'no_path' };
+        }
+        if (foot) {
+            const w = await walkToCell(bot, foot, clock, ms);
+            if (!w.ok) {
+                return w;
             }
-            const w = await gotoGoal(bot, new goals.GoalBlock(leg.x, leg.bottom, leg.z), { movements, timeoutMs: ms, clock });
-            if (w.reason === 'interrupted' || bot.interrupt_code) {
-                return INTERRUPTED;
-            }
-            const now = feetOf(bot);
-            if (!now || now.x !== leg.x || now.z !== leg.z) {
-                return { ok: false, reason: 'no_path' };
+            const into = await enterColumn(bot, { ...leg, foot }, { clock });
+            if (!into.ok) {
+                return into.reason === 'interrupted' || bot.interrupt_code ? INTERRUPTED : { ok: false, reason: 'no_path' };
             }
         }
         if (trap && !trap.open) {

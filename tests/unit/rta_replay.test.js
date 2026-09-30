@@ -103,7 +103,7 @@ describe('walkRoute (I3)', () => {
     test('a ladder removed on the way up: the leg of the ladder fails before the climb', async () => {
         const s = scene({ ladders: false });
         const r = await P.walkRoute(s.bot, s.ctx, s.route, s.opts);
-        assert.equal(r.text, 'I could not follow the route "bed" at step 2 of 4, at (2, 41, -2). Show me the way again.');
+        assert.equal(r.text, 'I could not follow the route "bed" at step 2 of 4, at (2, 41, -1). Show me the way again.');
     });
 
     test('one ladder missing: down the bot slides past the gap, up it does not start the climb', async () => {
@@ -113,7 +113,7 @@ describe('walkRoute (I3)', () => {
         assert.equal(down.ok, true, down.text);
         assert.deepEqual(feet(s.bot), [2, 41, 1]);
         const up = await P.walkRoute(s.bot, s.ctx, s.route, s.opts);
-        assert.equal(up.text, 'I could not follow the route "bed" at step 2 of 4, at (2, 41, -2). Show me the way again.');
+        assert.equal(up.text, 'I could not follow the route "bed" at step 2 of 4, at (2, 41, -1). Show me the way again.');
         assert.equal(P.ladderIntact(s.bot, s.route.legs[1], 1), true);
         assert.equal(P.ladderIntact(s.bot, s.route.legs[1]), false);
     });

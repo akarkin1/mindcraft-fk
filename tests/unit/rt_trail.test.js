@@ -110,13 +110,18 @@ describe('I1: the steps', () => {
         assert.equal(trail.list()[0].at, 'water');
     });
 
-    test('sky from the sky light at the feet: 15 open sky, less not', () => {
-        const s = scene({ sky: (x) => (x >= 10 ? 12 : 15) });
+    // fix round 2, decision F5 (E1): this test read "sky from the sky light at the feet: 15 open sky, less not"; the
+    // trail no longer reads the sky light (it was stale on the server), the column of 64 blocks decides
+    test('decision F5: the sky light is never read, the column of 64 blocks decides', () => {
+        const s = scene({ sky: (x) => (x === 10 ? 12 : 15) });
+        s.world.set(20, 70, 0, 'stone'); // a roof over x 20, where the stale light says 15
         const trail = TR.createTrail(s.bot, {}, { file: null, now: s.clock.now });
         trail.tick();
         moveTo(s.bot, 10, 64, 0);
         trail.tick();
-        assert.deepEqual(trail.list().map((st) => st.sky), [true, false]);
+        moveTo(s.bot, 20, 64, 0);
+        trail.tick();
+        assert.deepEqual(trail.list().map((st) => st.sky), [true, true, false]);
     });
 
     test('without a sky light: open sky when no solid block is in the column above within 64 blocks', () => {

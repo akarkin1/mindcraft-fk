@@ -9,9 +9,10 @@ import { openableKind } from '../home/door_logic.js';
 /** The numbers of the trail. */
 export const TRAIL_RULES = Object.freeze({
     maxSteps: 500,     // steps kept; the oldest leave
-    intervalMs: 250,   // one look at the bot
+    intervalMs: 100,   // one look at the bot (fix round 2, F8: 250 ms skipped the cell under a trapdoor)
+    lineCells: 4,      // via: the cells looked at on the line between two steps
     saveMs: 5000,      // the file is written at most this often
-    skyScan: 64,       // without sky light: blocks of the column above the feet that are looked at
+    skyScan: 64,       // open sky: blocks of the column above the feet that are looked at
     jump: 16,          // a move this far (sideways or up) between two looks is no walk: the trail starts again
 });
 
@@ -66,26 +67,6 @@ export function mayStep(state) {
 }
 
 /**
- * Open sky over the feet: sky light 15. A sky light of 0 or none at all is read as missing (a server
- * that sends no light gives 0 everywhere, and a cell under open sky never has 0): then the column
- * decides, `columnOpen` (a boolean or a function that returns one) is true when no solid block stands
- * above the feet within 64 blocks.
- * @param {number|undefined} skyLight
- * @param {boolean|(() => boolean)} columnOpen
- * @returns {boolean}
- */
-export function isOpenSky(skyLight, columnOpen) {
-    if (isFiniteNumber(skyLight) && skyLight > 0) {
-        return skyLight >= 15;
-    }
-    try {
-        return (typeof columnOpen === 'function' ? columnOpen() : columnOpen) === true;
-    } catch {
-        return false;
-    }
-}
-
-/**
  * True when no solid block stands in the column above the cell within `scan` blocks. A block that is
  * not loaded counts as air (above the loaded world).
  * @param {(x: number, y: number, z: number) => ({solid?: boolean}|null)} getBlock
@@ -131,16 +112,17 @@ export function inShaft(getBlock, feet) {
 }
 
 /**
- * The `sky` of a step (fix round T1-3): open sky over the feet (isOpenSky, with the column of 64 blocks
- * when the sky light is missing), and the step is not on a ladder, and the bot is not in a shaft. The sky
- * light is 15 all the way down a shaft of ladders open to the sky, but its foot is no way out.
+ * The `sky` of a step: no solid block in the column above the feet within 64 blocks (columnIsOpen), the
+ * step is not on a ladder, and the bot is not in a shaft (fix round T1-3: a shaft of ladders open to the
+ * sky is no way out). The sky light of the bot is never read (fix round 2, F5: where a house crosses a
+ * chunk border the bot reads 15 under its roof).
  * @param {(x: number, y: number, z: number) => object|null} getBlock
  * @param {{x,y,z}} feet
- * @param {{name?: string, skyLight?: number}|null} here the block at the feet
+ * @param {{name?: string}|null} here the block at the feet
  * @returns {boolean}
  */
 export function stepSky(getBlock, feet, here) {
-    return here?.name !== 'ladder' && isOpenSky(here?.skyLight, () => columnIsOpen(getBlock, feet)) && !inShaft(getBlock, feet);
+    return here?.name !== 'ladder' && !inShaft(getBlock, feet) && columnIsOpen(getBlock, feet);
 }
 
 // The openable of a cell as { kind, name, x, y, z }, the lower half of a door for its upper half; null.
@@ -155,8 +137,41 @@ function openableAt(getBlock, cell) {
 }
 
 /**
+ * The cells between two cells on the straight line from the middle of one to the middle of the other (a walk
+ * through the grid, one axis at a time), without the two cells themselves; of a longer line the first 2 and
+ * the last 2 of at most `max` (fix round 2, F8).
+ * @param {{x,y,z}} a
+ * @param {{x,y,z}} b
+ * @param {number} [max]
+ * @returns {{x: number, y: number, z: number}[]}
+ */
+export function lineCells(a, b, max = TRAIL_RULES.lineCells) {
+    const d = { x: b.x - a.x, y: b.y - a.y, z: b.z - a.z };
+    const axes = ['x', 'y', 'z'];
+    const next = {};
+    for (const k of axes) {
+        next[k] = d[k] === 0 ? Infinity : 0.5 / Math.abs(d[k]);
+    }
+    const at = { x: a.x, y: a.y, z: a.z };
+    const out = [];
+    const n = Math.abs(d.x) + Math.abs(d.y) + Math.abs(d.z);
+    for (let i = 0; i < n; i++) {
+        const k = axes.reduce((best, axis) => (next[axis] < next[best] ? axis : best), 'x');
+        at[k] += Math.sign(d[k]);
+        next[k] += 1 / Math.abs(d[k]);
+        if (sameCell(at, b)) {
+            break;
+        }
+        out.push({ ...at });
+    }
+    const half = Math.floor(max / 2);
+    return out.length > max ? [...out.slice(0, half), ...out.slice(out.length - (max - half))] : out;
+}
+
+/**
  * The openable the bot passed with a step: a door, gate or trapdoor at the feet cell, at the cell of the
- * last step, or at the cell between them; a trapdoor also directly above or below the feet. null for none.
+ * last step, or at a cell on the line between them (up to 4, fix round 2, F8); a trapdoor also directly
+ * above or below the feet. null for none.
  * @param {(x: number, y: number, z: number) => ({name: string, half?: string}|null)} getBlock
  * @param {{x,y,z}} feet
  * @param {{x,y,z}|null} last the cell of the last step
@@ -165,7 +180,7 @@ function openableAt(getBlock, cell) {
 export function viaOf(getBlock, feet, last = null) {
     const cells = [feet];
     if (isPoint(last) && !sameCell(last, feet)) {
-        cells.push(last, cellBetween(last, feet));
+        cells.push(last, ...lineCells(last, feet));
     }
     for (const cell of cells) {
         const found = openableAt(getBlock, cell);
@@ -201,7 +216,7 @@ export function isJump(from, to) {
  * is not on the ground, not on a ladder and not in water.
  * @param {object|null} last the last step
  * @param {{pos: {x,y,z}, onGround?: boolean, inWater?: boolean, t?: number}} input the bot now
- * @param {(x: number, y: number, z: number) => ({name: string, solid?: boolean, skyLight?: number, half?: string}|null)} getBlock
+ * @param {(x: number, y: number, z: number) => ({name: string, solid?: boolean, half?: string}|null)} getBlock
  * @returns {{x: number, y: number, z: number, on: string|null, at: string|null, sky: boolean, t: number, via: object|null}|null}
  */
 export function nextStep(last, input, getBlock) {
