@@ -215,7 +215,59 @@ Where this text and the spec disagree, this text wins.
 - Entries of `passed` are `{ ore: 'gold', x, y, z, reason, seen }` (`seen` an ISO time). Mine names are
   stored trimmed, lower case, spaces as `_`.
 
+## From parts D and E (model comparison, test server, E4), done in round 2
+
+- `new GPT(model, url, params, { client })` for tests. Usage is reported after every successful
+  request (I9); a cut-off chat completion is reported too, and the retry. Embeddings are reported under
+  the purpose of the caller (`other` in practice; there is no embedding purpose).
+- `routing_check.js`: `--profile`, `--model`; exports `DEFAULT_PROFILE`, `API_KEYS`, `apiOf`, `withModel`,
+  `keyFor`, `placeholderKeys`, `timeStats`; `parseArgs` returns `profile`, `model`, `missing`;
+  `summaryLine(passed, total, { times, cost })`. The dry run uses no embedding model. The real run sets
+  placeholder keys for the code and vision models whose key is missing (they are never called). The
+  time per answer counts non-error answers, summed over the retries of one sentence.
+- `test-routing.ps1 -Model <id> -Profile <path>`: loads the key of the chat model's api, and the other
+  key too when the secret exists. Not run here (no PowerShell).
+- `profiles/gpt.json` as D4. **The prompter makes the code model at the start and `getKey` throws
+  when its key is missing**, so the gpt bot does not start without `ANTHROPIC_API_KEY`;
+  `start-gpt.ps1` loads both keys.
+- `tests/routing/commands.js`: `partIsOn(settings, 'mine_routes')` is the effective switch (all three
+  on). The six new commands are in `SPEC_COMMANDS`.
+- `scripts/get_test_server.js`: `main(argv, deps)`; `scripts/get_test_server_logic.js`: `parseArgs`,
+  `pickVersion`, `serverDownload`, `defaultDir(platform, env, home?)`, `eulaText(date)`, `eulaAccepted(text)`,
+  the constants. Proven once against Mojang: 57,555,044 bytes, SHA-1 checked.
+- `tests/world/mc_server.js`: `locateServer(env, platform)` shares `defaultDir`; `serverEnv(env)` starts
+  the server without `JAVA_TOOL_OPTIONS`. Unsetting it by hand is no longer needed. The cloud still
+  needs `MC_TEST_JAVA=/usr/bin/java` and `MC_TEST_SERVER_DIR`.
+
+## From part G (glue, E5), done in round 2
+
+- Settings as section 2; `settings_spec.json` has `ore_sense_range` as a number with options `[0, 3]`.
+- `mineRoutesOn()` exported by `actions.js` (all three switches, `mine_routes` exactly `true`) and used
+  by `agent.js`. Off texts: `The routes pack is off.` and
+  `The mine routes are off. They need mine_routes, mining_pack and routes_pack.`
+- The trail: `<worldDir>/trail.json`, started at spawn, stopped and restarted on a world change,
+  stopped in `_atExit`. `homeContext().routes` is bound per world, null when off.
+- `whereAmI()` passes `extra.mine = { name, tunnel (from 0), level, onRoute }`; the knowledge block
+  drops `passed` when mine routes are off.
+- **`!rememberRoute`, `!routes`, `!forgetRoute`, `!rememberMine`, `!rememberTunnel` are plain commands**
+  (`runPlain`): no action, no pause of `unstuck`, a running `!followPlayer` keeps running. Their text is
+  recorded for `say_results` and the repeat guard. A pack that throws gives
+  `The <name> pack failed: <message>`. Only `!collectPassedOre` is an action through `runPack`.
+- `!goToRememberedPlace` tries a route only when the bot is still more than 2 blocks from the place
+  after the path search; it pauses `unstuck` for it and writes the text of the route
+  (`I followed the route "x", N steps.`).
+- `!newAction` with `skills_over_code`: the check of the `prompt` and of the last message of a player
+  (the `name:` prefix stripped) runs before the cost check; the command list drops what the agent hides.
+- Prompt: 16,883 characters with every switch on, 9,743 with every switch off. Descriptions of
+  `!getCraftingPlan`, `!modes`, `!searchForBlock`, `!searchForEntity`, `!moveAway`, `!placeHere`,
+  `!digDown`, `!endGoal`, `!goToSurface`, `!lookAtPlayer`, `!useOn`, `!setMode` and some parameter
+  texts were shortened; no meaning changed.
+- 18 new sentences in the routing list; "this is the mine" expects `!rememberArea` or `!rememberMine`.
+- `action_manager.js` now imports `assert` (the resume of `!followPlayer` used a global that only the
+  sandbox lockdown supplies). Corrected by the tech lead.
+
 ## State of the unit tests
 
 After parts A, B and C: E2 reports `npm test` with 5476 tests, 1 failure (the pack list, corrected by
-the tech lead). The 17 test files of the mining pack and the 5 of part B: 346 tests, 0 failures.
+the tech lead). After parts D, E and G: E5 reports 5965 tests, 2 failures, both in the tester's files
+against part A (`rt_route_logic` trapdoor leg, `rt_routes_pack` `too_short`).
