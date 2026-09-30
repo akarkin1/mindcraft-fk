@@ -50,6 +50,10 @@ W69, W73) share one new cause:
 | F12 | `!collectPassedOre` said `I collected 2 gold_ore that I had passed.` while the bot hung on the ladder: the result of the climb to the surface was ignored. | W68 | The text of a failed climb is appended. Done. | lead |
 | F13 | A plain `!goToCoordinates` into the mine stands on the closed trapdoor until `unstuck` stops it (the old path search plans through the trapdoor). `!goToRememberedPlace` avoids it by walking the route first. | W60 orders 35, 37 | Not corrected: a limit of the path search of v0.1.4.7, no regression. The play test guide says to use the saved places. | none |
 
+After F11: W62 (with an iron pickaxe in the hand), W67, W68, W69 and W73 pass twice in a row on the
+real server; the trapdoor opens from below with the tool in hand, and the bot ends every trip on the
+surface.
+
 Notes of T2 that are accepted as they are: a route from the trapdoor to the bed starts at the place
 `home` when it passes within 2 blocks of it (A2 as written); W60 replaces 8 repeated queries by 8 orders
 of the new commands so that it stays under 45 minutes; the hidden commands answer

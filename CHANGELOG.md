@@ -33,7 +33,8 @@ Every new switch is off by default. Corrections have no switch.
 - **The routing check takes a model of OpenAI**: `node scripts/routing_check.js --model gpt-6-luna` or `--profile profiles/gpt.json`; `test-routing.ps1 -Model gpt-6-luna`. The table shows the time of every answer; the summary shows the accuracy, the median and mean time per answer and the measured cost. The key of the api of the chat model is loaded from the vault, and the other key too when it exists, so that the examples are chosen as in play.
 - **`profiles/gpt.json`**: the prompt of the owner with GPT-6 Luna as chat model, reasoning effort low, the code model of the claude profile. `start-gpt.ps1` starts it and loads both keys.
 - **`scripts/get_test_server.js`**: downloads the official 1.21.8 server through Mojang's version manifest, checks the SHA-1 (`6bce4ef4…`) and, with `--accept-eula`, writes `eula.txt`. The world runner and the script share the default folder: `%LOCALAPPDATA%\Mindcraft\test-server` on Windows, `~/.local/share/mindcraft/test-server` elsewhere, or `MC_TEST_SERVER_DIR`. The server starts without `JAVA_TOOL_OPTIONS`.
-- Examples and about 15 sentences of the routing list for the new commands.
+- Examples and 18 sentences of the routing list for the new commands.
+- 377 unit tests written from the spec by an independent tester, 6078 in all. 14 more scenarios on the real server, 72 in all, among them the walk into the mine, the routes to the bed and back, a broken route and the long run of 30 minutes with the new parts on.
 
 ### Changed
 
