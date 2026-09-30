@@ -79,6 +79,18 @@ Commit `ac3f2c7`, cloned fresh, `npm install` (547 packages, every patch applied
 | `npm run test:e2e` | 17 of 17, 146 s |
 | `npm run test:world` | 70 of 72, 5817 s. Every scenario of v0.1.4.9 passes, the long run too. Failing: `tall_tree` (one log left on the ground, the wood pack is unchanged, F10), `wake_for_order` (the bot got out of the bed as the scenario demands; the walk to the cow was then stopped by `unstuck` beside the pen, a behaviour of v0.1.4.8), and one repeat of `creeper_in_sight` timed out when the server dropped the connection (F9). All three passed in the second full run of the tester on the same tree. Not regressions. |
 
+## Found by the play test of the owner, 2026-10-01
+
+Log of 3.5 minutes, 3 processes, 2 ends by "Got stuck and couldn't get unstuck", 1 by the server
+closing the socket at login; 3 orders, none with a result; 9 calls, 4 cents.
+
+| Id | Defect | Evidence | Decision | Owner |
+|---|---|---|---|---|
+| F14 | **`!followPlayer` and `!goToPlayer` cannot go down a ladder.** "follow me" from the house into the basement: the bot walked into the cell of the open trapdoor above the ladder and stood there for 22 s (the trail: `13 67 51 on ladder at oak_trapdoor`); the path search climbs a ladder but never descends one. `unstuck` fired, its escape failed, the process was killed 10 s later (`stuck_restart_after` at its default 1). "come here" said `You have reached MartyByrde2` on the trapdoor and ended the same way. The way into the mine is learned by following, so the release could not be used. The world tests moved the bot down the ladder with the test control and never exercised this. | the log and the trail of 2026-10-01 | Part L (spec section 13): with `routes_pack`, the follow and `!goToPlayer` open a closed trapdoor and go down or up a ladder column with the ladder code of the mining pack when the player is 2 or more blocks below or above. Scenario W75. A fix of v0.1.4.9 on `hotfix/follow-ladder`; the tag goes on its merge commit. | C |
+| F15 | An old mine the bot dug on 09-28 sits 6 blocks from the door of the owner (`mines.json`, key `16`, a shaft from y 66 to 25). `!mineOre` would choose it before the mine of the owner. | `mines.json` of the archive | The play test guide says to delete the entry. No code change. | owner |
+| F16 | `Error with embedding model` three times at every start: the owner's `profiles/claude.json` lost its `"embedding": "openai"` line when the release was pulled. | the log | The line goes back into the profile; the release never carries it. The guide says so. | owner |
+| F17 | The console line `Agent executed: !followPlayer and got: undefined` for an interrupted action. | the log | `... and was stopped.` Done. | C |
+
 ## Not corrected in this release
 
 - A mine named with a number (`"16"`) collides with the key of a mine of the bot at that level.

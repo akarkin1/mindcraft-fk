@@ -39,6 +39,7 @@ Every new switch is off by default. Corrections have no switch.
 ### Changed
 
 - **`!collectBlocks` with an ore takes only ore in sight**: an ore block needs a face towards an open cell. Before, the bot saw ore through the rock and dug to it. When every ore is inside the rock it says so and, with `mining_pack`, points to `!mineOre`. This holds with every switch off; `ore_sense_range` 3 widens it to ore within 3 blocks of an open cell. In a tunnel the bot no longer sends an ore beside it to `!mineOre` because a ray from its eyes did not reach it, and underground it never does.
+- **`!followPlayer` and `!goToPlayer` go down and up a ladder after the player.** When the player is 2 or more blocks below or above and a ladder column is within reach, the bot opens a closed trapdoor and slides down or climbs up the column, then follows on. With `routes_pack`. Before, the bot stood in the cell of the open trapdoor until the unstuck reflex killed the process, so the way into the mine could not be learned by following.
 - **`!goToRememberedPlace` walks a learned route first** when one leads to the place, then the path search does the rest. With `routes_pack`.
 - **`!mineOre` no longer breaks an ore its pickaxe cannot harvest** beside the tunnel; it is listed as passed. With `mine_routes`.
 - The block "what I know" shows a mine of the player by its name.

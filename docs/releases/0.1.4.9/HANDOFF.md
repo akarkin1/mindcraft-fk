@@ -288,6 +288,26 @@ Where this text and the spec disagree, this text wins.
   with `unstuck` paused; a failed route is the whole answer. `collectWork` decides ore in sight with
   `oreInSight` and `sightRange`; underground it never goes to `!mineOre`.
 
+## From part L (the follow down a ladder, E3), the fix after the play test
+
+- `src/agent/library/ladder_logic.js`, pure: `ladderColumnAt(getName, feet, { reach = 2, maxHeight = 64 })`
+  (`getName` may return a name or `{ name, facing }`; the facing is guessed at every cell of the column
+  when the block gives none), `ladderWay(column, feet, target)`, `heightWay`, `entryOf`, `ladderPlace`,
+  `wallYaw`, `LADDER_RULES`.
+- `src/agent/library/ladder_pass.js`: `passLadder(bot, column, way, { clock, timeoutMs = 30000 })`
+  returns `{ ok, reason, text }`, reasons `no_column`, `no_path`, `no_foot`, `no_floor`, `blocked_door`,
+  `stuck`, `timeout`, `interrupted`, `no_module`, `error`. It loads the ladder module of the mining pack
+  with a dynamic `import()` of a computed URL on the first pass (the flags-off test forbids a literal
+  pack import outside `agent.js`). Also `columnNear(bot)`, `ladderReader(bot)`, `passText`, `PASS_RULES`.
+- `followPlayer`: its own 3 s timer for the ladder step (the existing `stuck_since` restarts while the
+  player is within 6 blocks); down only while the bot is above the bottom of the column, up only while
+  below the top; at most 3 passes per sliding minute; a failed text once. `goToPlayer`: the pass by
+  the height rule, then the path search. Down is refused with `no_floor` when there is air under the
+  column. The texts name the cell of the trapdoor, or the top ladder without one.
+- `agent.js` line 1276: an action whose result is `undefined` prints `and was stopped.`
+- Tests read no switch from `settings.js` any more: the prompt-size tests and `rtc_collect_sight` pin
+  what they measure (the owner's `settings.js` on `main` has every pack on).
+
 ## State of the unit tests
 
 After parts A, B and C: E2 reports `npm test` with 5476 tests, 1 failure (the pack list, corrected by
