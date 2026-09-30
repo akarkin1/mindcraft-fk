@@ -46,10 +46,10 @@ const settings = {
 
     "allow_insecure_coding": true, // allows newAction command and model can write/run code on your computer. enable at own risk
     "sandbox_lockdown": true, // runs the SES lockdown that isolates code written by the model. set false only if a library breaks
-    "skill_learning": false, // save code that worked as named skills in bots/<name>/skills, so later code can reuse it. needs allow_insecure_coding
+    "skill_learning": true, // save code that worked as named skills in bots/<name>/skills, so later code can reuse it. needs allow_insecure_coding
     "skill_capture": true, // with skill_learning: review code that worked and save it as a skill when it is general
     "skill_reuse": true, // with skill_learning: show the saved skills to the model and let its code call them as customSkills.<name>
-    "skill_command": false, // with skill_learning and skill_reuse: also offer !useSkill to run a saved skill directly
+    "skill_command": true, // with skill_learning and skill_reuse: also offer !useSkill to run a saved skill directly
     "skill_max_count": 100, // with skill_learning: most skills kept, code of a new skill is not saved when the library is full. 0 for no limit
     "skill_disable_after_errors": 3, // with skill_learning: switch a skill off after it threw this many times in a row. 0 for never
     "cost_meter": true, // count the tokens and dollars of every call to the model, print them in the console and answer !cost
@@ -59,33 +59,33 @@ const settings = {
     "cost_limit_per_session": 10, // with cost_meter: no goals and no new code for the rest of the session at this many dollars. 0 for no limit
     "model_prices": {}, // with cost_meter: dollars per million tokens for other models, e.g. {"my-model": {"input": 1, "output": 5}}
     "max_command_result_chars": 3000, // shorten a command result in the history to this many characters. 0 for no limit
-    "protected_areas": false, // never break or place blocks in saved buildings, only plant and harvest in saved farms. needs world_memory
-    "player_rules": false, // save lasting rules of the players with !rememberRule and put them into every prompt
+    "protected_areas": true, // never break or place blocks in saved buildings, only plant and harvest in saved farms. needs world_memory
+    "player_rules": true, // save lasting rules of the players with !rememberRule and put them into every prompt
     "rules_max": 20, // with player_rules: most rules kept
-    "home_pack": false, // commands and reflexes for home: shelter at night, doors, beds, food and creepers
+    "home_pack": true, // commands and reflexes for home: shelter at night, doors, beds, food and creepers
     "home_reflexes": { "door_closing": true, "night_shelter": true, "creeper_safety": true, "hunger": true }, // with home_pack: which reflexes are on
-    "creeper_fighting": false, // with home_pack: fight a creeper that was led away from the base instead of running from it
-    "storage_pack": false, // store and fetch items with the chests the bot knows: !storeItems, !fetchItem, !chests
-    "farming_pack": false, // harvest, plant and fertilize a farm with !farmCycle and more; !collectBlocks on crops harvests and plants again
-    "wood_pack": false, // cut real trees, craft tools and supplies: !chopTrees, !getTool, !craftSupplies; !collectBlocks on logs cuts trees
-    "mining_pack": false, // mine an ore in a mine with a shaft and a tunnel: !mineOre, !goToMine, !leaveMine
+    "creeper_fighting": true, // with home_pack: fight a creeper that was led away from the base instead of running from it
+    "storage_pack": true, // store and fetch items with the chests the bot knows: !storeItems, !fetchItem, !chests
+    "farming_pack": true, // harvest, plant and fertilize a farm with !farmCycle and more; !collectBlocks on crops harvests and plants again
+    "wood_pack": true, // cut real trees, craft tools and supplies: !chopTrees, !getTool, !craftSupplies; !collectBlocks on logs cuts trees
+    "mining_pack": true, // mine an ore in a mine with a shaft and a tunnel: !mineOre, !goToMine, !leaveMine
     "mining_max_minutes": 30, // with mining_pack: the longest time of one mining trip
     "keep_items": {}, // items the bot keeps when it stores into chests, e.g. {"wheat_seeds": 32, "iron_ingot": -1}, -1 for all
     "stuck_restart_after": 1, // failed escapes of the unstuck reflex in a row before the process restarts. 0 for never
-    "protect_built_blocks": false, // never break blocks that players build with (fences, doors, planks ...), also outside saved areas
-    "knowledge_in_prompt": false, // put what the bot knows (chests, areas, mines, places) into the chat prompt
+    "protect_built_blocks": true, // never break blocks that players build with (fences, doors, planks ...), also outside saved areas
+    "knowledge_in_prompt": true, // put what the bot knows (chests, areas, mines, places) into the chat prompt
     "knowledge_max_chars": 600, // with knowledge_in_prompt: the longest that block may be
     "repeat_guard": 0, // refuse the Nth try in a row of a command of the model that keeps giving the same result. 0 for off
-    "restart_context": false, // after a restart tell the model the last order and why the process ended
-    "say_results": false, // when the model answers nothing after a work skill, say the text of the skill in the chat
+    "restart_context": true, // after a restart tell the model the last order and why the process ended
+    "say_results": true, // when the model answers nothing after a work skill, say the text of the skill in the chat
     "flee_below_health": 0, // below this health the bot does not fight, it retreats. 0 for off
-    "log_timestamps": false, // [HH:MM:SS] before each line of the console
-    "examples_by_last_request": false, // choose the prompt examples by the last request of the player, not by the whole conversation
-    "routes_pack": false, // record the trail and remember the ways the player shows: !rememberRoute, !routes, !forgetRoute; beds and places by a way
+    "log_timestamps": true, // [HH:MM:SS] before each line of the console
+    "examples_by_last_request": true, // choose the prompt examples by the last request of the player, not by the whole conversation
+    "routes_pack": true, // record the trail and remember the ways the player shows: !rememberRoute, !routes, !forgetRoute; beds and places by a way
     "trail_max_steps": 500, // with routes_pack: the steps of the trail that are kept, 50 or more
-    "mine_routes": false, // with mining_pack and routes_pack: the mine of the player: !rememberMine, !rememberTunnel, !collectPassedOre
+    "mine_routes": true, // with mining_pack and routes_pack: the mine of the player: !rememberMine, !rememberTunnel, !collectPassedOre
     "ore_sense_range": 0, // 0: only ore that touches the tunnel or the open air is taken. 3: also ore within 3 blocks of the wall
-    "skills_over_code": false, // !newAction writes no code for digging while a command can do it
+    "skills_over_code": true, // !newAction writes no code for digging while a command can do it
     "allow_vision": false, // allows vision model to interpret screenshots as inputs
     "blocked_actions" : ["!checkBlueprint", "!checkBlueprintLevel", "!getBlueprint", "!getBlueprintLevel", "!restart"] , // commands to disable and remove from docs. Ex: ["!setMode"]
     "code_timeout_mins": -1, // minutes code is allowed to run. -1 for no timeout
