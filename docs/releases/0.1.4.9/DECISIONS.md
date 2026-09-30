@@ -11,7 +11,10 @@ server), 2026-09-30. The decisions of the tech lead and the owner of each correc
 | T1-4 | A route that starts in the column above a ladder gets a ladder entry of `(x, top+1, wall side)`, inside the ground. The trip fails at that step. | `rt_route_logic` 106, `rt_mine_player` 455 | The entry is a cell where the bot can stand at the top: the last step beside the column before the ladder run, else top+2 on the open side, as the legs of the mining pack. | A |
 | T1-3 | In a ladder shaft open to the sky the sky light is 15 down to the foot of the ladder, so the way in starts at the foot and has no ladder. The shaft of the test base and of the owner is under the house roof, so neither is hit; other mines are. | `rt_mine_player` 544 | A step is under open sky only when the sky light or the column says so, the step is not on a ladder, and at least 2 of the 4 horizontal neighbours at head height are open. | A |
 | T1-1 | Going up with a step in the cell of the trapdoor, the trapdoor leg ends in the cell of the trapdoor, not past it. | `rt_route_logic` 63 | The `to` of a door leg is the first cell past the openable in the direction walked. | A |
-| T1-2 | A trail of one step at a known place answers `no_start` instead of `too_short`. | `rt_routes_pack` 161 | Fewer than 2 steps since the last known thing: `too_short`. `no_start` only when no known thing is in the trail at all. | A |
+| T1-2 | A trail of one step at a known place answers `no_start` instead of `too_short`. | `rt_routes_pack` 161 | Fewer than 2 steps since the last known thing: `too_short`; a trail that never left the thing the bot stands at: `too_short`; a walk in from somewhere unknown: `no_start`. | A |
+
+All five are corrected: unit tests 6046, 0 failures. The tester's line `rt_mine_player` 565 expected
+`sky === true` on a ladder step; it now expects `false`, by T1-3.
 
 ## Found by the scenarios of T2
 
