@@ -108,7 +108,7 @@ The cost meter for OpenAI, the routing check, the launch script and the test ser
 
 | Item | Effect |
 |---|---|
-| Five new commands in the prompt | About 500 characters. The prompt is near its limit of 17,000 characters with every switch on. I shorten descriptions to stay under the limit and tell you the sizes. |
+| Five new commands in the prompt | About 500 characters. The prompt is at 16,807 of 17,000 characters with every switch on (10,524 with every switch off). I shorten descriptions to stay under the limit and tell you the sizes. |
 | One more line in "what I know" | About 60 characters |
 | The trail | A file write every 5 seconds, about 40 KB. No model call. |
 | Routes, "this is the mine", "dig here", the ore list | Code only. No model call. |
