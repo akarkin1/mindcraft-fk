@@ -99,6 +99,15 @@ describe('rememberRoute (A2)', () => {
         assert.equal(s.store.size, 0);
     });
 
+    test('fix round T1-2: the bot stands at the only known thing and has not left it: too_short; walked in from elsewhere: no_start', () => {
+        const one = scene({ steps: [st(2, 41, 1)] });
+        assert.deepEqual(P.rememberRoute(one.bot, one.ctx, 'bed'), { ok: false, reason: 'too_short', text: 'The way "bed" is too short: I stand where it starts.', route: null });
+        const stayed = scene({ steps: [st(2, 41, 2), st(2, 41, 1), st(3, 41, 1)] });
+        assert.equal(P.rememberRoute(stayed.bot, stayed.ctx, 'bed').reason, 'too_short');
+        const came = scene({ steps: [st(9, 41, 1), st(8, 41, 1), st(7, 41, 1), st(6, 41, 1), st(5, 41, 1), st(4, 41, 1), st(3, 41, 1)] });
+        assert.equal(P.rememberRoute(came.bot, came.ctx, 'bed').reason, 'no_start');
+    });
+
     test('a place of another dimension does not count', () => {
         const s = scene({ places: { storage: { x: 2, y: 41, z: 1, dimension: 'the_nether' } } });
         assert.equal(P.rememberRoute(s.bot, s.ctx, 'bed').reason, 'no_start');

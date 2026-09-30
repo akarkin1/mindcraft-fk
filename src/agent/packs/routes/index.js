@@ -14,8 +14,8 @@ import { feetCell } from './trail_logic.js';
 import { ladderFacingReader } from './trail.js';
 import { walkByRoute, walkRoute } from './replay.js';
 
-export { TRAIL_RULES, WATER_NAMES, cellBetween, cleanStep, columnIsOpen, feetCell, isJump, isOpenSky, mayStep, nextStep, sameCell,
-    viaOf } from './trail_logic.js';
+export { TRAIL_RULES, WATER_NAMES, cellBetween, cleanStep, columnIsOpen, feetCell, inShaft, isJump, isOpenSky, mayStep, nextStep, openSides,
+    sameCell, stepSky, viaOf } from './trail_logic.js';
 export { DIRECTIONS, OPENABLE_KINDS, ROUTE_RULES, backOf, cleanLeg, dirVector, directionTo, isDirection, knownThings, legCells, legCounts,
     nearCell, nearestRoute, normalizeRouteName, reverseRoute, routeEnds, routeFromSteps, routeStart, skyStart, startOffLadder,
     trapdoorOverLadder } from './route_logic.js';
@@ -85,8 +85,9 @@ function storeOf(source) {
  * are ctx.routes.trail and ctx.routes.store (or options.trail and options.store). Synchronous; never throws.
  * Texts: `I remember the way "bed": from the place "storage" to here, 7 steps, 1 ladder, 1 trapdoor. I walk
  * it in both directions.` (with `I know a way "bed" already. I replace it.` in front when it existed),
- * `I do not know where this way starts. ...` (no_start), `The way "bed" is too short: I stand where it
- * starts.` (too_short).
+ * `I do not know where this way starts. ...` (no_start: no known thing where the way could start), `The way
+ * "bed" is too short: I stand where it starts.` (too_short: fewer than 2 steps since the known thing, or the
+ * only known thing is the one where the bot stands and the trail has fewer than 2 steps or never left it).
  * @param {object} bot
  * @param {object} ctx { routes, places, areas, mines }
  * @param {string} name
@@ -121,6 +122,20 @@ export function rememberRoute(bot, ctx, name, options = {}) {
         const known = knownThings({ places: savedPlaces(ctx, dimension), areas: listAreas(ctx, dimension), mines: knownMines(ctx, dimension) });
         const start = routeStart(steps, known);
         if (!start) {
+            // fix round T1-2: the only known thing is the one where the bot stands: the way is the whole trail,
+            // too short when it has fewer than 2 steps or never left that thing; no_start when no known thing is
+            // at its end either
+            const hits = (thing, step) => {
+                try {
+                    return thing.test(step) === true;
+                } catch {
+                    return false;
+                }
+            };
+            const here = steps.length > 0 ? known.filter(k => hits(k, steps[steps.length - 1])) : [];
+            if (here.length > 0 && (steps.length < 2 || steps.every(step => here.some(k => hits(k, step))))) {
+                return { ok: false, reason: 'too_short', text: tooShortText(clean), route: null };
+            }
             return { ok: false, reason: 'no_start', text: TEXTS.noStart, route: null };
         }
         const used = steps.slice(startOffLadder(steps, start.index));

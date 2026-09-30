@@ -151,15 +151,16 @@ function stepCells(steps) {
     return out;
 }
 
-// Before `index` (going back at most 3 steps), the step outside the column at the top: within 2 blocks
-// sideways of the column and not lower than the top. The index or null.
+// Before `index` (step -1) or after it (step 1), past the steps in the column above the ladders (on or in a
+// trapdoor), the step beside the column at the top: within 2 blocks sideways and not lower than the top.
+// The index or null.
 function topSideIndex(s, index, x, z, top, step) {
-    for (let k = index + step, n = 0; k >= 0 && k < s.length && n < 3; k += step, n++) {
+    for (let k = index + step; k >= 0 && k < s.length; k += step) {
         const st = s[k];
-        if (st.x === x && st.z === z) {
+        if (st.x === x && st.z === z && st.y > top) {
             continue;
         }
-        return Math.max(Math.abs(st.x - x), Math.abs(st.z - z)) <= 2 && st.y >= top ? k : null;
+        return st.x !== x || st.z !== z ? (Math.max(Math.abs(st.x - x), Math.abs(st.z - z)) <= 2 && st.y >= top ? k : null) : null;
     }
     return null;
 }
@@ -232,10 +233,14 @@ function ladderRun(s, a, b, faceAt) {
             end = entryIndex;
         }
     } else {
-        const back = dirVector(backOf(face));
-        entry = { x: x + back.x, y: top + 1, z: z + back.z };
+        // fix round T1-4: a cell to stand on at the top, on the open side (the facing of the ladders), never
+        // inside the wall or the ground
+        const open = dirVector(face);
+        entry = { x: x + open.x, y: top + 2, z: z + open.z };
     }
-    return { start, end, order: 1, leg: { kind: 'ladder', x, z, top, bottom, face, entry } };
+    // the order of the legs is the order of the trail: a run going down comes after what the trail passed
+    // before its first ladder (a trapdoor over it), although the walk before it ends at the entry
+    return { key: down ? a : start, start, end, order: 1, leg: { kind: 'ladder', x, z, top, bottom, face, entry } };
 }
 
 function ladderLegs(s, faceAt) {
@@ -261,17 +266,28 @@ function ladderLegs(s, faceAt) {
 // when the trail crosses its level beside it (walking over a closed trapdoor is no passage).
 function doorPassage(s, i0, i1, via) {
     const make = (f, t) => ({
+        key: f,
         start: f,
         end: t,
         order: 0,
         leg: { kind: 'door', kind2: via.kind, name: via.name, x: via.x, y: via.y, z: via.z, from: cell(s[f]), to: cell(s[t]) },
     });
     if (via.kind === 'trapdoor') {
-        const side = st => (st.y < via.y ? -1 : 1);
+        // below, in its own cell (neither side), above; the passage runs from the last step on one side to the
+        // first step on the other side (fix round T1-1: never the trapdoor's own cell)
+        const side = st => Math.sign(st.y - via.y);
         const near = st => Math.max(Math.abs(st.x - via.x), Math.abs(st.z - via.z)) <= 2;
-        for (let k = Math.max(0, i0 - 1); k <= i1 && k + 1 < s.length; k++) {
-            if (side(s[k]) !== side(s[k + 1]) && near(s[k]) && near(s[k + 1])) {
-                return make(k, k + 1);
+        for (let f = Math.max(0, i0 - 1); f <= i1 && f < s.length; f++) {
+            const a = side(s[f]);
+            if (a === 0 || !near(s[f])) {
+                continue;
+            }
+            let t = f + 1;
+            while (t < s.length && t <= i1 + 2 && side(s[t]) === 0) {
+                t++;
+            }
+            if (t < s.length && t <= i1 + 2 && side(s[t]) === -a && near(s[t])) {
+                return make(f, t);
             }
         }
         return null;
@@ -349,7 +365,7 @@ export function routeFromSteps(steps, options = {}) {
     if (s.length === 0) {
         return { legs: [], from: null, to: null };
     }
-    const special = [...ladderLegs(s, options?.faceAt), ...doorLegs(s)].sort((a, b) => a.start - b.start || a.order - b.order);
+    const special = [...ladderLegs(s, options?.faceAt), ...doorLegs(s)].sort((a, b) => a.key - b.key || a.order - b.order);
     const legs = [];
     let cursor = 0;
     for (const sp of special) {

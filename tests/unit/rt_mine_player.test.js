@@ -561,7 +561,8 @@ describe('B2 and I1 together: the way in recorded in a shaft of ladders under a 
         for (let y = 59; y >= 42; y--) at(31, y, 2, false);
         for (const [x, y, z] of [[31, 41, 2], [31, 41, 3], [31, 41, 4], [32, 41, 5], [33, 41, 5], [34, 41, 5]]) at(x, y, z);
         s.ctx.routes = R.bindRoutes(s.bot, s.ctx, new R.RouteStore(null, {}), trail);
-        assert.ok(trail.list().filter((st) => st.at === 'ladder').every((st) => st.sky === true), 'by the rule of I1 the ladder steps are under open sky');
+        // fix round, decision T1-3 (E1): a step on a ladder or in a shaft is never under open sky, whatever the sky light
+        assert.ok(trail.list().filter((st) => st.at === 'ladder').every((st) => st.sky === false), 'by the rule of T1-3 no ladder step is under open sky');
         const r = await M.rememberMine(s.bot, s.ctx, 'mine');
         assert.equal(r.ok, true, r.text);
         const m = s.ctx.mines.byName('mine', 'overworld');

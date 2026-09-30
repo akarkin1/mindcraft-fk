@@ -49,6 +49,30 @@ describe('routeFromSteps', () => {
         ]);
     });
 
+    test('fix round T1-1, T1-5: a step in the cell of the trapdoor or on it: the legs in the order of the trail, past the trapdoor', () => {
+        const cell60 = st(2, 60, -2, { at: 'oak_trapdoor', via: T });
+        const on = st(2, 61, -2, { on: 'oak_trapdoor', via: T });
+        // up: the trapdoor leg ends above it, not in its cell
+        const up = [...UP.slice(0, 22), cell60, ...UP.slice(22)];
+        const upLegs = R.routeFromSteps(up, { faceAt: faceSouth }).legs;
+        assert.deepEqual(upLegs.map(l => l.kind), ['walk', 'ladder', 'door', 'walk']);
+        assert.deepEqual([upLegs[2].from, upLegs[2].to], [{ x: 2, y: 59, z: -2 }, { x: 2, y: 61, z: -3 }]);
+        // down, with a step on the closed trapdoor and one in its cell: walk to the trapdoor, trapdoor, ladder, walk
+        const down = [...DOWN.slice(0, 3), on, cell60, ...DOWN.slice(3)];
+        const legs = R.routeFromSteps(down, { faceAt: faceSouth }).legs;
+        assert.deepEqual(legs.map(l => l.kind), ['walk', 'door', 'ladder', 'walk']);
+        assert.deepEqual(legs[0].to, { x: 2, y: 61, z: -2 }, 'the walk ends on the trapdoor');
+        assert.deepEqual([legs[1].from, legs[1].to], [{ x: 2, y: 61, z: -2 }, { x: 2, y: 59, z: -2 }]);
+        assert.deepEqual(legs[2].entry, { x: 1, y: 61, z: -2 }, 'the last step beside the column');
+    });
+
+    test('fix round T1-4: a way that starts on the trapdoor: the entry at top + 2 on the open side', () => {
+        const steps = [st(2, 61, -2, { on: 'oak_trapdoor', via: T }), st(2, 60, -2, { at: 'oak_trapdoor', via: T }), ...DOWN.slice(3)];
+        const legs = R.routeFromSteps(steps, { faceAt: faceSouth }).legs;
+        assert.deepEqual(legs.map(l => l.kind), ['door', 'ladder', 'walk']);
+        assert.deepEqual(legs[1].entry, { x: 2, y: 61, z: -1 }, 'south of the column, the ladders face south');
+    });
+
     test('the face of a ladder without the world: from the step on top of the wall, else the step at the foot', () => {
         assert.equal(R.routeFromSteps(UP).legs[1].face, 'south', 'the bot climbed out onto the wall at the north');
         assert.equal(R.routeFromSteps(DOWN).legs[2].face, 'east', 'stepped in from the west: the steps alone cannot know better');

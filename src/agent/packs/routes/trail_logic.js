@@ -103,6 +103,46 @@ export function columnIsOpen(getBlock, cell, scan = TRAIL_RULES.skyScan) {
     return true;
 }
 
+/**
+ * The number of the four horizontal neighbours of the cell above the feet (head height) that are open: not
+ * solid, or not loaded.
+ * @param {(x: number, y: number, z: number) => ({solid?: boolean}|null)} getBlock
+ * @param {{x,y,z}} feet
+ * @returns {number}
+ */
+export function openSides(getBlock, feet) {
+    let n = 0;
+    for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        if (getBlock(feet.x + dx, feet.y + 1, feet.z + dz)?.solid !== true) {
+            n++;
+        }
+    }
+    return n;
+}
+
+/**
+ * True when the feet stand in a shaft: fewer than 2 of the 4 neighbours at head height are open.
+ * @param {(x: number, y: number, z: number) => ({solid?: boolean}|null)} getBlock
+ * @param {{x,y,z}} feet
+ * @returns {boolean}
+ */
+export function inShaft(getBlock, feet) {
+    return openSides(getBlock, feet) < 2;
+}
+
+/**
+ * The `sky` of a step (fix round T1-3): open sky over the feet (isOpenSky, with the column of 64 blocks
+ * when the sky light is missing), and the step is not on a ladder, and the bot is not in a shaft. The sky
+ * light is 15 all the way down a shaft of ladders open to the sky, but its foot is no way out.
+ * @param {(x: number, y: number, z: number) => object|null} getBlock
+ * @param {{x,y,z}} feet
+ * @param {{name?: string, skyLight?: number}|null} here the block at the feet
+ * @returns {boolean}
+ */
+export function stepSky(getBlock, feet, here) {
+    return here?.name !== 'ladder' && isOpenSky(here?.skyLight, () => columnIsOpen(getBlock, feet)) && !inShaft(getBlock, feet);
+}
+
 // The openable of a cell as { kind, name, x, y, z }, the lower half of a door for its upper half; null.
 function openableAt(getBlock, cell) {
     const b = getBlock(cell.x, cell.y, cell.z);
@@ -184,7 +224,7 @@ export function nextStep(last, input, getBlock) {
         z: feet.z,
         on: typeof below?.name === 'string' ? below.name : null,
         at,
-        sky: isOpenSky(here?.skyLight, () => columnIsOpen(getBlock, feet)),
+        sky: stepSky(getBlock, feet, here),
         t: isFiniteNumber(input.t) ? input.t : Date.now(),
         via: viaOf(getBlock, feet, last && isPoint(last) ? last : null),
     };

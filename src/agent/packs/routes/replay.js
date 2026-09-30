@@ -268,8 +268,9 @@ async function doorLeg(bot, ctx, leg, next, clock, ms) {
             return bot.interrupt_code ? INTERRUPTED : { ok: false, reason: 'blocked_door' };
         }
     }
-    if (trapdoorOverLadder(leg, next) && (feetOf(bot)?.y ?? -Infinity) > leg.y) {
-        return OK; // the ladder leg steps onto the ladder
+    if (trapdoorOverLadder(leg, next) && leg.from?.y > leg.y) {
+        // going down: the ladder leg steps onto the ladder (a bot that stood on the trapdoor is on it already)
+        return OK;
     }
     return await walkToCell(bot, leg.to, clock, ms());
 }
@@ -336,7 +337,7 @@ export async function walkRoute(bot, ctx, route, options = {}) {
             const leg = legs[i];
             const next = legs[i + 1];
             // the ladder under a trapdoor is looked at before the trapdoor is opened over it
-            if (trapdoorOverLadder(leg, next) && (feetOf(bot)?.y ?? -Infinity) > next.bottom && !ladderIntact(bot, next, REPLAY_RULES.fallGap)) {
+            if (trapdoorOverLadder(leg, next) && leg.from?.y > leg.y && !ladderIntact(bot, next, REPLAY_RULES.fallGap)) {
                 return failed(i + 1, 'no_path');
             }
             const r = await walkLeg(bot, ctx, legs, i, clock, limit);

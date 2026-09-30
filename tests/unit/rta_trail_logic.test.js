@@ -66,6 +66,36 @@ describe('open sky', () => {
     });
 });
 
+describe('fix round T1-3: no open sky on a ladder or in a shaft', () => {
+    // a 1 x 1 shaft of ladders under open sky: stone around the column (5, 50..63, 5), sky light 15 inside it
+    function shaft() {
+        const blocks = {};
+        for (let y = 50; y <= 63; y++) {
+            for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) blocks[`${5 + dx},${y},${5 + dz}`] = stone;
+            blocks[`5,${y},5`] = { name: 'ladder', solid: false, skyLight: 15 };
+        }
+        blocks['5,50,5'] = { name: 'air', solid: false, skyLight: 15 };
+        blocks['5,49,5'] = stone;
+        return world(blocks, { skyLight: 15 });
+    }
+
+    test('the ladder steps and the foot of the shaft are not under open sky; the grass beside it is', () => {
+        const get = shaft();
+        assert.equal(L.nextStep(null, { pos: { x: 5.5, y: 57.4, z: 5.5 }, onGround: false }, get).sky, false, 'on the ladder');
+        assert.equal(L.nextStep(null, { pos: { x: 5.5, y: 50, z: 5.5 }, onGround: true }, get).sky, false, 'the foot, in the shaft');
+        assert.equal(L.inShaft(get, { x: 5, y: 50, z: 5 }), true);
+        assert.equal(L.openSides(get, { x: 5, y: 50, z: 5 }), 0);
+        assert.equal(L.nextStep(null, { pos: { x: 8.5, y: 64, z: 5.5 }, onGround: true }, get).sky, true, 'on the grass');
+    });
+
+    test('two open sides at head height are enough: a trench, a corner', () => {
+        const trench = world({ '0,65,1': stone, '0,65,-1': stone }, { skyLight: 15 });
+        assert.equal(L.stepSky(trench, { x: 0, y: 64, z: 0 }, { name: 'air', skyLight: 15 }), true);
+        const pit = world({ '0,65,1': stone, '0,65,-1': stone, '1,65,0': stone }, { skyLight: 15 });
+        assert.equal(L.stepSky(pit, { x: 0, y: 64, z: 0 }, { name: 'air', skyLight: 15 }), false);
+    });
+});
+
 describe('via: the openable passed with a step', () => {
     const door = { name: 'oak_door', solid: true, half: 'lower' };
     const upper = { name: 'oak_door', solid: true, half: 'upper' };
