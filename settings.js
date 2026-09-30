@@ -71,7 +71,7 @@ const settings = {
     "mining_pack": true, // mine an ore in a mine with a shaft and a tunnel: !mineOre, !goToMine, !leaveMine
     "mining_max_minutes": 30, // with mining_pack: the longest time of one mining trip
     "keep_items": {}, // items the bot keeps when it stores into chests, e.g. {"wheat_seeds": 32, "iron_ingot": -1}, -1 for all
-    "stuck_restart_after": 1, // failed escapes of the unstuck reflex in a row before the process restarts. 0 for never
+    "stuck_restart_after": 3, // failed escapes of the unstuck reflex in a row before the process restarts. 0 for never
     "protect_built_blocks": true, // never break blocks that players build with (fences, doors, planks ...), also outside saved areas
     "knowledge_in_prompt": true, // put what the bot knows (chests, areas, mines, places) into the chat prompt
     "knowledge_max_chars": 600, // with knowledge_in_prompt: the longest that block may be
