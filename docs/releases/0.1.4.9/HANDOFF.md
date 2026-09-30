@@ -142,6 +142,80 @@ Where this text and the spec disagree, this text wins.
 - The climb out through an open trapdoor is proven only on the real server (W62, W63): the fake bot has
   no climbable-trapdoor rule.
 
+## From part B (mine, E2), done in round 1
+
+### Exports (`src/agent/packs/mining/index.js`)
+
+- `ore_table.js`: every row has `min` and `max` (B4). Old fields unchanged.
+- `mine_logic.js`, pure: I6 as named (`mineAt` returns `{ mine, tunnel, onRoute }` with `tunnel` an
+  index **from 0**; `measureTunnel` also returns `dir`; `branchPlan` returns
+  `{ at, side, dir, junction, start, end, length, done, index }`). Also `legCells`, `legEnd`,
+  `tunnelsOf(mine)` (a mine of the bot shows its one tunnel here), `tunnelCells`, `branchCells`,
+  `roomBox`, `nearestLeg`, `mineDistance`, `tunnelDirection(dirs, feet, { yaw, anchor })`, `isCorridor`,
+  `veinParts` (`take`, `lava`, `beyond`), `cleanPassedEntry`, `addPassedEntry`, `removePassedAt`,
+  `senseOres`, `senseCut`; constants `BRANCH_FROM` 32, `BRANCH_EVERY` 4, `BRANCH_LENGTH` 8,
+  `PASSED_REASONS`, `MAX_PASSED` 200, `CORRIDOR_LIMIT`, `MAX_SENSE_RANGE`. `tunnelView` takes a fifth
+  argument `senseRange = 0`.
+- `mine_store.js`: `mineKey(mine)`, `cleanMineName`, `DOOR_KINDS`, `NEAREST_RANGE`; methods
+  `byName(name, dim)`, `nearest(pos, dim, range = 64)`, `within(pos, dim, range)`, `addPassed(key, entry)`,
+  `removePassed(key, pos)` (both return a copy of the mine or null; `key` is the key or the mine).
+  `get` and `atLevel` return only mines of the bot. `remove` also takes a name. A mine has a new
+  field `area` (the name of the mine area at the tunnel end, or null).
+- `texts.js`: `rememberMineText`, `wayWords`, `noEntranceText`, `rememberTunnelText`, `noTunnelText`,
+  `passedText`, `collectPassedText`, `mineLabel`; `TEXTS.noTrail`, `noMineHere`, `noCorridor`, `noRouteWalk`.
+- `mine_way.js`: `mineRoutesOn(ctx)`, `senseRangeOf(ctx)` (only `makeJob` calls them), `chooseMine`,
+  `wayIn`, `wayOut`, `walksRoute`, `hasDoorLeg`, `routeEndOf`, `minesOf`, `MINE_RANGE`.
+- `mine_player.js`: `rememberMine(bot, ctx, name = 'mine', { playerYaw })`,
+  `rememberTunnel(bot, ctx, name = '', { playerYaw })`, `collectPassedOre(bot, ctx, ore, count = 8, opts)`,
+  `findRoom`. The first two return promises.
+- `mining.js`: `digTunnel` options `tunnel`, `branch`, `line`; result fields `left`, `line`;
+  `prepareMiningTrip` options `level`, `wayDownTo`, `hasBase`; new exports `takePassedOre`, `BRANCH_BLOCKED`.
+
+### Behaviour decided by E2 and accepted
+
+- **The tunnel of the test base runs south** (+z is south). The example texts of the spec said north;
+  the scenarios expect south.
+- The room is searched within 6 blocks of the bot and of every step of the way in, from the last
+  step backwards. Its center is the feet of the bot when the room is near, else the step nearest to
+  the room's blocks.
+- The direction of a tunnel: both ends of a corridor are candidates; the yaw of the player decides
+  within 60 degrees; else the tunnel points away from the room (or the entrance). An open run in a
+  room counts as a tunnel only when every cell has at most 2 open neighbours.
+- The mine for an ore: the nearest within 64 blocks that has a fitting tunnel. The `no_tunnel` text
+  comes only when none fits and a mine of the player is in reach; `!mineOre(ore, n, true)` still digs a
+  new mine.
+- With `mine_routes` on, `digTunnel` also looks at the walls, ceiling and floor of the end cell when it
+  starts (W68). Ore beside the tunnel that the pickaxe cannot harvest is not dug; it is listed with
+  reason `pickaxe` (v0.1.4.8 destroyed it). Blocks ahead are always dug.
+- A cut through the floor (sense range) is dug from the cell behind the bot and closed again. Cuts into
+  the walls and the ceiling stay open.
+- A branch is done at 8 blocks, or when blocked, forbidden by an area, unknown or stuck; the trip goes on.
+- A second `rememberMine` with the same name keeps the old tunnels and the ore list when the new
+  entrance is within 64 blocks of the old one.
+- `collectPassedOre("")` or `("all")` takes every ore. It walks in and out when it starts outside the
+  mine; it stays when it starts in the room or a tunnel.
+- Texts beyond the spec: `It is in the area "x".` (appended to the text of `rememberMine`);
+  `It has no tunnel yet.` and `Its tunnels are at levels 40 and 25.` (for `no_tunnel`);
+  `I am in the mine "mine".` (`goToMine`); `The room of the mine has no chest.`
+- Known limit: a mine named with a number (`"16"`) collides with the key of a mine of the bot at that level.
+- `walkRoute` is called with the deadline of the trip; its reason `time` is reported as `no_path`.
+
+### For part G (glue, E5)
+
+1. `!rememberMine(name)` calls `pack.rememberMine(bot, ctx, name, { playerYaw })`;
+   `!rememberTunnel(name)` calls `pack.rememberTunnel(bot, ctx, name, { playerYaw })`;
+   `!collectPassedOre(ore, num)` calls `pack.collectPassedOre(bot, ctx, ore, num)`.
+2. I7: `const at = pack.mineAt(mines.list(dim), pos)`; `extra.mine = at ? { name: at.mine.name, tunnel: at.tunnel, level: at.tunnel !== null ? pack.tunnelsOf(at.mine)[at.tunnel].level : at.mine.level, onRoute: at.onRoute } : null`.
+   `tunnel` stays from 0; `whereLine` of part C adds 1.
+
+### For the testers
+
+- W65 and W66 expect "south". W65's text ends with `It is in the area "..."` when a mine area covers the
+  tunnel end. `tunnelsOf` lives in `mine_logic.js`.
+- Entries of `passed` are `{ ore: 'gold', x, y, z, reason, seen }` (`seen` an ISO time). Mine names are
+  stored trimmed, lower case, spaces as `_`.
+
 ## State of the unit tests
 
-After parts A and C: E1 reports `npm test` with 5474 tests, 1 failure (the pack list, corrected).
+After parts A, B and C: E2 reports `npm test` with 5476 tests, 1 failure (the pack list, corrected by
+the tech lead). The 17 test files of the mining pack and the 5 of part B: 346 tests, 0 failures.
