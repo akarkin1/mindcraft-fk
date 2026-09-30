@@ -51,6 +51,9 @@ let savedFile;
 beforeEach(() => {
     cap = captureConsole();
     savedFile = { ore_sense_range: fileSettings.ore_sense_range, mining_pack: fileSettings.mining_pack };
+    // the tests never depend on the values of the owner's settings.js: both switches off unless a test says so
+    fileSettings.ore_sense_range = 0;
+    fileSettings.mining_pack = false;
     agentSettings.setSettings({});
 });
 afterEach(() => {

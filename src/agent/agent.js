@@ -1273,7 +1273,7 @@ export class Agent {
                 if (typeof execute_res === 'string' && execute_res !== '' && execute_res === this.last_pack_text)
                     pack_text = execute_res; // the text of a work skill (runPack, the home pack)
 
-                console.log('Agent executed:', command_name, 'and got:', execute_res);
+                console.log(...(execute_res === undefined ? ['Agent executed:', command_name, 'and was stopped.'] : ['Agent executed:', command_name, 'and got:', execute_res]));
                 used_command = true;
 
                 if (execute_res)

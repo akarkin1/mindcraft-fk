@@ -5,6 +5,8 @@ import Vec3 from 'vec3';
 import settings from "../../../settings.js";
 import agentSettings from "../settings.js";
 import { isOreName, oreInSight, oreKind, outOfSightText, sightRange, SIGHT_TEXT_DISTANCE } from "./ore_sight_logic.js";
+import { heightWay, ladderPlace, ladderWay } from "./ladder_logic.js";
+import { columnNear, passLadder } from "./ladder_pass.js";
 import { findOpenables, openDoor, passThrough } from "../packs/home/doors.js";
 import { sideOf } from "../packs/home/door_logic.js";
 import { acquireEatLock } from "../packs/home/eat_lock.js";
@@ -2042,6 +2044,30 @@ export async function goToNearestEntity(bot, entityType, min_distance=2, range=6
     return true;
 }
 
+// v0.1.4.9 (section 13, part L, F14 of the play test): the path search climbs a ladder but never descends
+// one, and it stops in the cell of an open trapdoor above a ladder. With routes_pack, followPlayer and
+// goToPlayer go down or up a column of ladders near the bot with passLadder (ladder_pass.js, the ladder
+// walking of the mining pack), then the path search goes on. With the switch off nothing changes.
+const LADDER_PASSES_PER_MINUTE = 3;
+const LADDER_PASS_WINDOW_MS = 60000;
+
+function ladderStepOn() {
+    return currentSetting('routes_pack') === true;
+}
+
+// One pass, with the log line before it; the progress for the mode unstuck after it. Never throws.
+async function ladderStep(bot, column, way, username) {
+    const place = ladderPlace(column);
+    log(bot, way === 'down' ? `I go down the ladder at ${place} after ${username}.` : `I climb up the ladder at ${place} after ${username}.`);
+    const pass = await passLadder(bot, column, way);
+    try {
+        bot.modes?.noteProgress?.('ladder');
+    } catch (err) {
+        // modes are optional
+    }
+    return pass;
+}
+
 export async function goToPlayer(bot, username, distance=3) {
     /**
      * Navigate to the given player.
@@ -2068,6 +2094,20 @@ export async function goToPlayer(bot, username, distance=3) {
     if (!player) {
         log(bot, `Could not find ${username}.`);
         return false;
+    }
+
+    // v0.1.4.9 (section 13, F14): with routes_pack, a player 2 or more blocks below or above and a column of
+    // ladders within reach: down or up the ladder first, then the path search as before
+    if (ladderStepOn()) {
+        const column = columnNear(bot);
+        const way = heightWay(column, bot.entity.position, player.position);
+        if (way) {
+            const pass = await ladderStep(bot, column, way, username);
+            if (!pass.ok && pass.reason !== 'interrupted')
+                log(bot, pass.text);
+            if (bot.interrupt_code)
+                return;
+        }
     }
 
     distance = Math.max(distance, 0.5);
@@ -2104,11 +2144,50 @@ export async function followPlayer(bot, username, distance=4) {
     let stuck_pos = bot.entity.position.clone();
     let stuck_since = Date.now();
     let door_helps = 0;
+    // v0.1.4.9 (section 13, F14): the ladder step, with routes_pack. Its own clock of standing still: the one
+    // of the doors restarts near the player, and a player 5 blocks down the ladder is near
+    const ladders = ladderStepOn();
+    let still_pos = bot.entity.position.clone();
+    let still_since = Date.now();
+    const ladder_passes = []; // the times of the passes of the last minute
+    const ladder_failures = new Set(); // the texts of failed passes, each written once
 
     while (!bot.interrupt_code) {
         await new Promise(resolve => setTimeout(resolve, 500));
         // in cheat mode, if the distance is too far, teleport to the player
         const distance_from_player = bot.entity.position.distanceTo(player.position);
+
+        if (ladders) {
+            if (bot.entity.position.distanceTo(still_pos) >= 0.1) {
+                still_pos = bot.entity.position.clone();
+                still_since = Date.now();
+            }
+            while (ladder_passes.length > 0 && Date.now() - ladder_passes[0] >= LADDER_PASS_WINDOW_MS)
+                ladder_passes.shift();
+            const idle = Date.now() - still_since >= 3000 || !bot.pathfinder.goal;
+            if (idle && distance_from_player > distance && ladder_passes.length < LADDER_PASSES_PER_MINUTE) {
+                const column = columnNear(bot);
+                const way = ladderWay(column, bot.entity.position, player.position);
+                if (way) {
+                    ladder_passes.push(Date.now());
+                    bot.pathfinder.setGoal(null);
+                    const pass = await ladderStep(bot, column, way, username);
+                    if (bot.interrupt_code)
+                        break;
+                    if (!pass.ok && !ladder_failures.has(pass.text)) {
+                        ladder_failures.add(pass.text);
+                        log(bot, pass.text);
+                    }
+                    bot.pathfinder.setMovements(move);
+                    bot.pathfinder.setGoal(new pf.goals.GoalFollow(player, distance), true);
+                    still_pos = bot.entity.position.clone();
+                    still_since = Date.now();
+                    stuck_pos = still_pos.clone();
+                    stuck_since = still_since;
+                    continue;
+                }
+            }
+        }
 
         const teleport_distance = 100;
         const ignore_modes_distance = 30;
