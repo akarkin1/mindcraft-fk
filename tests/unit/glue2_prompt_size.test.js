@@ -86,7 +86,9 @@ after(() => {
 // that agent.knowledgeBlock() gives (v0.1.4.8), used only with knowledge_in_prompt.
 async function conversingPrompt(switches, knowledge = '') {
     const profile = JSON.parse(fs.readFileSync(repoPath('profiles/claude.json'), 'utf8'));
-    const settings = { ...S.runSettings(M.fileSettings, profile, false), ...switches };
+    // the 17,000 limit counts the switches of the fork's parts; skill learning is pinned off, never read from
+        // settings.js (CLAUDE.md: unit tests never assert the values of settings; decision of the tech lead)
+        const settings = { ...S.runSettings(M.fileSettings, profile, false), ...switches, skill_learning: false, skill_command: false };
     M.settingsModule.setSettings(settings);
     const blocked = S.blockedFor(settings, M.skills.skillFlags(settings));
     const agent = {
