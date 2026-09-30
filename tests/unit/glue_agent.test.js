@@ -279,8 +279,10 @@ describe('the area store of the current world (G5)', () => {
     test('homeContext: what the home pack gets', () => {
         const agent = Object.assign(Object.create(Agent.prototype), { memory_bank: { recallPlaceInfo() {} }, area_store: { list: () => [] }, bot: { output: '' } });
         const ctx = agent.homeContext();
-        // v0.1.4.8 (part G): say (C2) and whereAmI (I2), tested in stg_agent.test.js
-        assert.deepEqual(Object.keys(ctx).sort(), ['areas', 'log', 'now', 'places', 'say', 'settings', 'skills', 'whereAmI', 'world']);
+        // v0.1.4.8 (part G): say (C2) and whereAmI (I2), tested in stg_agent.test.js; v0.1.4.9: routes (I4), null
+        // without routes_pack, tested in rtg_agent.test.js
+        assert.deepEqual(Object.keys(ctx).sort(), ['areas', 'log', 'now', 'places', 'routes', 'say', 'settings', 'skills', 'whereAmI', 'world']);
+        assert.equal(ctx.routes, null);
         assert.equal(ctx.areas, agent.area_store);
         assert.equal(ctx.places, agent.memory_bank);
         assert.equal(ctx.settings, settings);

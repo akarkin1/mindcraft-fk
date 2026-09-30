@@ -14,6 +14,7 @@ if (Get-Command fnm -ErrorAction SilentlyContinue) {
 Push-Location $PSScriptRoot
 try {
     $env:ANTHROPIC_API_KEY = Get-Secret -Name AnthropicsApiKey -AsPlainText -ErrorAction Stop
+    $env:OPENAI_API_KEY = Get-Secret -Name OpenaiApiKey -AsPlainText -ErrorAction Stop
     if ($Log) {
         $dir = New-Item -ItemType Directory -Force "$env:LOCALAPPDATA\Mindcraft\logs"
         $file = Join-Path $dir ("claude-{0:yyyyMMdd-HHmmss}.log" -f (Get-Date))
@@ -26,5 +27,6 @@ try {
 }
 finally {
     Remove-Item Env:ANTHROPIC_API_KEY -ErrorAction SilentlyContinue
+    Remove-Item Env:OPENAI_API_KEY -ErrorAction SilentlyContinue
     Pop-Location
 }

@@ -65,22 +65,38 @@ export function depthOfBot(bot, now = Date.now()) {
     }
 }
 
+// v0.1.4.9, I7: the mine the glue found for the position of the bot (mineAt of the mining pack), or null.
+function mineOf(extra) {
+    try {
+        const mine = extra && typeof extra === 'object' ? extra.mine : null;
+        return mine && typeof mine === 'object' ? mine : null;
+    } catch {
+        return null;
+    }
+}
+
 /**
- * Where the bot is: { area: { name, type } | null, depth, underground }. underground is true when the
- * bot is more than 8 blocks under the ground around it, or inside an area of type mine. Never throws.
+ * Where the bot is: { area: { name, type } | null, depth, underground, mine }. underground is true when
+ * the bot is more than 8 blocks under the ground around it, inside an area of type mine, or in a mine
+ * (v0.1.4.9, I7: extra.mine, which the glue computes from mineAt with mine_routes; its room, its
+ * tunnels and its route). mine is extra.mine, { name, tunnel, level }, or null; a caller without extra
+ * gets mine null and the rest as in v0.1.4.8. Never throws.
  * @param {object} bot
  * @param {number} [now]
- * @returns {{area: {name: string, type: string|null}|null, depth: number, underground: boolean}}
+ * @param {{mine?: {name: string|null, tunnel: number|null, level: number}|null}} [extra]
+ * @returns {{area: {name: string, type: string|null}|null, depth: number, underground: boolean,
+ *   mine: {name: string|null, tunnel: number|null, level: number}|null}}
  */
-export function whereAmI(bot, now = Date.now()) {
+export function whereAmI(bot, now = Date.now(), extra = {}) {
+    const mine = mineOf(extra);
     try {
         const pos = bot?.entity?.position;
         if (!pos)
-            return { area: null, depth: 0, underground: false };
+            return { area: null, depth: 0, underground: mine !== null, mine };
         const area = areaAt(bot, pos);
         const depth = depthOfBot(bot, now);
-        return { area, depth, underground: isUnderground(depth) || area?.type === 'mine' };
+        return { area, depth, underground: isUnderground(depth) || area?.type === 'mine' || mine !== null, mine };
     } catch {
-        return { area: null, depth: 0, underground: false };
+        return { area: null, depth: 0, underground: mine !== null, mine };
     }
 }

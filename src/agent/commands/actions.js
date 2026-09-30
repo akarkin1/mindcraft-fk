@@ -8,6 +8,8 @@ import { scanBuilding, findFencedGroundNear } from '../areas/area_scan.js';
 import { AREA_TYPES, normalizeAreaName, replaceRefusal } from '../areas/area_store.js';
 import { goToShelter, sleepInBed, eatBestFood, enterBuilding, passThrough, closeNear } from '../packs/home/index.js';
 import { REMEMBER_RULE_DESCRIPTION, rememberRuleReply, forgetRuleReply } from '../rules/rule_commands.js';
+import { isDiggingRequest, digRefusalText } from '../dig_request_logic.js';
+import { oreInSight, sightRange } from '../library/ore_sight_logic.js';
 
 
 // v0.1.4.8, I5 (S3, S4): a command that was stopped starts no turn of the model. What it did so far goes
@@ -315,6 +317,21 @@ const FARMING_OFF = 'The farming pack is off.';
 const WOOD_OFF = 'The wood pack is off.';
 const MINING_OFF = 'The mining pack is off.';
 const UNKNOWN_ORE = (ore) => `I do not know the ore "${ore}". I know coal, copper, iron, lapis, gold, redstone and diamond.`;
+// v0.1.4.9 (I10): the commands of the routes pack and of the mine of the player
+const ROUTES_OFF = 'The routes pack is off.';
+const MINE_ROUTES_OFF = 'The mine routes are off. They need mine_routes, mining_pack and routes_pack.';
+
+/**
+ * v0.1.4.9 (section 2): mine_routes as it takes effect. It needs mining_pack and routes_pack; without
+ * routes_pack the agent warns once at the start and the mine routes are off. The agent, the commands
+ * and the guard of !newAction ask this one helper.
+ * @param {object} [s] the settings, those of the agent without it
+ * @returns {boolean}
+ */
+export function mineRoutesOn(s = settings) {
+    // mine_routes exactly true, as the mining pack reads it (mine_way.js)
+    return Boolean(s?.mining_pack) && Boolean(s?.routes_pack) && s?.mine_routes === true;
+}
 
 // Runs fn(pack, bot, ctx) of a work pack as the action `action:<label>` and returns the text of its
 // result word for word, like the commands of the home pack. Nothing when the action was interrupted:
@@ -323,6 +340,37 @@ async function runPack(agent, label, pack, name, fn) {
     if (!pack)
         return `The ${name} pack could not be loaded.`;
     return await runForText(agent, label, async () => await fn(pack, agent.bot, agent.packContext()), -1, { pack: true });
+}
+
+// v0.1.4.9 (decision of the tech lead): a command of a pack that does not move the bot is no action: its
+// perform awaits fn(pack) and returns the text of the result ({ ok, reason, text } or a text) word for word, so a
+// running action (!followPlayer into the mine) keeps running. Like runForText it notes the text for say_results
+// and the result on the entry of the command for the repeat guard. The caller builds the pack context. Never throws.
+async function runPlain(agent, pack, name, fn) {
+    if (!pack)
+        return `The ${name} pack could not be loaded.`;
+    const entry = Array.isArray(agent.running_commands) ? agent.running_commands[agent.running_commands.length - 1] ?? null : null;
+    let result = null;
+    let text = null;
+    try {
+        const value = await fn(pack);
+        if (value !== null && typeof value === 'object') {
+            result = value;
+            text = typeof value.text === 'string' ? value.text : null;
+        } else if (typeof value === 'string') {
+            text = value;
+        }
+    } catch (error) {
+        console.warn(`The ${name} pack failed:`, error);
+        text = `The ${name} pack failed: ${error?.message ?? error}`;
+        result = { ok: false, reason: 'error', text };
+    }
+    if (entry)
+        entry.pack = { ok: result ? result.ok : undefined, reason: result?.reason ?? null, text };
+    if (typeof text !== 'string' || text === '')
+        return '';
+    agent.last_pack_text = text;
+    return text;
 }
 
 // S4: the position of the chest that !putInChest, !takeFromChest and !viewChest will use, the nearest
@@ -352,19 +400,44 @@ async function recordChest(agent, pos) {
     }
 }
 
-// M5: true when a block of the ore, in stone or deepslate, is within 16 blocks and the bot can see it.
-function oreInSight(bot, type) {
+// M5: true when a block of the ore, in stone or deepslate, is within 16 blocks and in sight. v0.1.4.9 (F4, decision
+// of the tech lead): in sight by the rule of part C (oreInSight of library/ore_sight_logic.js, the range of
+// ore_sense_range): 0 a face in the open, 3 an open cell within 3 blocks. The ray from the eyes of v0.1.4.7
+// (bot.canSeeBlock) missed an ore in the wall at the height of the feet. Never throws.
+function oreVisible(bot, type) {
     try {
         const base = type.replace(/^deepslate_/, '');
-        return world.getNearestBlocks(bot, [base, `deepslate_${base}`], 16, 32).some((block) => bot.canSeeBlock(block));
+        const range = sightRange(settings.ore_sense_range);
+        const read = blockNameOf(bot);
+        const nameAt = (x, y, z) => {
+            try {
+                return read(x, y, z);
+            } catch (error) {
+                return null; // not loaded: rock
+            }
+        };
+        return world.getNearestBlocks(bot, [base, `deepslate_${base}`], 16, 32)
+            .some((block) => Boolean(block?.position) && oreInSight(nameAt, block.position, range));
     } catch (error) {
         console.warn('Could not look for the ore:', error);
         return false;
     }
 }
 
+// v0.1.4.9 (F4): true when agent.whereAmI() says the bot is underground (deep, in a mine area or a mine). Never throws.
+function isUnderground(agent) {
+    try {
+        return typeof agent?.whereAmI === 'function' && agent.whereAmI()?.underground === true;
+    } catch (error) {
+        console.warn('Could not ask where the bot is:', error);
+        return false;
+    }
+}
+
 // F3, T5, M5: the skill of a work pack that !collectBlocks leads to for a block, or null for the old
-// collecting. Decided by the name of the block and the switches. Never throws.
+// collecting. Decided by the name of the block and the switches. Never throws. v0.1.4.9 (F4): an ore out of sight
+// goes to !mineOre only on the surface; underground the old collecting runs, and the text of the library (C1) is
+// the answer (!mineOre starts no mine underground).
 function collectWork(agent, type) {
     try {
         if (settings.farming_pack && agent.work_packs?.farming?.harvestTarget(type))
@@ -372,7 +445,7 @@ function collectWork(agent, type) {
         if (settings.wood_pack && agent.work_packs?.wood?.woodKind(type))
             return { name: 'wood', pack: agent.work_packs.wood, run: (pack, bot, ctx, num) => pack.chopTrees(bot, ctx, num, pack.woodKind(type)) };
         const ore = settings.mining_pack ? agent.work_packs?.mining?.oreOf(type) : null;
-        if (ore && !oreInSight(agent.bot, type))
+        if (ore && !oreVisible(agent.bot, type) && !isUnderground(agent))
             return { name: 'mining', pack: agent.work_packs.mining, run: (pack, bot, ctx, num) => pack.mineOre(bot, ctx, ore.ore ?? type, num) };
     } catch (error) {
         console.warn('Could not choose the skill for !collectBlocks:', error);
@@ -400,6 +473,106 @@ async function goToMine(pack, bot, ctx, ore) {
             return { ok: false, reason: 'no_mine', text: 'I know no mine in this world.' };
     }
     return await pack.descendToLevel(bot, ctx, mine.level, { mine });
+}
+
+// v0.1.4.9 (B3, I10): the yaw of the player who gave the order that runs (agent.last_order), in radians as
+// mineflayer gives it, when that player is in bot.players and has an entity; else undefined. Never throws.
+function orderPlayerYaw(agent) {
+    try {
+        const by = agent?.last_order?.by;
+        const yaw = typeof by === 'string' && by !== '' ? agent.bot?.players?.[by]?.entity?.yaw : undefined;
+        return typeof yaw === 'number' && Number.isFinite(yaw) ? yaw : undefined;
+    } catch (error) {
+        return undefined;
+    }
+}
+
+// v0.1.4.9 (F2, decision of the tech lead): !goToRememberedPlace with routes_pack walks a way that the player showed
+// FIRST when ctx.routes.routeFor finds one for the place (one end within 4 blocks of the place, the other within 32
+// of the bot); the path search only does the rest (the path search alone stood on the closed trapdoor until the
+// reflex unstuck stopped the command). Unstuck is paused from here to the end of the command, as runPack does. The
+// text of the route goes into the output. Returns 'none' without such a route (the command goes on as before),
+// 'walked' when the route arrived, 'failed' when it failed or was stopped: then nothing else is tried. Never throws.
+async function routeFirst(agent, pos) {
+    try {
+        const routes = agent.homeContext().routes;
+        const place = { x: pos[0], y: pos[1], z: pos[2] };
+        if (typeof routes?.routeFor !== 'function' || typeof routes.walkTo !== 'function' || !routes.routeFor(place))
+            return 'none';
+        pauseUnstuck(agent);
+        const result = await routes.walkTo(agent.bot, place);
+        if (!result || result.reason === 'no_route')
+            return 'none';
+        if (typeof result.text === 'string' && result.text !== '')
+            skills.log(agent.bot, result.text);
+        return result.ok === true && !agent.bot.interrupt_code ? 'walked' : 'failed';
+    } catch (error) {
+        console.warn('Could not walk the way to the place:', error);
+        return 'none';
+    }
+}
+
+// v0.1.4.9 (I4): !goToRememberedPlace, after the walk of the path search: when the bot is still more than
+// 2 blocks from the place, a way that the player showed (ctx.routes.walkTo of the routes pack). Its text
+// goes into the output, unless no way leads there (reason no_route). Never throws.
+const PLACE_REACHED = 2;
+async function walkRememberedWay(agent, pos) {
+    try {
+        const bot = agent.bot;
+        const at = bot.entity?.position;
+        if (!at || Math.hypot(at.x - pos[0], at.y - pos[1], at.z - pos[2]) <= PLACE_REACHED)
+            return;
+        const routes = agent.homeContext().routes;
+        if (typeof routes?.walkTo !== 'function')
+            return;
+        pauseUnstuck(agent); // the walk of a way is progress, not being stuck
+        const result = await routes.walkTo(bot, { x: pos[0], y: pos[1], z: pos[2] });
+        if (result && result.reason !== 'no_route' && typeof result.text === 'string' && result.text !== '')
+            skills.log(bot, result.text);
+    } catch (error) {
+        console.warn('Could not walk a way to the place:', error);
+    }
+}
+
+// v0.1.4.9 (I8): the digging commands that are on, for digRefusalText: !mineOre with mining_pack, !rememberTunnel
+// with the mine routes, !collectBlocks always; none that settings.blocked_actions or the agent hides.
+function diggingCommands(agent) {
+    const hidden = new Set([...(Array.isArray(settings.blocked_actions) ? settings.blocked_actions : []),
+        ...(Array.isArray(agent?.blocked_actions) ? agent.blocked_actions : [])]);
+    const on = [];
+    if (settings.mining_pack)
+        on.push('!mineOre');
+    if (mineRoutesOn())
+        on.push('!rememberTunnel');
+    on.push('!collectBlocks');
+    return on.filter((name) => !hidden.has(name));
+}
+
+// v0.1.4.9 (I8): the text of a player's last message in the history, without the name in front; '' without one.
+function lastPlayerMessage(agent) {
+    const turns = agent?.history?.getHistory?.() ?? [];
+    for (let i = turns.length - 1; i >= 0; i--) {
+        const turn = turns[i];
+        if (turn?.role === 'user' && typeof turn.content === 'string')
+            return turn.content.replace(/^[^:\s]+:\s*/, '');
+    }
+    return '';
+}
+
+// v0.1.4.9 (I8, skills_over_code): the answer of !newAction when the model asks for code about digging (its
+// prompt or the last message of a player is a digging request); null when the code may be written, also
+// always for a !newAction that the player typed. Never throws.
+function digCodeRefusal(agent, prompt) {
+    try {
+        if (typedByPlayer(agent, '!newAction'))
+            return null;
+        if (!isDiggingRequest(prompt).digging && !isDiggingRequest(lastPlayerMessage(agent)).digging)
+            return null;
+        return digRefusalText(diggingCommands(agent));
+    } catch (error) {
+        console.warn('Could not check the code request for digging:', error);
+        return null;
+    }
 }
 
 // v0.1.4.8: true while the command `name` runs as the order that a player typed in the chat (the newest
@@ -484,6 +657,10 @@ export const actionsList = [
                 agent.openChat('newAction is disabled. Enable with allow_insecure_coding=true in settings.js');
                 return "newAction not allowed! Code writing is disabled in settings. Notify the user.";
             }
+            // v0.1.4.9 (I8): with skills_over_code no code for digging where a command does it; the code model is not called
+            const refusal = settings.skills_over_code ? digCodeRefusal(agent, prompt) : null;
+            if (refusal)
+                return refusal;
             if (!costAllows(agent, 'coding'))
                 return 'I reached my cost limit and do not write new code now. Use the commands I have.';
             let result = "";
@@ -588,7 +765,7 @@ export const actionsList = [
     },
     {
         name: '!searchForBlock',
-        description: 'Find and go to the nearest block of a given type in a given range.',
+        description: 'Go to the nearest block of a type within a range.',
         params: {
             'type': { type: 'BlockName', description: 'The block type to go to.' },
             'search_range': { type: 'float', description: 'The range to search for the block. Minimum 32.', domain: [10, 512], default: 64 }
@@ -603,7 +780,7 @@ export const actionsList = [
     },
     {
         name: '!searchForEntity',
-        description: 'Find and go to the nearest entity of a given type in a given range.',
+        description: 'Go to the nearest entity of a type within a range.',
         params: {
             'type': { type: 'string', description: 'The type of entity to go to.' },
             'search_range': { type: 'float', description: 'The range to search for the entity.', domain: [32, 512], default: 64 }
@@ -614,7 +791,7 @@ export const actionsList = [
     },
     {
         name: '!moveAway',
-        description: 'Move away from the current location in any direction by a given distance.',
+        description: 'Move this far away from here, in any direction.',
         params: {'distance': { type: 'float', description: 'The distance to move away.', domain: [0, Infinity] }},
         perform: runAsAction(async (agent, distance) => {
             await skills.moveAway(agent.bot, distance);
@@ -653,12 +830,24 @@ export const actionsList = [
                 skills.log(agent.bot, `"${name}" is in the dimension ${place_dimension}, but you are in ${current_dimension}. You cannot travel between dimensions by yourself.`);
                 return;
             }
+            // v0.1.4.9 (F2): a way that the player showed to the place goes first (it knows the doors, so no
+            // enterBuildingAround before it); after it the path search does the rest; a failed way is the answer
+            const way = settings.routes_pack ? await routeFirst(agent, pos) : 'none';
+            if (way === 'failed' || agent.bot.interrupt_code)
+                return;
+            if (way === 'walked') {
+                await skills.goToPosition(agent.bot, pos[0], pos[1], pos[2], 1);
+                return;
+            }
             if (settings.home_pack && agent.area_store) {
                 await enterBuildingAround(agent, pos, place_dimension ?? current_dimension);
                 if (agent.bot.interrupt_code)
                     return;
             }
             await skills.goToPosition(agent.bot, pos[0], pos[1], pos[2], 1);
+            // v0.1.4.9 (I4): where the path search did not arrive, a way that the player showed
+            if (settings.routes_pack && !agent.bot.interrupt_code)
+                await walkRememberedWay(agent, pos);
         })
     },
     {
@@ -733,9 +922,9 @@ export const actionsList = [
             'x1': { type: 'float', description: 'Corner 1, x.', domain: [-Infinity, Infinity] },
             'y1': { type: 'float', description: 'Corner 1, y.', domain: [-64, 320] },
             'z1': { type: 'float', description: 'Corner 1, z.', domain: [-Infinity, Infinity] },
-            'x2': { type: 'float', description: 'The opposite corner, x.', domain: [-Infinity, Infinity] },
-            'y2': { type: 'float', description: 'The opposite corner, y.', domain: [-64, 320] },
-            'z2': { type: 'float', description: 'The opposite corner, z.', domain: [-Infinity, Infinity] }
+            'x2': { type: 'float', description: 'Corner 2, x.', domain: [-Infinity, Infinity] },
+            'y2': { type: 'float', description: 'Corner 2, y.', domain: [-64, 320] },
+            'z2': { type: 'float', description: 'Corner 2, z.', domain: [-Infinity, Infinity] }
         },
         perform: async function (agent, name, type, x1, y1, z1, x2, y2, z2) {
             const store = agent.area_store;
@@ -831,9 +1020,9 @@ export const actionsList = [
             return 'Give the specified item to the given player.';
         },
         params: {
-            'player_name': { type: 'string', description: 'The name of the player to give the item to.' },
-            'item_name': { type: 'ItemName', description: 'The name of the item to give.' },
-            'num': { type: 'int', description: 'The number of items to give.', domain: [1, Number.MAX_SAFE_INTEGER], default: 1 }
+            'player_name': { type: 'string', description: 'The name of the player.' },
+            'item_name': { type: 'ItemName', description: 'The item to give.' },
+            'num': { type: 'int', description: 'How many to give.', domain: [1, Number.MAX_SAFE_INTEGER], default: 1 }
         },
         perform: runAsAction(async (agent, player_name, item_name, num) => {
             await fetchToGive(agent, item_name, num);
@@ -898,8 +1087,8 @@ export const actionsList = [
         name: '!discard',
         description: 'Discard the given item from the inventory.',
         params: {
-            'item_name': { type: 'ItemName', description: 'The name of the item to discard.' },
-            'num': { type: 'int', description: 'The number of items to discard.', domain: [1, Number.MAX_SAFE_INTEGER] }
+            'item_name': { type: 'ItemName', description: 'The item to discard.' },
+            'num': { type: 'int', description: 'How many to discard.', domain: [1, Number.MAX_SAFE_INTEGER] }
         },
         perform: runAsAction(async (agent, item_name, num) => {
             // v0.1.4.8 (S14): the walk away before the toss has a limit and never digs; the walk back only when the bot moved
@@ -944,7 +1133,7 @@ export const actionsList = [
         description: 'Craft the given recipe a given number of times.',
         params: {
             'recipe_name': { type: 'ItemName', description: 'The name of the output item to craft.' },
-            'num': { type: 'int', description: 'The number of times to craft the recipe. This is NOT the number of output items, as it may craft many more items depending on the recipe.', domain: [1, Number.MAX_SAFE_INTEGER], default: 1 }
+            'num': { type: 'int', description: 'How many times to craft the recipe. NOT the number of items: one craft can make several.', domain: [1, Number.MAX_SAFE_INTEGER], default: 1 }
         },
         perform: runAsAction(async (agent, recipe_name, num) => {
             await skills.craftRecipe(agent.bot, recipe_name, num);
@@ -954,8 +1143,8 @@ export const actionsList = [
         name: '!smeltItem',
         description: 'Smelt the given item the given number of times.',
         params: {
-            'item_name': { type: 'ItemName', description: 'The name of the input item to smelt.' },
-            'num': { type: 'int', description: 'The number of times to smelt the item.', domain: [1, Number.MAX_SAFE_INTEGER] }
+            'item_name': { type: 'ItemName', description: 'The item to smelt.' },
+            'num': { type: 'int', description: 'How many times to smelt it.', domain: [1, Number.MAX_SAFE_INTEGER] }
         },
         perform: runAsAction(async (agent, item_name, num) => {
             let success = await skills.smeltItem(agent.bot, item_name, num);
@@ -976,7 +1165,7 @@ export const actionsList = [
     },
         {
         name: '!placeHere',
-        description: 'Place a given block in the current location. Do NOT use to build structures, only use for single blocks/torches.',
+        description: 'Place a block where you stand. Only single blocks or torches, NOT to build.',
         params: {'type': { type: 'BlockOrItemName', description: 'The block type to place.' }},
         perform: runAsAction(async (agent, type) => {
             let pos = agent.bot.entity.position;
@@ -1080,7 +1269,7 @@ export const actionsList = [
     {
         name: '!farmCycle',
         description: 'Do the whole farm round: harvest, store, plant, make bone meal in the composter and use it, close the gate. Use this when the player says "farm" or "take care of the wheat".',
-        params: {'area': { type: 'string', description: 'The name of the farm, empty for the nearest.', default: '' }},
+        params: {'area': { type: 'string', description: 'The farm, empty for the nearest.', default: '' }},
         perform: async function (agent, area) {
             if (!settings.farming_pack)
                 return FARMING_OFF;
@@ -1090,7 +1279,7 @@ export const actionsList = [
     {
         name: '!harvest',
         description: 'Harvest the ripe plants of a farm and plant them again. Use this when the player says "harvest" or "collect the wheat".',
-        params: {'area': { type: 'string', description: 'The name of the farm, empty for the nearest.', default: '' }},
+        params: {'area': { type: 'string', description: 'The farm, empty for the nearest.', default: '' }},
         perform: async function (agent, area) {
             if (!settings.farming_pack)
                 return FARMING_OFF;
@@ -1102,7 +1291,7 @@ export const actionsList = [
         description: 'Plant seeds on the free ground of a farm. Use this when the player says "plant", "seed" or "sow".',
         params: {
             'seed': { type: 'string', description: 'The seed to plant: wheat_seeds, carrot, potato or beetroot_seeds.', default: 'wheat_seeds' },
-            'area': { type: 'string', description: 'The name of the farm, empty for the nearest.', default: '' }
+            'area': { type: 'string', description: 'The farm, empty for the nearest.', default: '' }
         },
         perform: async function (agent, seed, area) {
             if (!settings.farming_pack)
@@ -1123,7 +1312,7 @@ export const actionsList = [
     {
         name: '!fertilize',
         description: 'Use your bone meal on the plants of a farm, so they grow faster.',
-        params: {'area': { type: 'string', description: 'The name of the farm, empty for the nearest.', default: '' }},
+        params: {'area': { type: 'string', description: 'The farm, empty for the nearest.', default: '' }},
         perform: async function (agent, area) {
             if (!settings.farming_pack)
                 return FARMING_OFF;
@@ -1205,6 +1394,73 @@ export const actionsList = [
             return await runPack(agent, 'leaveMine', agent.work_packs?.mining, 'mining', (pack, bot, ctx) => pack.climbToSurface(bot, ctx));
         }
     },
+    // v0.1.4.9 (I10): the ways of the player (routes_pack) and the mine of the player (mine_routes). All but
+    // !collectPassedOre (it walks) are plain commands that do not move the bot and stop no running action.
+    {
+        name: '!rememberRoute',
+        description: 'Remember the way you walked here from a place you know. Use this when the player says "remember this way".',
+        params: {'name': { type: 'string', description: 'The name of the way, for example "bed".' }},
+        perform: async function (agent, name) {
+            if (!settings.routes_pack)
+                return ROUTES_OFF;
+            // no action: a running !followPlayer keeps running (decision of the tech lead)
+            return await runPlain(agent, agent.work_packs?.routes, 'routes', (pack) => pack.rememberRoute(agent.bot, agent.packContext(), name));
+        }
+    },
+    {
+        name: '!routes',
+        description: 'List the ways you remember.',
+        perform: async function (agent) {
+            if (!settings.routes_pack)
+                return ROUTES_OFF;
+            return await runPlain(agent, agent.work_packs?.routes, 'routes', (pack) => pack.routesText(agent.packContext(), agent.bot.game?.dimension));
+        }
+    },
+    {
+        name: '!forgetRoute',
+        description: 'Forget a way you remember.',
+        params: {'name': { type: 'string', description: 'The name of the way.' }},
+        perform: async function (agent, name) {
+            if (!settings.routes_pack)
+                return ROUTES_OFF;
+            return await runPlain(agent, agent.work_packs?.routes, 'routes', (pack) => pack.forgetRoute(agent.packContext(), name, agent.bot.game?.dimension));
+        }
+    },
+    {
+        name: '!rememberMine',
+        description: 'Learn the mine you walked into: the way in, the room and a tunnel. Use this when the player says "remember this mine".',
+        params: {'name': { type: 'string', description: 'The name of the mine.', default: 'mine' }},
+        perform: async function (agent, name) {
+            if (!mineRoutesOn())
+                return MINE_ROUTES_OFF;
+            const playerYaw = orderPlayerYaw(agent);
+            return await runPlain(agent, agent.work_packs?.mining, 'mining', (pack) => pack.rememberMine(agent.bot, agent.packContext(), name, { playerYaw }));
+        }
+    },
+    {
+        name: '!rememberTunnel',
+        description: 'Measure the tunnel you stand in, to dig on at its end later. Use this when the player says "dig here".',
+        params: {'name': { type: 'string', description: 'The mine, empty for the one here.', default: '' }},
+        perform: async function (agent, name) {
+            if (!mineRoutesOn())
+                return MINE_ROUTES_OFF;
+            const playerYaw = orderPlayerYaw(agent);
+            return await runPlain(agent, agent.work_packs?.mining, 'mining', (pack) => pack.rememberTunnel(agent.bot, agent.packContext(), name, { playerYaw }));
+        }
+    },
+    {
+        name: '!collectPassedOre',
+        description: 'Collect the ore you left behind in the mine, when the player asks for it.',
+        params: {
+            'ore': { type: 'string', description: 'The ore, for example "coal", empty for all.' },
+            'num': { type: 'int', description: 'The most ore blocks to take.', domain: [1, Number.MAX_SAFE_INTEGER], default: 8 }
+        },
+        perform: async function (agent, ore, num) {
+            if (!mineRoutesOn())
+                return MINE_ROUTES_OFF;
+            return await runPack(agent, 'collectPassedOre', agent.work_packs?.mining, 'mining', (pack, bot, ctx) => pack.collectPassedOre(bot, ctx, ore, num));
+        }
+    },
     {
         name: '!stay',
         description: 'Stay in the current location no matter what. Pauses all modes.',
@@ -1215,7 +1471,7 @@ export const actionsList = [
     },
     {
         name: '!setMode',
-        description: 'Set a mode to on or off. A mode is an automatic behavior that constantly checks and responds to the environment. Only the player switches a safety reflex off.',
+        description: 'Set a mode on or off. A mode is an automatic behavior that reacts to the world. Only the player switches a safety reflex off.',
         params: {
             'mode_name': { type: 'string', description: 'The name of the mode to enable.' },
             'on': { type: 'boolean', description: 'Whether to enable or disable the mode.' }
@@ -1252,7 +1508,7 @@ export const actionsList = [
     },
     {
         name: '!endGoal',
-        description: 'Call when you have accomplished your goal. It will stop self-prompting and the current action. ',
+        description: 'Call when you reached your goal. It stops self-prompting and the current action.',
         perform: async function (agent) {
             agent.self_prompter.stop();
             return 'Self-prompting stopped.';
@@ -1261,7 +1517,7 @@ export const actionsList = [
     {
         name: '!showVillagerTrades',
         description: 'Show trades of a specified villager.',
-        params: {'id': { type: 'int', description: 'The id number of the villager that you want to trade with.' }},
+        params: {'id': { type: 'int', description: 'The id of the villager.' }},
         perform: runAsAction(async (agent, id) => {
             await skills.showVillagerTrades(agent.bot, id);
         })
@@ -1270,9 +1526,9 @@ export const actionsList = [
         name: '!tradeWithVillager',
         description: 'Trade with a specified villager.',
         params: {
-            'id': { type: 'int', description: 'The id number of the villager that you want to trade with.' },
-            'index': { type: 'int', description: 'The index of the trade you want executed (1-indexed).', domain: [1, Number.MAX_SAFE_INTEGER] },
-            'count': { type: 'int', description: 'How many times that trade should be executed.', domain: [1, Number.MAX_SAFE_INTEGER] },
+            'id': { type: 'int', description: 'The id of the villager.' },
+            'index': { type: 'int', description: 'The number of the trade, from 1.', domain: [1, Number.MAX_SAFE_INTEGER] },
+            'count': { type: 'int', description: 'How many times to trade.', domain: [1, Number.MAX_SAFE_INTEGER] },
         },
         perform: runAsAction(async (agent, id, index, count) => {
             await skills.tradeWithVillager(agent.bot, id, index, count);
@@ -1282,7 +1538,7 @@ export const actionsList = [
         name: '!startConversation',
         description: 'Start a conversation with a bot. (FOR OTHER BOTS ONLY)',
         params: {
-            'player_name': { type: 'string', description: 'The name of the player to send the message to.' },
+            'player_name': { type: 'string', description: 'The name of the bot.' },
             'message': { type: 'string', description: 'The message to send.' },
         },
         perform: async function (agent, player_name, message) {
@@ -1299,7 +1555,7 @@ export const actionsList = [
         name: '!endConversation',
         description: 'End the conversation with the given bot. (FOR OTHER BOTS ONLY)',
         params: {
-            'player_name': { type: 'string', description: 'The name of the player to end the conversation with.' }
+            'player_name': { type: 'string', description: 'The name of the bot.' }
         },
         perform: async function (agent, player_name) {
             if (!convoManager.inConversation(player_name))
@@ -1310,12 +1566,12 @@ export const actionsList = [
     },
     {
         name: '!lookAtPlayer',
-        description: 'Look at a player or look in the same direction as the player.',
+        description: 'Look at a player, or where the player looks.',
         params: {
             'player_name': { type: 'string', description: 'Name of the target player' },
             'direction': {
                 type: 'string',
-                description: 'How to look ("at": look at the player, "with": look in the same direction as the player)',
+                description: '"at": look at the player; "with": look where the player looks.',
             }
         },
         perform: async function(agent, player_name, direction) {
@@ -1349,7 +1605,7 @@ export const actionsList = [
     },
     {
         name: '!digDown',
-        description: 'Digs down a specified distance. Will stop if it reaches lava, water, or a fall of >=4 blocks below the bot.',
+        description: 'Dig down a distance. Stops at lava, water or a drop of 4 blocks or more.',
         params: {'distance': { type: 'int', description: 'Distance to dig down', domain: [1, Number.MAX_SAFE_INTEGER] }},
         perform: runAsAction(async (agent, distance) => {
             await skills.digDown(agent.bot, distance)
@@ -1357,7 +1613,7 @@ export const actionsList = [
     },
     {
         name: '!goToSurface',
-        description: 'Moves the bot to the highest block above it (usually the surface).',
+        description: 'Go up to the highest block above you, usually the surface.',
         params: {},
         perform: runAsAction(async (agent) => {
             await skills.goToSurface(agent.bot);
@@ -1365,10 +1621,10 @@ export const actionsList = [
     },
     {
         name: '!useOn',
-        description: 'Use (right click) the given tool on the nearest target of the given type.',
+        description: 'Right click a tool on the nearest target of a type.',
         params: {
-            'tool_name': { type: 'string', description: 'Name of the tool to use, or "hand" for no tool.' },
-            'target': { type: 'string', description: 'The target as an entity type, block type, or "nothing" for no target.' }
+            'tool_name': { type: 'string', description: 'The tool, or "hand" for none.' },
+            'target': { type: 'string', description: 'An entity type, a block type, or "nothing".' }
         },
         perform: runAsAction(async (agent, tool_name, target) => {
             await skills.useToolOn(agent.bot, tool_name, target);

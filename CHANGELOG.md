@@ -6,6 +6,52 @@ This fork is based on [Mindcraft](https://github.com/mindcraft-bots/mindcraft) `
 
 Each release lists new settings and feature flags with their default value.
 
+## [0.1.4.9] - 2026-09-30
+
+The mine, the routes of the player, and the model comparison. The bot learns a place by walking through it with the player: the way into the mine, with its ladders, doors and trapdoors, and the way from one room of the base to another. Code stores the way as a route and walks it again. The language model never has to understand what a tunnel is, and it no longer writes tunnel code.
+
+Every new switch is off by default. Corrections have no switch.
+
+### Added
+
+- **Setting `routes_pack`**, default `false`, with `trail_max_steps`, default `500`. The bot records the steps it walks, the ladders it climbs and the doors, gates and trapdoors it passes, in `trail.json` in the folder of the world. No call of the model.
+  - **`!rememberRoute("bed")`**: the trail since the last saved place, area or mine the bot passed becomes a route of walks, ladders and doors. The bot walks a route in both directions: short hops with the path search, ladders by control states, doors and trapdoors by the door skills.
+  - **`!routes`** lists the routes, **`!forgetRoute`** removes one.
+  - `!goToBed`, the shelter walk and `!goToRememberedPlace` use a route when the path search finds no way, for example down a ladder with a trapdoor.
+  - A broken route: the bot says at which step and where, digs nothing, and asks the player to show the way again.
+- **Setting `mine_routes`**, default `false`. With `mining_pack` and `routes_pack`:
+  - **`!rememberMine("mine")`**, "this is the mine": the trail from the last step under open sky becomes the way into the mine; the chest, crafting table and furnace near the way become the room; the tunnel the bot stands in is measured.
+  - **`!rememberTunnel`**, "dig here": the bot measures the tunnel it stands in: start, direction, end, level. One mine holds several tunnels.
+  - **`!mineOre` in the mine of the player.** It takes the nearest known mine within 64 blocks, walks its route, picks the tunnel whose level lies in the range of the ore and nearest to its best level, and digs on at its end, 1 wide and 2 high, with the checks for lava and caves. When no tunnel of the mine fits the ore, it says at which levels the tunnels are and asks. A new shaft only when no mine is known, and only after the player said yes.
+  - **Side branches.** When a tunnel is 32 blocks long, the bot digs branches of 8 blocks to the left and to the right every 4 blocks, nearest to the room first.
+  - **The ore list.** Every ore block seen beside the tunnel and not taken is remembered with its reason: the pickaxe is too weak, lava beside it, the inventory was full, the vein was bigger than 12, the bot was stopped. `!mineOre` says what it left behind. **`!collectPassedOre("coal")`** walks back and takes it.
+  - On the route of a mine and in its room and tunnels the bot counts as underground: no shelter walk at dusk, creepers only in sight.
+  - The block "what I know" names the mine and the tunnel the bot is in, and the ore it left behind. With `knowledge_in_prompt`.
+- **Setting `ore_sense_range`**, default `0`. `3`: in a tunnel the bot also takes ore within 3 blocks of the wall, the ceiling and the floor, through a short side cut; `!collectBlocks` with an ore takes ore that has an open cell within 3 blocks.
+- **Setting `skills_over_code`**, default `false`. `!newAction` is refused for a request about digging, a tunnel, a shaft or an ore where a skill exists, with a text that names the skill. In the play test the model wrote tunnel code six times, each version different, one dug in the wrong direction.
+- **The cost meter counts the models of OpenAI**: input, cached and output tokens of the Responses API, of chat completions and of embeddings. Prices for `gpt-6-luna` (0.10 and 0.50 dollars per million tokens, cached input 0.01) and `text-embedding-3-small` (0.02). Before, `!cost` showed 0 calls for them.
+- **The routing check takes a model of OpenAI**: `node scripts/routing_check.js --model gpt-6-luna` or `--profile profiles/gpt.json`; `test-routing.ps1 -Model gpt-6-luna`. The table shows the time of every answer; the summary shows the accuracy, the median and mean time per answer and the measured cost. The key of the api of the chat model is loaded from the vault, and the other key too when it exists, so that the examples are chosen as in play.
+- **`profiles/gpt.json`**: the prompt of the owner with GPT-6 Luna as chat model, reasoning effort low, the code model of the claude profile. `start-gpt.ps1` starts it and loads both keys.
+- **`scripts/get_test_server.js`**: downloads the official 1.21.8 server through Mojang's version manifest, checks the SHA-1 (`6bce4ef4…`) and, with `--accept-eula`, writes `eula.txt`. The world runner and the script share the default folder: `%LOCALAPPDATA%\Mindcraft\test-server` on Windows, `~/.local/share/mindcraft/test-server` elsewhere, or `MC_TEST_SERVER_DIR`. The server starts without `JAVA_TOOL_OPTIONS`.
+- Examples and 18 sentences of the routing list for the new commands.
+- 377 unit tests written from the spec by an independent tester, 6078 in all. 14 more scenarios on the real server, 72 in all, among them the walk into the mine, the routes to the bed and back, a broken route and the long run of 30 minutes with the new parts on.
+
+### Changed
+
+- **`!collectBlocks` with an ore takes only ore in sight**: an ore block needs a face towards an open cell. Before, the bot saw ore through the rock and dug to it. When every ore is inside the rock it says so and, with `mining_pack`, points to `!mineOre`. This holds with every switch off; `ore_sense_range` 3 widens it to ore within 3 blocks of an open cell. In a tunnel the bot no longer sends an ore beside it to `!mineOre` because a ray from its eyes did not reach it, and underground it never does.
+- **`!goToRememberedPlace` walks a learned route first** when one leads to the place, then the path search does the rest. With `routes_pack`.
+- **`!mineOre` no longer breaks an ore its pickaxe cannot harvest** beside the tunnel; it is listed as passed. With `mine_routes`.
+- The block "what I know" shows a mine of the player by its name.
+- The remembering, listing and forgetting of routes and mines are plain commands: a running `!followPlayer` keeps running, so "follow me, this is the mine" works.
+
+### Fixed
+
+- **The bot could not climb out of a shaft through an open trapdoor.** `prismarine-physics` 1.10.0 treats an open trapdoor above a ladder as climbable only up to Minecraft 1.20, and knows no trapdoor newer than mangrove. Corrected by `patches/prismarine-physics+1.10.0.patch`, which also lets a jump climb a ladder in 1.21; `npm install` applies it. The climb has a second way out at the top: jump and walk towards the entry.
+- **The path search climbed any ladder it entered**, so a walk to the foot of a ladder hung in the column. The bot now walks to the cell beside the column and steps in.
+- **The sky light the bot reads is stale** on a chunk border (15 inside a house). Open sky is decided by the column above the bot, never by the light.
+- **A resume action such as `!followPlayer` used a global `assert`** that only the sandbox lockdown supplies. The action manager imports it.
+- Nothing of a play test: `0.1.4.8` was not played before this release.
+
 ## [0.1.4.8] - 2026-09-30
 
 Stability. The answer to the first play test of the work skills: 20 restarts of the process in two hours, a bot that starved with food in its hand, a broken fence, reflexes that did not know where the bot was. This release corrects defects of `0.1.4.6` and `0.1.4.7` and adds switches for new behaviour.

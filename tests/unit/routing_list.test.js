@@ -46,6 +46,8 @@ describe('tests/routing/commands.js', () => {
             'home_reflexes', 'creeper_fighting',
             // v0.1.4.7
             'storage_pack', 'farming_pack', 'wood_pack', 'mining_pack', 'mining_max_minutes', 'keep_items',
+            // v0.1.4.9
+            'routes_pack', 'trail_max_steps', 'mine_routes', 'ore_sense_range', 'skills_over_code',
         ]);
     });
 
@@ -84,7 +86,7 @@ describe('tests/routing/commands.js', () => {
     });
 
     test('hiddenPartCommands: the commands of every part that is off', () => {
-        const packs = { storage_pack: true, farming_pack: true, wood_pack: true, mining_pack: true }; // v0.1.4.7
+        const packs = { storage_pack: true, farming_pack: true, wood_pack: true, mining_pack: true, routes_pack: true, mine_routes: true }; // v0.1.4.7, v0.1.4.9
         assert.deepEqual(T.hiddenPartCommands({ player_rules: true, protected_areas: true, world_memory: true, home_pack: true, cost_meter: true, ...packs }), []);
         assert.deepEqual(T.hiddenPartCommands({ player_rules: true, cost_meter: true, ...packs }).sort(),
             [...T.PART_COMMANDS.protected_areas, ...T.PART_COMMANDS.home_pack].sort());
@@ -135,10 +137,12 @@ describe('tests/routing/sentences.json', () => {
         }
     });
 
+    // v0.1.4.9: mine_routes is on only with mining_pack and routes_pack (partIsOn)
     test('with only the named part on, at least one expected command is visible', () => {
         for (const entry of SENTENCES) {
             const settings = { world_memory: true, cost_meter: false };
             if (entry.part !== '') settings[entry.part] = true;
+            if (entry.part === 'mine_routes') Object.assign(settings, { mining_pack: true, routes_pack: true });
             const hidden = new Set(T.hiddenPartCommands(settings));
             assert.ok(entry.expect.some((name) => !hidden.has(name)), `"${entry.say}" with part "${entry.part}"`);
         }
@@ -191,12 +195,13 @@ describe('scripts/routing_check.js: import', () => {
 });
 
 describe('scripts/routing_check.js: parseArgs', () => {
+    // v0.1.4.9 (D3): profile, model and missing are new
     test('no options', () => {
-        assert.deepEqual(S.parseArgs([]), { dryRun: false, allParts: false, help: false, unknown: [] });
+        assert.deepEqual(S.parseArgs([]), { dryRun: false, allParts: false, help: false, profile: null, model: null, unknown: [], missing: [] });
     });
 
     test('--dry-run, --all-parts, --help', () => {
-        assert.deepEqual(S.parseArgs(['--dry-run', '--all-parts']), { dryRun: true, allParts: true, help: false, unknown: [] });
+        assert.deepEqual(S.parseArgs(['--dry-run', '--all-parts']), { dryRun: true, allParts: true, help: false, profile: null, model: null, unknown: [], missing: [] });
         assert.equal(S.parseArgs(['-h']).help, true);
         assert.equal(S.parseArgs(['--help']).help, true);
     });
@@ -235,7 +240,7 @@ describe('scripts/routing_check.js: settings and sentences', () => {
 
     test('blockedFor: skill commands stay with their flags, no duplicates', () => {
         const blocked = S.blockedFor({ blocked_actions: ['!useSkill'], world_memory: true, player_rules: true, protected_areas: true, home_pack: true, cost_meter: true,
-            storage_pack: true, farming_pack: true, wood_pack: true, mining_pack: true }, { capture: true, reuse: false, command: true });
+            storage_pack: true, farming_pack: true, wood_pack: true, mining_pack: true, routes_pack: true, mine_routes: true }, { capture: true, reuse: false, command: true });
         assert.deepEqual(blocked, ['!useSkill']);
     });
 
@@ -259,10 +264,12 @@ describe('scripts/routing_check.js: results', () => {
         assert.equal(S.firstCommand('x', () => { throw new Error('boom'); }), null);
     });
 
+    // v0.1.4.9 (D3): the summary with the time per answer and the measured cost (rtd_routing_check.test.js)
     test('summaryLine, as in the spec', () => {
-        assert.equal(S.summaryLine(41, 50), '41 of 50 sentences led to an expected command (82 percent).');
-        assert.equal(S.summaryLine(0, 0), '0 of 0 sentences led to an expected command (0 percent).');
-        assert.equal(S.summaryLine(2, 3), '2 of 3 sentences led to an expected command (67 percent).');
+        assert.equal(S.summaryLine(41, 50, { times: [1000], cost: { dollars: 0.5, unpriced_calls: 0 } }),
+            'Accuracy: 41 of 50 (82%). Time per answer: median 1.0 s, mean 1.0 s. Cost: 0.50 dollars, measured.');
+        assert.match(S.summaryLine(0, 0), /^Accuracy: 0 of 0 \(0%\)\. /);
+        assert.match(S.summaryLine(2, 3), /^Accuracy: 2 of 3 \(67%\)\. /);
     });
 
     test('estimateTokens: 4 characters per token, rounded up', () => {

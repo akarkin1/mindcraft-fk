@@ -322,6 +322,32 @@
         "description": "Whether the prompt examples are chosen by the last request of the player instead of the whole conversation",
         "default": false
     },
+    "routes_pack": {
+        "type": "boolean",
+        "description": "Whether to record the trail of the bot and offer !rememberRoute, !routes and !forgetRoute. !goToBed, the walk to the shelter and !goToRememberedPlace then use a way the player showed when the path search finds none",
+        "default": false
+    },
+    "trail_max_steps": {
+        "type": "number",
+        "description": "With routes_pack on: the steps of the trail that are kept, a whole number of 50 or more. The trail is saved in trail.json of the world",
+        "default": 500
+    },
+    "mine_routes": {
+        "type": "boolean",
+        "description": "With mining_pack and routes_pack on: whether to offer !rememberMine, !rememberTunnel and !collectPassedOre, to work in the mine of the player along its way, to dig side branches and to list the ore left behind. Without routes_pack it stays off",
+        "default": false
+    },
+    "ore_sense_range": {
+        "type": "number",
+        "description": "0 or 3. 0: in a tunnel the bot takes only ore that touches it, and !collectBlocks takes only ore with a face in the open. 3: also ore within 3 blocks of the wall",
+        "default": 0,
+        "options": [0, 3]
+    },
+    "skills_over_code": {
+        "type": "boolean",
+        "description": "Whether !newAction refuses to write code for a request about digging and names the commands that do it. A !newAction that the player types still runs",
+        "default": false
+    },
     "code_timeout_mins": {
         "type": "number",
         "description": "Number of minutes to allow code execution. -1 for no timeout",

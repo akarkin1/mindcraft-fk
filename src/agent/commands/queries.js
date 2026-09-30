@@ -236,7 +236,7 @@ export const queryList = [
     },
     {
         name: "!modes",
-        description: "Get all available modes and their docs and see which are on/off.",
+        description: "List the modes, what they do and which are on or off.",
         perform: function (agent) {
             return agent.bot.modes.getDocs();
         }
@@ -383,11 +383,11 @@ export const queryList = [
     },
     {
         name: '!getCraftingPlan',
-        description: "Provides a comprehensive crafting plan for a specified item. This includes a breakdown of required ingredients, the exact quantities needed, and an analysis of missing ingredients or extra items needed based on the bot's current inventory.",
+        description: 'Get a crafting plan for an item: the ingredients, how many of each, and what your inventory lacks.',
         params: {
             targetItem: { 
                 type: 'string', 
-                description: 'The item that we are trying to craft' 
+                description: 'The item to craft.' 
             },
             quantity: { 
                 type: 'int',

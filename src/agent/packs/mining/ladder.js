@@ -9,7 +9,7 @@
 import { Vec3 } from 'vec3';
 import { botPos, clockOf } from '../home/context.js';
 import { stopMoving } from '../home/motion.js';
-import { blockAt, isSolid, race, stepInto, walkTo } from './dig.js';
+import { blockAt, isFree, isSolid, race, stepInto, walkTo } from './dig.js';
 import { backOf, dirVector, offset } from './mine_logic.js';
 
 /** Yaw of mineflayer for a direction (the way pathfinder computes it: atan2(-dx, -dz)). */
@@ -274,13 +274,110 @@ export async function slideDown(bot, leg, options = {}) {
     return { ok, reason: ok ? null : 'stuck', ms: clock.now() - t0 };
 }
 
+function isCell(p) {
+    return p !== null && typeof p === 'object' && [p.x, p.y, p.z].every(Number.isFinite);
+}
+
+// The bot can stand in the cell: feet and head free, a solid block under it.
+function standable(bot, p) {
+    return isFree(blockAt(bot, p)) && isFree(blockAt(bot, { x: p.x, y: p.y + 1, z: p.z })) && isSolid(blockAt(bot, { x: p.x, y: p.y - 1, z: p.z }));
+}
+
+/**
+ * The foot of a column of ladders (fix round 2 of v0.1.4.9, F3): the cell beside the column at its bottom
+ * from which the bot steps into it. `leg.foot` when the leg has one (a route of the routes pack), else the
+ * cell on the side the ladders face at the height of the bottom, when the bot can stand there; else null.
+ * @param {object} bot
+ * @param {{x: number, z: number, bottom: number, face: string, foot?: {x,y,z}}} leg
+ * @returns {{x: number, y: number, z: number}|null}
+ */
+export function footOf(bot, leg) {
+    if (isCell(leg?.foot)) {
+        return { x: Math.floor(leg.foot.x), y: Math.floor(leg.foot.y), z: Math.floor(leg.foot.z) };
+    }
+    const cell = offset({ x: leg.x, y: leg.bottom, z: leg.z }, leg.face);
+    return standable(bot, cell) ? cell : null;
+}
+
+/**
+ * Into a column of ladders from its foot (fix round 2 of v0.1.4.9, F3): walks to the foot (footOf) and steps
+ * into the bottom of the column with stepInto. No goal of the path search lies in the column: the path search
+ * would climb the ladders on its own. A bot in the column already stays.
+ * @param {object} bot
+ * @param {{x: number, z: number, top: number, bottom: number, face: string, foot?: {x,y,z}}} leg
+ * @param {{clock?: object, walkMs?: number}} [options]
+ * @returns {Promise<{ok: boolean, reason: string|null}>} reasons: no_foot, no_path, interrupted
+ */
+export async function enterColumn(bot, leg, options = {}) {
+    const clock = options.clock ?? clockOf(null);
+    const inColumn = () => {
+        const c = feetCell(bot);
+        return Boolean(c) && c.x === leg.x && c.z === leg.z && c.y >= leg.bottom - 1 && c.y <= leg.top + 1;
+    };
+    if (inColumn()) {
+        return { ok: true, reason: null };
+    }
+    const foot = footOf(bot, leg);
+    if (!foot) {
+        return { ok: false, reason: 'no_foot' };
+    }
+    const w = await walkTo(bot, foot, { clock, timeoutMs: options.walkMs ?? 30000 });
+    if (!w.ok) {
+        return { ok: false, reason: w.reason === 'interrupted' ? 'interrupted' : 'no_path' };
+    }
+    await stepInto(bot, { x: leg.x, y: leg.bottom, z: leg.z }, clock);
+    if (bot.interrupt_code) {
+        return { ok: false, reason: 'interrupted' };
+    }
+    return inColumn() ? { ok: true, reason: null } : { ok: false, reason: 'no_path' };
+}
+
+// At the top of the column with a way out above it (fix round 2, F1): the feet at the top ladder or in the
+// cell above it, and that cell an open trapdoor, or free with the entry beside it.
+function wayOutAbove(bot, leg, entry) {
+    const c = feetCell(bot);
+    if (!c || c.x !== leg.x || c.z !== leg.z || c.y < leg.top) {
+        return false;
+    }
+    const above = blockAt(bot, { x: leg.x, y: leg.top + 1, z: leg.z });
+    const props = (typeof above?.getProperties === 'function' ? above.getProperties() : above?._properties) ?? {};
+    if (typeof above?.name === 'string' && above.name.endsWith('_trapdoor')) {
+        return props.open === true;
+    }
+    return isFree(above) && Math.max(Math.abs(entry.x - leg.x), Math.abs(entry.z - leg.z)) === 1 && entry.y >= leg.top + 1 && entry.y <= leg.top + 2;
+}
+
+// The second way out at the top (F1): jump and hold forward towards the entry for 1 s. True when arrived.
+async function jumpOut(bot, entry, clock, arrived) {
+    const p = botPos(bot);
+    try {
+        await bot.lookAt(new Vec3(entry.x + 0.5, (p?.y ?? entry.y) + 1.6, entry.z + 0.5), true);
+    } catch {
+        // best effort
+    }
+    bot.setControlState('forward', true);
+    bot.setControlState('jump', true);
+    const start = clock.now();
+    while (clock.now() - start < 1000 && !bot.interrupt_code && !arrived()) {
+        await clock.wait(50);
+    }
+    release(bot);
+    await waitStanding(bot, clock, 600);
+    return arrived();
+}
+
 /**
  * Climbs up a column of ladders: looks at the wall with the ladders and walks forward; at the top
  * the bot steps onto the wall, which is its entry. When the climb gets stuck the pathfinder tries
  * (it climbs ladders).
+ * Fix round 2 of v0.1.4.9: a bot outside the column walks to its foot (footOf) and steps in with
+ * stepInto; no goal of the path search lies in the column (F3). At the top, when the bot does not rise
+ * for 1.5 s and above it is an open trapdoor or a free cell beside the entry, it jumps and walks towards
+ * the entry for 1 s, up to 3 times, before the pathfinder tries (F1). "Not rising" is measured by the
+ * highest point, so that bobbing at the top counts.
  * @param {object} bot
- * @param {{x: number, z: number, top: number, bottom: number, face: string, entry: {x,y,z}}} leg
- * @param {{clock?: object, timeoutMs?: number}} [options]
+ * @param {{x: number, z: number, top: number, bottom: number, face: string, entry: {x,y,z}, foot?: {x,y,z}}} leg
+ * @param {{clock?: object, timeoutMs?: number, walkMs?: number}} [options]
  * @returns {Promise<{ok: boolean, reason: string|null, ms: number}>}
  */
 export async function climbUp(bot, leg, options = {}) {
@@ -294,14 +391,19 @@ export async function climbUp(bot, leg, options = {}) {
     if (arrived()) {
         return { ok: true, reason: null, ms: 0 };
     }
+    const into = await enterColumn(bot, leg, { clock, walkMs: options.walkMs });
+    if (!into.ok && into.reason !== 'no_foot') {
+        return { ok: false, reason: into.reason, ms: clock.now() - t0 };
+    }
     const depth = Math.max(1, leg.top + 1 - leg.bottom);
     const limit = options.timeoutMs ?? depth * 700 + 6000;
     await look(bot, backOf(leg.face));
     bot.setControlState('forward', true);
     const start = clock.now();
-    let lastY = botPos(bot)?.y ?? 0;
+    let best = botPos(bot)?.y ?? 0;
     let still = clock.now();
     let stuck = false;
+    let tries = 0;
     while (clock.now() - start < limit) {
         if (bot.interrupt_code) {
             release(bot);
@@ -314,9 +416,18 @@ export async function climbUp(bot, leg, options = {}) {
         const c = feetCell(bot);
         const onLadder = c && blockAt(bot, c)?.name === 'ladder';
         bot.setControlState('jump', Boolean(c) && !onLadder && c.x === leg.x && c.z === leg.z && bot.entity?.onGround === true);
-        const y = botPos(bot)?.y ?? lastY;
-        if (Math.abs(y - lastY) > 0.05) {
-            lastY = y;
+        const y = botPos(bot)?.y ?? best;
+        if (y > best + 0.05) {
+            best = y;
+            still = clock.now();
+        } else if (tries < 3 && clock.now() - still > 1500 && wayOutAbove(bot, leg, entry)) {
+            tries++;
+            if (await jumpOut(bot, entry, clock, arrived)) {
+                break;
+            }
+            await look(bot, backOf(leg.face));
+            bot.setControlState('forward', true);
+            best = botPos(bot)?.y ?? best;
             still = clock.now();
         } else if (clock.now() - still > 3000) {
             stuck = true;
@@ -447,7 +558,8 @@ export async function followUp(bot, route, options = {}) {
         if (leg.kind === 'ladder') {
             const bottom = { x: leg.x, y: leg.bottom, z: leg.z };
             const c = feetCell(bot);
-            if (!(c && c.x === leg.x && c.z === leg.z && c.y >= leg.bottom - 1 && c.y <= leg.top + 1)) {
+            // a leg with a foot (v0.1.4.9, F3): climbUp walks to the foot and steps in, no goal in the column
+            if (!isCell(leg.foot) && !(c && c.x === leg.x && c.z === leg.z && c.y >= leg.bottom - 1 && c.y <= leg.top + 1)) {
                 const w = await walkTo(bot, bottom, { clock, timeoutMs: 60000 });
                 if (!w.ok) {
                     return { ok: false, reason: w.reason, legs };

@@ -106,6 +106,13 @@ const NEW_EXAMPLES = [
     ['we tore down the old barn, forget it', '!forgetArea'],
     ['the farm goes from 10 63 20 to 25 67 35', '!setArea'],
     ['please fix the hole in the roof of the house', '!allowChanges'],
+    // v0.1.4.9, part G (section 10, item 6 of its spec): the ways and the mine of the player
+    ['this is the mine, remember this', '!rememberMine'],
+    ['dig here', '!rememberTunnel'],
+    ['remember this way to the bed', '!rememberRoute'],
+    ['collect the coal you passed', '!collectPassedOre'],
+    ['which ways do you know', '!routes'],
+    ['forget the way to the bed', '!forgetRoute'],
 ];
 
 const exampleOf = (sentence) => PROFILE.conversation_examples.find((example) => example.some((t) => t.role === 'user' && t.content.endsWith(': ' + sentence)));
@@ -290,7 +297,7 @@ describe('no example with a hidden command reaches the prompt', () => {
 
     test('with every part on, all examples remain', () => {
         const hidden = new Set(T.hiddenPartCommands({ player_rules: true, protected_areas: true, world_memory: true, home_pack: true, cost_meter: true,
-            storage_pack: true, farming_pack: true, wood_pack: true, mining_pack: true }));
+            storage_pack: true, farming_pack: true, wood_pack: true, mining_pack: true, routes_pack: true, mine_routes: true }));
         assert.equal(hidden.size, 0);
         assert.equal(F.visibleExamples(PROFILE.conversation_examples, (n) => hidden.has(n)).length, PROFILE.conversation_examples.length);
     });

@@ -29,6 +29,9 @@ describe('DEFAULT_PRICES', () => {
             'claude-sonnet-5': { input: 2, output: 10 },
             'claude-opus-5': { input: 5, output: 25 },
             'claude-opus-5-5': { input: 4, output: 20 },
+            // v0.1.4.9 (I9)
+            'gpt-6-luna': { input: 0.10, output: 0.50, cache_read: 0.01 },
+            'text-embedding-3-small': { input: 0.02, output: 0 },
         });
     });
 

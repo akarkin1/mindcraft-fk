@@ -5,6 +5,7 @@ import { Prompter } from '../models/prompter.js';
 import { initModes } from './modes.js';
 import { initBot } from '../utils/mcdata.js';
 import { containsCommand, commandExists, executeCommand, truncCommandMessage, isAction, blacklistCommands, commandCallText } from './commands/index.js';
+import { mineRoutesOn } from './commands/actions.js'; // v0.1.4.9: after index.js, which loads actions.js first
 import { ActionManager } from './action_manager.js';
 import { NPCContoller } from './npc/controller.js';
 import { MemoryBank } from './memory_bank.js';
@@ -50,6 +51,25 @@ const KICK_WAIT_MS = 1000;
 // A number setting of v0.1.4.6: a value that is not finite or is below 0 counts as the default.
 export function numberSetting(value, fallback) {
     return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : fallback;
+}
+
+// v0.1.4.9 (section 2): the steps of the trail that are kept, trail_max_steps: a whole number of 50 or more;
+// any other value counts as the default 500.
+export const TRAIL_MAX_STEPS = 500;
+export function trailMaxSteps(value) {
+    return Number.isInteger(value) && value >= 50 ? value : TRAIL_MAX_STEPS;
+}
+
+// v0.1.4.9: the warning at the start when mine_routes is on without routes_pack
+export const MINE_ROUTES_WARNING = 'mine_routes needs routes_pack. The mine routes are off.';
+
+// v0.1.4.9 (I6, C for G 2): a mine without its list of the ore left behind, for the knowledge block while
+// mine_routes is off, so that old entries do not show
+function withoutPassed(mine) {
+    if (!mine || typeof mine !== 'object' || !('passed' in mine))
+        return mine;
+    const { passed, ...rest } = mine;
+    return rest;
 }
 
 // v0.1.4.6, G2: a command result for the history, cut to max characters (0 for no limit). The first
@@ -234,6 +254,8 @@ export class Agent {
         const areas_on = Boolean(settings.protected_areas) && Boolean(settings.world_memory); // areas belong to a world
         if (settings.protected_areas && !settings.world_memory)
             console.warn('protected_areas needs world_memory, so the protected areas stay off.');
+        if (settings.mine_routes && !settings.routes_pack)
+            console.warn(MINE_ROUTES_WARNING); // v0.1.4.9: once, the mine routes stay off
         if (!this.cost_meter)
             this.blocked_actions.push('!cost');
         if (!this.rule_store)
@@ -243,8 +265,8 @@ export class Agent {
         if (!settings.home_pack)
             this.blocked_actions.push('!goToShelter', '!eat', '!closeDoor');
         // the parts of v0.1.4.7: a pack is imported only while a switch needs it; the commands of a part
-        // that is off, or whose pack could not be loaded, are hidden
-        if (settings.storage_pack || settings.farming_pack || settings.wood_pack || settings.mining_pack) {
+        // that is off, or whose pack could not be loaded, are hidden (v0.1.4.9: also the routes pack)
+        if (settings.storage_pack || settings.farming_pack || settings.wood_pack || settings.mining_pack || settings.routes_pack) {
             this.work_packs = await this._loadWorkPacks();
             if (!settings.world_memory && (this.work_packs.storage || this.work_packs.mining))
                 console.warn('Without world_memory the chest index and the mine store live in memory only and are lost when the bot stops.');
@@ -257,6 +279,12 @@ export class Agent {
             this.blocked_actions.push('!chopTrees', '!getTool', '!craftSupplies');
         if (!settings.mining_pack || !this.work_packs?.mining)
             this.blocked_actions.push('!mineOre', '!goToMine', '!leaveMine');
+        // the parts of v0.1.4.9: the ways of the player (routes_pack), the mine of the player (mine_routes as it
+        // takes effect, with mining_pack and routes_pack, both packs loaded)
+        if (!settings.routes_pack || !this.work_packs?.routes)
+            this.blocked_actions.push('!rememberRoute', '!routes', '!forgetRoute');
+        if (!this._mineRoutesOn())
+            this.blocked_actions.push('!rememberMine', '!rememberTunnel', '!collectPassedOre');
         blacklistCommands(this.blocked_actions);
 
         console.log(this.name, 'logging into minecraft...');
@@ -340,6 +368,8 @@ export class Agent {
                     this._areaStore(); // the protected areas of this world
                 if (this.work_packs)
                     this._workStores(); // the chest index and the mine store of this world (v0.1.4.7)
+                if (settings.routes_pack && this.work_packs)
+                    this._trail(); // v0.1.4.9 (I1): the trail of this world starts
                 const restart_note = await this._atSpawn(); // v0.1.4.8: off-hand, house, doors, restart note
               
                 this._setupEventHandlers(save_data, withRestartNote(init_message, restart_note));
@@ -514,8 +544,9 @@ export class Agent {
     }
 
     homeContext() {
-        // what the modules of the home pack get (spec v0.1.4.6, section 5); v0.1.4.8: say (C2) and whereAmI (I2)
-        return {
+        // what the modules of the home pack get (spec v0.1.4.6, section 5); v0.1.4.8: say (C2) and whereAmI (I2);
+        // v0.1.4.9: routes (I4), null without routes_pack
+        const ctx = {
             areas: this.area_store ?? null,
             places: this.memory_bank,
             settings,
@@ -525,12 +556,51 @@ export class Agent {
             world,
             say: (text) => this.sayText(text),
             whereAmI: () => this.whereAmI(),
+            routes: null,
         };
+        ctx.routes = this._routes(ctx);
+        return ctx;
     }
 
     whereAmI() {
-        // v0.1.4.8 (I2): { area: { name, type } | null, depth, underground } of reflex/where_am_i.js. Never throws.
-        return whereAmIOf(this.bot);
+        // v0.1.4.8 (I2): { area: { name, type } | null, depth, underground } of reflex/where_am_i.js; v0.1.4.9 (I7):
+        // and mine, the mine of the store the bot is in, with mine_routes (else null; the bot counts as
+        // underground in a mine). The modes and the packs ask this. Never throws.
+        return whereAmIOf(this.bot, Date.now(), { mine: this._mineHere() });
+    }
+
+    _mineRoutesOn() {
+        // v0.1.4.9: mine_routes as it takes effect (mineRoutesOn of the commands: with mining_pack and routes_pack),
+        // with both packs loaded
+        const packs = this.work_packs;
+        if (!packs)
+            return false;
+        return mineRoutesOn() && Boolean(packs.mining) && Boolean(packs.routes);
+    }
+
+    _mineHere() {
+        // v0.1.4.9 (I7, B for G 2): with mine_routes, the mine that holds the bot (mineAt of the mining pack over
+        // the mines of its dimension: the room, a tunnel, a branch or the way in) as { name, tunnel, level, onRoute };
+        // tunnel is an index from 0 or null on the way in, level that of the tunnel, else of the mine. null
+        // without mine_routes, outside every mine, or when it cannot be read. Never throws.
+        if (!this._mineRoutesOn())
+            return null;
+        try {
+            const pack = this.work_packs.mining;
+            const mines = this._workStores().mines;
+            const pos = this.bot?.entity?.position;
+            if (typeof pack.mineAt !== 'function' || !mines || !pos)
+                return null;
+            const at = pack.mineAt(mines.list(this.bot.game?.dimension), { x: pos.x, y: pos.y, z: pos.z });
+            if (!at?.mine)
+                return null;
+            const tunnel = Number.isInteger(at.tunnel) ? at.tunnel : null;
+            const level = tunnel !== null ? (pack.tunnelsOf?.(at.mine)?.[tunnel]?.level ?? at.mine.level) : at.mine.level;
+            return { name: at.mine.name ?? null, tunnel, level, onRoute: at.onRoute === true };
+        } catch (error) {
+            console.warn('Could not find the mine the bot is in:', error);
+            return null;
+        }
     }
 
     sayText(text) {
@@ -616,10 +686,11 @@ export class Agent {
             const plain = (d) => (typeof d === 'string' && d !== '' ? d.replace(/^minecraft:/, '') : 'overworld');
             const stores = this._workStores();
             const areas = (this.area_store?.list?.() ?? []).filter((area) => plain(area?.dimension) === plain(dimension));
+            const mines = stores.mines?.list?.(dimension) ?? [];
             return knowledgeText({
                 chests: stores.chests?.list?.(dimension) ?? [],
                 areas,
-                mines: stores.mines?.list?.(dimension) ?? [],
+                mines: this._mineRoutesOn() ? mines : mines.map(withoutPassed), // v0.1.4.9: the ore left behind only with mine_routes
                 places: this.memory_bank ?? null,
                 where: { ...this.whereAmI(), pos: { x: pos.x, y: pos.y, z: pos.z } },
             }, numberSetting(settings.knowledge_max_chars, 600));
@@ -664,6 +735,14 @@ export class Agent {
                 failed('mining', error);
             }
         }
+        // v0.1.4.9: the routes pack (the trail, the ways of the player), with routes_pack
+        if (settings.routes_pack) {
+            try {
+                packs.routes = await (loaders.routes ? loaders.routes() : import('./packs/routes/index.js'));
+            } catch (error) {
+                failed('routes', error);
+            }
+        }
         return packs;
     }
 
@@ -699,6 +778,69 @@ export class Agent {
             chests: this._workStore('chests', packs.storage?.ChestIndex, 'chests.json'),
             mines: this._workStore('mines', packs.mining?.MineStore, 'mines.json'),
         };
+    }
+
+    _trail() {
+        // v0.1.4.9 (I1): the trail of the current world with routes_pack (createTrail of the routes pack, file
+        // <world folder>/trail.json, in memory only without world_memory, trail_max_steps steps), made and started
+        // when the world is known (at spawn) and again when it changes; the trail of the world that is left
+        // stops first and is written. null before the world is known or when it cannot be made. Never throws.
+        if (!settings.routes_pack || !this.work_packs)
+            return null;
+        const dir = settings.world_memory ? (this.world_memory?.worldDir ?? null) : ''; // '': in memory only
+        if (this._trail_of && this._trail_of.dir === dir)
+            return this._trail_of.trail;
+        this._stopTrail();
+        let trail = null;
+        const createTrail = this.work_packs.routes?.createTrail;
+        if (dir !== null && typeof createTrail === 'function') {
+            try {
+                trail = createTrail(this.bot, { settings, now: () => Date.now(), log: (text) => console.log(text) },
+                    { file: dir ? `${dir}/trail.json` : null, maxSteps: trailMaxSteps(settings.trail_max_steps) });
+                trail.start();
+            } catch (error) {
+                trail = null;
+                console.warn('Could not start the trail of this world:', error);
+            }
+        }
+        this._trail_of = { dir, trail };
+        return trail;
+    }
+
+    _stopTrail() {
+        // v0.1.4.9 (I1): the trail stops and writes its file (a world change, the exit). Never throws.
+        try {
+            this._trail_of?.trail?.stop?.();
+        } catch (error) {
+            console.warn('Could not stop the trail:', error);
+        }
+    }
+
+    _routes(ctx) {
+        // v0.1.4.9 (I4): ctx.routes of the home context with routes_pack: bindRoutes of the routes pack with the route
+        // store of this world (routes.json) and its trail, made once per world (bindRoutes never reads ctx.routes;
+        // it uses the clock and the log of the first context). null without routes_pack, before the world is
+        // known or when the pack could not be loaded. Never throws.
+        if (!settings.routes_pack || !this.work_packs)
+            return null;
+        try {
+            const pack = this.work_packs.routes;
+            if (typeof pack?.bindRoutes !== 'function')
+                return null;
+            const store = this._workStore('routes', pack.RouteStore, 'routes.json');
+            const trail = this._trail();
+            if (!store && !trail)
+                return null;
+            const bound = this._routes_of;
+            if (bound && bound.store === store && bound.trail === trail)
+                return bound.routes;
+            const routes = pack.bindRoutes(this.bot, ctx, store, trail) ?? null;
+            this._routes_of = { store, trail, routes };
+            return routes;
+        } catch (error) {
+            console.warn('Could not give the routes of this world to the packs:', error);
+            return null;
+        }
     }
 
     packContext() {
@@ -774,7 +916,8 @@ export class Agent {
 
     _atExit(reason) {
         // v0.1.4.8: right before the process exits (cleanKill, a disconnect): the exit file with restart_context
-        // (F3), the door service stops, the blocks that the bot placed are written (D4). Never throws.
+        // (F3), the door service stops, the blocks that the bot placed are written (D4); v0.1.4.9: the trail
+        // stops and is written (I1). Never throws.
         if (settings.restart_context) {
             try {
                 writeExit(`./bots/${this.name}`, {
@@ -798,6 +941,7 @@ export class Agent {
         } catch (error) {
             console.warn('Could not save the blocks that the bot placed:', error);
         }
+        this._stopTrail(); // v0.1.4.9 (I1): the trail is written; never throws
         try {
             this.bot?.chatLimiter?.drop?.(); // v0.1.4.8 (X9): the chat lines that still wait are dropped
         } catch (error) {

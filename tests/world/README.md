@@ -9,7 +9,7 @@ fake with canned replies; nothing leaves 127.0.0.1.
 ## Running
 
 ```
-npm run test:world                       all scenarios (about 80 minutes since v0.1.4.8: the long run alone takes 30)
+npm run test:world                       all scenarios (about 90 minutes since v0.1.4.9: the long run alone takes 30)
 node tests/world/run.js doors shelter    only scenarios whose name contains one of the words
 node tests/world/run.js all_modes_on     a group: the work scenarios w15 to w28 (W30 of v0.1.4.8)
 node tests/world/run.js --verbose        the whole output of every scenario while it runs
@@ -25,12 +25,39 @@ passed and nothing was left behind (see "Hygiene").
 
 | Variable | Meaning | Default |
 |---|---|---|
-| `MC_TEST_SERVER_DIR` | folder with `server-1.21.8.jar` and the accepted `eula.txt` | `%LOCALAPPDATA%\Mindcraft\test-server` |
-| `MC_TEST_JAVA` | `java.exe` of Java 21 | the Java of the Minecraft launcher (see `mc_server.js`) |
+| `MC_TEST_SERVER_DIR` | folder with `server-1.21.8.jar` and the accepted `eula.txt` | Windows: `%LOCALAPPDATA%\Mindcraft\test-server`; Linux and macOS (since v0.1.4.9): `~/.local/share/mindcraft/test-server` |
+| `MC_TEST_JAVA` | the `java` of Java 21 (`java.exe` on Windows) | Windows: the Java of the Minecraft launcher (see `mc_server.js`); Linux and macOS: none, set it (for example `/usr/bin/java`) |
 | `MCW_LOG_DIR` | if set, the runner copies the output of every scenario run and the server log there | not set: nothing is kept |
+| `JAVA_TOOL_OPTIONS` | must not reach the server; `mc_server.js` removes it from the environment of the server process (since v0.1.4.9), so the runner may be started with it set | - |
 
 Without the jar, an accepted `eula.txt` or Java the runner prints
 `World tests skipped: no test server found.` and exits with 0.
+
+### Getting the server (v0.1.4.9)
+
+```
+node scripts/get_test_server.js                  download the server jar into the folder of the test server
+node scripts/get_test_server.js --accept-eula    the same, and write eula.txt with eula=true
+node scripts/get_test_server.js --dir <folder>   another folder
+```
+
+The script reads Mojang's version manifest (`https://piston-meta.mojang.com/mc/game/version_manifest_v2.json`),
+finds 1.21.8 and its server download, and refuses a server whose SHA-1 is not
+`6bce4ef400e4efaa63a13d5e6f6b500be969ef81` (the file the tests were made with, 57,555,044 bytes). It downloads
+to `server-1.21.8.jar.part`, checks SHA-1 and size and renames it to `server-1.21.8.jar`; a jar that is there
+already with the right SHA-1 is kept. The folder is `--dir`, else `MC_TEST_SERVER_DIR`, else the default of the
+table above, the same that the runner uses. `--accept-eula` means that you accept the EULA of Minecraft
+(`https://aka.ms/MinecraftEULA`); without it the script says how to accept it (the flag, or `eula=true` in
+`eula.txt` by hand). It uses the `fetch` of Node, no package; Node's fetch uses `HTTPS_PROXY` only with
+`NODE_USE_ENV_PROXY=1` (Node 22.21 and later). Exit codes: 0 done, 1 network or file error, 2 bad arguments,
+3 wrong checksum. Java 21 is not part of it: install it and set `MC_TEST_JAVA`.
+
+A Linux machine, for example the cloud container (OpenJDK 21 at `/usr/bin/java`):
+
+```
+node scripts/get_test_server.js --accept-eula
+MC_TEST_JAVA=/usr/bin/java node tests/world/run.js <name>
+```
 
 ## World types
 
@@ -226,7 +253,7 @@ grass:
 |---|---|
 | house | planks, x -4..4, z -5..5, floor g, walls g+1..g+4, roof g+5 (9 x 6 x 11 blocks), oak_log posts, glass at (-4, g+2, 0), (4, g+2, 0), (0, g+2, 5); oak door (0, g+1, -5) in the north wall; red bed foot (-3, g+1, 3), head (-3, g+1, 4); chest (3, g+1, 4) with 12 bread and 64 leaf_litter; torches (-3, g+1, -4), (3, g+1, -4); the place "home" at (0, g+1, 1) |
 | shaft | oak trapdoor (2, g, -2) in the floor, closed, facing south (climbable when open, over the ladders); ladders facing south at (2, 41..59, -2) on the north wall |
-| room | air x 0..4, y 41..43, z -2..2 (stone floor at y 40), under the house; chest (0, 41, 2) with 64 cobblestone and 16 torches; crafting table (4, 41, 2); torch (4, 41, -2) |
+| room | air x 0..4, y 41..43, z -2..2 (stone floor at y 40), under the house; chest (0, 41, 2) with 64 cobblestone and 16 torches; crafting table (4, 41, 2); furnace (0, 41, -2) facing east (v0.1.4.9: the room of the owner's mine has one); torch (4, 41, -2) |
 | descent | 16 steps of loose blocks along z 0: step k at x 4+k, feet y 41-k, 3 high, cobblestone under each step; from x 5 (feet 40) to x 20 (feet 25) |
 | landing | air x 21..23, y 25..27, z -1..1; torch (23, 25, -1) |
 | tunnel | 1 wide, 2 high, 12 long: x 22, y 25..26, z 2..13; stone around it, grass 34 blocks above |
@@ -236,6 +263,31 @@ grass:
 
 `penFence(plan)`, `farmFence(plan)` and `penAnimalsWhere(plan)` read the fences and the animals back.
 `w58_base_world.js` proves the build (every part read back) and that the agent can stand in every part.
+
+### Helpers of v0.1.4.9
+
+The routes and the mine of the player are learned from the trail of the bot, so the scenarios W61 to W73 walk the
+bot along the way (spec 11 TW 2) instead of teleporting it: a teleport of more than 16 blocks sideways or up starts
+the trail again (HANDOFF part A).
+
+- `settings0149(extra, modes)`: the owner's switches (`OWNER_SWITCHES`), every setting of v0.1.4.8 on (`FLAGS_0148_ON`,
+  knowledge in the prompt among them), the switches of v0.1.4.9 on (`FLAGS_0149_ON`: `routes_pack`, `mine_routes`;
+  `ore_sense_range` 0 and `skills_over_code` off unless `extra` sets them), a trip of at most 12 minutes, and the modes
+  of the owner (`withModes`). `FLAGS_0149_OFF` has the new settings at their defaults (W74), `COMMANDS_0149` the six
+  new commands by switch.
+- `walkTyped(orders, agent, cell)`: a typed `!goToCoordinates` to a cell (closeness 0), with a note whether the bot
+  arrived. `stepCells(agent, cells, { ms: 200 })` and `columnCells(x, z, from, to)`: the bot moved cell by cell with
+  `/tp` where the path search cannot walk (the ladder). `setTrapdoor(plan, open)`: the player opens or closes the
+  trapdoor of the base.
+- `walkUpToBed(agent, orders, plan)` (W62 to W64): from the middle of the room at y 41 to the floor beside the ladder
+  (typed), up the ladder cell by cell, through the open trapdoor into the house, to the bed (typed); the trapdoor is
+  closed behind the bot. `walkIntoMine(agent, orders, plan, { end })` (W65 to W73): from outside in front of the door
+  into the house next to the trapdoor (typed: the path search opens the door), down the ladder cell by cell, and down
+  the descent to `end` (typed; the end of the tunnel by default).
+- `worldDirOf(agent)`, `readWorldFile(agent, name)`, `minesInFile(agent)`, `routesInFile(agent)`: the files of the
+  folder of the current world (`bots/<name>/worlds/<key>/trail.json`, `routes.json`, `mines.json`).
+- `serverSleeping(name)`: the server says the player sleeps (as W39). `recordMoves(agent)`: every `activateBlock` and
+  every goal of the path search as `MOVE` lines, for the report of a failing walk (nothing is changed).
 
 ## Reading a failing scenario
 
@@ -319,6 +371,29 @@ player in the chat. The comment at the top of each file says how it would have f
 
 The chat kick of the play test (S12) cannot happen on the test server, which does not sign chat: no world
 scenario for it (spec 12, T2.4).
+
+Release v0.1.4.9 "The mine, the routes of the player" (spec section 11, TW): the group `mine_routes_0149`
+(`node tests/world/run.js mine_routes_0149`), all in the base world, with the modes of the owner, the owner's switches,
+the settings of v0.1.4.8 on and the switches of v0.1.4.9 on (`settings0149`), the orders typed by the player. The
+comment at the top of each file says how it would have failed against v0.1.4.8.
+
+| Id | File | What it proves |
+|---|---|---|
+| W61 | `w61_trail_records.js` | after a typed walk of 36 blocks through the door into the house, `trail.json` holds the steps in order, one with `via` the door, `sky` false inside the house and true outside (with notes of the light the bot reads and the light of the server) |
+| W62 | `w62_route_to_bed.js` | the place `storage` in the room at y 41; walked to the ladder, moved up it cell by cell, through the trapdoor to the bed: `!rememberRoute("bed")` answers the text of A2 with 1 ladder and 1 trapdoor, `routes.json` has the ladder and the trapdoor legs; from the room at night `!goToBed` climbs the ladder and sleeps in the bed ("I slept. It is morning."), nothing dug |
+| W63 | `w63_route_reverse.js` | the route of W62; from the bed `!goToRememberedPlace("storage")` goes down the ladder into the room at y 41, nothing dug, never hurt |
+| W64 | `w64_route_broken.js` | the route of W62, 7 ladders taken away: `!goToRememberedPlace("storage")` answers the text of I3 with the step of the ladder and the position of the bot, nothing dug, the bot lives in the house |
+| W65 | `w65_remember_mine.js` | walked from outside through the door, down the ladder, to the end of the tunnel: `!rememberMine("mine")` answers the text of B2 (1 ladder, 1 door, 1 trapdoor; chest, crafting table, furnace; one tunnel of 12 at level 25 going south); `mines.json` has the mine of the player with its entrance outside, the route, the room and the tunnel; the place "mine"; whereAmI names the mine |
+| W66 | `w66_remember_tunnel.js` | the mine of W65; in the tunnel, the player looking south, `!rememberTunnel` answers the text of B3 (start, south, end, 12 blocks, level 25); the tunnel dug 4 further, it measures 16 and replaces the tunnel |
+| W67 | `w67_mine_known.js` | the mine of W65, 4 iron ore beyond the end of the tunnel: `!mineOre("iron", 4)` from the door walks the route in and out by the ladder, brings 4 raw_iron, the ore is gone, the tunnel is longer than 12, no new mine and no new shaft |
+| W68 | `w68_passed_ore.js` | the mine of W65, 2 gold ore beside the end of the tunnel, stone pickaxes: `!mineOre("iron", 2)` says "I left 2 gold_ore behind: I need an iron pickaxe.", `passed` lists them (reason pickaxe); with an iron pickaxe `!collectPassedOre("gold")` gets both, `passed` is empty |
+| W69 | `w69_ore_sense.js` | the mine of W65, an iron ore 2 blocks inside the wall beside the new steps: with `ore_sense_range` 0 it stays (the ore ahead is taken), with 3 it is taken with a side cut |
+| W70 | `w70_ore_in_sight.js` | one iron ore in the wall of the tunnel, one 5 blocks inside the rock: `!collectBlocks("iron_ore", 2)` with `ore_sense_range` 0 takes the one in the wall, says the text of C1, digs nothing towards the other |
+| W71 | `w71_dusk_on_route.js` | the mine of W65; the bot held on the ladder of its route at dusk: whereAmI says underground in the mine on its way in, `night_shelter` does nothing for 60 s; control on the surface |
+| W72 | `w72_dig_code_refused.js` | `skills_over_code`: the model's `!newAction("dig a tunnel to the east")` gets the text of I8 and the fake code model is never called; typed by the player it runs |
+| W73 | `w73_branches.js` | the tunnel of the base dug to 32, learned with `!rememberMine`: `!mineOre("iron", 2)` digs the first branch to the left (east) at 4 blocks from the start, 1 wide and 2 high, nothing to the right, the branch in `mines.json` |
+| W74 | `w74_flags_off_0149.js` | every setting of v0.1.4.9 at its default: no `trail.json` or `routes.json`, the six commands hidden and "not a command", `!mineOre` asks as in v0.1.4.8, `!collectBlocks` for ore by `ore_sense_range` 0 (decision of the owner), the model's `!newAction` runs |
+| W60 | `w60_long_run.js` | v0.1.4.9: as before with the switches of v0.1.4.9 on (`ore_sense_range` 3, `skills_over_code` on) and 8 orders of the new commands (`!rememberRoute`, `!routes`, `!rememberMine`, `!rememberTunnel`, `!mineOre` in the known mine, `!collectPassedOre`, `!forgetRoute`) in the places of 8 repeated queries: still 60 orders; the process never ends, every order has a result text |
 
 ## Hygiene
 

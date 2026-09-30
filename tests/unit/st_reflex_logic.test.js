@@ -331,7 +331,7 @@ describe('I2: whereAmI', () => {
     test('returns { area, depth, underground }; on the surface outside of areas', () => {
         const world = createBlockWorld().flatGround(63);
         const r = where.whereAmI(fakeBot(world, { x: 0.5, y: 64, z: 0.5 }));
-        assert.deepEqual(r, { area: null, depth: 0, underground: false });
+        assert.deepEqual(r, { area: null, depth: 0, underground: false, mine: null });
     });
 
     test('underground when deeper than 8', () => {

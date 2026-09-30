@@ -102,8 +102,12 @@ describe('settings_spec.json: the settings of v0.1.4.8', () => {
         assert.match(spec.home_reflexes.description, /hunger/);
     });
 
-    test('ore_sense_range is not part of this release', () => {
-        assert.equal(spec.ore_sense_range, undefined);
-        assert.ok(!Object.hasOwn(settings, 'ore_sense_range'));
+    // v0.1.4.9 brought ore_sense_range (section 2 of its spec; tests/unit/rtg_settings.test.js)
+    test('ore_sense_range is not part of this release: it came with v0.1.4.9, a number, 0 or 3, 0 by default', () => {
+        assert.equal(spec.ore_sense_range.type, 'number');
+        assert.equal(spec.ore_sense_range.default, 0);
+        assert.ok([0, 3].includes(settings.ore_sense_range), `ore_sense_range: ${settings.ore_sense_range}`);
+        const keys = Object.keys(settings);
+        assert.ok(keys.indexOf('ore_sense_range') > keys.indexOf('log_timestamps'), 'after the keys of v0.1.4.8');
     });
 });

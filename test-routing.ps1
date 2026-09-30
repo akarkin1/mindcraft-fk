@@ -1,25 +1,76 @@
 # Checks whether plain sentences of the player lead the bot to the right command.
 # Sends one request per sentence of tests/routing/sentences.json to the chat model of
-# profiles/claude.json, with all parts of v0.1.4.6 switched on, and prints the result
-# and the cost of the run. The API key comes from the PowerShell secret vault and is
-# passed to the script as an environment variable, so no keys.json is needed.
+# the profile (profiles/claude.json unless -Profile names another; -Model replaces its
+# chat model and keeps its params), with all parts switched on, and prints the result
+# and the time of every answer, the accuracy, the time per answer and the cost of the
+# run. The API key comes from the PowerShell secret vault and is passed to the script
+# as an environment variable, so no keys.json is needed: OpenaiApiKey for an OpenAI
+# chat model (a -Model that starts with gpt-, or a profile whose model is an OpenAI
+# model), else AnthropicsApiKey. The other key is loaded too when the vault has it, so
+# that the other models of the profile ("embedding": "openai") are made as in play.
 #
-#   .\test-routing.ps1          run the check
+#   .\test-routing.ps1                                  run the check with profiles/claude.json
+#   .\test-routing.ps1 -Model gpt-6-luna                the same profile with GPT-6 Luna
+#   .\test-routing.ps1 -Profile profiles/gpt.json       the gpt profile
 #
 # To only see the prompt sizes and the estimated cost, without a key and without requests:
-#   node scripts/routing_check.js --dry-run --all-parts
+#   node scripts/routing_check.js --dry-run --all-parts [--model gpt-6-luna] [--profile profiles/gpt.json]
+param(
+    [string] $Model = '',
+    [Alias('Profile')] [string] $ProfilePath = ''
+)
+
+# The rules of apiOf in scripts/routing_check.js: true for a model of OpenAI.
+function Test-OpenAiModel($entry) {
+    if ($entry -is [string]) { $name = $entry; $api = '' }
+    else { $name = [string] $entry.model; $api = [string] $entry.api }
+    if ($api) { return $api -eq 'openai' }
+    if ($name.Contains('/')) { return $name.StartsWith('openai/') }
+    return $name.StartsWith('openai') -or $name.Contains('gpt') -or $name.Contains('o1') -or $name.Contains('o3')
+}
 
 if (Get-Command fnm -ErrorAction SilentlyContinue) {
     fnm env --shell powershell | Out-String | Invoke-Expression
     fnm use 20
 }
 
+# a profile path relative to the folder where the script was started
+if ($ProfilePath) {
+    $ProfilePath = (Resolve-Path -Path $ProfilePath -ErrorAction Stop).Path
+}
+
 Push-Location $PSScriptRoot
 try {
-    $env:ANTHROPIC_API_KEY = Get-Secret -Name AnthropicsApiKey -AsPlainText -ErrorAction Stop
-    node scripts/routing_check.js --all-parts
+    $checkArgs = @('scripts/routing_check.js', '--all-parts')
+    if ($ProfilePath) { $checkArgs += @('--profile', $ProfilePath) }
+    if ($Model) { $checkArgs += @('--model', $Model) }
+
+    # the chat model: -Model when given, else the model of the profile
+    if ($Model) {
+        $openai = Test-OpenAiModel $Model
+    }
+    else {
+        $path = if ($ProfilePath) { $ProfilePath } else { 'profiles/claude.json' }
+        $openai = Test-OpenAiModel (Get-Content -Raw -Path $path | ConvertFrom-Json).model
+    }
+
+    # the secrets by their names only; their values go into the environment of the check and nowhere else.
+    # The key of the chat model is needed; the other one is loaded when the vault has it.
+    if ($openai) {
+        $env:OPENAI_API_KEY = Get-Secret -Name OpenaiApiKey -AsPlainText -ErrorAction Stop
+        $other = Get-Secret -Name AnthropicsApiKey -AsPlainText -ErrorAction SilentlyContinue
+        if ($other) { $env:ANTHROPIC_API_KEY = $other }
+    }
+    else {
+        $env:ANTHROPIC_API_KEY = Get-Secret -Name AnthropicsApiKey -AsPlainText -ErrorAction Stop
+        $other = Get-Secret -Name OpenaiApiKey -AsPlainText -ErrorAction SilentlyContinue
+        if ($other) { $env:OPENAI_API_KEY = $other }
+    }
+    $other = $null
+    node @checkArgs
 }
 finally {
+    Remove-Item Env:OPENAI_API_KEY -ErrorAction SilentlyContinue
     Remove-Item Env:ANTHROPIC_API_KEY -ErrorAction SilentlyContinue
     Pop-Location
 }

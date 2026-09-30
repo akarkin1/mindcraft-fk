@@ -8,10 +8,14 @@
 //   Chest (11, 67, 53): leaf_litter 104, cobblestone 81, raw_copper 52, wheat_seeds 52, lapis_lazuli 49, coal 39 and 32 more kinds.
 //   Chest (11, 41, 44): empty.
 //   Areas: home (home), farm (farm, 1 gate), mine (mine).
-//   Mines: iron, entrance (9, 67, 58), level 16.
+//   Mines: iron, entrance (9, 67, 58), level 16; "mine", entrance (30, 60, 4), level 25.
+//   Ore left behind: gold 2, coal 6 in the mine "mine".
 //   Places: home (12, 67, 52), mine (9, 67, 58).
-// The text is cut at whole lines to maxChars: the header, where the bot is, the areas and the mines
-// come first, then the chests, the nearest first, then the places.
+// In a mine (spec v0.1.4.9 I7, where.mine) the line of where the bot is names it:
+//   You are in the area "mine" (mine), in the mine "mine", tunnel 1 at level 25, 35 blocks under the ground.
+//   You are in the mine "mine", on its way in, 12 blocks under the ground.
+// The text is cut at whole lines to maxChars: the header, where the bot is, the areas, the mines and
+// the ore left behind come first, then the chests, the nearest first, then the places.
 
 /** The first line of the block. */
 export const KNOWLEDGE_HEADER = 'WHAT YOU KNOW (from memory, no need to check):';
@@ -101,26 +105,48 @@ export function chestKnowledgeLine(chest) {
     return `Chest ${posText(chest)}: ${shown}${more}.`;
 }
 
+// The part of the line of where the bot is for where.mine (v0.1.4.9, I7): `in the mine "mine", tunnel 1
+// at level 25` or `in the mine "mine", on its way in`. The tunnel is an index from 0, shown from 1; null
+// means the bot is on the route of the mine. A mine without a name (dug by the bot) is `a mine`.
+function mineParts(mine) {
+    const name = typeof mine.name === 'string' && mine.name !== '' ? `the mine "${mine.name}"` : 'a mine';
+    if (isFiniteNumber(mine.tunnel) && mine.tunnel >= 0) {
+        const level = isFiniteNumber(mine.level) ? ` at level ${Math.round(mine.level)}` : '';
+        return [`in ${name}`, `tunnel ${Math.floor(mine.tunnel) + 1}${level}`];
+    }
+    return [`in ${name}`, 'on its way in'];
+}
+
 /**
  * The line of where the bot is: `You are in the area "farm" (farm), on the surface.`, under the
  * ground `You are in the area "mine" (mine), 26 blocks under the ground.`; without an area
  * `You are on the surface.` or `You are 26 blocks under the ground.` '' without `where`.
- * @param {{area?: {name: string, type?: string|null}|null, depth?: number, underground?: boolean}|null} where
+ * With `where.mine` (v0.1.4.9, I7) the bot is under the ground, and the mine is named:
+ * `You are in the area "mine" (mine), in the mine "mine", tunnel 1 at level 25, 35 blocks under the ground.`
+ * or `You are in the mine "mine", on its way in, 12 blocks under the ground.`
+ * @param {{area?: {name: string, type?: string|null}|null, depth?: number, underground?: boolean,
+ *   mine?: {name: string|null, tunnel: number|null, level?: number}|null}|null} where
  * @returns {string}
  */
 export function whereLine(where) {
     if (!where || typeof where !== 'object') {
         return '';
     }
+    const mine = where.mine && typeof where.mine === 'object' ? where.mine : null;
     const depth = isFiniteNumber(where.depth) && where.depth > 0 ? Math.round(where.depth) : 0;
-    const level = where.underground === true
+    const level = where.underground === true || mine
         ? (depth > 0 ? `${depth} ${depth === 1 ? 'block' : 'blocks'} under the ground` : 'under the ground')
         : 'on the surface';
     const area = where.area && typeof where.area.name === 'string' ? where.area : null;
+    const parts = [];
     if (area) {
-        return `You are in the area "${area.name}" (${typeof area.type === 'string' && area.type ? area.type : 'building'}), ${level}.`;
+        parts.push(`in the area "${area.name}" (${typeof area.type === 'string' && area.type ? area.type : 'building'})`);
     }
-    return `You are ${level}.`;
+    if (mine) {
+        parts.push(...mineParts(mine));
+    }
+    parts.push(level);
+    return `You are ${parts.join(', ')}.`;
 }
 
 /**
@@ -142,23 +168,82 @@ export function areasLine(areas) {
     return parts.length > 0 ? `Areas: ${parts.join(', ')}.` : '';
 }
 
+// The name of a mine (v0.1.4.9, I6): a string when the player named it, null for a mine of the bot.
+function mineName(m) {
+    return typeof m?.name === 'string' && m.name !== '' ? m.name : null;
+}
+
 /**
  * The line of the mines: `Mines: iron, entrance (9, 67, 58), level 16.`, several joined by `; `.
- * '' without mines.
+ * A mine the player named (v0.1.4.9, I6) is shown by its name, not by the ore the store needs:
+ * `"mine", entrance (30, 60, 4), level 25`. '' without mines.
  * @param {object[]} mines
  * @returns {string}
  */
 export function minesLine(mines) {
     const parts = [];
     for (const m of Array.isArray(mines) ? mines : []) {
-        if (!m || !isPoint(m.entrance) || typeof m.ore !== 'string') {
+        if (!m || !isPoint(m.entrance) || (typeof m.ore !== 'string' && mineName(m) === null)) {
             continue;
         }
         const ores = [m.ore, ...(Array.isArray(m.ores) ? m.ores : [])].filter((o, i, all) => typeof o === 'string' && all.indexOf(o) === i);
+        const what = mineName(m) !== null ? `"${mineName(m)}"` : ores.join(' and ');
         const level = isFiniteNumber(m.level) ? `, level ${m.level}` : '';
-        parts.push(`${ores.join(' and ')}, entrance ${posText(m.entrance)}${level}`);
+        parts.push(`${what}, entrance ${posText(m.entrance)}${level}`);
     }
     return parts.length > 0 ? `Mines: ${parts.join('; ')}.` : '';
+}
+
+// The kinds of ore left behind in the order of the line: the deeper ore of the mining pack first (its
+// table from the bottom), then any other kind by name.
+const PASSED_ORDER = ['diamond', 'redstone', 'gold', 'lapis', 'iron', 'copper', 'coal'];
+
+// The kind of the ore of an entry of `passed`: `gold`, `gold_ore` and `deepslate_gold_ore` are `gold`.
+function passedKind(ore) {
+    if (typeof ore !== 'string') {
+        return null;
+    }
+    const kind = ore.trim().toLowerCase().replace(/^minecraft:/, '').replace(/^deepslate_/, '').replace(/_ore$/, '');
+    return kind.length > 0 ? kind : null;
+}
+
+function passedRank(kind) {
+    const at = PASSED_ORDER.indexOf(kind);
+    return at >= 0 ? at : PASSED_ORDER.length;
+}
+
+/**
+ * The line of the ore left behind in the mines (v0.1.4.9, I6 `passed`, I7):
+ * `Ore left behind: gold 2, coal 6 in the mine "mine".`, several mines joined by `; `:
+ * `Ore left behind: gold 2 in the mine "mine"; coal 3 in the mine "deep".` The kinds are counted per
+ * mine, the deeper ore of the mining pack first (diamond, redstone, gold, lapis, iron, copper, coal),
+ * then other kinds by name. A mine without a name is named by its entrance: `in the mine at (9, 67, 58)`.
+ * Entries without an ore or a position are left out. '' without entries.
+ * @param {object[]} mines
+ * @returns {string}
+ */
+export function passedOreLine(mines) {
+    const parts = [];
+    for (const m of Array.isArray(mines) ? mines : []) {
+        if (!m || typeof m !== 'object' || !Array.isArray(m.passed)) {
+            continue;
+        }
+        const counts = new Map();
+        for (const entry of m.passed) {
+            const kind = isPoint(entry) ? passedKind(entry.ore) : null;
+            if (kind !== null) {
+                counts.set(kind, (counts.get(kind) ?? 0) + 1);
+            }
+        }
+        if (counts.size === 0) {
+            continue;
+        }
+        const kinds = [...counts].sort((a, b) => passedRank(a[0]) - passedRank(b[0]) || (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))
+            .map(([kind, n]) => `${kind} ${n}`).join(', ');
+        const where = mineName(m) !== null ? `the mine "${mineName(m)}"` : (isPoint(m.entrance) ? `the mine at ${posText(m.entrance)}` : 'a mine');
+        parts.push(`${kinds} in ${where}`);
+    }
+    return parts.length > 0 ? `Ore left behind: ${parts.join('; ')}.` : '';
 }
 
 /**
@@ -175,12 +260,14 @@ export function placesLine(places) {
  * What the bot knows, for the chat prompt (spec v0.1.4.8 I9, E5). Pure; never throws.
  * The chests are listed the nearest first when `where.pos` (or `where.position`) gives the position
  * of the bot, otherwise in the order given. The text is cut at whole lines to `maxChars`: the header,
- * where the bot is, the areas and the mines come first, then as many chests as fit, the nearest
- * first, then the places; the lines keep the order of the format. '' when nothing is known.
+ * where the bot is, the areas, the mines and the ore left behind (v0.1.4.9) come first, then as many
+ * chests as fit, the nearest first, then the places; the lines keep the order of the format. '' when
+ * nothing is known.
  * @param {{chests?: object[]|{list: Function}, areas?: object[]|{list: Function}, mines?: object[]|{list: Function},
- *   places?: object[]|object, where?: {area?: object|null, depth?: number, underground?: boolean, pos?: {x,y,z}}|null}} input
+ *   places?: object[]|object, where?: {area?: object|null, depth?: number, underground?: boolean, mine?: object|null, pos?: {x,y,z}}|null}} input
  *   chests: the chests of the chest index (of the dimension of the bot); areas: the saved areas;
- *   mines: the mines of the mine store; places: the saved places; where: agent.whereAmI() and the position
+ *   mines: the mines of the mine store (with `passed`); places: the saved places; where: agent.whereAmI()
+ *   and the position
  * @param {number} [maxChars] 600
  * @returns {string}
  */
@@ -193,10 +280,12 @@ export function knowledgeText(input, maxChars = KNOWLEDGE_MAX_CHARS) {
         const chests = listOf(k.chests).filter(isPoint);
         const ordered = pos ? chests.map((c, i) => ({ c, i, d: distance(pos, c) })).sort((a, b) => a.d - b.d || a.i - b.i).map(e => e.c) : chests;
         const head = [whereLine(where)].filter(Boolean);
-        const tail = [areasLine(listOf(k.areas)), minesLine(listOf(k.mines))].filter(Boolean);
+        const mines = listOf(k.mines);
+        const tail = [areasLine(listOf(k.areas)), minesLine(mines)].filter(Boolean);
+        const ore = passedOreLine(mines);
         const chestLines = ordered.map(chestKnowledgeLine);
         const places = placesLine(placesOf(k.places));
-        if (head.length + tail.length + chestLines.length + (places ? 1 : 0) === 0) {
+        if (head.length + tail.length + (ore ? 1 : 0) + chestLines.length + (places ? 1 : 0) === 0) {
             return '';
         }
         // choose the lines by importance, then write them in the order of the format
@@ -213,6 +302,7 @@ export function knowledgeText(input, maxChars = KNOWLEDGE_MAX_CHARS) {
         };
         const keptHead = head.filter(take);
         const keptTail = tail.filter(take);
+        const keptOre = ore && take(ore) ? [ore] : []; // v0.1.4.9: after the mines, before the chests
         const keptChests = [];
         for (const line of chestLines) {
             if (!take(line)) {
@@ -221,7 +311,7 @@ export function knowledgeText(input, maxChars = KNOWLEDGE_MAX_CHARS) {
             keptChests.push(line);
         }
         const keptPlaces = places && take(places) ? [places] : [];
-        const lines = [...keptHead, ...keptChests, ...keptTail, ...keptPlaces];
+        const lines = [...keptHead, ...keptChests, ...keptTail, ...keptOre, ...keptPlaces];
         return lines.length > 0 ? [KNOWLEDGE_HEADER, ...lines].join('\n') : '';
     } catch {
         return '';

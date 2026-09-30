@@ -10,7 +10,7 @@ describe('the table of M1', () => {
         assert.deepEqual(T.ORE_NAMES, ['coal', 'copper', 'iron', 'lapis', 'gold', 'redstone', 'diamond']);
         const row = name => T.ORES.find(r => r.ore === name);
         assert.deepEqual({ ...row('coal'), blocks: [...row('coal').blocks] },
-            { ore: 'coal', blocks: ['coal_ore', 'deepslate_coal_ore'], item: 'coal', level: 96, pickaxe: 'wooden' });
+            { ore: 'coal', blocks: ['coal_ore', 'deepslate_coal_ore'], item: 'coal', level: 96, pickaxe: 'wooden', min: 0, max: 192 });
         assert.deepEqual([row('copper').item, row('copper').level, row('copper').pickaxe], ['raw_copper', 48, 'stone']);
         assert.deepEqual([row('iron').item, row('iron').level, row('iron').pickaxe], ['raw_iron', 16, 'stone']);
         assert.deepEqual([row('lapis').item, row('lapis').level, row('lapis').pickaxe], ['lapis_lazuli', 0, 'stone']);

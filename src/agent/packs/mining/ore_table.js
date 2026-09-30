@@ -1,15 +1,16 @@
 // The ores the mining pack knows (spec v0.1.4.7 M1): their blocks, the item they drop, the best
-// level to dig for them and the weakest pickaxe that breaks them. Pure: no imports.
+// level to dig for them and the weakest pickaxe that breaks them. Since v0.1.4.9 (B4) also the range
+// of levels where the ore is found (min, max: the y of the ore block). Pure: no imports.
 
-/** The table of M1, in the order of the spec. */
+/** The table of M1, in the order of the spec, with the ranges of v0.1.4.9 (B4). */
 export const ORES = Object.freeze([
-    Object.freeze({ ore: 'coal', blocks: Object.freeze(['coal_ore', 'deepslate_coal_ore']), item: 'coal', level: 96, pickaxe: 'wooden' }),
-    Object.freeze({ ore: 'copper', blocks: Object.freeze(['copper_ore', 'deepslate_copper_ore']), item: 'raw_copper', level: 48, pickaxe: 'stone' }),
-    Object.freeze({ ore: 'iron', blocks: Object.freeze(['iron_ore', 'deepslate_iron_ore']), item: 'raw_iron', level: 16, pickaxe: 'stone' }),
-    Object.freeze({ ore: 'lapis', blocks: Object.freeze(['lapis_ore', 'deepslate_lapis_ore']), item: 'lapis_lazuli', level: 0, pickaxe: 'stone' }),
-    Object.freeze({ ore: 'gold', blocks: Object.freeze(['gold_ore', 'deepslate_gold_ore']), item: 'raw_gold', level: -16, pickaxe: 'iron' }),
-    Object.freeze({ ore: 'redstone', blocks: Object.freeze(['redstone_ore', 'deepslate_redstone_ore']), item: 'redstone', level: -59, pickaxe: 'iron' }),
-    Object.freeze({ ore: 'diamond', blocks: Object.freeze(['diamond_ore', 'deepslate_diamond_ore']), item: 'diamond', level: -59, pickaxe: 'iron' }),
+    Object.freeze({ ore: 'coal', blocks: Object.freeze(['coal_ore', 'deepslate_coal_ore']), item: 'coal', level: 96, pickaxe: 'wooden', min: 0, max: 192 }),
+    Object.freeze({ ore: 'copper', blocks: Object.freeze(['copper_ore', 'deepslate_copper_ore']), item: 'raw_copper', level: 48, pickaxe: 'stone', min: -16, max: 112 }),
+    Object.freeze({ ore: 'iron', blocks: Object.freeze(['iron_ore', 'deepslate_iron_ore']), item: 'raw_iron', level: 16, pickaxe: 'stone', min: -64, max: 72 }),
+    Object.freeze({ ore: 'lapis', blocks: Object.freeze(['lapis_ore', 'deepslate_lapis_ore']), item: 'lapis_lazuli', level: 0, pickaxe: 'stone', min: -64, max: 64 }),
+    Object.freeze({ ore: 'gold', blocks: Object.freeze(['gold_ore', 'deepslate_gold_ore']), item: 'raw_gold', level: -16, pickaxe: 'iron', min: -64, max: 32 }),
+    Object.freeze({ ore: 'redstone', blocks: Object.freeze(['redstone_ore', 'deepslate_redstone_ore']), item: 'redstone', level: -59, pickaxe: 'iron', min: -64, max: 15 }),
+    Object.freeze({ ore: 'diamond', blocks: Object.freeze(['diamond_ore', 'deepslate_diamond_ore']), item: 'diamond', level: -59, pickaxe: 'iron', min: -64, max: 16 }),
 ]);
 
 /** The names of the ores, in the order of the table. */
@@ -70,7 +71,7 @@ export function cleanOreName(name) {
  * The row of the table for the name of an ore, of one of its blocks or of its item, also
  * `raw_iron`, `iron_ingot` and `lapis_lazuli`; a row given as it is. null for anything else.
  * @param {string|object} name
- * @returns {{ore: string, blocks: string[], item: string, level: number, pickaxe: string}|null}
+ * @returns {{ore: string, blocks: string[], item: string, level: number, pickaxe: string, min: number, max: number}|null}
  */
 export function oreOf(name) {
     if (name && typeof name === 'object' && ORES.includes(name)) {

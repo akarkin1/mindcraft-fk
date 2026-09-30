@@ -561,7 +561,7 @@ let snapSlot = 0;
 const SNAPSHOT_NAMES = ['air', 'cave_air', 'oak_planks', 'oak_log', 'glass', 'oak_door', 'red_bed', 'chest', 'torch', 'wall_torch',
     'ladder', 'oak_trapdoor', 'oak_fence', 'oak_fence_gate', 'crafting_table', 'composter', 'farmland', 'dirt', 'grass_block',
     'stone', 'cobblestone', 'water', 'lava', 'wheat', 'oak_leaves', 'oak_sapling', 'coal_ore', 'iron_ore', 'bedrock', 'short_grass',
-    'gravel', 'deepslate', 'dirt_path', 'coarse_dirt'];
+    'gravel', 'deepslate', 'dirt_path', 'coarse_dirt', 'furnace', 'gold_ore'];
 
 // The first name of SNAPSHOT_NAMES that the block at p has (states left out), or null.
 async function nameOnServer(p) {

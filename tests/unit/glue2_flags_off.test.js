@@ -29,7 +29,7 @@ register('../helpers/mcdata_hooks.js', import.meta.url);
 const SWITCHES = ['storage_pack', 'farming_pack', 'wood_pack', 'mining_pack'];
 const SWITCH_PATTERN = /storage_pack|farming_pack|wood_pack|mining_pack/;
 const PACKS = ['storage', 'farming', 'wood', 'mining'];
-const PACK_DIR = /(^|\/)src\/agent\/packs\/(storage|farming|wood|mining)\//;
+const PACK_DIR = /(^|\/)src\/agent\/packs\/(storage|farming|wood|mining|routes)\//; // v0.1.4.9: the routes pack imports the ladder walking of the mining pack
 // The switch that must guard the import of each pack (storage serves every part, wood serves mining).
 const IMPORT_GUARD = { storage: SWITCHES, farming: ['farming_pack'], wood: ['wood_pack', 'mining_pack'], mining: ['mining_pack'] };
 
@@ -169,10 +169,12 @@ describe('source text: the packs of v0.1.4.7 are reached only behind their switc
         assert.deepEqual(sets, ['src/agent/agent.js']);
     });
 
+    // v0.1.4.9: the routes pack is reached behind its own switch routes_pack
+    const USE_GUARD = /storage_pack|farming_pack|wood_pack|mining_pack|routes_pack/;
     const CASES = [
-        ['src/agent/agent.js', { guard: /skill_manager|storage_pack|farming_pack|wood_pack|mining_pack/ }],
-        ['src/agent/commands/actions.js', { guard: SWITCH_PATTERN, packContext: true }],
-        ['src/agent/commands/queries.js', { guard: SWITCH_PATTERN, packContext: true }],
+        ['src/agent/agent.js', { guard: /skill_manager|storage_pack|farming_pack|wood_pack|mining_pack|routes_pack/ }],
+        ['src/agent/commands/actions.js', { guard: USE_GUARD, packContext: true }],
+        ['src/agent/commands/queries.js', { guard: USE_GUARD, packContext: true }],
     ];
     for (const [file, { guard, packContext }] of CASES) {
         test(`${file}: every use of work_packs${packContext ? ', packContext() and runPack()' : ''} is guarded by a switch`, () => {

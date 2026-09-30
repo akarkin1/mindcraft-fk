@@ -3,6 +3,8 @@ import * as world from "./world.js";
 import pf from 'mineflayer-pathfinder';
 import Vec3 from 'vec3';
 import settings from "../../../settings.js";
+import agentSettings from "../settings.js";
+import { isOreName, oreInSight, oreKind, outOfSightText, sightRange, SIGHT_TEXT_DISTANCE } from "./ore_sight_logic.js";
 import { findOpenables, openDoor, passThrough } from "../packs/home/doors.js";
 import { sideOf } from "../packs/home/door_logic.js";
 import { acquireEatLock } from "../packs/home/eat_lock.js";
@@ -486,6 +488,50 @@ async function collectBlocks(bot, blockType, num, exclude, blocktypes, breaks, t
     const brokenNames = {}; // v0.1.4.8 (B1, F4): the broken blocks by name
     const invBefore = inventoryCounts(bot);
 
+    // v0.1.4.9 (C1): an ore is a candidate only when it is in sight (ore_sight_logic.js): with
+    // ore_sense_range 0 a face in the open, with 3 an open cell within 3 blocks. A cell dug in this call
+    // is open. Also without the mining pack: it is a property of the setting.
+    const sight = sightRange(currentSetting('ore_sense_range'));
+    const dug = new Set(); // "x,y,z" of the blocks collected in this call
+    const dugHere = { has: (key) => dug.has(key) || breaks.has(key) };
+    let names = new Map(); // "x,y,z" -> name, read once per search
+    let hidden = 0; // ores out of sight in the last search
+    let hiddenNear = null; // the name of one of them within 16 blocks
+    let outOfSight = false;
+    const readName = (x, y, z) => {
+        const key = `${x},${y},${z}`;
+        if (names.has(key))
+            return names.get(key);
+        let name = null;
+        try {
+            const b = bot.blockAt(new Vec3(x, y, z));
+            name = typeof b?.name === 'string' ? b.name : null;
+        } catch (err) {
+            name = null; // not loaded: rock
+        }
+        names.set(key, name);
+        return name;
+    };
+    const isNear = (p) => {
+        try {
+            const me = bot.entity.position; // the distance of findBlocks: from the block of the bot
+            return Math.hypot(p.x - Math.floor(me.x), p.y - Math.floor(me.y), p.z - Math.floor(me.z)) <= SIGHT_TEXT_DISTANCE;
+        } catch (err) {
+            return false;
+        }
+    };
+    const inSight = (block) => {
+        const p = block.position;
+        if (!p)
+            return true; // the palette of a section (findBlocks): any block of the type may be in sight
+        if (oreInSight(readName, p, sight, dugHere))
+            return true;
+        hidden++;
+        if (hiddenNear === null && isNear(p))
+            hiddenNear = block.name;
+        return false;
+    };
+
     const movements = new pf.Movements(bot);
     movements.dontMineUnderFallingBlock = false;
     movements.dontCreateFlow = true;
@@ -546,6 +592,9 @@ async function collectBlocks(bot, blockType, num, exclude, blocktypes, breaks, t
         refused = 0;
         refusedBuilt = 0;
         refusal = null;
+        names = new Map();
+        hidden = 0;
+        hiddenNear = null;
         let blocks = world.getNearestBlocksWhere(bot, block => {
             if (!blocktypes.includes(block.name)) {
                 return false;
@@ -561,7 +610,10 @@ async function collectBlocks(bot, blockType, num, exclude, blocktypes, breaks, t
                 // collect only source blocks
                 return block.metadata === 0 && guardAllows(block);
             }
-            
+            if (isOreName(block.name) && !inSight(block)) {
+                return false; // v0.1.4.9 (C1): inside the rock, no candidate
+            }
+
             return (movements.safeToBreak(block) || unsafeBlocks.includes(block.name)) && guardAllows(block);
         }, range, 1);
 
@@ -577,6 +629,11 @@ async function collectBlocks(bot, blockType, num, exclude, blocktypes, breaks, t
                 // v0.1.4.8 (B1): every candidate was refused, the text of the guard says why
                 log(bot, refusalText(refusal, `I may not break the ${blockType} nearby.`));
                 refusedAll = true;
+            }
+            else if (hidden > 0) {
+                // v0.1.4.9 (C1): every candidate is out of sight
+                log(bot, outOfSightText(blockType, { ore: oreKind(hiddenNear), near: hiddenNear !== null, mining: currentSetting('mining_pack') === true }));
+                outOfSight = true;
             }
             else if (collected === 0)
                 log(bot, `No ${blockType} nearby to collect.`);
@@ -621,6 +678,7 @@ async function collectBlocks(bot, blockType, num, exclude, blocktypes, breaks, t
             if (success) {
                 collected++;
                 brokenNames[block.name] = (brokenNames[block.name] ?? 0) + 1;
+                dug.add(`${block.position.x},${block.position.y},${block.position.z}`);
             }
             await autoLight(bot);
         }
@@ -642,6 +700,8 @@ async function collectBlocks(bot, blockType, num, exclude, blocktypes, breaks, t
     }
     if (refusedAll && collected === 0)
         return false; // v0.1.4.8 (B1): the text of the guard is the whole answer
+    if (outOfSight && collected === 0 && breaks.count() === 0)
+        return false; // v0.1.4.9 (C1): nothing broke, the text of the sight is the whole answer
     const result = await collectResult(bot, blockType, mostBroken(brokenNames, breaks.names()), collected, invBefore);
     log(bot, result.text);
     return result.got;
@@ -683,6 +743,7 @@ function watchBreaks(bot, blocktypes, target = {}) {
     }
     return {
         count: () => broken.size,
+        has: (key) => broken.has(key), // v0.1.4.9 (C1): a cell dug in this call is open for the sight of ore
         names: () => {
             const out = {};
             for (const name of broken.values())
@@ -720,6 +781,19 @@ function keepOtherTargets(bot, blocktypes, target) {
     } catch (err) {
         return () => {};
     }
+}
+
+// v0.1.4.9 (C1): a setting as the agent runs with it. src/agent/settings.js holds the settings the mind
+// server gave the agent (settings.js, the profile, SETTINGS_JSON, the tests); settings.js itself is read
+// when that object lacks the key (a unit test, a script without the mind server).
+function currentSetting(name) {
+    try {
+        if (agentSettings && Object.prototype.hasOwnProperty.call(agentSettings, name))
+            return agentSettings[name];
+    } catch (err) {
+        // the value of the file
+    }
+    return settings[name];
 }
 
 // X11: what the inventory gained of the given item names.

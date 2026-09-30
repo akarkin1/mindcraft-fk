@@ -13,7 +13,8 @@
 //   shaft   an oak trapdoor in the floor of the house at (2, g, -2), closed; under it a shaft of 1 x 1 with
 //           ladders on its north wall from y 59 down to the room (the ladders go on in the room to y 41).
 //   room    at y 41 (air y 41..43, floor y 40), x 0..4, z -2..2, under the house: a chest and a crafting
-//           table, a torch. The shaft opens into its north-east part.
+//           table, a torch, and (v0.1.4.9, spec 11 TW 1) a furnace in the north-west corner. The shaft opens
+//           into its north part.
 //   descent from the east wall of the room: 16 steps of loose blocks (cobblestone under every step), each one
 //           block down and one east, 3 high, from x 5 (feet y 40) to x 20 (feet y 25), along z = 0.
 //   landing x 21..23, z -1..1, feet y 25, 3 high; a torch.
@@ -46,6 +47,7 @@ export const ROOM = Object.freeze({ y: 41, x0: 0, x1: 4, z0: -2, z1: 2, height: 
 export const ROOM_CHEST = Object.freeze({ dx: 0, dz: 2 });
 export const ROOM_TABLE = Object.freeze({ dx: 4, dz: 2 });
 export const ROOM_TORCH = Object.freeze({ dx: 4, dz: -2 });
+export const ROOM_FURNACE = Object.freeze({ dx: 0, dz: -2 }); // v0.1.4.9: the room of the owner's mine has a furnace
 export const DESCENT = Object.freeze({ steps: 16, z: 0 }); // step k (1..16) at x = ROOM.x1 + k, feet y ROOM.y - k
 export const LANDING = Object.freeze({ y: 25, x0: 21, x1: 23, z0: -1, z1: 1, height: 3 });
 export const LANDING_TORCH = Object.freeze({ dx: 23, dz: -1 });
@@ -97,6 +99,7 @@ export function basePlan(r, { crops = DEFAULT_CROPS } = {}) {
         chest: at(ROOM_CHEST, ROOM.y),
         table: at(ROOM_TABLE, ROOM.y),
         torch: at(ROOM_TORCH, ROOM.y),
+        furnace: at(ROOM_FURNACE, ROOM.y),
     };
     const steps = [];
     for (let k = 1; k <= DESCENT.steps; k++) {
@@ -222,6 +225,7 @@ export async function buildMine(b) {
     // the trapdoor in the floor of the house, closed, on the same side as the ladders (climbable when open)
     cmds.push(`setblock ${P(b.trapdoor)} minecraft:oak_trapdoor[facing=south,half=top,open=false]`);
     cmds.push(`setblock ${P(b.room.table)} minecraft:crafting_table`);
+    cmds.push(`setblock ${P(b.room.furnace)} minecraft:furnace[facing=east]`);
     cmds.push(`setblock ${P(b.room.torch)} minecraft:torch`);
     cmds.push(`setblock ${P(b.landing.torch)} minecraft:torch`);
     await run(cmds, 'the mine');
@@ -342,16 +346,16 @@ export async function verifyBase(b, { parts = ['house', 'mine', 'farm', 'pen'], 
             for (let z = b.room.box.min.z; z <= b.room.box.max.z; z++) {
                 for (let y = b.room.box.min.y; y <= b.room.box.max.y; y++) {
                     const p = { x, y, z };
-                    const special = [b.room.chest, b.room.table, b.room.torch, ...b.shaft.ladders].some((q) => q.x === x && q.y === y && q.z === z);
+                    const special = [b.room.chest, b.room.table, b.room.torch, b.room.furnace, ...b.shaft.ladders].some((q) => q.x === x && q.y === y && q.z === z);
                     if (!special) roomAir.push({ pos: p, name: 'air' });
                 }
             }
         }
         await expect(`room at y ${b.room.box.min.y}: air`, roomAir, ['air']);
-        await expect('room: chest, crafting table, torch, stone floor', [
-            { pos: b.room.chest, name: 'chest' }, { pos: b.room.table, name: 'crafting_table' }, { pos: b.room.torch, name: 'torch' },
-            { pos: { ...b.room.middle, y: b.room.floorY }, name: 'stone' },
-        ], ['chest', 'crafting_table', 'torch', 'stone']);
+        await expect('room: chest, crafting table, furnace, torch, stone floor', [
+            { pos: b.room.chest, name: 'chest' }, { pos: b.room.table, name: 'crafting_table' }, { pos: b.room.furnace, name: 'furnace' },
+            { pos: b.room.torch, name: 'torch' }, { pos: { ...b.room.middle, y: b.room.floorY }, name: 'stone' },
+        ], ['chest', 'crafting_table', 'furnace', 'torch', 'stone']);
         const steps = b.steps.flatMap((s) => [
             { pos: s.floor, name: 'cobblestone' }, { pos: s.feet, name: 'air' }, { pos: { ...s.feet, y: s.feet.y + 1 }, name: 'air' }, { pos: { ...s.feet, y: s.feet.y + 2 }, name: 'air' },
         ]);

@@ -14,36 +14,13 @@ Rules that hold for every release:
 | Release | Name | State |
 |---|---|---|
 | 0.1.4.8 | Stability | Released |
-| 0.1.4.9 | The mine, the routes of the player, and the model comparison | Planned |
+| 0.1.4.9 | The mine, the routes of the player, and the model comparison | Released |
 | 0.1.4.10 | Understanding and watching | Planned, both trials passed |
 | Later | See the backlog | Not decided |
 
 ## 0.1.4.9 The mine, the routes of the player, and the model comparison
 
-The bot learns a place by walking through it with the player. Code stores it as a route. The language model never has to understand what a tunnel is.
-
-| Part | Content |
-|---|---|
-| Trail | The bot records the steps it walks, on disk. No call of the model. |
-| "This is the mine" | The trail from the last point under open sky becomes the route. Chest and crafting table around the bot become the room. |
-| Routes inside the base | The same for the ways between floors, for example from the storage room to the bed. The path search finds no way through a ladder with a trapdoor; a route that the bot walked once with the player is walked again step by step. |
-| "Dig here" | The bot measures the tunnel: start, direction, end. It digs on at the end, straight, 1 wide and 2 high. |
-| Work | `!mineOre` takes the nearest known mine and a tunnel that fits. It asks before it digs a new shaft. |
-| Ore list | Every ore block seen and left behind, with kind, position and reason. |
-| Setting `ore_sense_range` | 0: only ore that touches the tunnel. 3: also ore within 3 blocks of the wall. Default 0. The bot knows every block of the loaded area, also behind rock; this setting decides how much of that it uses in a mine. |
-| Own code of the model | `!newAction` is refused for digging where a skill exists. |
-| Where am I | One line in the prompt: area, tunnel, depth. |
-
-The same release brings the tools for a comparison of chat models. They change nothing while Claude is the chat model.
-
-| Part | Content |
-|---|---|
-| Cost meter | Models of OpenAI report their tokens. Prices for GPT-6 Luna. |
-| Routing check | A model of OpenAI can be chosen. The table also shows the time per answer and the measured cost. |
-| Launch script | It takes a profile and loads the key that the profile needs. |
-| Profile | The prompt of the owner with GPT-6 Luna as chat model. |
-
-Why: a first play with GPT-6 Luna showed answers after about 3 seconds against 1 second with Haiku 4.5, at a tenth of the price. The choice of commands was not measured. The routing check measures it with the same sentences for both models.
+Released on 2026-09-30; `CHANGELOG.md` says what it contains. Left for later: a mine named with a number collides with the mines the bot dug itself; `ore_sense_range` accepts 1 and 2 as well as 0 and 3; a plain `!goToCoordinates` into the mine still stands on the closed trapdoor (the path search of v0.1.4.7), while `!goToRememberedPlace` walks the learned route.
 
 ## 0.1.4.10 Understanding and watching
 
