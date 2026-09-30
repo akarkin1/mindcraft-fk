@@ -25,7 +25,8 @@ You have not play tested v0.1.4.8 yet. When you attach logs, I analyse them firs
 | The model's own code | Refused for digging where a skill exists |
 | Model comparison | Luna only, not Sol. Reasoning effort low. |
 | Engineers | Opus 5.5, at most three at a time |
-| Your files | I change `start-claude.ps1` (it gets `-Profile`) and `profiles/gpt.json` (the release wins, you set your values again). `settings.js` and `profiles/claude.json` stay as they are. |
+| Launch scripts | No `-Profile`. Your `start-gpt.ps1` and your `start-claude.ps1` (it loads the OpenAI key for the embeddings) go into the release as they are. |
+| Your files | `profiles/gpt.json` changes (the release wins, you set your values again). `settings.js` gets the new keys with their defaults; none of your values changes. `profiles/claude.json` stays as it is. |
 
 ## 3. Decisions I made, say if one is wrong
 
@@ -71,7 +72,7 @@ You have not play tested v0.1.4.8 yet. When you attach logs, I analyse them firs
 |---|---|
 | 3.1 | The cost meter counts the models of OpenAI: input, output and reasoning tokens. Prices for GPT-6 Luna and the embedding model. `!cost` shows them. |
 | 3.2 | The routing check takes a model of OpenAI: `--model gpt-6-luna`. The table shows per sentence the command chosen, and at the end the accuracy, the time per answer and the measured cost. Only you run the real one. |
-| 3.3 | `start-claude.ps1 -Profile .\profiles\gpt.json` loads the keys the profile needs from your vault, by name. Without `-Profile` it works as today. |
+| 3.3 | Your `start-gpt.ps1` and your `start-claude.ps1` are in the repository. Already done on the branch. |
 | 3.4 | `profiles/gpt.json`: your prompt with one house rule, `speak_model` system, reasoning effort low, the code model of the claude profile. |
 
 ### Package 4: Test server
@@ -102,7 +103,7 @@ All off by default. The play test guide says which to switch on.
 | `ore_sense_range` | 0: only ore that touches the tunnel or has a face in the open | 3: also ore within 3 blocks of the wall |
 | `skills_over_code` | `!newAction` writes code for everything | `!newAction` refuses digging where a skill exists |
 
-The cost meter for OpenAI, the routing check, the launch script and the test server script have no switch. The line about the mine in "what I know" comes with `knowledge_in_prompt`.
+The cost meter for OpenAI, the routing check, the launch scripts and the test server script have no switch. The line about the mine in "what I know" comes with `knowledge_in_prompt`.
 
 ## 6. Cost
 
