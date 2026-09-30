@@ -11,7 +11,7 @@
 //     inside the rock. Tell me to mine iron and I get it from a mine." and then the line of the ore it broke;
 //   - the ore in the wall is gone, the bot carries 1 raw_iron; the ore in the rock and the 4 blocks of stone
 //     between it and the tunnel are as they were (server).
-// Finding of T2 (2026-09-30, left failing): the answer comes at once and is "I am underground. I start a new mine
+// F4 of T2 (the first run, 2026-09-30; corrected in the fix round: the sight rule of C1 decides): the answer comes at once and is "I am underground. I start a new mine
 // only from the surface."; nothing is taken. With the mining pack on, !collectBlocks for an ore first asks whether
 // the ore is in sight (oreInSight of actions.js, M5 of v0.1.4.7: bot.canSeeBlock from the eyes to the middle of the
 // block); for an ore at the height of the feet in the wall the ray from the eyes meets the wall block above it, so

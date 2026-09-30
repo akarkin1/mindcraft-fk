@@ -12,9 +12,12 @@
 //      too.
 //   B  ore_sense_range 3: the same, 2 and 4 steps beyond the new end of the tunnel (mines.json). !mineOre("iron", 1):
 //      the ore in the wall is taken, the side cut to it is open.
+// Each trip ends with the way up: after it the bot is on the surface (the fix round of F1).
+// F11 of T2 (the re-run after the fix round, left failing): both ways up stop at y 56 under the closed trapdoor, as in
+// W67. The checks of the ore pass.
 import {
     scenarioMain, check, note, exitSoon, startAgent, stopRealAgent, settings0149, resetBot, fmt, env, orderChannel, commands,
-    walkIntoMine, minesInFile, placeBot, giveItems, MINING_KIT, entityPos,
+    walkIntoMine, minesInFile, placeBot, giveItems, MINING_KIT, entityPos, checkOnSurface,
 } from './helpers.js';
 import { region, prepareRegion, releaseRegion, blockNames } from './world.js';
 import { basePlan, buildBase, saveHomePlace, BASE_RADIUS } from './base_world.js';
@@ -64,6 +67,7 @@ await scenarioMain({
                 const got = await blockNames([hidden, ahead, ...between], ['iron_ore', 'stone', ...OPEN]);
                 note(`${label}: the ore in the wall is ${got[0]}, the ore ahead is ${got[1]}, the blocks between the wall ore and the tunnel are ${got[2]} and ${got[3]}`);
                 check(/I mined \d+ raw_iron\./.test(info.reply), `${label}: the trip mined iron (the text of M4)`, JSON.stringify(info.reply));
+                await checkOnSurface(label, agent, b, info.reply);
                 return got;
             }
 

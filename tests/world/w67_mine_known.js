@@ -11,20 +11,26 @@
 // trip. The player types !mineOre("iron", 4):
 //   - the answer is the text of M4 "I mined N raw_iron. ..." with N at least 4;
 //   - the bot went in and out by the ladder of the shaft (server positions in its column, down and up) and is on
-//     the surface at the end, with at least 4 raw_iron (inventory and the chest of the room);
+//     the surface at the end (feet at y 60 or more, not in the box of the mine: the way up of F1), with at least
+//     4 raw_iron (inventory and the chest of the room);
 //   - the 4 ore blocks are gone; the tunnel in mines.json is longer than 12 and ends farther south;
 //   - no new mine: mines.json holds one mine with the same entrance; nothing around the house on the surface and
 //     down to 10 blocks under it was dug or placed (no new shaft).
-// Finding of T2 (2026-09-30, left failing): the way in, the digging, the storing and the ore work; the way out does
-// not: the ladder leg up through the trapdoor fails as in W62 and the bot stays in the room at y 41, "I could not
-// follow the route "mine" at step 5 of 6, at (x, 41, z). Show me the way again." (the same in W68, W69 and W73,
-// whose rows of the spec do not ask for the way up).
+// F1 of T2 (the first run, 2026-09-30; corrected in the fix round, DECISIONS.md): the way in, the digging, the
+// storing and the ore worked; the way out did not: the ladder leg up through the trapdoor failed as in W62 and the
+// bot stayed in the room at y 41, "I could not follow the route "mine" at step 5 of 6, at (x, 41, z). Show me the
+// way again." W68, W69 and W73 now check the way up too.
+// F11 of T2 (the re-run after the fix round, left failing): the bot climbs the ladder to y 56.6 and clicks the closed
+// trapdoor 3 times, "activateBlock oak_trapdoor (x, 60, z) open=false from (x, 56.6, z) holding iron_pickaxe sneak
+// true", and it stays closed: "I could not follow the route "mine" at step 5 of 8, at (x, 56, z)." climbToOpen of
+// replay.js holds sneak while it clicks; a player who sneaks with an item in the hand does not use the block. In W62
+// the hand is empty and the same click opens the trapdoor.
 import {
     scenarioMain, check, note, exitSoon, startAgent, stopRealAgent, settings0149, resetBot, fmt, env, orderChannel, commands,
-    walkIntoMine, minesInFile, placeBot, giveItems, MINING_KIT, entityPos, startTrace, printTrace, watchHealth, sleep,
+    walkIntoMine, minesInFile, placeBot, giveItems, MINING_KIT, entityPos, startTrace, printTrace, watchHealth, sleep, checkOnSurface, recordMoves,
 } from './helpers.js';
 import {
-    region, prepareRegion, releaseRegion, blockNames, stableInventory, chestItems, itemsText, snapshotBox, compareSnapshot, describeDifferences,
+    region, prepareRegion, releaseRegion, blockNames, isOpen, stableInventory, chestItems, itemsText, snapshotBox, compareSnapshot, describeDifferences,
     dropSnapshot,
 } from './world.js';
 import { basePlan, buildBase, saveHomePlace, BASE_RADIUS } from './base_world.js';
@@ -69,11 +75,13 @@ await scenarioMain({
             snap = await snapshotBox({ min: { x: b.house.box.min.x - 8, y: g - 10, z: b.house.box.min.z - 10 }, max: { x: b.house.box.max.x + 4, y: g + 3, z: b.house.box.min.z - 1 } });
             const health = watchHealth(agent.bot);
             const t0 = Date.now();
-            const trace = startTrace(async () => ({ pos: await entityPos(NAME), action: agent.actions.currentActionLabel || '-' }), 500);
+            const trace = startTrace(async () => ({ pos: await entityPos(NAME), action: agent.actions.currentActionLabel || '-', trap: await isOpen(b.trapdoor, 'oak_trapdoor') }), 500);
+            const moves = recordMoves(agent); // for the report of a failing way: every click on a block, every goal of the path search
             const info = await orders.orderInfo('!mineOre("iron", 4)', 780000);
+            moves.stop();
             const rows = await trace.stop();
             const hp = health.stop();
-            printTrace('!mineOre("iron", 4) in the mine of the player', rows, { pos: (x) => fmt(x.pos), action: (x) => x.action }, 80);
+            printTrace('!mineOre("iron", 4) in the mine of the player', rows, { pos: (x) => fmt(x.pos), trapdoor: (x) => (x.trap ? 'open' : 'closed'), action: (x) => x.action }, 200);
             note(`!mineOre("iron", 4) answered after ${((Date.now() - t0) / 1000).toFixed(1)} s: ${JSON.stringify(info.reply)}`);
             const m = /I mined (\d+) raw_iron\./.exec(info.reply);
             check(Boolean(m) && Number(m[1]) >= 4, 'the answer is the text of M4 "I mined N raw_iron. ..." with at least 4', JSON.stringify(info.reply));
@@ -81,8 +89,7 @@ await scenarioMain({
             const deepest = rows.findIndex((x) => x.pos && x.pos.y < t.end.y + 1.5);
             const upAgain = rows.findIndex((x, i) => i > deepest && deepest >= 0 && x.pos && Math.floor(x.pos.x) === col.x && Math.floor(x.pos.z) === col.z && x.pos.y < g - 3 && x.pos.y > b.room.box.min.y + 2);
             check(firstDown >= 0 && deepest > firstDown && upAgain > deepest, 'the bot went down the ladder of the shaft, to the tunnel, and up the same ladder (server)', `down at ${firstDown}, tunnel at ${deepest}, up at ${upAgain}`);
-            const end = await entityPos(NAME);
-            check(end && end.y >= g + 0.9, 'the bot is on the surface at the end (server)', fmt(end));
+            await checkOnSurface('the trip', agent, b, info.reply);
             const inv = await stableInventory(NAME);
             const room = await chestItems(b.room.chest);
             note(`the bot carries ${itemsText(inv.items)}; the chest of the room holds ${itemsText(room)}`);

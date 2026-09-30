@@ -12,12 +12,14 @@
 //   - one step has `via` the door of the house (kind door, the lower half of the door);
 //   - every step inside the house has sky false, every step outside the house has sky true;
 //   - the walk of about 36 blocks gave at least 25 steps.
-// Finding of T2 (2026-09-30, left failing): where the house lies across a chunk border (the regions at x = 400,
-// 800, 1200, ...: the origin is the first column of a chunk) the steps inside the house have sky true. The notes
+// F5 of T2 (the first run, 2026-09-30; corrected in the fix round: open sky is the column above): where the house
+// lies across a chunk border (the regions at x = 400, 800, 1200, ...: the origin is the first column of a chunk)
+// the steps inside the house had sky true. The notes
 // show why: the bot reads sky light 15 under the roof and at the roof block itself where the server has a
 // brightness of 9, block light 0 beside a torch where the server has 13, and a block changed near it does not
 // change what it reads. trail_logic.js isOpenSky takes a sky light of 15 for open sky. In the region at x = 600 the
-// bot reads 10 inside and the scenario passes.
+// bot reads 10 inside and the scenario passed. Since the fix round it passes at x = 400 too (the notes of the light
+// stay, for the report of a failure).
 import { Vec3 } from 'vec3';
 import {
     scenarioMain, check, note, exitSoon, startAgent, stopRealAgent, settings0149, placeBot, resetBot, waitFor, entityPos,

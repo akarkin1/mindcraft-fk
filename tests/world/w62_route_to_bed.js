@@ -18,7 +18,7 @@
 //      is "I slept. It is morning."; nothing in the house, the shaft and the room was dug or placed.
 // The place "home" of the base is not saved here: the walk from the trapdoor to the bed passes within 2 blocks of
 // it, and by A2 the way would then start at "home" (see the report of T2).
-// Findings of T2 (2026-09-30, left failing):
+// Findings F1, F3, F8 of T2 (the first run, 2026-09-30; corrected in the fix round, DECISIONS.md):
 //   - the route cannot be walked up out of the shaft: the open trapdoor over the ladder is not climbable for the
 //     bot's own physics (prismarine-physics lists its feature climbableTrapdoor for 1.9 to 1.20 only), the bot bobs
 //     between y 60.0 and 60.1 in the cell of the trapdoor, climbUp of ladder.js and the path search after it give

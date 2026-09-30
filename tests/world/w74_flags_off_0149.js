@@ -14,7 +14,7 @@
 //      nothing towards the other.
 //   E  skills_over_code off: the model answers "dig a tunnel to the east" with !newAction("dig a tunnel to the
 //      east"): the code model is asked (the code runs as in v0.1.4.8).
-// Finding of T2 (2026-09-30, left failing): part D fails as W70 does: "I am underground. I start a new mine only from
+// F4 of T2 (the first run, 2026-09-30; corrected in the fix round): part D fails as W70 does: "I am underground. I start a new mine only from
 // the surface." (the check of M5 in actions.js does not see the ore at the feet in the wall; see W70).
 import {
     scenarioMain, check, note, exitSoon, startAgent, stopRealAgent, OWNER_SWITCHES, FLAGS_0148_ON, FLAGS_0149_OFF, COMMANDS_0149, withModes,

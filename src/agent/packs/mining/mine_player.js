@@ -337,12 +337,18 @@ export async function collectPassedOre(bot, ctx = {}, ore = '', count = 8, optio
             }
         }
         const r = await takePassedOre(bot, ctx, mine, entries, { ...pass, wanted });
-        const text = collectPassedText({ ore: row?.ore ?? null, collected: r.collected, stay: r.stay, stopped: r.stopped, done: r.taken, total, mine });
+        let text = collectPassedText({ ore: row?.ore ?? null, collected: r.collected, stay: r.stay, stopped: r.stopped, done: r.taken, total, mine });
+        let reason = r.reason;
         if (outside && !r.stopped && !bot.interrupt_code) {
-            await climbToSurface(bot, ctx, { ...pass, mine: r.mine ?? mine });
+            const up = await climbToSurface(bot, ctx, { ...pass, mine: r.mine ?? mine });
+            if (!up.ok && typeof up.text === 'string' && up.text.length > 0) {
+                // F12 of the real server: a failed way out was hidden behind the text of the ore
+                text = `${text} ${up.text}`;
+                reason = up.reason === 'interrupted' ? 'interrupted' : reason;
+            }
         }
         logTo(ctx, text);
-        return { ok: r.ok, reason: r.reason, text, collected: r.taken };
+        return { ok: r.ok, reason, text, collected: r.taken };
     } catch (err) {
         console.warn('Mining pack: collecting the ore left behind failed:', err?.stack ?? err);
         return { ok: false, reason: 'error', text: `I could not collect the ore I passed: ${errText(err)}`, collected: 0 };

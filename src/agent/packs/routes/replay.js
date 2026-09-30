@@ -146,7 +146,7 @@ function trapdoorAbove(bot, leg) {
     return null;
 }
 
-// On the way up: climbs until the closed trapdoor is within reach, holds on the ladder (sneak) and opens it.
+// On the way up: climbs until the closed trapdoor is within reach, holds on the ladder by pressing forward against it and opens it.
 async function climbToOpen(bot, ctx, leg, trap, clock) {
     const limit = Math.max(1, trap.y - leg.bottom) * 700 + 6000;
     try {
@@ -178,9 +178,12 @@ async function climbToOpen(bot, ctx, leg, trap, clock) {
         }
         await clock.wait(50);
     }
-    bot.setControlState('forward', false);
+    // F11 of the real server: a sneaking click with an item in the hand uses the item, not the block, so the
+    // trapdoor never opened while the bot held a pickaxe. The bot holds itself on the ladder by pressing
+    // forward against the closed trapdoor instead of sneaking, and clicks without sneak.
     bot.setControlState('jump', false);
-    bot.setControlState('sneak', true);
+    bot.setControlState('sneak', false);
+    bot.setControlState('forward', true);
     await clock.wait(100);
     const opened = eyeDistance(bot, trap) <= REPLAY_RULES.reach && (await openDoor(bot, trap, doorOptions(ctx, clock)));
     release(bot);

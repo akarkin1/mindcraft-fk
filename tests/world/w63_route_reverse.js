@@ -11,7 +11,7 @@
 //     within 2 blocks of the place "storage";
 //   - nothing in the house, the shaft and the room was dug or placed; the bot was never hurt.
 // The place "home" is not saved, as in W62.
-// Finding of T2 (2026-09-30, left failing): the path search of !goToRememberedPlace ("Found non-destructive path")
+// F2 of T2 (the first run, 2026-09-30; corrected in the fix round: the route is walked first): the path search of !goToRememberedPlace ("Found non-destructive path")
 // walks onto the closed trapdoor and stands there; after about 20 s the reflex unstuck stops the command ("Command
 // !goToRememberedPlace was stopped by the reflex unstuck. ... I stopped at (x, 61, z), 20 blocks from the goal.")
 // before the learned route is tried (walkRememberedWay in actions.js comes only after goToPosition returns). The

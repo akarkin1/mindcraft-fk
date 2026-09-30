@@ -15,7 +15,8 @@
 // Seen by T2 (2026-09-30): with the player only teleported to look south (no look of its own client), the agent saw
 // its yaw as 0 (north) in 2 of 4 runs while the server had south, and measured "goes north" from the end of the
 // tunnel into the landing (15 blocks), a second tunnel in mines.json. The player now turns by itself, as a player
-// does; the note of the yaw stays.
+// does; the note of the yaw stays. In the re-run after the fix round the agent still saw 0 once after the turn, and
+// the answer was right: a yaw that points towards the room is ignored (F6, DECISIONS.md).
 import {
     scenarioMain, check, note, exitSoon, startAgent, stopRealAgent, settings0149, resetBot, fmt, env, orderChannel, commands,
     walkIntoMine, minesInFile, placeBot, tp, sleep,

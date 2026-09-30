@@ -12,10 +12,13 @@
 //   - the answer is the text of M4 with at least 2 raw_iron;
 //   - the first branch is dug to the left (east) at 4 blocks from the start of the tunnel: its cells are open, 1 wide
 //     (the stone north and south of it stands) and 2 high (the stone above and below it stands); nothing was dug to
-//     the right (west) there; mines.json has the branch at 4 on the left; the tunnel itself is still 32 long.
+//     the right (west) there; mines.json has the branch at 4 on the left; the tunnel itself is still 32 long;
+//   - the trip ends with the way up: the bot is on the surface at the end (the fix round of F1).
+// F11 of T2 (the re-run after the fix round, left failing): the way up stops at y 55 under the closed trapdoor, as in
+// W67. The checks of the branch pass.
 import {
     scenarioMain, check, note, exitSoon, startAgent, stopRealAgent, settings0149, resetBot, fmt, env, orderChannel, commands,
-    walkIntoMine, minesInFile, placeBot, giveItems, MINING_KIT, entityPos, startTrace, printTrace,
+    walkIntoMine, minesInFile, placeBot, giveItems, MINING_KIT, entityPos, startTrace, printTrace, checkOnSurface,
 } from './helpers.js';
 import { region, prepareRegion, releaseRegion, blockNames } from './world.js';
 import { basePlan, buildBase, saveHomePlace, BASE_RADIUS } from './base_world.js';
@@ -66,6 +69,7 @@ await scenarioMain({
             note(`!mineOre("iron", 2) answered after ${((Date.now() - t0) / 1000).toFixed(1)} s: ${JSON.stringify(info.reply)}`);
             const m = /I mined (\d+) raw_iron\./.exec(info.reply);
             check(Boolean(m) && Number(m[1]) >= 2, 'the answer is the text of M4 with at least 2 raw_iron', JSON.stringify(info.reply));
+            await checkOnSurface('the trip', agent, b, info.reply);
 
             const cells = await blockNames(branch.flatMap((p) => [p, { ...p, y: p.y + 1 }]), ['iron_ore', 'stone', 'cobblestone', ...OPEN]);
             note(`the cells of the first branch to the left (east), feet and head: ${JSON.stringify(cells)}`);

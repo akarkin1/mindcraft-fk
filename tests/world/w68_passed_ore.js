@@ -12,9 +12,13 @@
 //      `passed` with reason pickaxe; both gold blocks are still there (server).
 //   2. The bot gets an iron pickaxe; !collectPassedOre("gold") answers "I collected 2 gold_ore that I had passed.";
 //      both gold blocks are gone, the bot has 2 raw_gold (inventory and the chest of the room), `passed` is empty.
+// Both orders start outside and end with the way up: after each the bot is on the surface (the fix round of F1).
+// F11 of T2 (the re-run after the fix round, left failing): both ways up stop at y 52 to 56 under the closed trapdoor,
+// as in W67 (climbToOpen of replay.js clicks the trapdoor while it sneaks with a pickaxe in the hand). F12: the answer
+// of !collectPassedOre, "I collected 2 gold_ore that I had passed.", does not say that the way out failed.
 import {
     scenarioMain, check, note, exitSoon, startAgent, stopRealAgent, settings0149, resetBot, fmt, env, orderChannel, commands,
-    walkIntoMine, minesInFile, placeBot, giveItems, entityPos, startTrace, printTrace,
+    walkIntoMine, minesInFile, placeBot, giveItems, entityPos, startTrace, printTrace, checkOnSurface,
 } from './helpers.js';
 import { region, prepareRegion, releaseRegion, blockNames, stableInventory, chestItems, itemsText } from './world.js';
 import { basePlan, buildBase, saveHomePlace, BASE_RADIUS } from './base_world.js';
@@ -69,6 +73,7 @@ await scenarioMain({
             check(goldEntries.length === 2, '1: mines.json lists the 2 gold blocks in `passed` with reason pickaxe', JSON.stringify(passed1));
             const still = await blockNames(gold, ['gold_ore']);
             check(still.every((x) => x === 'gold_ore'), '1: both gold blocks are still in the wall (server)', JSON.stringify(still));
+            await checkOnSurface('1', agent, b, trip.reply);
 
             // ---------------------------------------------------------- 2. !collectPassedOre("gold") with an iron pickaxe
             await placeBot(agent, { x: b.house.door.x, y: g + 1, z: b.house.door.z - 4 }, 180);
@@ -90,8 +95,7 @@ await scenarioMain({
             check(gotGold >= 2, '2: the bot got 2 raw_gold (inventory and the chest of the room)', `${gotGold}`);
             const mine2 = minesInFile(agent).find((x) => x.name === 'mine');
             check(Array.isArray(mine2?.passed) && mine2.passed.length === 0, '2: `passed` is empty (mines.json)', JSON.stringify(mine2?.passed));
-            const end = await entityPos(NAME);
-            note(`2: the bot is at ${fmt(end)}`);
+            await checkOnSurface('2', agent, b, fetch.reply);
             check(s.killed === null, 'the process lives', String(s.killed));
             check(s.realCalls.length === 0, 'no request reached a real model class', JSON.stringify(s.realCalls));
         } finally {

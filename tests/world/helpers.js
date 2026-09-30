@@ -12,7 +12,7 @@ import {
 } from '../e2e/helpers.js';
 import { env, haveControl, command, commands } from './control.js';
 import { OWNER_PORT } from './mc_server.js';
-import { entityPos, positions, fmt, tp } from './world.js';
+import { entityPos, positions, fmt, tp, inBox } from './world.js';
 
 export {
     check, note, scenarioMain, sleep, withTimeout, errText, importProject, stopRealAgent, runCommand, runPhase,
@@ -376,7 +376,9 @@ export function recordMoves(agent) {
     const activate = bot.activateBlock;
     bot.activateBlock = function recordedActivate(block, ...rest) {
         const props = typeof block?.getProperties === 'function' ? block.getProperties() : {};
-        push(`activateBlock ${block?.name} (${block?.position?.x}, ${block?.position?.y}, ${block?.position?.z}) open=${props.open} from ${at()}`);
+        let held = '?', sneak = '?';
+        try { held = bot.heldItem?.name ?? 'nothing'; sneak = String(bot.getControlState('sneak')); } catch { /* not readable */ }
+        push(`activateBlock ${block?.name} (${block?.position?.x}, ${block?.position?.y}, ${block?.position?.z}) open=${props.open} from ${at()} holding ${held} sneak ${sneak}`);
         return activate.call(this, block, ...rest);
     };
     const pf = bot.pathfinder;
@@ -395,6 +397,20 @@ export function recordMoves(agent) {
             return lines;
         },
     };
+}
+
+// After an order of the mining pack that ends with the way up (a trip, !collectPassedOre from outside): the bot is
+// on the surface, its feet at y 60 or more and not in the box of the mine of the base (F1 of the fix round of
+// v0.1.4.9: the way up through the trapdoor). When the answer says "I am still in the mine" (the trip was stopped)
+// the check is skipped and a note says so. Resolves with the server position.
+export async function checkOnSurface(label, agent, b, reply) {
+    const pos = await entityPos(agent.name);
+    if (/I am still in the mine/.test(String(reply))) {
+        note(`${label}: the check "on the surface at the end" is skipped: the answer says "I am still in the mine" (${fmt(pos)})`);
+        return pos;
+    }
+    check(Boolean(pos) && pos.y >= b.g && !inBox(pos, b.mineBox), `${label}: the bot is on the surface at the end (feet at y ${b.g} or more, not in the box of the mine; the way up of F1)`, fmt(pos));
+    return pos;
 }
 
 // The base world (base_world.js): the trapdoor over the shaft opened or closed by the console, the way a player

@@ -13,7 +13,7 @@
 //   - nothing in the house, the shaft and the room was dug or placed (the trapdoor may be open);
 //   - the bot lives: it is in the house, not in the shaft, never hurt, the process did not end.
 // The place "home" is not saved, as in W62.
-// Finding of T2 (2026-09-30, left failing): as in W63, the reflex unstuck stops !goToRememberedPlace while its path
+// F2 of T2 (the first run, 2026-09-30; corrected in the fix round): as in W63, the reflex unstuck stops !goToRememberedPlace while its path
 // search stands on the closed trapdoor, so the route is never tried and the answer has no text of I3. Nothing is dug
 // (protect_built_blocks keeps the floor). The route alone (the probe at the end) answers the text of I3 as the spec
 // wants: "I could not follow the route "bed" at step 3 of 4, at (x, 61, z). Show me the way again."
