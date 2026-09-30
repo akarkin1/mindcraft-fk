@@ -137,10 +137,12 @@ describe('tests/routing/sentences.json', () => {
         }
     });
 
+    // v0.1.4.9: mine_routes is on only with mining_pack and routes_pack (partIsOn)
     test('with only the named part on, at least one expected command is visible', () => {
         for (const entry of SENTENCES) {
             const settings = { world_memory: true, cost_meter: false };
             if (entry.part !== '') settings[entry.part] = true;
+            if (entry.part === 'mine_routes') Object.assign(settings, { mining_pack: true, routes_pack: true });
             const hidden = new Set(T.hiddenPartCommands(settings));
             assert.ok(entry.expect.some((name) => !hidden.has(name)), `"${entry.say}" with part "${entry.part}"`);
         }

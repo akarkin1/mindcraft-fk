@@ -157,11 +157,13 @@ export const PART_DEFAULTS = { player_rules: false, protected_areas: false, home
     storage_pack: false, farming_pack: false, wood_pack: false, mining_pack: false };
 
 // Whether a part is on: its switch, or its default when the key is absent. protected_areas also
-// needs world_memory (section 1).
+// needs world_memory (section 1). mine_routes is the effective switch of v0.1.4.9: it also needs
+// mining_pack and routes_pack, as the agent hides the mine commands otherwise.
 export function partIsOn(settings, part) {
     const value = settings?.[part];
     const on = value === undefined ? PART_DEFAULTS[part] === true : value === true;
     if (part === 'protected_areas') return on && Boolean(settings?.world_memory);
+    if (part === 'mine_routes') return on && partIsOn(settings, 'mining_pack') && partIsOn(settings, 'routes_pack');
     return on;
 }
 

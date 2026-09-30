@@ -80,10 +80,15 @@ describe('test-routing.ps1', () => {
         assert.match(code, /scripts\/routing_check\.js/);
     });
 
-    test('loads OpenaiApiKey for an OpenAI model, else AnthropicsApiKey, by name, and removes the variable at the end', () => {
+    test('loads the key of the chat model by name (OpenaiApiKey for an OpenAI model, else AnthropicsApiKey), and removes both at the end', () => {
         assert.match(code, /\$env:OPENAI_API_KEY = Get-Secret -Name OpenaiApiKey -AsPlainText -ErrorAction Stop/);
         assert.match(code, /\$env:ANTHROPIC_API_KEY = Get-Secret -Name AnthropicsApiKey -AsPlainText -ErrorAction Stop/);
-        assert.match(code, /finally \{[\s\S]*Remove-Item "Env:\$keyName"/);
+        assert.match(code, /finally \{[\s\S]*Remove-Item Env:OPENAI_API_KEY -ErrorAction SilentlyContinue[\s\S]*Remove-Item Env:ANTHROPIC_API_KEY -ErrorAction SilentlyContinue/);
+    });
+
+    test('the other key is loaded too when the vault has it, and set only when it is not empty', () => {
+        assert.match(code, /\$other = Get-Secret -Name AnthropicsApiKey -AsPlainText -ErrorAction SilentlyContinue\s+if \(\$other\) \{ \$env:ANTHROPIC_API_KEY = \$other \}/);
+        assert.match(code, /\$other = Get-Secret -Name OpenaiApiKey -AsPlainText -ErrorAction SilentlyContinue\s+if \(\$other\) \{ \$env:OPENAI_API_KEY = \$other \}/);
     });
 
     test('the value of a key is only assigned: no output command names it', () => {

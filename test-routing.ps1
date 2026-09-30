@@ -6,7 +6,8 @@
 # run. The API key comes from the PowerShell secret vault and is passed to the script
 # as an environment variable, so no keys.json is needed: OpenaiApiKey for an OpenAI
 # chat model (a -Model that starts with gpt-, or a profile whose model is an OpenAI
-# model), else AnthropicsApiKey.
+# model), else AnthropicsApiKey. The other key is loaded too when the vault has it, so
+# that the other models of the profile ("embedding": "openai") are made as in play.
 #
 #   .\test-routing.ps1                                  run the check with profiles/claude.json
 #   .\test-routing.ps1 -Model gpt-6-luna                the same profile with GPT-6 Luna
@@ -39,7 +40,6 @@ if ($ProfilePath) {
 }
 
 Push-Location $PSScriptRoot
-$keyName = ''
 try {
     $checkArgs = @('scripts/routing_check.js', '--all-parts')
     if ($ProfilePath) { $checkArgs += @('--profile', $ProfilePath) }
@@ -54,18 +54,23 @@ try {
         $openai = Test-OpenAiModel (Get-Content -Raw -Path $path | ConvertFrom-Json).model
     }
 
-    # the secret by its name only; its value goes into the environment of the check and nowhere else
+    # the secrets by their names only; their values go into the environment of the check and nowhere else.
+    # The key of the chat model is needed; the other one is loaded when the vault has it.
     if ($openai) {
-        $keyName = 'OPENAI_API_KEY'
         $env:OPENAI_API_KEY = Get-Secret -Name OpenaiApiKey -AsPlainText -ErrorAction Stop
+        $other = Get-Secret -Name AnthropicsApiKey -AsPlainText -ErrorAction SilentlyContinue
+        if ($other) { $env:ANTHROPIC_API_KEY = $other }
     }
     else {
-        $keyName = 'ANTHROPIC_API_KEY'
         $env:ANTHROPIC_API_KEY = Get-Secret -Name AnthropicsApiKey -AsPlainText -ErrorAction Stop
+        $other = Get-Secret -Name OpenaiApiKey -AsPlainText -ErrorAction SilentlyContinue
+        if ($other) { $env:OPENAI_API_KEY = $other }
     }
+    $other = $null
     node @checkArgs
 }
 finally {
-    if ($keyName) { Remove-Item "Env:$keyName" -ErrorAction SilentlyContinue }
+    Remove-Item Env:OPENAI_API_KEY -ErrorAction SilentlyContinue
+    Remove-Item Env:ANTHROPIC_API_KEY -ErrorAction SilentlyContinue
     Pop-Location
 }

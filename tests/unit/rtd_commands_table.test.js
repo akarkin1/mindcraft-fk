@@ -32,7 +32,7 @@ describe('PART_COMMANDS', () => {
     test('the six commands are hidden while their switch is off, and shown while it is on', () => {
         const hiddenOff = new Set(T.hiddenPartCommands({ cost_meter: true }));
         for (const name of Object.values(NEW_PARTS).flat()) assert.ok(hiddenOff.has(name), name);
-        const hiddenOn = new Set(T.hiddenPartCommands({ cost_meter: true, routes_pack: true, mine_routes: true }));
+        const hiddenOn = new Set(T.hiddenPartCommands({ cost_meter: true, mining_pack: true, routes_pack: true, mine_routes: true }));
         for (const name of Object.values(NEW_PARTS).flat()) assert.ok(!hiddenOn.has(name), name);
     });
 
@@ -40,6 +40,19 @@ describe('PART_COMMANDS', () => {
         assert.equal(T.partIsOn({}, 'routes_pack'), false);
         assert.equal(T.partIsOn({}, 'mine_routes'), false);
         assert.equal(T.partIsOn({ routes_pack: true }, 'routes_pack'), true);
+    });
+
+    test('mine_routes is the effective switch: on only with mining_pack and routes_pack', () => {
+        const all = { mining_pack: true, routes_pack: true, mine_routes: true };
+        assert.equal(T.partIsOn(all, 'mine_routes'), true);
+        for (const off of ['mining_pack', 'routes_pack', 'mine_routes']) {
+            const settings = { ...all, [off]: false };
+            assert.equal(T.partIsOn(settings, 'mine_routes'), false, off);
+            const hidden = new Set(T.hiddenPartCommands(settings));
+            for (const name of NEW_PARTS.mine_routes) assert.ok(hidden.has(name), `${name} without ${off}`);
+        }
+        assert.equal(T.partIsOn({ mine_routes: true }, 'mine_routes'), false);
+        assert.equal(T.partIsOn({ mining_pack: true, mine_routes: true }, 'routes_pack'), false, 'routes_pack alone decides routes_pack');
     });
 
     test('the routing check with --all-parts switches both on', () => {
