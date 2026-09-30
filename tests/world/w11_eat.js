@@ -10,11 +10,14 @@
 //   4. Food level 15 or 16 (above startAt 14, so the plugin does not eat), 3 bread:
 //      !eat answers "I ate 1 bread. Food 20 of 20, health 20 of 20." and the food level is 20 (v0.1.4.8, C1:
 //      the texts of !eat end with the food level and the health).
+//   v0.1.4.8, X10: in 3 the number of the text of !eat is the bread that left the inventory while it ran (the
+//      hunger reflex eats beside it: before X10 the text was "I could not eat: Consuming cancelled ...").
+//   5. v0.1.4.8, X12: !consume("bread") with full food answers "I am not hungry. Food 20 of 20.", no exception.
 import {
     scenarioMain, check, note, exitSoon, startAgent, stopRealAgent, NEW_FLAGS_OFF, placeBot, resetBot, command_,
     waitFor, sleep, command, commands,
 } from './helpers.js';
-import { region, prepareRegion, releaseRegion, entityNumber } from './world.js';
+import { region, prepareRegion, releaseRegion, entityNumber, inventoryOf, stableInventory } from './world.js';
 
 const NAME = 'w_eat';
 const BANNED = ['rotten_flesh', 'spider_eye', 'poisonous_potato', 'pufferfish', 'chicken', 'golden_apple', 'enchanted_golden_apple', 'chorus_fruit', 'suspicious_stew'];
@@ -64,14 +67,20 @@ await scenarioMain({
             await command(`give ${NAME} minecraft:bread 5`);
             await waitFor(() => bread(agent) > 0, { ms: 5000 });
             await sleep(500);
+            const b0 = (await inventoryOf(NAME)).bread || 0; // the hunger reflex may have eaten some already
             const r3 = await command_(agent, '!eat', 45000);
+            const b1 = (await stableInventory(NAME)).items.bread || 0;
             const full = await waitFor(async () => (await food()) >= 18, { ms: 20000, every: 300 });
             const after = await food();
-            note(`3: food ${before} -> ${after}, bread left ${bread(agent)} of 5, !eat answered ${JSON.stringify(r3)}`);
+            note(`3: food ${before} -> ${after}, bread ${b0} before !eat, ${b1} after it (5 given), !eat answered ${JSON.stringify(r3)}`);
             check(full.ok, '3: with bread and a low food level the bot eats: the food level reaches 18 or more (server)', `${before} -> ${after}`);
             check(bread(agent) < 5, '3: bread was eaten', `${bread(agent)} left`);
             check(/(I ate \d+ bread|I am not hungry)\. Food \d+ of 20, health \d+ of 20\./.test(r3),
                 '3: the reply of !eat is "I ate <n> bread. Food N of 20, health M of 20." (or "I am not hungry. ..." when a reflex was faster; C1)', JSON.stringify(r3.slice(0, 200)));
+            // v0.1.4.8, X10: one lock for eating; the text of !eat counts what left the inventory while it ran
+            const ate = /I ate (\d+) bread\./.exec(r3);
+            check(ate ? Number(ate[1]) === b0 - b1 : b0 - b1 === 0, '3: the number in the text of !eat is the bread that left the inventory while it ran (X10)',
+                `text ${ate ? ate[1] : '(not hungry)'}, bread ${b0} -> ${b1}`);
 
             // ---------------------------------------------------------- 4. above startAt: only !eat eats
             await command(`clear ${NAME} minecraft:bread`);
@@ -87,6 +96,12 @@ await scenarioMain({
             check(untouched, '4: above startAt the plugin did not eat by itself');
             check(r4.includes('I ate 1 bread. Food 20 of 20, health 20 of 20.'), '4: !eat answers "I ate 1 bread. Food 20 of 20, health 20 of 20." (C1)', JSON.stringify(r4.slice(0, 200)));
             check(after4 === 20 && bread(agent) === 2, '4: the food level is 20 and 2 bread are left', `food ${after4}, bread ${bread(agent)}`);
+
+            // ---------------------------------------------------------- 5. !consume with full food (X12)
+            const r5 = await command_(agent, '!consume("bread")', 30000);
+            note(`5: !consume("bread") at food ${await food()} answered ${JSON.stringify(r5)}`);
+            check(r5.includes('I am not hungry. Food 20 of 20.') && !/exception|Error/i.test(r5), '5: !consume with full food answers "I am not hungry. Food 20 of 20." and no exception (X12)', JSON.stringify(r5.slice(0, 200)));
+            check(bread(agent) === 2, '5: no bread was used', `bread ${bread(agent)}`);
 
             check(s.realCalls.length === 0, 'no request reached a real model class', JSON.stringify(s.realCalls));
         } finally {

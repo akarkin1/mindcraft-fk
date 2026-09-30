@@ -18,6 +18,9 @@
 //     (x, y, z) and used them." and "K more plants got ripe and I harvested them.", ends with "The gate is
 //     closed."; no sentence about shears;
 //   - the gate is closed, the fence is whole, no farmland became dirt.
+//   - v0.1.4.8 fix round: X14 (the text counts what the inventory gained; wheat left in the field only with
+//     "I could not pick up the crop of N plants."; "I cut them" and "used none of them" are allowed forms),
+//     X13 (the gate is never called a door), X2 (no farmland became dirt, as before).
 import {
     scenarioMain, check, note, exitSoon, startAgent, stopRealAgent, OWNER_SWITCHES, FLAGS_0148_OFF, withModes, placeBot,
     resetBot, orderChannel, env, startTrace, printTrace, entityPos, fmt,
@@ -77,14 +80,23 @@ await scenarioMain({
             check((house?.leaf_litter || 0) < 64, 'leaf litter was taken from the chest of the house (server)', itemsText(house));
             check(wheatAfter > wheatBefore, 'wheat was harvested (the wheat of the bot and of the chests is more than before)', `${wheatBefore} -> ${wheatAfter}`);
             check(text.startsWith('Farm "farm":'), 'the text starts with Farm "farm":', JSON.stringify(text.slice(0, 120)));
-            const made = new RegExp(`I made (\\d+) bone_meal from (\\d+) leaf_litter of the chest at ${at(b.house.chest).replace(/[()]/g, '\\$&')} and used (them|it)\\.`).exec(text);
-            check(Boolean(made) && Number(made[1]) >= 1, `the text says "I made N bone_meal from M leaf_litter of the chest at ${at(b.house.chest)} and used them." (E2; "used it" for 1)`, JSON.stringify(text));
+            const made = new RegExp(`I made (\\d+) bone_meal from (\\d+) leaf_litter of the chest at ${at(b.house.chest).replace(/[()]/g, '\\$&')} and used (them|it|none of them|none of it|\\d+ of them)\\.`).exec(text);
+            check(Boolean(made) && Number(made[1]) >= 1, `the text says "I made N bone_meal from M leaf_litter of the chest at ${at(b.house.chest)} and used them." (E2; "used it" for 1, "used none of them" since X14)`, JSON.stringify(text));
             // a bone meal that the composter drops lies on the ground until it is picked up: the text must not
-            // say that it was used while it lies there (section 0.9)
+            // say that it was used while it lies there (section 0.9; X14: items within 3 blocks are picked up once more)
             const bonemealLeft = lying.filter((x) => x.name === 'bone_meal').reduce((n, x) => n + (x.count || 0), 0);
             check(bonemealLeft === 0, 'no bone meal was left on the ground (the text says it was used)', `${bonemealLeft} bone_meal on the ground`);
-            const ripe = /(\d+) more plants? got ripe and I harvested (them|it)\./.exec(text);
-            check(Boolean(ripe) && Number(ripe[1]) >= 1, 'the text says "K more plants got ripe and I harvested them." (E2; "1 more plant ... it" in the singular)', JSON.stringify(text));
+            const ripe = /(\d+) more plants? got ripe and I (harvested|cut) (them|it)\./.exec(text);
+            check(Boolean(ripe) && Number(ripe[1]) >= 1, 'the text says "K more plants got ripe and I harvested them." (E2; "1 more plant ... it" in the singular; "I cut them" when the crop was not picked up, X14)', JSON.stringify(text));
+            // v0.1.4.8, X14: the text counts what the inventory gained; wheat that lies in the field must be named
+            const notPicked = /I could not pick up the crop of (\d+) plants?\./.exec(text);
+            const wheatLying = lying.filter((x) => x.name === 'wheat' && inBox(x.pos, { min: { x: f.box.min.x - 1, y: g - 1, z: f.box.min.z - 1 }, max: { x: f.box.max.x + 1, y: g + 4, z: f.box.max.z + 1 } }))
+                .reduce((n, x) => n + (x.count || 0), 0);
+            check(wheatLying === 0 || Boolean(notPicked), 'no wheat lies in the field, or the text says "I could not pick up the crop of N plants." (X14)',
+                `${wheatLying} wheat on the ground; ${notPicked ? notPicked[0] : 'no such sentence'}`);
+            if (ripe && ripe[2] === 'cut') check(Boolean(notPicked), 'X14: "I cut them" comes with "I could not pick up the crop of N plants."', JSON.stringify(text));
+            // v0.1.4.8, X13: the text names a gate a gate, never a door
+            check(!new RegExp(`door at ${at(f.gate).replace(/[()]/g, '\\$&')}`).test(text), `the text does not call the gate at ${at(f.gate)} a door (X13)`, JSON.stringify(text));
             check(text.trimEnd().endsWith('The gate is closed.'), 'the text ends with "The gate is closed."', JSON.stringify(text.slice(-80)));
             check(!/shears/i.test(text), 'the text has no sentence about shears (E2, F3)', JSON.stringify(text));
             check(await isOpen(f.gate, 'oak_fence_gate') === false, 'the gate is closed (server)');

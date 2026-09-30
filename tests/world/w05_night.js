@@ -100,10 +100,17 @@ await scenarioMain({
             await sleep(1000);
             rows = await trace.stop();
             printTrace('2: at night the player orders 8 dirt', rows, cols);
-            const during = rows.filter((x) => x.t * 1000 <= (done2.ms + (started2.ms || 0)));
+            // the rows while the order ran: up to the first row whose action is no longer the order (the reflex may
+            // start right after the order ended, in the same sample as the last dirt; seen in the fix round)
+            const firstStart = rows.findIndex((x) => x.action === 'action:collectBlocks');
+            const firstAfter = rows.findIndex((x, i) => i > firstStart && x.action !== 'action:collectBlocks');
+            const during = firstStart < 0 ? [] : rows.slice(firstStart, firstAfter < 0 ? rows.length : firstAfter);
+            const stoppedByNight = s.added.filter((a) => a.t >= t2 && /^Command !collectBlocks was stopped by the reflex night_shelter/.test(a.content)).map((a) => a.content);
             check(started2.ok, '2: at night the bot starts the ordered !collectBlocks("dirt", 8)');
             check(countDirt(agent) >= dirtBefore + 8, '2: the order given at night is obeyed: the bot collected 8 dirt', `dirt ${dirtBefore} -> ${countDirt(agent)}`);
-            check(!during.some((x) => String(x.action).startsWith('mode:night_shelter')), '2: the night reflex did not interrupt the order given at night');
+            check(!during.some((x) => String(x.action).startsWith('mode:night_shelter')) && stoppedByNight.length === 0,
+                '2: the night reflex did not interrupt the order given at night (no "Command !collectBlocks was stopped by the reflex night_shelter")',
+                `${during.length} rows of the order; ${JSON.stringify(stoppedByNight.map((x) => x.slice(0, 120)))}`);
             const saidWhileWorking = player.heard.filter((x) => x.from === NAME && x.t >= t2 && x.t <= tDone2).map((x) => x.text);
             check(!saidWhileWorking.some((t) => t.includes(DARK)), '2: the bot did not announce the shelter while it worked on the order',
                 JSON.stringify(saidWhileWorking.slice(-4)));

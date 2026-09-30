@@ -247,12 +247,14 @@ export function withModes(settings = {}, modes = {}) {
 export const FLAGS_0148_OFF = Object.freeze({
     stuck_restart_after: 1, protect_built_blocks: false, knowledge_in_prompt: false, knowledge_max_chars: 600,
     repeat_guard: 0, restart_context: false, say_results: false, flee_below_health: 0, log_timestamps: false,
+    examples_by_last_request: false,
 });
 
 // Every setting of v0.1.4.8 on, as the owner will play with it (the long run W60).
 export const FLAGS_0148_ON = Object.freeze({
     stuck_restart_after: 3, protect_built_blocks: true, knowledge_in_prompt: true, knowledge_max_chars: 600,
     repeat_guard: 3, restart_context: true, say_results: true, flee_below_health: 8, log_timestamps: true,
+    examples_by_last_request: true,
 });
 
 // The commands of v0.1.4.8 by switch (spec section 11, 10). !chests and !mineOre existed before.

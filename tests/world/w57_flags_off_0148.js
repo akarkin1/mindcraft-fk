@@ -18,6 +18,11 @@
 //      does not go to the chat.
 //   F  log_timestamps off: no line of the console starts with [HH:MM:SS].
 //   G  restart_context off: no file last_exit.json in the folder of the bot.
+//   H  examples_by_last_request off (runs first, while the conversation is short): the prompt examples are
+//      chosen by the whole conversation, as before. The player says "do we have wheat", then three times
+//      "wait here for a minute" nine times over, then "do we have wheat" again. The first example of the
+//      last request is the one of "wait here for a minute" (the earlier conversation wins), not the one the
+//      first "do we have wheat" got. (With the switch on the last request alone decides: unit tests.)
 // flee_below_health 0 is not tested here: it needs a hostile mob and low health (the unit tests cover it).
 import path from 'node:path';
 import {
@@ -51,9 +56,32 @@ await scenarioMain({
                 agent = s.agent;
                 await resetBot(NAME);
 
+                // H
+                await placeBot(agent, { x: r.ox + 6, y: g + 1, z: r.oz + 3 }, 0);
+                orders = await orderChannel(s, { name: PLAYER, at: { x: CELL.x + 10, y: g + 1, z: CELL.z } });
+                const ask = async (text) => {
+                    const n = s.chat.requests.length;
+                    orders.say(text);
+                    const q = await waitFor(() => s.chat.requests.slice(n).find((x) => String(x.turns?.[x.turns.length - 1]?.content ?? '').includes(text)),
+                        { ms: 30000, every: 150 });
+                    await waitIdle(agent, 15000);
+                    await sleep(1500);
+                    return q.ok ? firstExample(q.value.prompt) : '(no request)';
+                };
+                const e1 = await ask('do we have wheat');
+                const flood = 'wait here for a minute '.repeat(9).trim();
+                for (let i = 0; i < 3; i++) await ask(flood);
+                const e2 = await ask('do we have wheat');
+                note(`H: the first example for the first "do we have wheat": ${JSON.stringify(e1.slice(0, 120))}; for the second one: ${JSON.stringify(e2.slice(0, 120))}`);
+                check(e1 !== '(no request)' && e2 !== '(no request)', 'H: precondition: both requests "do we have wheat" reached the model with examples', `${e1.slice(0, 60)} | ${e2.slice(0, 60)}`);
+                check(e2.includes('wait here for a minute') && !e1.includes('wait here for a minute'),
+                    'H: examples_by_last_request off: the whole conversation chose the examples (the second "do we have wheat" got the example of "wait here for a minute")',
+                    JSON.stringify(e2.slice(0, 120)));
+
                 // A
                 await placeBot(agent, CELL, 0);
-                orders = await orderChannel(s, { name: PLAYER, at: { x: CELL.x + 10, y: g + 1, z: CELL.z } });
+                await tp(PLAYER, { x: CELL.x + 10, y: g + 1, z: CELL.z });
+                await sleep(500);
                 const tA = Date.now();
                 orders.orderInfo(`!followPlayer("${PLAYER}", 2)`, 5000);
                 const freed = await waitFor(() => {
@@ -132,3 +160,12 @@ await scenarioMain({
     },
 });
 exitSoon();
+
+// The first example in the prompt of a request ('' when the prompt has none).
+function firstExample(prompt) {
+    const text = String(prompt ?? '');
+    const i = text.indexOf('Example 1:');
+    if (i < 0) return '';
+    const j = text.indexOf('Example 2:', i);
+    return text.slice(i + 'Example 1:'.length, j < 0 ? i + 400 : j).trim();
+}

@@ -13,11 +13,13 @@
 //   - the history holds "Command !chopTrees was stopped by !stop. Done so far: ..." (I5) with the text of I6
 //     "I cut N oak_log and picked up M." where N is the number of logs that are gone from the trees (server)
 //     and M is at most N and at most what the bot carried at the stop;
+//   - v0.1.4.8, X4: the same text is the answer of the typed !chopTrees in the chat of the player (before X4
+//     the stopped order answered nothing there);
 //   - no turn of the model started for the stopped command;
 //   - the process lives.
 import {
     scenarioMain, check, note, exitSoon, startAgent, stopRealAgent, OWNER_SWITCHES, FLAGS_0148_OFF, withModes, placeBot,
-    resetBot, waitFor, entityPos, fmt, orderChannel, env, sleep,
+    resetBot, waitFor, entityPos, fmt, orderChannel, env, sleep, heardFrom,
 } from './helpers.js';
 import { region, prepareRegion, releaseRegion, treePlan, buildTree, blockNames, hdist, itemsText, inventoryOf } from './world.js';
 import { basePlan, buildBase, saveHomePlace, BASE_RADIUS } from './base_world.js';
@@ -78,6 +80,14 @@ await scenarioMain({
                 check(m <= n && m <= Math.max(carried, (await inventoryOf(NAME)).oak_log || 0), 'M is at most N and at most what the bot carries', `M ${m}, N ${n}, carried ${carried}`);
                 if (m < n) check(/I was stopped before I picked up the rest\./.test(lines[0]), 'when not all were picked up the text says "I was stopped before I picked up the rest."', JSON.stringify(lines[0]));
             }
+            // v0.1.4.8, X4: the stopped order answers in the chat of the player who typed it
+            const replyDone = DONE.exec(c.reply);
+            check(STOPPED.test(c.reply) && Boolean(replyDone) && (!done || replyDone[1] === done[1]),
+                'X4: the stopped !chopTrees answers the player "Command !chopTrees was stopped by !stop. Done so far: I cut N oak_log and picked up M." (N as in the history)',
+                JSON.stringify(c.reply.slice(0, 300)));
+            await waitFor(() => heardFrom(orders.player, NAME, tStop - 1000).join(' ').includes('Command !chopTrees was stopped by !stop.'), { ms: 8000, every: 200 });
+            const heard = heardFrom(orders.player, NAME, tStop - 1000);
+            check(heard.join(' ').includes('Command !chopTrees was stopped by !stop.'), 'X4: the player saw the text in the chat', JSON.stringify(heard.slice(-4)));
             const turns = s.chat.requests.slice(requests0).filter((q) => q.turns.some((t) => STOPPED.test(String(t.content))));
             check(turns.length === 0, 'no turn of the model started for the stopped command (G3)', `${turns.length} requests`);
             note(`the bot carries ${itemsText(await inventoryOf(NAME))}`);

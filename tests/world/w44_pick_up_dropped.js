@@ -9,6 +9,8 @@
 // and 1 oak_fence_gate on the grass in front of it, then walks away. When the items lie on the ground (server) the player types
 // !pickUpItems. Then: the bot carries 8 oak_fence and 1 oak_fence_gate (server), no fence item lies on the
 // ground, the answer has the line "I picked up 8 oak_fence, 1 oak_fence_gate." (B4), the process lives.
+// v0.1.4.8, X15: then the player types !givePlayer("w_dropper", "oak_fence", 1): the player gets the fence and
+// the answer has no stray line with a number (the long run of stage 2 showed "61.125" in it).
 import { Vec3 } from 'vec3';
 import {
     scenarioMain, check, note, exitSoon, startAgent, stopRealAgent, OWNER_SWITCHES, FLAGS_0148_OFF, withModes, placeBot,
@@ -71,6 +73,16 @@ await scenarioMain({
             check(left.length === 0, 'no fence item lies on the ground', JSON.stringify(left));
             const seen = agent.bot.blockAt(new Vec3(dropAt.x, g, dropAt.z))?.name;
             note(`the ground where the items lay: ${seen}`);
+
+            // v0.1.4.8, X15: !givePlayer printed a stray line with a number ("61.125") into its output
+            await command(`clear ${PLAYER}`);
+            await tp(PLAYER, { x: botAt.x - 6, y: g + 1, z: botAt.z + 2 });
+            await sleep(1000);
+            const give = await orders.order(`!givePlayer("${PLAYER}", "oak_fence", 1)`, 60000);
+            const got = await waitFor(async () => ((await inventoryOf(PLAYER)).oak_fence || 0) === 1, { ms: 8000, every: 250 });
+            note(`!givePlayer answered ${JSON.stringify(give)}`);
+            check(!give.split('\n').some((l) => /^\s*-?\d+(\.\d+)?\s*$/.test(l)), 'the answer of !givePlayer has no line of only a number (X15)', JSON.stringify(give));
+            check(got.ok, 'the player received 1 oak_fence (server)', itemsText(await inventoryOf(PLAYER)));
             check(s.killed === null, 'the process lives', String(s.killed));
             check(s.realCalls.length === 0, 'no request reached a real model class', JSON.stringify(s.realCalls));
         } finally {

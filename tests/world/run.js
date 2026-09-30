@@ -78,6 +78,9 @@ const SCENARIOS = [
     ['offhand_food', 'w41_offhand_food.js', 300, false],
     ['reflex_switch', 'w55_reflex_switch.js', 240, false],
     ['flags_off_0148', 'w57_flags_off_0148.js', 480, false],
+    ['hole_escape', 'w37_hole_escape.js', 360, false],
+    ['order_after_stuck', 'w38_order_after_stuck.js', 480, false],
+    ['chat_burst', 'w40_chat_burst.js', 300, false],
     // the mining scenarios run in the deep world, with a server of their own
     ['mine_basics', 'w24_mine_basics.js', 600, false, 'deep'],
     ['shaft', 'w25_shaft.js', 900, false, 'deep'],
@@ -102,6 +105,9 @@ const SCENARIOS = [
     ['trees_with_axe', 'w53_trees_with_axe.js', 600, false, 'base'],
     ['mine_asks', 'w54_mine_asks.js', 300, false, 'base'],
     ['farm_scan', 'w56_farm_scan.js', 300, false, 'base'],
+    // v0.1.4.8 fix round: the corrections X1 to X15 that had no scenario
+    ['composter_never', 'w36_composter_never.js', 900, false, 'base'],
+    ['wake_for_order', 'w39_wake_for_order.js', 360, false, 'base'],
     ['long_run', 'w60_long_run.js', 2700, false, 'base'],
 ];
 

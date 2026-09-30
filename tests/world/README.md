@@ -9,7 +9,7 @@ fake with canned replies; nothing leaves 127.0.0.1.
 ## Running
 
 ```
-npm run test:world                       all scenarios (about 70 minutes since v0.1.4.8: the long run alone takes 30)
+npm run test:world                       all scenarios (about 80 minutes since v0.1.4.8: the long run alone takes 30)
 node tests/world/run.js doors shelter    only scenarios whose name contains one of the words
 node tests/world/run.js all_modes_on     a group: the work scenarios w15 to w28 (W30 of v0.1.4.8)
 node tests/world/run.js --verbose        the whole output of every scenario while it runs
@@ -254,13 +254,13 @@ health of the bot. Set `MCW_LOG_DIR` to keep the full output of each run and the
 | `w02_flags_off.js` | all new flags off: no new command for the model, no new mode, no new file; the problems of today: the door stays open, `!collectBlocks("oak_log", 4)` takes logs of the house |
 | `w03_doors.js` | the door and the fence gate are closed after the bot walked through; a player in the doorway keeps it open |
 | `w04_shelter.js` | `!goToShelter` from 40 blocks away: inside the house, door closed, house untouched |
-| `w05_night.js` | night comes while the bot works on a day order: it goes to the shelter by itself; an order given at night is obeyed; following continues at night |
+| `w05_night.js` | night comes while the bot works on a day order: it goes to the shelter by itself; an order given at night is obeyed (the rows up to the first that is not the order, no "Command !collectBlocks was stopped by the reflex night_shelter"); following continues at night |
 | `w06_protected_house.js` | `!collectBlocks("oak_log", 4)` takes the tree, not the house; `bot.dig` on the wall is refused; a path goes around the house |
 | `w07_scan.js` | `!rememberArea` finds the house and its door, the fenced farm and its gate, nothing on an open field |
 | `w08_farm.js` | in a farm area: ripe wheat can be broken, the fence cannot, seeds can be planted, dirt cannot be placed |
 | `w09_creeper.js` | a creeper 10 blocks from the house is led away; house untouched, the bot lives, the door stays shut (monsters: up to 3 runs, 2 must pass) |
 | `w10_sleep.js` | at night the bot sleeps in the bed of the house; the text at day; bedrock is no bed |
-| `w11_eat.js` | the bot eats bread at a low food level; the text without food; the auto-eat options |
+| `w11_eat.js` | the bot eats bread at a low food level; the text without food; the auto-eat options; the number in the text of `!eat` is the bread that left the inventory (X10); `!consume` at full food: "I am not hungry. Food 20 of 20." (X12) |
 | `w12_rules.js` | a rule survives a restart and is in the conversing prompt |
 | `w13_cost.js` | the cost meter with a fake model that reports usage: totals, report line, state `saving` and what it switches off, `usage.json` |
 | `w14_creeper_standing.js` | Amendment 2 F3: a creeper that stands (NoAI) near the house is left alone well within 90 s, never approached closer than 8 blocks; at night the bot does not open the door near it and digs in 24 blocks away |
@@ -289,13 +289,18 @@ player in the chat. The comment at the top of each file says how it would have f
 | W30 | `w15` to `w28` (group `all_modes_on`) | flat, deep | the work scenarios of v0.1.4.7 with `MODES_PROFILE` and their orders in the chat; `!mineOre(..., true)` for a new mine (E4), the entrance 16 blocks from a house (E4), `I tilled N blocks and planted ...` (E2), `N plants are not ripe.` (E2) |
 | W31 | `w31_stuck_gives_up.js` | flat | [S1, S2] in a room of obsidian with `stuck_restart_after` 3: the reflex gives up twice ("I am stuck at (x, y, z) and could not walk away."), the model is told the position, the process lives; the third failure in a row ends it |
 | W32 | `w32_skill_stands_still.js` | flat | [S15] `!goToBed` at dusk waits 40 s at the bed without "I'm stuck!"; `!makeBoneMeal`, `!storeItems` into 24 chests with a free slot each, `!getTool` from a known chest: no "I'm stuck!", their result in the world (they are too quick to stand 25 s, which is noted) |
-| W33 | `w33_stopped_command.js` | base | [S3, T1] `!chopTrees(20, "oak")` stopped by `!stop`: the history holds "Command !chopTrees was stopped by !stop. Done so far: I cut N oak_log and picked up M." |
+| W33 | `w33_stopped_command.js` | base | [S3, T1] `!chopTrees(20, "oak")` stopped by `!stop`: the history holds "Command !chopTrees was stopped by !stop. Done so far: I cut N oak_log and picked up M." ; since X4 the same text is the answer in the chat of the player |
 | W34 | `w34_stop_is_hard.js` | flat | [S9] `!goToCoordinates` 70 blocks, `!stop` after 6, 14, 22 blocks: the bot stands within 1 s, no kill |
 | W35 | `w35_resume_ends.js` | base | [S5] `!followPlayer`, then `!storeItems`: afterwards the bot does not follow again |
+| W36 | `w36_composter_never.js` | base | [X1, X2] four `!farmCycle` with unripe wheat and a full composter, two of them stopped at dusk: the bot is never in or on the composter (samples every 250 ms), no farmland becomes dirt, a walk afterwards reaches its goal |
+| W37 | `w37_hole_escape.js` | flat | [X1] the bot inside a composter and inside a cauldron, a typed `!goToCoordinates`: it gets out and reaches the goal, no give-up |
+| W38 | `w38_order_after_stuck.js` | flat | [X3] right after a give-up a new order has its 20 s before "I'm stuck!"; three walks after it are not stopped by `unstuck` |
+| W39 | `w39_wake_for_order.js` | base | [X5] asleep after `!goToBed` (and by `night_shelter`), a typed `!goToCoordinates` / `!searchForEntity`: the bot is out of the bed within 10 s (server) and the command reaches its goal |
+| W40 | `w40_chat_burst.js` | flat | [X9] 12 lines at once all arrive, in order, the last 6 s after the first; fast typed queries: no kick; a kick prints "The server said: Kicked for spamming" |
 | W41 | `w41_offhand_food.js` | flat | [E1] bread in slot 45: `!inventory` says "In the off-hand: bread 6", `!eat` eats it |
 | W42 | `w42_hunger_reflex.js` | base | [E3] food 6, no food carried, bread in the known chest of the house: the bot fetches and eats without an order and without the model |
 | W43 | `w43_fence_is_safe.js` | base | [P1] the model's `!collectBlocks("oak_fence", 20)` in the pen with `protect_built_blocks`: every fence stands, the animals are inside, the text of B1 |
-| W44 | `w44_pick_up_dropped.js` | base | [P2] a second bot drops 8 fences and a gate 12 blocks away: `!pickUpItems` gets them |
+| W44 | `w44_pick_up_dropped.js` | base | [P2] a second bot drops 8 fences and a gate 12 blocks away: `!pickUpItems` gets them; `!givePlayer` has no stray number line (X15) |
 | W45 | `w45_shaft_underground.js` | base | [R1, M8] at dusk in the room at y 41 and at the landing at y 25 `night_shelter` does nothing; on the surface it runs (control) |
 | W46 | `w46_creeper_above.js` | base | [R3] creepers on the surface above the mine (area of type mine): no reaction in 30 s, at y 41 and at y 25 |
 | W47 | `w47_creeper_in_sight.js` | base | [R3] a creeper 8 blocks away in the same tunnel: the reflex reacts (monsters: 2 of 3 runs) |
@@ -303,12 +308,12 @@ player in the chat. The comment at the top of each file says how it would have f
 | W49 | `w49_doors_after_reflex.js` | base | [R5, R9] the night reflex walks the bot from the farm into the house: gate and door are closed afterwards, "Door service: closed ..." |
 | W50 | `w50_auto_home.js` | base | [M5] a restart with the place "home" and no area: the area "home" (type home, source auto) exists, the bot says so |
 | W51 | `w51_chest_at_fence.js` | base | [C4] `!storeItems` at the farm: the chest in the fence line opens and is in the index |
-| W52 | `w52_farm_cycle_whole.js` | base | [F1, F2, F3] unripe wheat, leaf litter in the known chest: one `!farmCycle` makes bone meal, uses it and ends with harvested wheat |
+| W52 | `w52_farm_cycle_whole.js` | base | [F1, F2, F3] unripe wheat, leaf litter in the known chest: one `!farmCycle` makes bone meal, uses it and ends with harvested wheat; X13 (a gate is no door), X14 (wheat left in the field only with "I could not pick up the crop of N plants.") |
 | W53 | `w53_trees_with_axe.js` | base | [T4, T1] `!chopTrees(6)` with a pickaxe in the hand: an axe is made and held for every log, 6 logs or more |
 | W54 | `w54_mine_asks.js` | base | [M1, M3, M5] `!mineOre("iron", 8)` with no mine: the text asks, nothing dug or crafted, the proposed entrance 16 blocks from home |
 | W55 | `w55_reflex_switch.js` | flat | [R4] `!setMode` of the five safety reflexes from the model is refused; typed by the player it works |
 | W56 | `w56_farm_scan.js` | base | [P5] `!rememberArea("farm", "farm")` from outside the gate saves the farm with its gate |
-| W57 | `w57_flags_off_0148.js` | flat | every new setting of v0.1.4.8 at its default: the behaviour of v0.1.4.7 (the escape that returns says "I'm free.", no give-up; free fences can be collected, no knowledge block, no repeat guard, no text to the chat, no time stamps, no `last_exit.json`) |
+| W57 | `w57_flags_off_0148.js` | flat | every new setting of v0.1.4.8 at its default: the behaviour of v0.1.4.7 (the escape that returns says "I'm free.", no give-up; free fences can be collected, no knowledge block, no repeat guard, no text to the chat, no time stamps, no `last_exit.json`, the prompt examples chosen by the whole conversation) |
 | W58 | `w58_base_world.js` | base | the harness of the base world: every part read back from the server, the agent stands in every part, a typed order answers in the chat |
 | W60 | `w60_long_run.js` | base | [all 20 ends of the process] 60 orders in a fixed order over 30 minutes (at least 15 s apart), every part and setting on, the daylight cycle on: the process never ends, every order has a result text (the endless `!followPlayer` is answered by the `!stop` after it), the bot is alive at the end |
 
