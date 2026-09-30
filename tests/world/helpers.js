@@ -3,6 +3,8 @@
 //
 // The checks, the phases, the fake language model and the start of the real agent come from the
 // end-to-end framework of the earlier releases (tests/e2e/helpers.js) and are imported, not copied.
+import fs from 'node:fs';
+import path from 'node:path';
 import mineflayer from 'mineflayer';
 import {
     check, note, scenarioMain, sleep, withTimeout, errText, importProject, startRealAgent, stopRealAgent,
@@ -263,6 +265,184 @@ export const COMMANDS_0148 = { always: ['!pickUpItems'], home_pack: ['!closeDoor
 // The texts of the mode unstuck (spec A2).
 export const STUCK_SAID = "I'm stuck!";
 export const FREE_SAID = "I'm free.";
+
+// ------------------------------------------------------------------ v0.1.4.9: the routes and the mine of the player
+
+// The new settings of v0.1.4.9 (spec section 2) at their defaults: the behaviour of v0.1.4.8 (W74).
+export const FLAGS_0149_OFF = Object.freeze({
+    routes_pack: false, trail_max_steps: 500, mine_routes: false, ore_sense_range: 0, skills_over_code: false,
+});
+
+// The switches of v0.1.4.9 on (spec 11 TW 3): the routes and the mine of the player. ore_sense_range and
+// skills_over_code stay at their defaults here; a scenario sets them as it needs (W69, W70, W72, W60).
+export const FLAGS_0149_ON = Object.freeze({
+    routes_pack: true, trail_max_steps: 500, mine_routes: true, ore_sense_range: 0, skills_over_code: false,
+});
+
+// The commands of v0.1.4.9 by switch (spec I10).
+export const COMMANDS_0149 = Object.freeze({
+    routes_pack: ['!rememberRoute', '!routes', '!forgetRoute'],
+    mine_routes: ['!rememberMine', '!rememberTunnel', '!collectPassedOre'],
+});
+
+// The settings of the scenarios W61 to W73: the owner's switches (every pack, protected areas, rules, world
+// memory), every setting of v0.1.4.8 on as the owner plays (knowledge in the prompt among them), the switches of
+// v0.1.4.9 on, a mining trip of at most 12 minutes, and the modes of the owner (MODES_PROFILE).
+export function settings0149(extra = {}, modes = {}) {
+    return withModes({ ...OWNER_SWITCHES, ...FLAGS_0148_ON, ...FLAGS_0149_ON, mining_max_minutes: 12, ...extra }, modes);
+}
+
+// The folder of the current world of the agent (bots/<name>/worlds/<key>), or null without world memory.
+export function worldDirOf(agent) {
+    return agent?.world_memory?.worldDir ?? null;
+}
+
+// A JSON file of the folder of the current world (trail.json, routes.json, mines.json): { file, json, error }.
+// json is null when the file is missing or cannot be read.
+export function readWorldFile(agent, name) {
+    const dir = worldDirOf(agent);
+    if (!dir) return { file: null, json: null, error: 'no world folder' };
+    const file = path.join(dir, name);
+    try {
+        return { file, json: JSON.parse(fs.readFileSync(file, 'utf8')), error: null };
+    } catch (e) {
+        return { file, json: null, error: e.code === 'ENOENT' ? 'missing' : e.message };
+    }
+}
+
+// The mines of mines.json as a list (the store keeps them by key), [] without the file.
+export function minesInFile(agent) {
+    const { json } = readWorldFile(agent, 'mines.json');
+    const mines = json?.mines;
+    if (Array.isArray(mines)) return mines;
+    return mines && typeof mines === 'object' ? Object.values(mines) : [];
+}
+
+// The routes of routes.json as a list, [] without the file.
+export function routesInFile(agent) {
+    const { json } = readWorldFile(agent, 'routes.json');
+    const routes = json?.routes;
+    if (Array.isArray(routes)) return routes;
+    return routes && typeof routes === 'object' ? Object.values(routes) : [];
+}
+
+// Whether the server says that the player sleeps (sleeping_pos since 1.21.5, SleepingX before), as in W39.
+export async function serverSleeping(name) {
+    const out = await commands([`data get entity ${name} sleeping_pos`, `data get entity ${name} SleepingX`]);
+    return out.some((lines) => lines.some((l) => /has the following entity data/.test(l)));
+}
+
+// The cells of a column from y `from` to y `to` (either way), for stepCells.
+export function columnCells(x, z, from, to) {
+    const out = [];
+    const step = to >= from ? 1 : -1;
+    for (let y = from; step > 0 ? y <= to : y >= to; y += step) out.push({ x, y, z });
+    return out;
+}
+
+// Moves the agent's bot cell by cell with /tp where the path search cannot walk (spec 11 TW 2: the ladder, 200 ms
+// per cell). Every move is one block, so the trail sees a walk and not a jump (a move of more than 16 blocks starts
+// the trail again, HANDOFF part A). Resolves with the server position at the end.
+export async function stepCells(agent, cells, { ms = 200, yaw = 0 } = {}) {
+    for (const c of cells) {
+        await tp(agent.name, c, yaw, 0);
+        await sleep(ms);
+    }
+    return entityPos(agent.name);
+}
+
+// A typed !goToCoordinates to a cell (closeness 0: the feet in that block) and whether the bot arrived there
+// (server position within 1 block). Resolves with { reply, pos, arrived }.
+export async function walkTyped(orders, agent, p, ms = 120000) {
+    const reply = await orders.order(`!goToCoordinates(${p.x}, ${p.y}, ${p.z}, 0)`, ms);
+    const arrived = await waitFor(async () => {
+        const at = await entityPos(agent.name);
+        return at && Math.abs(Math.floor(at.x) - p.x) <= 1 && Math.abs(Math.floor(at.y + 0.01) - p.y) <= 1 && Math.abs(Math.floor(at.z) - p.z) <= 1 ? at : null;
+    }, { ms: 5000, every: 250 });
+    const pos = arrived.value ?? await entityPos(agent.name);
+    note(`walk to (${p.x}, ${p.y}, ${p.z}): ${arrived.ok ? 'arrived' : 'NOT arrived'} at ${fmt(pos)}; the answer ${JSON.stringify(String(reply).slice(0, 160))}`);
+    return { reply, pos, arrived: arrived.ok };
+}
+
+// Records what the bot does with blocks and the path search while a route is walked, for the report of a failure:
+// every activateBlock (the name, the position, open or closed before, where the bot stood) and every goal of the
+// path search. Nothing is changed: the wrappers call the originals. Returns { lines, stop() }.
+export function recordMoves(agent) {
+    const bot = agent.bot;
+    const lines = [];
+    const t0 = Date.now();
+    const at = () => { const p = bot.entity?.position; return p ? `(${p.x.toFixed(1)}, ${p.y.toFixed(1)}, ${p.z.toFixed(1)})` : '?'; };
+    const push = (text) => { const l = `MOVE t=${((Date.now() - t0) / 1000).toFixed(1)}s ${text}`; lines.push(l); console.log(l); };
+    const activate = bot.activateBlock;
+    bot.activateBlock = function recordedActivate(block, ...rest) {
+        const props = typeof block?.getProperties === 'function' ? block.getProperties() : {};
+        push(`activateBlock ${block?.name} (${block?.position?.x}, ${block?.position?.y}, ${block?.position?.z}) open=${props.open} from ${at()}`);
+        return activate.call(this, block, ...rest);
+    };
+    const pf = bot.pathfinder;
+    const setGoal = pf?.setGoal;
+    if (pf && setGoal) {
+        pf.setGoal = function recordedGoal(goal, ...rest) {
+            push(`path search goal ${goal ? `${goal.constructor?.name} (${goal.x}, ${goal.y}, ${goal.z})${goal.rangeSq !== undefined ? ' range ' + Math.sqrt(goal.rangeSq) : ''}` : 'none'} from ${at()}`);
+            return setGoal.call(this, goal, ...rest);
+        };
+    }
+    return {
+        lines,
+        stop() {
+            bot.activateBlock = activate;
+            if (pf && setGoal) pf.setGoal = setGoal;
+            return lines;
+        },
+    };
+}
+
+// The base world (base_world.js): the trapdoor over the shaft opened or closed by the console, the way a player
+// opens it for the bot that follows him.
+export async function setTrapdoor(b, open) {
+    const t = b.trapdoor;
+    return commands([`setblock ${t.x} ${t.y} ${t.z} minecraft:oak_trapdoor[facing=south,half=top,open=${open}]`]);
+}
+
+// The walk of W62 to W64 (spec 11 TW 2): the bot stands in the room at y 41, walks to the foot of the ladder
+// (typed !goToCoordinates), is moved up the ladder cell by cell, through the open trapdoor into the house, and
+// walks to the bed (typed). The trapdoor is closed behind it (as the door service does). Resolves with
+// { ok, at, bedside }: ok when every walk arrived.
+export async function walkUpToBed(agent, orders, b, { ms = 200 } = {}) {
+    const col = b.shaft.column;
+    const g = b.g;
+    await placeBot(agent, b.room.middle, 180);
+    await sleep(1000); // the trail takes its first step here
+    // to the floor beside the ladder (the path search climbs a ladder it is sent into), then up the column
+    const foot = await walkTyped(orders, agent, { x: col.x, y: b.room.box.min.y, z: col.z + 1 });
+    await stepCells(agent, columnCells(col.x, col.z, b.room.box.min.y, g - 1), { ms });
+    await setTrapdoor(b, true);
+    await sleep(300);
+    await stepCells(agent, [{ x: col.x, y: g, z: col.z }, { x: col.x, y: g + 1, z: col.z + 1 }], { ms: Math.max(ms, 400) });
+    await setTrapdoor(b, false);
+    const bedside = { x: b.house.bedFoot.x + 1, y: g + 1, z: b.house.bedFoot.z };
+    const bed = await walkTyped(orders, agent, bedside);
+    return { ok: foot.arrived && bed.arrived, at: bed.pos, bedside };
+}
+
+// The walk of W65 to W73 (spec 11 TW 2): the bot stands outside the house in front of the door (under open
+// sky), walks into the house next to the trapdoor (typed !goToCoordinates: the path search opens the door), is
+// moved down the ladder cell by cell through the open trapdoor to the room at y 41, and walks down the descent to
+// `end` (typed; the end of the tunnel by default). The trapdoor is closed behind it. Resolves with { ok, at }.
+export async function walkIntoMine(agent, orders, b, { end = b.tunnel.end, ms = 200 } = {}) {
+    const col = b.shaft.column;
+    const g = b.g;
+    await placeBot(agent, { x: b.house.door.x, y: g + 1, z: b.house.door.z - 6 }, 180);
+    await sleep(1500); // the trail takes its steps under the open sky
+    const inHouse = await walkTyped(orders, agent, { x: col.x, y: g + 1, z: col.z + 1 });
+    await setTrapdoor(b, true);
+    await sleep(300);
+    await stepCells(agent, columnCells(col.x, col.z, g, b.room.box.min.y), { ms });
+    await setTrapdoor(b, false);
+    await sleep(500);
+    const there = await walkTyped(orders, agent, end, 180000);
+    return { ok: inHouse.arrived && there.arrived, at: there.pos };
+}
 
 // ------------------------------------------------------------------ v0.1.4.8: what the agent did
 

@@ -108,14 +108,32 @@ const SCENARIOS = [
     // v0.1.4.8 fix round: the corrections X1 to X15 that had no scenario
     ['composter_never', 'w36_composter_never.js', 900, false, 'base'],
     ['wake_for_order', 'w39_wake_for_order.js', 360, false, 'base'],
+    // v0.1.4.9 "The mine, the routes of the player": the trail, the routes, the mine of the player (spec 11 TW)
+    ['trail_records', 'w61_trail_records.js', 240, false, 'base'],
+    ['route_to_bed', 'w62_route_to_bed.js', 480, false, 'base'],
+    ['route_reverse', 'w63_route_reverse.js', 420, false, 'base'],
+    ['route_broken', 'w64_route_broken.js', 420, false, 'base'],
+    ['remember_mine', 'w65_remember_mine.js', 420, false, 'base'],
+    ['remember_tunnel', 'w66_remember_tunnel.js', 420, false, 'base'],
+    ['mine_known', 'w67_mine_known.js', 900, false, 'base'],
+    ['passed_ore', 'w68_passed_ore.js', 1200, false, 'base'],
+    ['ore_sense', 'w69_ore_sense.js', 1200, false, 'base'],
+    ['ore_in_sight', 'w70_ore_in_sight.js', 300, false, 'base'],
+    ['dusk_on_route', 'w71_dusk_on_route.js', 480, false, 'base'],
+    ['dig_code_refused', 'w72_dig_code_refused.js', 300, false, 'base'],
+    ['branches', 'w73_branches.js', 900, false, 'base'],
+    ['flags_off_0149', 'w74_flags_off_0149.js', 480, false, 'base'],
     ['long_run', 'w60_long_run.js', 2700, false, 'base'],
 ];
 
 // Words that select a group of scenarios (spec v0.1.4.8, W30: the work scenarios of v0.1.4.7, which run
 // with the modes of the owner since v0.1.4.8).
+// v0.1.4.9: mine_routes_0149, the scenarios W61 to W74 of the routes and the mine of the player.
 const GROUPS = {
     all_modes_on: ['storage', 'harvest', 'plant', 'bone_meal', 'farm_cycle', 'farm_old_command', 'trees', 'tall_tree', 'tools',
         'mine_basics', 'shaft', 'tunnel', 'mining_trip', 'mine_house'],
+    mine_routes_0149: ['trail_records', 'route_to_bed', 'route_reverse', 'route_broken', 'remember_mine', 'remember_tunnel', 'mine_known',
+        'passed_ore', 'ore_sense', 'ore_in_sight', 'dusk_on_route', 'dig_code_refused', 'branches', 'flags_off_0149'],
 };
 
 const args = process.argv.slice(2);
@@ -392,7 +410,7 @@ function report(r, timeoutS, label) {
 const tStart = Date.now();
 const outcomes = [];
 let hygieneProblems = [];
-console.log(`world tests v0.1.4.8: node ${process.version}, repository ${ROOT}, ${selected.length} scenario(s)`);
+console.log(`world tests v0.1.4.9: node ${process.version}, repository ${ROOT}, ${selected.length} scenario(s)`);
 console.log(`server ${loc.jar}\njava ${loc.java}`);
 
 async function runScenario([name, file, timeoutS, monsters]) {

@@ -7,7 +7,8 @@
 // Base world with 4 trees north of the house, every part on as the owner plays (OWNER_SWITCHES) with every
 // setting of v0.1.4.8 on (FLAGS_0148_ON: stuck_restart_after 3, protect_built_blocks, knowledge in the prompt,
 // repeat guard 3, restart context, say_results, flee_below_health 8, time stamps), the modes of the owner with
-// all home reflexes. Difficulty easy (the food level falls), no monsters, the daylight cycle ON from time 1000:
+// all home reflexes; v0.1.4.9 (spec 11 TW 3): the switches of v0.1.4.9 on too (routes_pack, mine_routes,
+// ore_sense_range 3, skills_over_code), and orders of the new commands in the list (see ORDERS). Difficulty easy (the food level falls), no monsters, the daylight cycle ON from time 1000:
 // dusk comes after about 9 minutes, so the night reflex, the doors and the shelter take part.
 // The player types the 60 orders of ORDERS below, in this order, one every 30 s at the earliest and never
 // sooner than 15 s after the one before (the next one waits for the answer of the one before, at most its time
@@ -17,7 +18,7 @@
 // reached the agent; every order has a result text (its answer in the chat, or the history line "Command !x was
 // stopped by ..." of I5 when a later order or a reflex stopped it); the bot is alive at the end (server).
 import {
-    scenarioMain, check, note, exitSoon, startAgent, stopRealAgent, OWNER_SWITCHES, FLAGS_0148_ON, withModes, placeBot,
+    scenarioMain, check, note, exitSoon, startAgent, stopRealAgent, OWNER_SWITCHES, FLAGS_0148_ON, FLAGS_0149_ON, withModes, placeBot,
     resetBot, waitFor, sleep, commands, orderChannel, giveItems, entityPos, fmt, env,
 } from './helpers.js';
 import { region, prepareRegion, releaseRegion, treePlan, buildTree, entityNumber, inventoryOf, itemsText } from './world.js';
@@ -36,19 +37,25 @@ const DEADLINE_MS = 40 * 60 * 1000; // no order is given after 40 minutes (the r
 
 // The 60 orders: [command, time limit in seconds]. `P` holds the places of the base (basePlan).
 const xyz = (p, d = 1) => `${p.x + 0.5}, ${p.y}, ${p.z + 0.5}, ${d}`;
+// v0.1.4.9: eight orders of the new commands (spec 11 TW 3, W60) took the places of eight repeated queries of
+// v0.1.4.8 (a second !chests("..."), !closeDoor, !chests, !eat, !inventory, !stats and !goToRememberedPlace("home")),
+// so the run keeps 60 orders and its 30 minutes: the way to the farm (!rememberRoute, !routes, !forgetRoute), the
+// mine of the owner (!rememberMine in the room, !rememberTunnel at the end of the tunnel, !mineOre in it,
+// !collectPassedOre).
 const ORDERS = (P) => [
     ['!stats', 20],
     ['!inventory', 20],
     ['!goToRememberedPlace("home")', 90],
     ['!viewChest', 60],
     ['!chests', 20],
-    ['!chests("bread")', 20],
     ['!fetchItem("bread", 3)', 90],
     ['!eat', 45],
     ['!rememberArea("home", "home")', 60],
     ['!areas', 20],
     [`!goToCoordinates(${xyz(P.farm.outsideGate)})`, 90],
     ['!rememberArea("farm", "farm")', 90],
+    ['!rememberRoute("farm")', 20],
+    ['!routes', 20],
     ['!harvest', 240],
     ['!storeItems', 180],
     ['!plant("wheat_seeds", "farm")', 240],
@@ -67,11 +74,15 @@ const ORDERS = (P) => [
     ['!craftSupplies("torch", 8)', 240],
     ['!goToRememberedPlace("home")', 120],
     ['!storeItems', 180],
-    ['!chests("oak_log")', 20],
     ['!goToShelter', 120],
     ['!goToBed', 90],
     ['!mineOre("iron", 4)', 60],
     [`!goToCoordinates(${xyz(P.room.middle)})`, 120],
+    ['!rememberMine("mine")', 20],
+    [`!goToCoordinates(${xyz(P.tunnel.end)})`, 120],
+    ['!rememberTunnel', 20],
+    ['!mineOre("iron", 2)', 180],
+    ['!collectPassedOre("coal")', 60],
     ['!nearbyBlocks', 20],
     ['!goToSurface', 120],
     ['!rememberHere("field")', 20],
@@ -88,15 +99,10 @@ const ORDERS = (P) => [
     ['!rules', 20],
     ['!cost', 20],
     ['!craftable', 20],
-    ['!goToRememberedPlace("home")', 120],
-    ['!closeDoor', 30],
-    ['!chests', 20],
     ['!fetchItem("leaf_litter", 8)', 90],
     ['!harvest("farm")', 240],
-    ['!eat', 45],
-    ['!inventory', 20],
+    ['!forgetRoute("farm")', 20],
     ['!goToRememberedPlace("home")', 120],
-    ['!stats', 20],
 ];
 
 await scenarioMain({
@@ -116,7 +122,7 @@ await scenarioMain({
         let agent = null, orders = null;
         let deaths = 0;
         try {
-            const s = await startAgent(NAME, withModes({ ...OWNER_SWITCHES, ...FLAGS_0148_ON }));
+            const s = await startAgent(NAME, withModes({ ...OWNER_SWITCHES, ...FLAGS_0148_ON, ...FLAGS_0149_ON, ore_sense_range: 3, skills_over_code: true }));
             agent = s.agent;
             agent.bot.on('death', () => { deaths++; });
             await resetBot(NAME);
