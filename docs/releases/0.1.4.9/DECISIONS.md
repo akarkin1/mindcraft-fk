@@ -69,6 +69,16 @@ of the new commands so that it stays under 45 minutes; the hidden commands answe
 | R4 | An ore name alone made "craft an iron pickaxe" a digging request. | An ore counts only followed by `ore`, or within 3 words after find, get, collect and the like. Done. | C |
 | R5 | The real routing run with the owner's profile chose the examples by word overlap while play uses embeddings, because only one key was loaded. | `test-routing.ps1` loads the other key too when its secret exists. Done. | D |
 
+## Verification in a fresh checkout
+
+Commit `ac3f2c7`, cloned fresh, `npm install` (547 packages, every patch applied), Node 22:
+
+| Run | Result |
+|---|---|
+| `npm test` | 6078 tests, 0 failures, 1 skipped (Windows only) |
+| `npm run test:e2e` | 17 of 17, 146 s |
+| `npm run test:world` | 70 of 72, 5817 s. Every scenario of v0.1.4.9 passes, the long run too. Failing: `tall_tree` (one log left on the ground, the wood pack is unchanged, F10), `wake_for_order` (the bot got out of the bed as the scenario demands; the walk to the cow was then stopped by `unstuck` beside the pen, a behaviour of v0.1.4.8), and one repeat of `creeper_in_sight` timed out when the server dropped the connection (F9). All three passed in the second full run of the tester on the same tree. Not regressions. |
+
 ## Not corrected in this release
 
 - A mine named with a number (`"16"`) collides with the key of a mine of the bot at that level.
