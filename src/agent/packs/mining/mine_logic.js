@@ -243,17 +243,21 @@ export function shaftView(getBlockName, feet) {
 /**
  * The view of tunnelStep for a bot whose feet are at `feet`, digging towards `dir`: the two
  * blocks ahead (upper, lower) and around them left, right, above, below and the two behind them
- * (beyond). `step` is the number of the step in the tunnel, from 1.
+ * (beyond). `step` is the number of the step in the tunnel, from 1. With a `senseRange` of 2 or 3
+ * (the setting ore_sense_range, v0.1.4.9 B7) the view also has `sensed`: the ore blocks deeper in
+ * the walls, the ceiling and the floor of the column ahead (senseOres); with 0 it is the view of
+ * v0.1.4.7.
  * @param {(x: number, y: number, z: number) => string|null} getBlockName
  * @param {{x,y,z}} feet
  * @param {string} dir
  * @param {number} [step]
+ * @param {number} [senseRange]
  * @returns {object}
  */
-export function tunnelView(getBlockName, feet, dir, step = 1) {
+export function tunnelView(getBlockName, feet, dir, step = 1, senseRange = 0) {
     const slots = tunnelSlots(feet, dir);
     const name = key => readName(getBlockName, slots[key]);
-    return {
+    const view = {
         origin: { x: feet.x, y: feet.y, z: feet.z },
         dir: isDirection(dir) ? dir : 'north',
         step,
@@ -264,6 +268,10 @@ export function tunnelView(getBlockName, feet, dir, step = 1) {
         below: name('below'),
         beyond: { upper: name('beyond.upper'), lower: name('beyond.lower') },
     };
+    if (isFiniteNumber(senseRange) && senseRange >= 2) {
+        view.sensed = senseOres(getBlockName, feet, dir, senseRange);
+    }
+    return view;
 }
 
 /**
@@ -540,25 +548,40 @@ export function faceNeighbours(p) {
  * @returns {{x: number, y: number, z: number, name: string}[]}
  */
 export function veinOrder(start, getBlockName, limit = 12) {
+    return veinParts(start, getBlockName, limit).take;
+}
+
+/**
+ * The parts of one vein (v0.1.4.9, B6): `take` is veinOrder, `lava` the ore blocks of the vein that
+ * were left out for lava beside them, `beyond` the blocks of the vein past the limit (nearest
+ * first). All empty when `start` is no ore.
+ * @param {{x,y,z}} start
+ * @param {(x: number, y: number, z: number) => string|null} getBlockName
+ * @param {number} [limit]
+ * @returns {{take: object[], lava: object[], beyond: object[]}} each `{ x, y, z, name }`
+ */
+export function veinParts(start, getBlockName, limit = 12) {
     const first = cellOf(start);
     if (!first || typeof getBlockName !== 'function') {
-        return [];
+        return { take: [], lava: [], beyond: [] };
     }
     const firstName = readName(getBlockName, first);
     const row = isOreBlock(firstName) ? oreOf(firstName) : null;
     if (!row) {
-        return [];
+        return { take: [], lava: [], beyond: [] };
     }
     const max = isFiniteNumber(limit) && limit > 0 ? Math.floor(limit) : 12;
     const sameOre = name => isOreBlock(name) && oreOf(name) === row;
     const lavaBeside = p => faceNeighbours(p).some(n => readName(getBlockName, n) === 'lava');
     const found = [];
+    const lava = [];
     const seen = new Set([posKey(first)]);
     const queue = [{ ...first, name: firstName }];
     let order = 0;
     while (queue.length > 0 && seen.size < 256) {
         const p = queue.shift();
         if (lavaBeside(p)) {
+            lava.push({ x: p.x, y: p.y, z: p.z, name: p.name });
             continue;
         }
         found.push({ ...p, order: order++ });
@@ -576,8 +599,8 @@ export function veinOrder(start, getBlockName, limit = 12) {
         }
     }
     const dist = p => Math.hypot(p.x - first.x, p.y - first.y, p.z - first.z);
-    return found.sort((a, b) => dist(a) - dist(b) || a.order - b.order).slice(0, max)
-        .map(({ x, y, z, name }) => ({ x, y, z, name }));
+    const sorted = found.sort((a, b) => dist(a) - dist(b) || a.order - b.order).map(({ x, y, z, name }) => ({ x, y, z, name }));
+    return { take: sorted.slice(0, max), lava, beyond: sorted.slice(max) };
 }
 
 // ------------------------------------------------------------------ going back
@@ -1016,4 +1039,622 @@ export function sameCell(a, b) {
     const ca = cellOf(a);
     const cb = cellOf(b);
     return Boolean(ca && cb) && samePos(ca, cb);
+}
+
+// ------------------------------------------------------------------ the mine of the player (v0.1.4.9)
+//
+// A mine of v0.1.4.9 (spec I6) may also have a name, a source ('bot' or 'player'), a room of the
+// player ({ center, chest, table, furnace }), tunnels ([{ start, dir, end, level, length, branches }])
+// and the ore list `passed`. The functions here read such a mine; they never change it.
+
+/** A tunnel gets side branches from this length on (spec B5). */
+export const BRANCH_FROM = 32;
+/** A side branch every this many blocks of the main tunnel, from its start. */
+export const BRANCH_EVERY = 4;
+/** The length of a side branch. */
+export const BRANCH_LENGTH = 8;
+/** The reasons of the ore list (spec B6), in the order the texts name them. */
+export const PASSED_REASONS = Object.freeze(['pickaxe', 'lava', 'inventory', 'vein', 'stopped']);
+/** The most entries of the ore list of one mine; the oldest leave. */
+export const MAX_PASSED = 200;
+/** How far corridorDirections and measureTunnel look along a corridor. */
+export const CORRIDOR_LIMIT = 64;
+/** The deepest sense range of the setting ore_sense_range (spec B7). */
+export const MAX_SENSE_RANGE = 3;
+
+// a cell without -0 in it (Math.round(-0.4) is -0)
+function round0(v) {
+    return Math.round(v) + 0;
+}
+
+function uniqueCells(list) {
+    const seen = new Set();
+    return list.filter(p => {
+        const k = posKey(p);
+        if (seen.has(k)) {
+            return false;
+        }
+        seen.add(k);
+        return true;
+    });
+}
+
+// the cells of a straight or slanted line from a to b, both ends included
+function lineCells(a, b) {
+    const n = Math.max(Math.abs(b.x - a.x), Math.abs(b.y - a.y), Math.abs(b.z - a.z));
+    const out = [];
+    for (let k = 0; k <= n; k++) {
+        const t = n === 0 ? 0 : k / n;
+        out.push({ x: round0(a.x + (b.x - a.x) * t), y: round0(a.y + (b.y - a.y) * t), z: round0(a.z + (b.z - a.z) * t) });
+    }
+    return out;
+}
+
+/**
+ * The cells a leg of a route covers (spec I2, B8; the routes pack has the same rule and is not
+ * imported): a ladder its column from bottom to top and the cell of its entry; a walk and a
+ * staircase the straight line of cells from `from` to `to`; a door `from`, the openable and `to`.
+ * @param {object} leg
+ * @returns {{x: number, y: number, z: number}[]}
+ */
+export function legCells(leg) {
+    if (!leg || typeof leg !== 'object') {
+        return [];
+    }
+    if (leg.kind === 'ladder') {
+        if (![leg.x, leg.z, leg.top, leg.bottom].every(isFiniteNumber)) {
+            return [];
+        }
+        const out = [];
+        for (let y = Math.floor(Math.min(leg.top, leg.bottom)); y <= Math.floor(Math.max(leg.top, leg.bottom)); y++) {
+            out.push({ x: Math.floor(leg.x), y, z: Math.floor(leg.z) });
+        }
+        const entry = cellOf(leg.entry);
+        return uniqueCells(entry ? [...out, entry] : out);
+    }
+    if (leg.kind === 'door') {
+        return uniqueCells([cellOf(leg.from), cellOf(leg), cellOf(leg.to)].filter(Boolean));
+    }
+    if (leg.kind === 'walk' || leg.kind === 'stairs') {
+        const a = cellOf(leg.from);
+        const b = cellOf(leg.to);
+        return a && b ? uniqueCells(lineCells(a, b)) : [];
+    }
+    return [];
+}
+
+/**
+ * The end of a leg: where the bot stands after it (a ladder: the bottom of its column).
+ * @param {object} leg
+ * @returns {{x: number, y: number, z: number}|null}
+ */
+export function legEnd(leg) {
+    if (leg?.kind === 'ladder') {
+        return isFiniteNumber(leg.x) && isFiniteNumber(leg.bottom) && isFiniteNumber(leg.z)
+            ? { x: Math.floor(leg.x), y: Math.floor(leg.bottom), z: Math.floor(leg.z) } : null;
+    }
+    return cellOf(leg?.to);
+}
+
+// The tunnel of a mine of the bot (v0.1.4.7): from the first corner of mine.tunnel (or the end) to
+// mine.end, in mine.direction, at the level of the mine. The branches are those kept in tunnels[0].
+function ownTunnel(mine, first) {
+    if (!mine || mine.source === 'player' || !isDirection(mine.direction)) {
+        return null;
+    }
+    const end = cellOf(mine.end);
+    if (!end) {
+        return null;
+    }
+    const corners = (Array.isArray(mine.tunnel) ? mine.tunnel : []).map(cellOf).filter(Boolean);
+    const tunnel = {
+        start: corners[0] ?? end,
+        dir: mine.direction,
+        end,
+        level: isFiniteNumber(mine.level) ? Math.floor(mine.level) : end.y,
+        length: isFiniteNumber(mine.length) && mine.length > 0 ? Math.floor(mine.length) : 0,
+        branches: Array.isArray(first?.branches) ? first.branches : [],
+    };
+    if (corners.length > 0) {
+        tunnel.corners = corners;
+    }
+    return tunnel;
+}
+
+/**
+ * The tunnels of a mine in one shape (spec B1): `mine.tunnels`, and for a mine of the bot with a
+ * direction and an end its own tunnel of v0.1.4.7 as the first one (with the branches kept in the
+ * first entry of `tunnels`). Empty for a mine without a tunnel.
+ * @param {object} mine
+ * @returns {{start: object, dir: string, end: object, level: number, length: number, branches: object[], corners?: object[]}[]}
+ */
+export function tunnelsOf(mine) {
+    const stored = (Array.isArray(mine?.tunnels) ? mine.tunnels : [])
+        .filter(t => t && typeof t === 'object' && cellOf(t.start) && cellOf(t.end) && isDirection(t.dir));
+    const own = ownTunnel(mine, stored[0]);
+    return own ? [own, ...stored.slice(1)] : stored.slice();
+}
+
+/**
+ * The feet cells of a tunnel: along its corners when it has them, else from start to end.
+ * @param {object} tunnel
+ * @returns {{x: number, y: number, z: number}[]}
+ */
+export function tunnelCells(tunnel) {
+    const corners = (Array.isArray(tunnel?.corners) && tunnel.corners.length >= 2 ? tunnel.corners : [tunnel?.start, tunnel?.end])
+        .map(cellOf).filter(Boolean);
+    if (corners.length === 0) {
+        return [];
+    }
+    const out = [corners[0]];
+    for (let i = 1; i < corners.length; i++) {
+        out.push(...lineCells(corners[i - 1], corners[i]).slice(1));
+    }
+    return uniqueCells(out);
+}
+
+/**
+ * The feet cells of a side branch that were dug: from its start to its end; none while its length is 0.
+ * @param {object} branch
+ * @returns {{x: number, y: number, z: number}[]}
+ */
+export function branchCells(branch) {
+    const a = cellOf(branch?.start);
+    const b = cellOf(branch?.end);
+    if (!a || !b || !isFiniteNumber(branch.length) || branch.length <= 0) {
+        return [];
+    }
+    return uniqueCells(lineCells(a, b));
+}
+
+/**
+ * The box of the room of a mine: for a room of the player the box around its center, chest, table
+ * and furnace, 3 high; for a mine of the bot the room of roomPlan. null without a room.
+ * @param {object} mine
+ * @returns {{min: object, max: object}|null}
+ */
+export function roomBox(mine) {
+    let points = [];
+    let height = 0;
+    if (mine?.room && cellOf(mine.room.center)) {
+        points = [mine.room.center, mine.room.chest, mine.room.table, mine.room.furnace].map(cellOf).filter(Boolean);
+        height = 2;
+    } else if (cellOf(mine?.base) && isDirection(mine?.direction)) {
+        points = roomPlan(cellOf(mine.base), mine.direction).all;
+    }
+    if (points.length === 0) {
+        return null;
+    }
+    const min = { x: Math.min(...points.map(p => p.x)), y: Math.min(...points.map(p => p.y)), z: Math.min(...points.map(p => p.z)) };
+    const max = { x: Math.max(...points.map(p => p.x)), y: Math.max(...points.map(p => p.y)) + height, z: Math.max(...points.map(p => p.z)) };
+    return { min, max };
+}
+
+function nearCell(a, b, range = 1) {
+    return Math.abs(a.x - b.x) <= range && Math.abs(a.y - b.y) <= range && Math.abs(a.z - b.z) <= range;
+}
+
+function nearBox(box, p, range = 1) {
+    return p.x >= box.min.x - range && p.x <= box.max.x + range && p.y >= box.min.y - range && p.y <= box.max.y + range
+        && p.z >= box.min.z - range && p.z <= box.max.z + range;
+}
+
+// a feet cell of a tunnel is 2 high: the feet and the head
+function nearTunnelCell(cell, p) {
+    return nearCell(cell, p) || nearCell({ x: cell.x, y: cell.y + 1, z: cell.z }, p);
+}
+
+function tunnelHit(tunnel, p) {
+    if (tunnelCells(tunnel).some(c => nearTunnelCell(c, p))) {
+        return true;
+    }
+    return (Array.isArray(tunnel.branches) ? tunnel.branches : []).some(b => branchCells(b).some(c => nearTunnelCell(c, p)));
+}
+
+/**
+ * The mine at a position (spec I6, B8): the position is within 1 block of a cell of a tunnel (start
+ * to end, 2 high, with its branches), of the room, or of a leg of the route (legCells). A tunnel
+ * wins over a room, a room over a route. `tunnel` is the index of the tunnel in tunnelsOf(mine).
+ * @param {object[]} mines
+ * @param {{x,y,z}} pos
+ * @returns {{mine: object, tunnel: number|null, onRoute: boolean}|null}
+ */
+export function mineAt(mines, pos) {
+    const p = cellOf(pos);
+    if (!p || !Array.isArray(mines)) {
+        return null;
+    }
+    let room = null;
+    let route = null;
+    for (const mine of mines) {
+        if (!mine || typeof mine !== 'object') {
+            continue;
+        }
+        const tunnels = tunnelsOf(mine);
+        for (let i = 0; i < tunnels.length; i++) {
+            if (tunnelHit(tunnels[i], p)) {
+                return { mine, tunnel: i, onRoute: false };
+            }
+        }
+        const box = room ? null : roomBox(mine);
+        if (box && nearBox(box, p)) {
+            room = mine;
+        }
+        if (!route && (Array.isArray(mine.route) ? mine.route : []).some(leg => legCells(leg).some(c => nearCell(c, p)))) {
+            route = mine;
+        }
+    }
+    if (room) {
+        return { mine: room, tunnel: null, onRoute: false };
+    }
+    return route ? { mine: route, tunnel: null, onRoute: true } : null;
+}
+
+/**
+ * The index of the leg of a route nearest to a position (by its cells), or -1 for an empty route.
+ * @param {object[]} legs
+ * @param {{x,y,z}} pos
+ * @returns {number}
+ */
+export function nearestLeg(legs, pos) {
+    const p = cellOf(pos);
+    let best = -1;
+    let bestD = Infinity;
+    (Array.isArray(legs) ? legs : []).forEach((leg, i) => {
+        for (const c of legCells(leg)) {
+            const d = p ? Math.hypot(c.x - p.x, c.y - p.y, c.z - p.z) : 0;
+            if (d < bestD) {
+                best = i;
+                bestD = d;
+            }
+        }
+    });
+    return best;
+}
+
+function boxDistance(box, p) {
+    const gap = (v, lo, hi) => (v < lo ? lo - v : v > hi ? v - hi : 0);
+    return Math.hypot(gap(p.x, box.min.x, box.max.x), gap(p.y, box.min.y, box.max.y), gap(p.z, box.min.z, box.max.z));
+}
+
+/**
+ * The distance from a position to a mine (spec I6, `nearest`): to its entrance and to the nearest
+ * cell of its route, its room and its tunnels with their branches. Infinity for a mine without any.
+ * @param {object} mine
+ * @param {{x,y,z}} pos
+ * @returns {number}
+ */
+export function mineDistance(mine, pos) {
+    const p = cellOf(pos);
+    if (!p || !mine) {
+        return Infinity;
+    }
+    const cells = [];
+    const entrance = cellOf(mine.entrance);
+    if (entrance) {
+        cells.push(entrance);
+    }
+    for (const leg of Array.isArray(mine.route) ? mine.route : []) {
+        cells.push(...legCells(leg));
+    }
+    for (const t of tunnelsOf(mine)) {
+        cells.push(...tunnelCells(t));
+        for (const b of Array.isArray(t.branches) ? t.branches : []) {
+            cells.push(...branchCells(b));
+        }
+    }
+    let best = cells.reduce((d, c) => Math.min(d, Math.hypot(c.x - p.x, c.y - p.y, c.z - p.z)), Infinity);
+    const box = roomBox(mine);
+    if (box) {
+        best = Math.min(best, boxDistance(box, p));
+    }
+    return best;
+}
+
+/**
+ * The tunnel of a mine for an ore (spec I6, B4): the tunnel whose level lies in the range of the
+ * ore (min to max of the ore table), the one nearest to the best level of the ore; the first of
+ * equals. null when no tunnel fits or the ore is unknown.
+ * @param {object} mine
+ * @param {string|object} ore
+ * @returns {number|null} the index in tunnelsOf(mine)
+ */
+export function tunnelFor(mine, ore) {
+    const row = oreOf(ore);
+    if (!row || !mine) {
+        return null;
+    }
+    let best = null;
+    let bestD = Infinity;
+    tunnelsOf(mine).forEach((t, i) => {
+        const level = isFiniteNumber(t.level) ? t.level : cellOf(t.start)?.y;
+        if (!isFiniteNumber(level) || level < row.min || level > row.max) {
+            return;
+        }
+        const d = Math.abs(level - row.level);
+        if (d < bestD) {
+            best = i;
+            bestD = d;
+        }
+    });
+    return best;
+}
+
+/**
+ * The next side branch of a tunnel (spec B5): none while the tunnel is shorter than 32. Branches
+ * leave the tunnel at 4, 8, 12, ... blocks from its start (while that cell is in the tunnel), at
+ * each first to the left, then to the right, 8 blocks long; the first one that is not done, the
+ * nearest to the start first. null when every branch of its length is done: the main tunnel goes on.
+ * @param {object} tunnel
+ * @returns {{at: number, side: 'left'|'right', dir: string, junction: object, start: object, end: object,
+ *   length: number, done: false, index: number|null}|null} end: where the digging goes on (the
+ *   junction in the tunnel while nothing is dug); index: the index in tunnel.branches, null for a new one
+ */
+export function branchPlan(tunnel) {
+    const start = cellOf(tunnel?.start);
+    const length = isFiniteNumber(tunnel?.length) ? Math.floor(tunnel.length) : 0;
+    if (!start || !isDirection(tunnel.dir) || length < BRANCH_FROM) {
+        return null;
+    }
+    const branches = Array.isArray(tunnel.branches) ? tunnel.branches : [];
+    for (let at = BRANCH_EVERY; at < length; at += BRANCH_EVERY) {
+        for (const side of ['left', 'right']) {
+            const index = branches.findIndex(b => b && b.at === at && b.side === side);
+            const old = index >= 0 ? branches[index] : null;
+            if (old?.done === true) {
+                continue;
+            }
+            const dir = side === 'left' ? leftOf(tunnel.dir) : rightOf(tunnel.dir);
+            const junction = offset(start, tunnel.dir, at);
+            const dug = isFiniteNumber(old?.length) && old.length > 0 ? Math.floor(old.length) : 0;
+            return {
+                at, side, dir, junction,
+                start: cellOf(old?.start) ?? offset(junction, dir, 1),
+                end: dug > 0 ? cellOf(old?.end) ?? offset(junction, dir, dug) : junction,
+                length: dug,
+                done: false,
+                index: index >= 0 ? index : null,
+            };
+        }
+    }
+    return null;
+}
+
+// a cell the bot can stand in: feet and head open
+function openCell(getName, p) {
+    return classify(readName(getName, p)) === 'air' && classify(readName(getName, { x: p.x, y: p.y + 1, z: p.z })) === 'air';
+}
+
+function openNeighbours(getName, p) {
+    return DIRECTIONS.filter(d => openCell(getName, offset(p, d))).length;
+}
+
+/**
+ * The directions of the corridors at the feet (spec I6, B3): for each direction the open cells
+ * ahead (feet and head open) in a row, the directions with 2 or more, the longest first.
+ * @param {(x: number, y: number, z: number) => string|null} getName
+ * @param {{x,y,z}} feet
+ * @returns {{dir: string, length: number}[]}
+ */
+export function corridorDirections(getName, feet) {
+    const f = cellOf(feet);
+    if (!f || typeof getName !== 'function') {
+        return [];
+    }
+    const out = [];
+    for (const dir of DIRECTIONS) {
+        let n = 0;
+        while (n < CORRIDOR_LIMIT && openCell(getName, offset(f, dir, n + 1))) {
+            n++;
+        }
+        if (n >= 2) {
+            out.push({ dir, length: n });
+        }
+    }
+    return out.sort((a, b) => b.length - a.length || DIRECTIONS.indexOf(a.dir) - DIRECTIONS.indexOf(b.dir));
+}
+
+/**
+ * The tunnel the bot stands in, measured in `dir` (spec I6, B3): `end` the last open cell ahead
+ * before rock, `start` the last open cell behind the bot before the corridor opens into a room (a
+ * cell with 3 or more open neighbours at the feet level) or ends, `level` the feet, `length` the
+ * cells from start to end. null when the feet are not open or `dir` is no direction.
+ * @param {(x: number, y: number, z: number) => string|null} getName
+ * @param {{x,y,z}} feet
+ * @param {string} dir
+ * @returns {{start: object, end: object, length: number, level: number, dir: string}|null}
+ */
+export function measureTunnel(getName, feet, dir) {
+    const f = cellOf(feet);
+    if (!f || typeof getName !== 'function' || !isDirection(dir) || !openCell(getName, f)) {
+        return null;
+    }
+    let end = f;
+    for (let k = 1; k <= CORRIDOR_LIMIT; k++) {
+        const p = offset(f, dir, k);
+        if (!openCell(getName, p)) {
+            break;
+        }
+        end = p;
+    }
+    let start = f;
+    for (let k = 1; k <= CORRIDOR_LIMIT; k++) {
+        const p = offset(f, backOf(dir), k);
+        if (!openCell(getName, p) || openNeighbours(getName, p) >= 3) {
+            break;
+        }
+        start = p;
+    }
+    return { start, end, length: Math.abs(end.x - start.x) + Math.abs(end.z - start.z) + 1, level: f.y, dir };
+}
+
+/**
+ * True when every cell of a measured tunnel, from its start to its end, has at most 2 open
+ * neighbours at the feet level: a corridor, not the floor of a room.
+ * @param {(x: number, y: number, z: number) => string|null} getName
+ * @param {{start: object, end: object}} tunnel
+ * @returns {boolean}
+ */
+export function isCorridor(getName, tunnel) {
+    const cells = tunnelCells(tunnel);
+    return cells.length > 0 && typeof getName === 'function' && cells.every(c => openNeighbours(getName, c) <= 2);
+}
+
+/**
+ * The direction of a tunnel (spec B3): with the yaw of the player (mineflayer: 0 is north, pi/2
+ * west) the direction of the corridors, or its opposite, nearest to where the player looks (when it
+ * is within 60 degrees); else the longest corridor, turned to point away from `anchor` (the room or
+ * the way in of the mine: a tunnel goes on away from it). null without a corridor.
+ * @param {{dir: string, length: number}[]} dirs corridorDirections
+ * @param {{x,y,z}} feet
+ * @param {{yaw?: number, anchor?: {x,y,z}}} [options]
+ * @returns {string|null}
+ */
+export function tunnelDirection(dirs, feet, options = {}) {
+    const list = (Array.isArray(dirs) ? dirs : []).filter(d => isDirection(d?.dir))
+        .sort((a, b) => (b.length ?? 0) - (a.length ?? 0));
+    if (list.length === 0) {
+        return null;
+    }
+    if (isFiniteNumber(options?.yaw)) {
+        const look = { x: -Math.sin(options.yaw), z: -Math.cos(options.yaw) };
+        const axis = [...new Set(list.flatMap(d => [d.dir, backOf(d.dir)]))];
+        const scored = axis.map(d => ({ d, dot: dirVector(d).x * look.x + dirVector(d).z * look.z })).sort((a, b) => b.dot - a.dot);
+        if (scored[0].dot >= 0.5) {
+            return scored[0].d;
+        }
+    }
+    const longest = list[0].dir;
+    const a = cellOf(options?.anchor);
+    const f = cellOf(feet);
+    if (a && f) {
+        const v = dirVector(longest);
+        if (v.x * (f.x - a.x) + v.z * (f.z - a.z) < 0) {
+            return backOf(longest);
+        }
+    }
+    return longest;
+}
+
+// ------------------------------------------------------------------ the ore list (v0.1.4.9, B6)
+
+/**
+ * A clean entry of the ore list: `{ ore, x, y, z, reason, seen }` with the name of the ore of the
+ * table (`gold` for `deepslate_gold_ore`), a cell, a reason of PASSED_REASONS and the time it was
+ * seen (an ISO string, else `seen`). null for anything else.
+ * @param {object} entry
+ * @param {string|null} [seen]
+ * @returns {{ore: string, x: number, y: number, z: number, reason: string, seen: string|null}|null}
+ */
+export function cleanPassedEntry(entry, seen = null) {
+    const row = oreOf(entry?.ore);
+    const p = cellOf(entry);
+    if (!row || !p || !PASSED_REASONS.includes(entry.reason)) {
+        return null;
+    }
+    return { ore: row.ore, ...p, reason: entry.reason, seen: typeof entry.seen === 'string' ? entry.seen : seen };
+}
+
+/**
+ * The ore list with an entry added: an entry at the same cell is replaced, the new one is the
+ * newest, and the oldest leave beyond `max` (200).
+ * @param {object[]} list
+ * @param {object} entry
+ * @param {number} [max]
+ * @returns {object[]} a new list
+ */
+export function addPassedEntry(list, entry, max = MAX_PASSED) {
+    const old = (Array.isArray(list) ? list : []).map(e => cleanPassedEntry(e)).filter(Boolean);
+    const clean = cleanPassedEntry(entry);
+    if (!clean) {
+        return old;
+    }
+    const out = old.filter(e => !samePos(e, clean));
+    out.push(clean);
+    const limit = isFiniteNumber(max) && max > 0 ? Math.floor(max) : MAX_PASSED;
+    return out.slice(-limit);
+}
+
+/**
+ * The ore list without the entry at a cell.
+ * @param {object[]} list
+ * @param {{x,y,z}} pos
+ * @returns {object[]} a new list
+ */
+export function removePassedAt(list, pos) {
+    const p = cellOf(pos);
+    const old = (Array.isArray(list) ? list : []).map(e => cleanPassedEntry(e)).filter(Boolean);
+    return p ? old.filter(e => !samePos(e, p)) : old;
+}
+
+// ------------------------------------------------------------------ the sense range (v0.1.4.9, B7)
+
+/**
+ * The ore blocks deeper in the walls, the ceiling and the floor of the column ahead of a tunnel
+ * step (spec B7): left and right at the feet and the head, 2 to `range` blocks from the column;
+ * above the ceiling and below the floor, 2 to `range` blocks from the head or the feet. The first
+ * block around the column is the business of tunnelStep. Nearest first.
+ * @param {(x: number, y: number, z: number) => string|null} getBlockName
+ * @param {{x,y,z}} feet
+ * @param {string} dir
+ * @param {number} range 2 or 3
+ * @returns {{x: number, y: number, z: number, name: string, side: 'left'|'right'|'above'|'below', depth: number, up: number}[]}
+ *   up: 0 at the feet, 1 at the head (walls)
+ */
+export function senseOres(getBlockName, feet, dir, range) {
+    const f = cellOf(feet);
+    if (!f || typeof getBlockName !== 'function') {
+        return [];
+    }
+    const d = isDirection(dir) ? dir : 'north';
+    const max = Math.min(MAX_SENSE_RANGE, isFiniteNumber(range) ? Math.floor(range) : 0);
+    const lower = offset(f, d);
+    const out = [];
+    for (let depth = 2; depth <= max; depth++) {
+        for (const [side, sideDir] of [['left', leftOf(d)], ['right', rightOf(d)]]) {
+            for (const up of [0, 1]) {
+                out.push({ ...offset(lower, sideDir, depth, up), side, depth, up });
+            }
+        }
+        out.push({ ...offset(lower, d, 0, 1 + depth), side: 'above', depth, up: 1 });
+        out.push({ ...offset(lower, d, 0, -depth), side: 'below', depth, up: 0 });
+    }
+    return out.map(p => ({ ...p, name: readName(getBlockName, p) })).filter(p => isOreBlock(p.name));
+}
+
+/**
+ * The side cut to an ore that senseOres found (spec B7), for a bot whose feet are in the column of
+ * that step: the cells to dig, 1 wide and 2 high towards a wall, 1 wide upwards to the ceiling,
+ * and down through the floor from the cell behind (`stand`, the bot must not stand on the cut);
+ * `refill` is the floor cell to close again after a cut down.
+ * @param {{x,y,z}} feet
+ * @param {string} dir the direction of the tunnel
+ * @param {{side: string, depth: number, up: number}} ore
+ * @returns {{cells: object[], stand: object|null, refill: object[]}}
+ */
+export function senseCut(feet, dir, ore) {
+    const f = cellOf(feet);
+    const d = isDirection(dir) ? dir : 'north';
+    const depth = isFiniteNumber(ore?.depth) ? Math.floor(ore.depth) : 0;
+    if (!f || depth < 1) {
+        return { cells: [], stand: null, refill: [] };
+    }
+    const cells = [];
+    if (ore.side === 'left' || ore.side === 'right') {
+        const sideDir = ore.side === 'left' ? leftOf(d) : rightOf(d);
+        for (let k = 1; k < depth; k++) {
+            cells.push(offset(f, sideDir, k, 1), offset(f, sideDir, k));
+        }
+        return { cells, stand: null, refill: [] };
+    }
+    if (ore.side === 'above') {
+        for (let k = 1; k < depth; k++) {
+            cells.push(offset(f, d, 0, 1 + k));
+        }
+        return { cells, stand: null, refill: [] };
+    }
+    for (let k = 1; k < depth; k++) {
+        cells.push(offset(f, d, 0, -k));
+    }
+    return { cells, stand: offset(f, backOf(d)), refill: [offset(f, d, 0, -1)] };
 }

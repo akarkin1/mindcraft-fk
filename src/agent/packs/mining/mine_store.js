@@ -6,14 +6,26 @@
 // of the bot at the end of the tunnel, the corners of the tunnel (feet cells, from the room to the
 // end, where it went to the side), and the way from the entrance to the bottom as a list of legs
 // ({ kind: 'ladder', x, z, top, bottom, face, entry } | { kind: 'walk', from, to } | { kind: 'stairs', from, to, dir }).
+//
+// v0.1.4.9 (spec I6, B1): a mine may also have `name` (the name the player gave; null for a mine of
+// the bot), `source` ('bot' or 'player'), `room` ({ center, chest, table, furnace } of the player),
+// `tunnels` ([{ start, dir, end, level, length, branches }]), `passed` (the ore left behind, at most
+// 200) and `area` (the name of the area of type mine that held the bot, beyond the spec). A route may
+// have door legs ({ kind: 'door', kind2, name, x, y, z, from, to }). A mine of v0.1.4.7 loads with
+// name null, source 'bot', room null, tunnels [], passed []. The key of a mine is its name when it
+// has one, else its level (mineKey). get and atLevel see the mines of the bot only.
 import { readJsonSafe, writeJsonAtomic } from '../../../utils/safe_json.js';
-import { isDirection } from './mine_logic.js';
+import { MAX_PASSED, addPassedEntry, cleanPassedEntry, isDirection, mineDistance, removePassedAt } from './mine_logic.js';
 import { oreOf, targetLevel } from './ore_table.js';
 
 /** The name of the file in the world folder. */
 export const MINE_FILE = 'mines.json';
 /** The kinds of shafts. */
 export const SHAFT_KINDS = Object.freeze(['ladder', 'stairs']);
+/** The kinds of openables of a door leg (spec I2). */
+export const DOOR_KINDS = Object.freeze(['door', 'gate', 'trapdoor']);
+/** How far `nearest` looks for a mine (spec I6). */
+export const NEAREST_RANGE = 64;
 
 const FILE_VERSION = 1;
 
@@ -36,6 +48,36 @@ function normalizeDimension(value) {
     return typeof value === 'string' && value.trim().length > 0 ? value.trim().replace(/^minecraft:/, '') : 'overworld';
 }
 
+function count(value) {
+    return isFiniteNumber(value) && value > 0 ? Math.floor(value) : 0;
+}
+
+/**
+ * The name of a mine as the store keeps it, like the names of areas: trimmed, lower case, spaces as
+ * underscores. null for no name.
+ * @param {*} name
+ * @returns {string|null}
+ */
+export function cleanMineName(name) {
+    if (typeof name !== 'string') {
+        return null;
+    }
+    const clean = name.trim().toLowerCase().replace(/\s+/g, '_');
+    return clean.length > 0 ? clean : null;
+}
+
+/**
+ * The key of a mine in the store and in the file (spec I6): its name when it has one, else its
+ * level; with the dimension in front outside the overworld (`the_nether:16`).
+ * @param {object} mine
+ * @returns {string}
+ */
+export function mineKey(mine) {
+    const dimension = normalizeDimension(mine?.dimension);
+    const id = cleanMineName(mine?.name) ?? String(Math.floor(mine?.level));
+    return dimension === 'overworld' ? id : `${dimension}:${id}`;
+}
+
 function cleanLeg(leg) {
     if (!isPlainObject(leg)) {
         return null;
@@ -54,7 +96,63 @@ function cleanLeg(leg) {
         }
         return out;
     }
+    if (leg.kind === 'door' && point(leg) && point(leg.from) && point(leg.to)) {
+        return {
+            kind: 'door', kind2: DOOR_KINDS.includes(leg.kind2) ? leg.kind2 : 'door', name: typeof leg.name === 'string' ? leg.name : null,
+            ...point(leg), from: point(leg.from), to: point(leg.to),
+        };
+    }
     return null;
+}
+
+function cleanRoom(room) {
+    const center = point(room?.center);
+    if (!center) {
+        return null;
+    }
+    return { center, chest: point(room.chest), table: point(room.table), furnace: point(room.furnace) };
+}
+
+function cleanBranch(branch) {
+    if (!isPlainObject(branch) || !isFiniteNumber(branch.at) || (branch.side !== 'left' && branch.side !== 'right')) {
+        return null;
+    }
+    const start = point(branch.start);
+    const end = point(branch.end);
+    if (!start || !end) {
+        return null;
+    }
+    return { at: Math.floor(branch.at), side: branch.side, start, end, length: count(branch.length), done: branch.done === true };
+}
+
+function cleanTunnel(tunnel) {
+    if (!isPlainObject(tunnel) || !isDirection(tunnel.dir)) {
+        return null;
+    }
+    const start = point(tunnel.start);
+    const end = point(tunnel.end);
+    if (!start || !end) {
+        return null;
+    }
+    const out = {
+        start, dir: tunnel.dir, end, level: isFiniteNumber(tunnel.level) ? Math.floor(tunnel.level) : start.y, length: count(tunnel.length),
+        branches: (Array.isArray(tunnel.branches) ? tunnel.branches : []).map(cleanBranch).filter(Boolean),
+    };
+    const corners = (Array.isArray(tunnel.corners) ? tunnel.corners : []).map(point).filter(Boolean);
+    if (corners.length > 0) {
+        out.corners = corners;
+    }
+    return out;
+}
+
+function cleanPassed(list) {
+    let out = [];
+    for (const entry of Array.isArray(list) ? list : []) {
+        if (cleanPassedEntry(entry)) {
+            out = addPassedEntry(out, entry);
+        }
+    }
+    return out;
 }
 
 function copyMine(mine) {
@@ -106,11 +204,18 @@ function validateMine(mine, now) {
         end: point(mine.end),
         tunnel: (Array.isArray(mine.tunnel) ? mine.tunnel : []).map(point).filter(Boolean),
         route: (Array.isArray(mine.route) ? mine.route : []).map(cleanLeg).filter(Boolean),
+        name: cleanMineName(mine.name),
+        source: mine.source === 'player' ? 'player' : 'bot',
+        room: cleanRoom(mine.room),
+        tunnels: (Array.isArray(mine.tunnels) ? mine.tunnels : []).map(cleanTunnel).filter(Boolean),
+        passed: cleanPassed(mine.passed),
+        area: typeof mine.area === 'string' && mine.area.trim().length > 0 ? mine.area.trim() : null,
     };
 }
 
-function levelKey(mine) {
-    return mine.dimension === 'overworld' ? String(mine.level) : `${mine.dimension}:${mine.level}`;
+// the mines of the bot: those get and atLevel choose from (a mine of the player is chosen by nearest)
+function ofBot(mine) {
+    return mine.source !== 'player';
 }
 
 export class MineStore {
@@ -150,7 +255,7 @@ export class MineStore {
                             const clean = validateMine(entry, null);
                             clean.created = typeof entry.created === 'string' ? entry.created : null;
                             clean.updated = typeof entry.updated === 'string' ? entry.updated : null;
-                            this._mines.set(levelKey(clean), clean);
+                            this._mines.set(mineKey(clean), clean);
                         } catch {
                             // an invalid entry is left out
                         }
@@ -171,20 +276,20 @@ export class MineStore {
     }
 
     /**
-     * Creates or replaces the mine of its level and writes the file. A mine that exists at that
-     * level keeps its `created` time and the other ores it serves.
+     * Creates or replaces the mine of its key (its name, else its level) and writes the file. A mine
+     * that exists with that key keeps its `created` time and the other ores it serves.
      * @param {object} mine
      * @returns {object} a copy of the saved mine
      * @throws {TypeError} for an unknown ore, a bad entrance or a missing level
      */
     set(mine) {
         const clean = validateMine(mine, this._nowIso());
-        const old = this._mines.get(levelKey(clean));
+        const old = this._mines.get(mineKey(clean));
         if (old) {
             clean.created = typeof mine.created === 'string' ? mine.created : old.created ?? clean.created;
             clean.ores = [...new Set([...clean.ores, ...old.ores])];
         }
-        this._mines.set(levelKey(clean), clean);
+        this._mines.set(mineKey(clean), clean);
         this._save();
         return copyMine(clean);
     }
@@ -201,7 +306,7 @@ export class MineStore {
         if (!row) {
             return null;
         }
-        const mines = this.list(dimension);
+        const mines = this.list(dimension).filter(ofBot);
         const own = mines.find(m => m.ore === row.ore) ?? mines.find(m => m.ores.includes(row.ore));
         if (own) {
             return own;
@@ -210,13 +315,92 @@ export class MineStore {
     }
 
     /**
-     * The mine at a level, or null.
+     * The mine of the bot at a level, or null.
      * @param {number} level
      * @param {string} [dimension]
      * @returns {object|null} a copy
      */
     atLevel(level, dimension) {
-        return this.list(dimension).find(m => m.level === Math.floor(level)) ?? null;
+        return this.list(dimension).filter(ofBot).find(m => m.level === Math.floor(level)) ?? null;
+    }
+
+    /**
+     * The mine with a name (spec I6), or null.
+     * @param {string} name
+     * @param {string} [dimension]
+     * @returns {object|null} a copy
+     */
+    byName(name, dimension) {
+        const wanted = cleanMineName(name);
+        return wanted === null ? null : this.list(dimension).find(m => m.name === wanted) ?? null;
+    }
+
+    /**
+     * The mines within `range` of a position (by mineDistance: the entrance and every cell of the
+     * route, the room and the tunnels), the nearest first.
+     * @param {{x,y,z}} pos
+     * @param {string} [dimension]
+     * @param {number} [range]
+     * @returns {object[]} copies
+     */
+    within(pos, dimension, range = NEAREST_RANGE) {
+        const limit = isFiniteNumber(range) ? range : NEAREST_RANGE;
+        return this.list(dimension).map(m => ({ m, d: mineDistance(m, pos) })).filter(e => e.d <= limit)
+            .sort((a, b) => a.d - b.d).map(e => e.m);
+    }
+
+    /**
+     * The nearest mine within `range` (64) of a position (spec I6), or null.
+     * @param {{x,y,z}} pos
+     * @param {string} [dimension]
+     * @param {number} [range]
+     * @returns {object|null} a copy
+     */
+    nearest(pos, dimension, range = NEAREST_RANGE) {
+        return this.within(pos, dimension, range)[0] ?? null;
+    }
+
+    _byKey(key) {
+        return this._mines.get(typeof key === 'string' ? key : mineKey(key)) ?? null;
+    }
+
+    /**
+     * Adds an entry to the ore list of a mine (spec I6, B6) and writes the file: an entry at the same
+     * cell is replaced, the oldest leave beyond 200. `seen` is now when it is not given.
+     * @param {string|object} key mineKey(mine), or the mine
+     * @param {{ore: string, x: number, y: number, z: number, reason: string, seen?: string}} entry
+     * @returns {object|null} a copy of the mine, null when there is no such mine or the entry is invalid
+     */
+    addPassed(key, entry) {
+        const mine = this._byKey(key);
+        const clean = cleanPassedEntry(entry, this._nowIso());
+        if (!mine || !clean) {
+            return null;
+        }
+        mine.passed = addPassedEntry(mine.passed, clean, MAX_PASSED);
+        mine.updated = this._nowIso();
+        this._save();
+        return copyMine(mine);
+    }
+
+    /**
+     * Removes the entry at a cell from the ore list of a mine and writes the file when it was there.
+     * @param {string|object} key mineKey(mine), or the mine
+     * @param {{x,y,z}} pos
+     * @returns {object|null} a copy of the mine, null when there is no such mine
+     */
+    removePassed(key, pos) {
+        const mine = this._byKey(key);
+        if (!mine) {
+            return null;
+        }
+        const left = removePassedAt(mine.passed, pos);
+        if (left.length !== mine.passed.length) {
+            mine.passed = left;
+            mine.updated = this._nowIso();
+            this._save();
+        }
+        return copyMine(mine);
     }
 
     /**
@@ -227,21 +411,22 @@ export class MineStore {
     list(dimension) {
         const wanted = dimension === undefined || dimension === null ? null : normalizeDimension(dimension);
         return [...this._mines.values()].filter(m => wanted === null || m.dimension === wanted)
-            .sort((a, b) => b.level - a.level || a.ore.localeCompare(b.ore)).map(copyMine);
+            .sort((a, b) => b.level - a.level || a.ore.localeCompare(b.ore) || mineKey(a).localeCompare(mineKey(b))).map(copyMine);
     }
 
     /**
-     * Removes the mine of an ore (as get finds it) or of a level, and writes the file.
+     * Removes the mine of an ore (as get finds it), of a level, or of a name (v0.1.4.9), and writes the file.
      * @param {string|number} oreOrLevel
      * @param {string} [dimension]
      * @returns {boolean} true if it existed
      */
     remove(oreOrLevel, dimension) {
-        const mine = typeof oreOrLevel === 'number' ? this.atLevel(oreOrLevel, dimension) : this.get(oreOrLevel, dimension);
+        const mine = typeof oreOrLevel === 'number' ? this.atLevel(oreOrLevel, dimension)
+            : this.get(oreOrLevel, dimension) ?? this.byName(oreOrLevel, dimension);
         if (!mine) {
             return false;
         }
-        this._mines.delete(levelKey(mine));
+        this._mines.delete(mineKey(mine));
         this._save();
         return true;
     }
@@ -254,7 +439,7 @@ export class MineStore {
     _toJson() {
         const mines = {};
         for (const mine of this.list()) {
-            mines[levelKey(mine)] = mine;
+            mines[mineKey(mine)] = mine;
         }
         return { version: FILE_VERSION, mines };
     }
