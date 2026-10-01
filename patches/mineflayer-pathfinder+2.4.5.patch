@@ -1,5 +1,5 @@
 diff --git a/node_modules/mineflayer-pathfinder/index.js b/node_modules/mineflayer-pathfinder/index.js
-index b38bd30..f6a7796 100644
+index b38bd30..2ba8c31 100644
 --- a/node_modules/mineflayer-pathfinder/index.js
 +++ b/node_modules/mineflayer-pathfinder/index.js
 @@ -12,8 +12,11 @@ const Physics = require('./lib/physics')
@@ -125,7 +125,7 @@ index b38bd30..f6a7796 100644
        // arrived at next point
        lastNodeTime = performance.now()
        if (stopPathing) {
-@@ -604,6 +652,14 @@ function inject (bot) {
+@@ -604,6 +652,15 @@ function inject (bot) {
        dz = nextPoint.z - p.z
      }
  
@@ -133,6 +133,7 @@ index b38bd30..f6a7796 100644
 +    if (climbTowards(p, nextPoint)) {
 +      if (lastClimbY !== null && Math.abs(p.y - lastClimbY) >= 0.05) lastNodeTime = performance.now() // no stuck while the height changes
 +      lastClimbY = p.y
++      checkStuck(nextPoint) // a bot that hangs still on the ladder is stuck as anywhere else
 +      return
 +    }
 +    lastClimbY = null
@@ -140,7 +141,7 @@ index b38bd30..f6a7796 100644
      bot.look(Math.atan2(-dx, -dz), 0)
      bot.setControlState('forward', true)
      bot.setControlState('jump', false)
-@@ -611,6 +667,9 @@ function inject (bot) {
+@@ -611,6 +668,9 @@ function inject (bot) {
      if (bot.entity.isInWater) {
        bot.setControlState('jump', true)
        bot.setControlState('sprint', false)
@@ -150,8 +151,16 @@ index b38bd30..f6a7796 100644
      } else if (stateMovements.allowSprinting && physics.canStraightLine(path, true)) {
        bot.setControlState('jump', false)
        bot.setControlState('sprint', true)
-@@ -631,9 +690,71 @@ function inject (bot) {
-     // check for futility
+@@ -628,12 +688,78 @@ function inject (bot) {
+       bot.setControlState('sprint', false)
+     }
+ 
+-    // check for futility
++    checkStuck(nextPoint)
++  }
++
++  // check for futility
++  function checkStuck (nextPoint) {
      if (performance.now() - lastNodeTime > 3500) {
        // should never take this long to go to the next node
 +      // P5: the point the bot could not reach; the cells within 1 block of it cost more for 30 s
