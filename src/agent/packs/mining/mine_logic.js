@@ -1663,3 +1663,193 @@ export function senseCut(feet, dir, ore) {
     }
     return { cells, stand: offset(f, backOf(d)), refill: [offset(f, d, 0, -1)] };
 }
+
+// ------------------------------------------------------------------ the way back (fix round F24)
+
+/** The longest hop of the way back along a tunnel, in blocks. */
+export const WAY_BACK_HOP = 8;
+/** How far a bot outside the cells of a mine (a side cut, a vein hole) looks for a tunnel cell. */
+export const WAY_BACK_REACH = 4;
+/** Blocks of the rock that the bot may dig through on its way back (no block a player places). */
+export const NATURAL_NAMES = Object.freeze(['stone', 'deepslate', 'cobblestone', 'cobbled_deepslate', 'tuff', 'granite', 'diorite', 'andesite',
+    'calcite', 'dirt', 'coarse_dirt', 'rooted_dirt', 'gravel', 'sand', 'red_sand', 'clay', 'netherrack', 'blackstone', 'basalt', 'smooth_basalt',
+    'dripstone_block', 'mud', 'infested_stone', 'infested_deepslate']);
+
+/**
+ * True for a block of the rock (NATURAL_NAMES, the ores of the table, falling blocks): the way back
+ * may dig through it.
+ * @param {string} name
+ * @returns {boolean}
+ */
+export function isNaturalBlock(name) {
+    return known(name) && (NATURAL_NAMES.includes(name) || isOreBlock(name) || isFalling(name));
+}
+
+/**
+ * The cells a mine has opened, 2 high: the legs of its route, its tunnels with their corners and
+ * branches, its room. A Set of posKey.
+ * @param {object} mine
+ * @returns {Set<string>}
+ */
+export function knownCells(mine) {
+    const out = new Set();
+    const add2 = c => {
+        out.add(posKey(c));
+        out.add(posKey({ x: c.x, y: c.y + 1, z: c.z }));
+    };
+    for (const leg of Array.isArray(mine?.route) ? mine.route : []) {
+        legCells(leg).forEach(add2);
+    }
+    for (const t of tunnelsOf(mine)) {
+        tunnelCells(t).forEach(add2);
+        for (const b of Array.isArray(t.branches) ? t.branches : []) {
+            branchCells(b).forEach(add2);
+        }
+    }
+    const box = roomBox(mine);
+    if (box) {
+        for (let x = box.min.x; x <= box.max.x; x++) {
+            for (let y = box.min.y; y <= box.max.y; y++) {
+                for (let z = box.min.z; z <= box.max.z; z++) {
+                    out.add(posKey({ x, y, z }));
+                }
+            }
+        }
+    }
+    return out;
+}
+
+// the cells of a line from a (left out) to b, every `step` blocks, b always last
+function hopsAlong(a, b, step) {
+    const cells = lineCells(a, b).slice(1);
+    return cells.filter((c, i) => (i + 1) % step === 0 || i === cells.length - 1);
+}
+
+function distance(a, b) {
+    return Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z);
+}
+
+/**
+ * The way back from the feet to the way in of a mine (fix round F24): the cells the bot knows, as
+ * hops of at most 8 blocks, and the leg of the route where they reach it. From a branch back to its
+ * junction; then the tunnel back along its corners to its start; then the end of the route. A bot
+ * beside the cells of the mine (within 4 blocks, not in the room or on the route) first goes to the
+ * nearest cell of a tunnel or branch. The hops end at the first one within 1 block of a leg of the
+ * route (also the feet themselves): the route is walked back from that leg. In the room the hop is
+ * the end of the nearest leg. `leg` is -1 without a route.
+ * @param {object} mine
+ * @param {{x,y,z}} feet
+ * @param {number} [step]
+ * @returns {{hops: {x: number, y: number, z: number}[], leg: number}}
+ */
+export function wayBack(mine, feet, step = WAY_BACK_HOP) {
+    const f = cellOf(feet);
+    const legs = Array.isArray(mine?.route) ? mine.route : [];
+    if (!f || !mine) {
+        return { hops: [], leg: -1 };
+    }
+    const legAt = p => legs.findIndex(l => legCells(l).some(c => nearCell(c, p)));
+    const here = legAt(f);
+    if (here >= 0) {
+        return { hops: [], leg: Math.max(here, nearestLeg(legs, f)) };
+    }
+    const at = mineAt([mine], f);
+    if (at && at.tunnel === null && !at.onRoute && legs.length > 0) {
+        // the room: the way in passes by it
+        const leg = nearestLeg(legs, f);
+        const end = legEnd(legs[leg]);
+        return { hops: end && !samePos(end, f) ? [end] : [], leg };
+    }
+    const all = wayBackHops(mine, f, step);
+    for (let i = 0; i < all.length; i++) {
+        const leg = legAt(all[i]);
+        if (leg >= 0) {
+            return { hops: all.slice(0, i + 1), leg };
+        }
+    }
+    return { hops: all, leg: legs.length - 1 };
+}
+
+/**
+ * The hops of the way back from the feet to the end of the way in, whole (see wayBack): from a
+ * branch to its junction, the tunnel along its corners to its start, the end of the route; a bot
+ * beside the cells of the mine (within 4 blocks, not in the room or on the route) first goes to the
+ * nearest cell of a tunnel or branch. Without a tunnel near the feet only the end of the route.
+ * @param {object} mine
+ * @param {{x,y,z}} feet
+ * @param {number} [step]
+ * @returns {{x: number, y: number, z: number}[]}
+ */
+export function wayBackHops(mine, feet, step = WAY_BACK_HOP) {
+    const f = cellOf(feet);
+    if (!f || !mine) {
+        return [];
+    }
+    const n = isFiniteNumber(step) && step >= 1 ? Math.floor(step) : WAY_BACK_HOP;
+    const tunnels = tunnelsOf(mine);
+    const hops = [];
+    let from = f;
+    let index = null;
+    // in a branch: back to its junction
+    tunnels.forEach((t, i) => {
+        for (const b of Array.isArray(t.branches) ? t.branches : []) {
+            const cells = branchCells(b);
+            if (index === null && cells.some(c => nearTunnelCell(c, f))) {
+                const sideDir = b.side === 'left' ? leftOf(t.dir) : rightOf(t.dir);
+                const junction = offset(cellOf(b.start), sideDir, -1);
+                const here = cells.reduce((m, c) => (distance(c, f) < distance(m, f) ? c : m), cells[0]);
+                hops.push(...(samePos(here, f) ? [] : [here]), ...hopsAlong(here, junction, n));
+                from = junction;
+                index = i;
+            }
+        }
+    });
+    const inRoomOrRoute = index === null && mineAt([mine], f)?.tunnel === null;
+    if (index === null && !inRoomOrRoute) {
+        index = tunnels.findIndex(t => tunnelCells(t).some(c => nearTunnelCell(c, f)));
+        if (index < 0) {
+            // a side cut or a hole beside the mine: the nearest cell of a tunnel or branch
+            let best = null;
+            tunnels.forEach((t, i) => {
+                for (const c of [...tunnelCells(t), ...(Array.isArray(t.branches) ? t.branches : []).flatMap(branchCells)]) {
+                    if (distance(c, f) <= WAY_BACK_REACH && (!best || distance(c, f) < distance(best.c, f))) {
+                        best = { c, i };
+                    }
+                }
+            });
+            index = best ? best.i : null;
+            if (best) {
+                hops.push(best.c);
+                from = best.c;
+            }
+        }
+    }
+    if (index !== null) {
+        const t = tunnels[index];
+        const corners = (Array.isArray(t.corners) && t.corners.length >= 2 ? t.corners : [t.start, t.end]).map(cellOf).filter(Boolean);
+        // the piece of the tunnel the bot is on: the corner before it is the next hop
+        let k = 0;
+        let bestD = Infinity;
+        for (let i = 0; i + 1 < corners.length; i++) {
+            const d = lineCells(corners[i], corners[i + 1]).reduce((m, c) => Math.min(m, distance(c, from)), Infinity);
+            if (d < bestD) {
+                bestD = d;
+                k = i;
+            }
+        }
+        let at = from;
+        for (let i = k; i >= 0; i--) {
+            if (!samePos(at, corners[i])) {
+                hops.push(...hopsAlong(at, corners[i], n));
+                at = corners[i];
+            }
+        }
+        from = at;
+    }
+    const legs = Array.isArray(mine.route) ? mine.route : [];
+    const end = legs.length > 0 ? legEnd(legs[legs.length - 1]) : null;
+    if (end && !samePos(end, from)) {
+        hops.push(...(distance(end, from) <= n || index === null ? [end] : hopsAlong(from, end, n)));
+    }
+    return hops.filter((c, i) => !samePos(c, f) && (i === 0 || !samePos(c, hops[i - 1])));
+}

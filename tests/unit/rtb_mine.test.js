@@ -235,7 +235,7 @@ describe('mineOre in a known mine (B4)', () => {
         assert.equal(r.ok, true, r.text);
         assert.equal(r.text, 'I mined 2 raw_iron. The mine is at (0, 64, -3), its tunnel is 13 blocks long at level 34. I also stored 3 cobblestone in the chest of the mine.');
         assert.equal(count(s.bot, 'raw_iron'), 2);
-        assert.deepEqual(s.ctx.routes.calls, [{ name: 'mine', legs: 6, reverse: false }, { name: 'mine', legs: 6, reverse: true }]);
+        assert.deepEqual(s.ctx.routes.calls, [{ name: 'mine', legs: 6, reverse: false }, { name: 'mine', legs: 3, reverse: true }], 'out from the room by the 3 legs before it (F24)');
         assert.deepEqual(s.stored[0].chest, { x: -2, y: 50, z: 2 });
         const m = s.ctx.mines.byName('mine');
         assert.deepEqual([m.tunnels[0].end, m.tunnels[0].length], [{ x: 21, y: 34, z: 14 }, 13], 'saved after the step');
@@ -536,5 +536,117 @@ describe('ore_sense_range (B7)', () => {
         assert.equal(s.world.nameAt(21, 32, 14), 'air');
         assert.notEqual(s.world.nameAt(21, 33, 14), 'air', 'the floor is closed');
         assert.equal(s.bot.health, 20);
+    });
+});
+
+describe('F24: the way out along the tunnel, its corners and branches', () => {
+    // A tunnel that went 3 blocks to the side once: (21, 34, 2) south to z 8, east to x 24, south to z 14,
+    // and a branch to the left (east) at 4 from the start, 2 blocks long, not done. The way in ends at
+    // (21, 34, 0) in the landing.
+    const CORNERS = [{ x: 21, y: 34, z: 2 }, { x: 21, y: 34, z: 8 }, { x: 24, y: 34, z: 8 }, { x: 24, y: 34, z: 14 }];
+    async function bent({ pos = [23.5, 34, 6.5] } = {}) {
+        const world = mineWorld({ tunnelTo: 8 });
+        world.fill(21, 34, 8, 24, 35, 8, 'air').fill(24, 34, 8, 24, 35, 14, 'air').fill(22, 34, 6, 23, 35, 6, 'air');
+        const s = await scene({ world, pos });
+        s.ctx.mines.set({
+            name: 'mine', source: 'player', ore: 'iron', entrance: { x: 0, y: 64, z: -3 }, level: 34, dimension: 'overworld',
+            route: [...LEGS.slice(0, 4), { kind: 'walk', from: { x: 2, y: 50, z: 0 }, to: { x: 21, y: 34, z: 0 } }],
+            room: { center: { x: 1, y: 50, z: 0 }, chest: { x: -2, y: 50, z: 2 }, table: null, furnace: null },
+            tunnels: [{ start: CORNERS[0], dir: 'south', end: CORNERS[3], level: 34, length: 32, corners: CORNERS,
+                branches: [{ at: 4, side: 'left', start: { x: 22, y: 34, z: 6 }, end: { x: 23, y: 34, z: 6 }, length: 2, done: false }] }],
+        });
+        return s;
+    }
+    const gotos = bot => bot.calls.filter(c => c[0] === 'goto').map(c => `${c[1]},${c[2]},${c[3]}`);
+
+    test('the hops: from the branch to its junction, the corners back to the start, the end of the way in', () => {
+        const mine = { route: [{ kind: 'walk', from: { x: 2, y: 50, z: 0 }, to: { x: 21, y: 34, z: 0 } }],
+            tunnels: [{ start: CORNERS[0], dir: 'south', end: CORNERS[3], level: 34, length: 17, corners: CORNERS,
+                branches: [{ at: 4, side: 'left', start: { x: 22, y: 34, z: 6 }, end: { x: 23, y: 34, z: 6 }, length: 2, done: false }] }] };
+        const key = list => list.map(p => `${p.x},${p.y},${p.z}`);
+        assert.deepEqual(key(P.wayBackHops(mine, { x: 23, y: 34, z: 6 })), ['21,34,6', '21,34,2', '21,34,0']);
+        assert.deepEqual(key(P.wayBackHops(mine, { x: 24, y: 34, z: 14 })), ['24,34,8', '21,34,8', '21,34,2', '21,34,0']);
+        assert.deepEqual(key(P.wayBackHops(mine, { x: 26, y: 34, z: 11 })), ['24,34,11', '24,34,8', '21,34,8', '21,34,2', '21,34,0'], 'from a side cut');
+        assert.deepEqual(key(P.wayBackHops(mine, { x: 21, y: 34, z: 0 })), []);
+        const back = P.wayBack(mine, { x: 24, y: 34, z: 14 });
+        assert.deepEqual([key(back.hops), back.leg], [['24,34,8', '21,34,8', '21,34,2', '21,34,0'], 0], 'to the end of the way in');
+        const roomMine = { ...mine, route: LEGS.slice(0, 4), room: { center: { x: 1, y: 50, z: 0 }, chest: { x: -2, y: 50, z: 2 }, table: null, furnace: null } };
+        assert.deepEqual(P.wayBack(roomMine, { x: -1, y: 50, z: 2 }), { hops: [{ x: 0, y: 50, z: 0 }], leg: 2 }, 'from the room: the end of the nearest leg');
+        assert.deepEqual(P.wayBack(roomMine, { x: 0, y: 55, z: 0 }), { hops: [], leg: 2 }, 'on the ladder: from there');
+    });
+
+    test('a trip that ends in a branch: back along the branch and the corners to the route, then up', async () => {
+        const s = await bent();
+        const r = await P.leaveMine(s.bot, s.ctx, s.opts);
+        assert.deepEqual([r.ok, r.text], [true, 'I am on the surface at (0, 64, -3).']);
+        const g = gotos(s.bot);
+        const order = ['21,34,6', '21,34,2', '21,34,0'].map(k => g.indexOf(k));
+        assert.ok(order.every((v, i) => v >= 0 && (i === 0 || v > order[i - 1])), JSON.stringify(g));
+        assert.deepEqual(s.ctx.routes.calls.map(c => c.reverse), [true]);
+    });
+
+    test('a hop blocked by gravel of the mine is dug through; a block of a player is named, the bot stays, !leaveMine tries again', async () => {
+        const s = await bent({ pos: [24.5, 34, 14.5] });
+        s.world.set(24, 35, 10, 'gravel');
+        s.bot.noPath = { has: k => (k === '24,34,8' && s.world.nameAt(24, 35, 10) !== 'air') || (k === '21,34,2' && s.world.nameAt(21, 34, 4) !== 'air') };
+        s.world.set(21, 34, 4, 'oak_planks');
+        const r = await P.leaveMine(s.bot, s.ctx, s.opts);
+        assert.equal(s.world.nameAt(24, 35, 10), 'air', 'the gravel was dug');
+        assert.deepEqual([r.ok, r.reason, r.text], [false, 'blocked', 'I could not get to the way out at (21, 34, 0): I was blocked at (21, 34, 4).']);
+        assert.equal(s.world.nameAt(21, 34, 4), 'oak_planks', 'not dug');
+        assert.equal(P.mineAt([s.ctx.mines.byName('mine')], s.bot.entity.position)?.tunnel, 0, 'it stays in the tunnel');
+        assert.deepEqual(s.ctx.routes.calls, [], 'no route walked');
+        s.world.set(21, 34, 4, 'air');
+        const again = await P.leaveMine(s.bot, s.ctx, s.opts);
+        assert.deepEqual([again.ok, again.text], [true, 'I am on the surface at (0, 64, -3).']);
+    });
+
+    test('mineOre ending blocked says so in its text; a stone outside the cells of the mine is not dug', async () => {
+        const s = await bent({ pos: [21.5, 34, 7.5] });
+        s.world.set(21, 34, 4, 'stone');
+        s.bot.noPath = { has: k => k === '21,34,0' && s.world.nameAt(21, 34, 4) !== 'air' };
+        s.ctx.mines.set({ ...s.ctx.mines.byName('mine'), route: [{ kind: 'walk', from: { x: 2, y: 50, z: 0 }, to: { x: 21, y: 34, z: 0 } }] });
+        const mine = s.ctx.mines.byName('mine');
+        mine.tunnels[0].corners = [{ x: 21, y: 34, z: 5 }, ...CORNERS.slice(1)]; // the cell (21, 34, 4) is not a cell of the mine now
+        mine.tunnels[0].start = { x: 21, y: 34, z: 5 };
+        s.ctx.mines.set(mine);
+        s.world.set(25, 34, 6, 'iron_ore'); // on the way of the branch left not done
+        s.ctx.storage = null; // nothing stored: the way out starts in the branch
+        const r = await P.mineOre(s.bot, s.ctx, 'iron', 1, s.opts);
+        assert.equal(r.mined, 1, r.text);
+        assert.match(r.text, /^I mined 1 raw_iron\. The mine is at \(0, 64, -3\), its tunnel is 32 blocks long at level 34\. .*I could not get to the way out at \(21, 34, 0\): I was blocked at \(21, 34, 4\)\.$/);
+        assert.equal(s.world.nameAt(21, 34, 4), 'stone');
+        assert.equal(P.mineAt([s.ctx.mines.byName('mine')], s.bot.entity.position)?.tunnel, 0, 'it stays in the tunnel');
+    });
+
+    test('a branch left not done: the next trip walks in by the route and digs on at the end of that branch', async () => {
+        const s = await bent({ pos: [0.5, 64, -6.5] });
+        s.world.set(26, 34, 6, 'iron_ore');
+        const r = await P.mineOre(s.bot, s.ctx, 'iron', 1, s.opts);
+        assert.equal(r.ok, true, r.text);
+        assert.deepEqual(s.ctx.routes.calls.map(c => [c.reverse, c.legs]), [[false, 5], [true, 3]], 'in by the route; out from the room after storing');
+        const b = s.ctx.mines.byName('mine').tunnels[0].branches[0];
+        assert.deepEqual([b.at, b.side, b.start], [4, 'left', { x: 22, y: 34, z: 6 }], 'the same branch, not a new one');
+        assert.ok(b.length > 2, `dug on: ${b.length}`);
+        assert.equal(s.world.nameAt(26, 34, 6), 'air');
+        assert.equal(s.ctx.mines.byName('mine').tunnels[0].branches.length, 1);
+    });
+});
+
+describe('F24: the side step of digTunnel keeps the corners for the way back', () => {
+    test('water ahead: 3 blocks to the side, the corners saved, the way back goes through the corner', async () => {
+        const s = await known();
+        s.world.set(21, 34, 14, 'water');
+        const mine = s.ctx.mines.byName('mine');
+        s.bot.entity.position = { x: 21.5, y: 34, z: 13.5 };
+        const r = await P.digTunnel(s.bot, s.ctx, 3, { ...s.opts, mine, tunnel: 0 });
+        assert.equal(r.ok, true, r.text);
+        const t = s.ctx.mines.byName('mine').tunnels[0];
+        assert.deepEqual(t.corners, [{ x: 21, y: 34, z: 2 }, { x: 21, y: 34, z: 13 }, { x: 18, y: 34, z: 13 }]);
+        assert.deepEqual([t.end, t.length], [{ x: 18, y: 34, z: 13 }, 15]);
+        const key = list => list.map(p => `${p.x},${p.y},${p.z}`);
+        assert.deepEqual(key(P.wayBackHops(s.ctx.mines.byName('mine'), t.end)), ['21,34,13', '21,34,5', '21,34,2', '21,34,10', '21,34,13'], 'whole');
+        assert.deepEqual(P.wayBack(s.ctx.mines.byName('mine'), t.end), { hops: [{ x: 21, y: 34, z: 13 }], leg: 5 },
+            'this way in runs along the tunnel: the walk back ends at the corner, on the last leg');
     });
 });

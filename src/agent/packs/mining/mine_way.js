@@ -2,11 +2,12 @@
 // that the mining pack reads. With mine_routes the route of a mine of the player (or a route with a
 // door) is walked with walkRoute of the routes pack, reached through ctx.routes (I3, I4); the routes
 // pack is never imported. Executing: every function returns { ok, reason, text } and never throws.
-import { botPos, clockOf, dimensionOf, logTo } from '../home/context.js';
+import { containsPos } from '../home/box_math.js';
+import { botPos, clockOf, dimensionOf, listAreas, logTo } from '../home/context.js';
 import { walkNear } from '../home/motion.js';
-import { walkTo } from './dig.js';
-import { legEnd, mineAt, nearestLeg, tunnelFor } from './mine_logic.js';
-import { TEXTS, posText } from './texts.js';
+import { blockAt, digClear, isFree, logicName, walkTo } from './dig.js';
+import { classify, faceNeighbours, isNaturalBlock, knownCells, legEnd, mineAt, nearestLeg, posKey, tunnelFor, wayBack } from './mine_logic.js';
+import { TEXTS, posText, wayBlockedText } from './texts.js';
 
 /** How far the choice of a mine for mineOre looks (spec B4). */
 export const MINE_RANGE = 64;
@@ -176,9 +177,114 @@ export async function wayIn(bot, ctx, mine, options = {}) {
     }
 }
 
+// True when the bot may dig the cell on its way back (fix round F24): a block of the rock, in the
+// cells the mine has opened or in an area of type mine, with no lava or water beside it.
+function mayDigBack(bot, ctx, ours, mineAreas, p) {
+    const name = logicName(blockAt(bot, p));
+    if (!isNaturalBlock(name)) {
+        return false;
+    }
+    const c = { x: p.x + 0.5, y: p.y + 0.5, z: p.z + 0.5 };
+    if (!ours.has(posKey(p)) && !mineAreas.some(a => containsPos(a, c))) {
+        return false;
+    }
+    return !faceNeighbours(p).some(n => {
+        const kind = classify(logicName(blockAt(bot, n)));
+        return kind === 'lava' || kind === 'water';
+    });
+}
+
+// The cells between the feet and a hop (feet and head) that are not free, dug when the bot may
+// dig them, walking up to each. Returns the cell that blocks, or null when the way is open.
+async function digToward(bot, ctx, ours, mineAreas, hop, clock) {
+    const feet = feetOf(bot);
+    if (!feet) {
+        return hop;
+    }
+    const n = Math.max(Math.abs(hop.x - feet.x), Math.abs(hop.y - feet.y), Math.abs(hop.z - feet.z));
+    let last = feet;
+    for (let k = 1; k <= n; k++) {
+        const t = k / n;
+        const c = { x: Math.round(feet.x + (hop.x - feet.x) * t) + 0, y: Math.round(feet.y + (hop.y - feet.y) * t) + 0, z: Math.round(feet.z + (hop.z - feet.z) * t) + 0 };
+        for (const p of [{ ...c, y: c.y + 1 }, c]) {
+            if (isFree(blockAt(bot, p))) {
+                continue;
+            }
+            if (bot.interrupt_code || !mayDigBack(bot, ctx, ours, mineAreas, p)) {
+                return p;
+            }
+            if (last !== feet) {
+                await walkTo(bot, last, { clock, timeoutMs: 8000 });
+            }
+            const r = await digClear(bot, p, { clock });
+            if (!r.ok) {
+                return p;
+            }
+        }
+        last = c;
+    }
+    return null;
+}
+
+/**
+ * The walk back to the way in of a mine (fix round F24): hop by hop along the cells the bot knows
+ * (wayBack: the branch to its junction, the tunnel along its corners to its start, the end of the
+ * route; it ends where the hops reach a leg of the route, `leg` of the result), each with walkTo. A hop that fails is tried again after the blocks of the
+ * rock between are dug (only in the cells of the mine or an area of type mine, never beside lava or
+ * water); a block the bot may not dig is named:
+ * `I could not get to the way out at (10, 30, 16): I was blocked at (12, 30, 9).`
+ * The bot then stays where it is. `at` is the cell that blocked.
+ * @param {object} bot
+ * @param {object} ctx
+ * @param {object} mine
+ * @param {{clock?: object}} [options]
+ * @returns {Promise<{ok: boolean, reason: string|null, text: string, at: object|null, leg: number}>}
+ */
+export async function walkBack(bot, ctx, mine, options = {}) {
+    const clock = options.clock ?? clockOf(ctx, options);
+    const end = routeEndOf(mine);
+    try {
+        const feet = feetOf(bot);
+        if (!feet) {
+            return { ok: false, reason: 'error', text: 'I do not know where I am.', at: null, leg: -1 };
+        }
+        const { hops, leg } = wayBack(mine, feet);
+        const ours = knownCells(mine);
+        const mineAreas = listAreas(ctx, dimensionOf(bot)).filter(a => a.type === 'mine');
+        const blocked = at => ({ ok: false, reason: 'blocked', text: wayBlockedText(end ?? at, at), at });
+        for (const hop of hops) {
+            if (bot.interrupt_code) {
+                return { ok: false, reason: 'interrupted', text: `I was stopped on my way out of the mine at ${posText(feetOf(bot) ?? feet)}.`, at: null };
+            }
+            const w = await walkTo(bot, hop, { clock, timeoutMs: 30000 });
+            if (w.ok) {
+                continue;
+            }
+            if (w.reason === 'interrupted') {
+                return { ok: false, reason: 'interrupted', text: `I was stopped on my way out of the mine at ${posText(feetOf(bot) ?? feet)}.`, at: null };
+            }
+            const stop = await digToward(bot, ctx, ours, mineAreas, hop, clock);
+            if (stop) {
+                return blocked(stop);
+            }
+            const again = await walkTo(bot, hop, { clock, timeoutMs: 30000 });
+            if (!again.ok) {
+                return again.reason === 'interrupted'
+                    ? { ok: false, reason: 'interrupted', text: `I was stopped on my way out of the mine at ${posText(feetOf(bot) ?? feet)}.`, at: null }
+                    : blocked(hop);
+            }
+        }
+        return { ok: true, reason: null, text: '', at: null, leg };
+    } catch (err) {
+        console.warn('Mining pack: the walk back in the mine failed:', err?.stack ?? err);
+        return { ok: false, reason: 'error', text: `I could not walk out of the mine: ${errText(err)}`, at: null };
+    }
+}
+
 /**
  * Walks out of a mine along its route (spec B4): from the room or a tunnel to the end of the way
- * in with the path search, then the legs backwards with ctx.routes.walkRoute (reverse). On the
+ * in by walkBack (fix round F24: hop by hop along the tunnel and its corners; when it is blocked
+ * the bot stays and the text names the cell, and !leaveMine tries the same walk again), then the legs backwards with ctx.routes.walkRoute (reverse). On the
  * route it walks back from the nearest leg. Ends at the entrance.
  * @param {object} bot
  * @param {object} ctx
@@ -200,14 +306,14 @@ export async function wayOut(bot, ctx, mine, options = {}) {
             upTo = Math.max(0, nearestLeg(legs, feet)) + 1;
         } else if (!here && feet.y >= (mine.entrance?.y ?? -Infinity) - 1) {
             return { ok: true, reason: null, text: TEXTS.onSurface };
-        } else {
-            const end = routeEndOf(mine);
-            if (end) {
-                const w = await walkTo(bot, end, { clock, timeoutMs: 120000, range: 1 });
-                if (!w.ok) {
-                    return { ok: false, reason: w.reason === 'interrupted' ? 'interrupted' : 'no_path', text: `I could not get to the way out at ${posText(end)}.` };
-                }
+        } else if (routeEndOf(mine)) {
+            // fix round F24: back along the cells the bot knows to the way in, not one long walk of the
+            // path search; the route is walked back from the leg the walk reached
+            const back = await walkBack(bot, ctx, mine, { clock });
+            if (!back.ok) {
+                return { ok: false, reason: back.reason, text: back.text };
             }
+            upTo = back.leg >= 0 ? back.leg + 1 : legs.length;
         }
         if (upTo > 0) {
             const r = await walkRouteVia(bot, ctx, { name: routeName(mine), legs: legs.slice(0, upTo) }, { clock, deadline: options.deadline, reverse: true });

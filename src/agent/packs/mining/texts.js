@@ -412,3 +412,14 @@ export function collectPassedText(r) {
     const stay = byReason(r?.stay, (w, why) => `${w} stay: ${why}.`);
     return `I collected ${words} that I had passed.${stay ? ` ${stay}` : ''}`;
 }
+
+/**
+ * The way out of a mine is blocked (fix round F24):
+ * `I could not get to the way out at (10, 30, 16): I was blocked at (12, 30, 9).`
+ * @param {{x,y,z}} end the end of the way in
+ * @param {{x,y,z}} at the cell that blocked
+ * @returns {string}
+ */
+export function wayBlockedText(end, at) {
+    return `I could not get to the way out at ${posText(end)}: I was blocked at ${posText(at)}.`;
+}
