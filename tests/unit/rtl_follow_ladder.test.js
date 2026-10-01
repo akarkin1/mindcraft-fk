@@ -162,7 +162,9 @@ describe('no switch: the ladder step runs with routes_pack off and absent', () =
 });
 
 describe('goToPlayer with routes_pack on', () => {
-    test('the player below: down the ladder first, then the path search as before', { timeout: 30000 }, async () => {
+    // v0.1.4.10 (P6): the path search climbs and descends ladders itself; the pass is the fallback after a path
+    // search that ends with the player still 2 or more blocks below (the stub of the follow goal does nothing).
+    test('the player below: the path search first; it ends with the gap, then the pass, then the path search again', { timeout: 30000 }, async () => {
         agentSettings.setSettings({ routes_pack: true });
         const s = scene();
         let pathSearch = 0;
@@ -171,22 +173,24 @@ describe('goToPlayer with routes_pack on', () => {
             await skills.goToPlayer(s.bot, PLAYER, 3);
             assert.deepEqual(s.feet(), { x: 2, y: 53, z: -2 });
             assert.deepEqual(s.bot.clicks, [{ x: 2, y: 60, z: -2, sneak: false }]);
-            assert.ok(s.bot.output.startsWith(`${DOWN_TEXT}\n`), s.bot.output);
-            assert.ok(s.bot.output.includes(`You have reached ${PLAYER}.`), s.bot.output);
-            assert.ok(pathSearch >= 1, 'the path search ran after the pass');
+            const lines = s.bot.output.trim().split('\n');
+            assert.ok(lines[0].startsWith('Found '), `the path search ran first: ${s.bot.output}`);
+            assert.ok(lines.includes(DOWN_TEXT), s.bot.output);
+            assert.equal(lines.at(-1), `You have reached ${PLAYER}.`, s.bot.output);
+            assert.equal(pathSearch, 2, 'the path search before and after the pass');
         } finally {
             s.stop();
         }
     });
 
-    test('routes_pack off: the pass runs all the same', { timeout: 30000 }, async () => {
+    test('routes_pack off: the fallback pass runs all the same', { timeout: 30000 }, async () => {
         agentSettings.setSettings({ routes_pack: false });
         const s = scene();
         stubFollowGoto(s.bot);
         try {
             await skills.goToPlayer(s.bot, PLAYER, 3);
             assert.deepEqual(s.bot.clicks, [{ x: 2, y: 60, z: -2, sneak: false }]);
-            assert.ok(s.bot.output.startsWith(`${DOWN_TEXT}\n`), s.bot.output);
+            assert.ok(s.bot.output.includes(`${DOWN_TEXT}\n`), s.bot.output);
         } finally {
             s.stop();
         }
@@ -336,29 +340,29 @@ describe('the fixes of W75', () => {
 });
 
 describe('goToPosition (L4 of the play test: "no idea about up and down")', () => {
-    test('to a point 18 blocks below, from the house through the closed trapdoor: one pass, then the path search arrives', { timeout: 40000 }, async () => {
+    // v0.1.4.10 (P6): no pass before the path search; the path search of the fake arrives at the point by itself,
+    // so no pass runs at all. The fallback after a path search that ends with the gap is tested with goToPlayer above.
+    test('to a point 18 blocks below, from the house: the path search arrives by itself, no pass', { timeout: 40000 }, async () => {
         agentSettings.setSettings({ routes_pack: true });
         const s = scene({ pos: [5.5, 61, -0.5], low: 41 });
         try {
             assert.equal(await skills.goToPosition(s.bot, 2, 41, 0, 1), true);
             const lines = s.bot.output.trim().split('\n');
-            assert.equal(lines.filter((l) => l.startsWith('I go down the ladder')).length, 1, lines.join(' | '));
-            assert.equal(lines[0], 'I go down the ladder at (2, 60, -2) to (2, 41, 0).');
+            assert.equal(lines.filter((l) => l.startsWith('I go down the ladder')).length, 0, lines.join(' | '));
             assert.equal(lines.at(-1), `You have reached ${`(${Math.floor(s.bot.entity.position.x)}, 41, ${Math.floor(s.bot.entity.position.z)})`}.`);
-            assert.deepEqual(s.bot.clicks, [{ x: 2, y: 60, z: -2, sneak: false }]);
             assert.equal(s.feet().y, 41);
         } finally {
             s.stop();
         }
     });
 
-    test('routes_pack off: the pass runs all the same', { timeout: 30000 }, async () => {
+    test('routes_pack off: the same', { timeout: 30000 }, async () => {
         agentSettings.setSettings({ routes_pack: false });
         const s = scene({ pos: [5.5, 61, -0.5], low: 41 });
         try {
-            await skills.goToPosition(s.bot, 2, 41, 0, 1);
-            assert.deepEqual(s.bot.clicks, [{ x: 2, y: 60, z: -2, sneak: false }]);
-            assert.ok(s.bot.output.includes('I go down the ladder'), s.bot.output);
+            assert.equal(await skills.goToPosition(s.bot, 2, 41, 0, 1), true);
+            assert.equal(s.feet().y, 41);
+            assert.ok(!s.bot.output.includes('I go down the ladder'), s.bot.output);
         } finally {
             s.stop();
         }

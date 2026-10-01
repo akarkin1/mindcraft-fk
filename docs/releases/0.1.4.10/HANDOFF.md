@@ -114,3 +114,44 @@ A version 1 file is read as before and written again at load as `version: 2`: `"
 
 Existing tests changed: `sta_modes` (the fake of the item walk is `collectItems`), `mining_store`,
 `rt_mine_store`, `rtb_store` (the keys `bot:16`, version 2). Tests: `tests/unit/gjr_*.test.js`, 43.
+
+## From part P (the path search, E2), done in round 1
+
+`patches/mineflayer-pathfinder+2.4.5.patch`, regenerated with `npx patch-package`, 644 lines, LF. Every hunk of
+today is kept (lava, door centring, the two trapdoor-climb moves, doors opened, jump released after placing,
+vines climbable) and `tests/unit/gjp_pathfinder.test.js` checks they are still in the file.
+
+| File | Function | What it does | P |
+|---|---|---|---|
+| movements.js | constructor | the no-stand lists copied from `isNoStandBlock`; `pitCost` 50, `stuckCost` 100, `stuckMarks` | P4, P5 |
+| movements.js | `getBlock` | a closed trapdoor is a floor only over a solid block; an open trapdoor over a ladder with the same facing is climbable; bottom slabs, bottom stairs and the no-stand blocks are no floor | P1, P4 |
+| movements.js | `safeOrBreak` | an open door, gate or trapdoor is passable; a closed one costs 100; only a move that opens it goes through | P1 |
+| movements.js | `mayBreakOnPath` (new) | a move never breaks a door, gate, trapdoor, ladder, slab, stairs, cauldron, composter or hopper (`safeToBreak` is unchanged: skills ask it what the bot may collect) | P1, P4 |
+| movements.js | `getMoveForward` | the upper half of a door opens with the lower half | P1 |
+| movements.js | `getMoveDown` | one rung down, cost 1, vines too; a trapdoor over a ladder is a rung, a closed one is opened first | P2 |
+| movements.js | `getMoveUp` | opens a closed trapdoor above the head; jumps onto a lowest ladder that ends one block above the floor | P1, P2 |
+| movements.js | `getMoveIntoLadderBelow` (new) | from beside the top of a column into it; opens the trapdoor | P2 |
+| movements.js | `getNeighbors` | +50 for a move down into a one-wide pit with 2-high walls; +100 for a move into a cell within 1 block of a stuck mark | P4, P5 |
+| index.js | `postProcessPath` | every door, gate and trapdoor point is centred; ladder points both ways; each point gets its tolerance | P2, P3 |
+| index.js | the arrival check | tolerance 0.35 at a door, gate, trapdoor or ladder point, 0.175 elsewhere | P3 |
+| index.js | `climbTowards` (new) | on a ladder: look at the wall, hold forward to go up, release forward and sneak to go down, never jump; the stuck timer is reset while the height changes by 0.05 or more per tick | P2 |
+| index.js | the futility check, `getPathFromTo` | on "stuck" the unreached point is marked for 30 s; each new search gets the active marks | P5 |
+| skills.js | `goToPosition`, `goToPlayer` | the ladder step before the path search is gone; the mid-walk watcher (F33) and the step after the walk stay; `followPlayer` unchanged | P6 |
+
+Decisions beyond the spec, accepted: the stuck cost is added per move in `getNeighbors`, not through
+`exclusionAreasStep` (100 there means refused, and the bot's own cell is within 1 block); the mark is on the
+point the bot could not reach, not on its position; only bottom slabs and bottom stairs are no-stand; a move
+that only opens a door uses no scaffolding block; `ladder_pass.js` and `packs/mining/ladder.js` are unchanged
+in behaviour.
+
+For the other parts: a staircase of bottom stairs or bottom slabs is no way for the path search any more
+(it walks around or finds no path; W90 and the journeys show whether the owner's base has one). Numbers the
+packs may rely on: tolerance 0.35 at doors, gates, trapdoors and ladders, 0.175 elsewhere; rung cost 1; pit
++50; stuck +100 for 30 s. A closed openable is refused (100) in every move except the ones that open it; R1's
+gate rule refuses on top of that.
+
+Tests changed by the lead for P: `rtl_follow_ladder` (the pass after the path search, not before; no pass
+when the fake path search arrives), `fxc_stand` and `fxe_farming` (the plain path search no longer ends on
+the composter). Tests: `tests/unit/gjp_pathfinder.test.js`, 25, on the installed library with the real
+physics. To run on the real server: `route_to_bed route_reverse mine_known follow_ladder first_minutes
+come_here_floors`; no "I go down the ladder" or "I climb up the ladder" line for the follow and the walks.
