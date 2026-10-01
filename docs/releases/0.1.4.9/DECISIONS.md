@@ -91,6 +91,24 @@ closing the socket at login; 3 orders, none with a result; 9 calls, 4 cents.
 | F16 | `Error with embedding model` three times at every start: the owner's `profiles/claude.json` lost its `"embedding": "openai"` line when the release was pulled. | the log | The line goes back into the profile; the release never carries it. The guide says so. | owner |
 | F17 | The console line `Agent executed: !followPlayer and got: undefined` for an interrupted action. | the log | `... and was stopped.` Done. | C |
 
+## Found by the play of the owner on 2026-10-01, second and third session (Luna, then Claude with an empty memory)
+
+| Id | Defect | Evidence | Decision | Owner |
+|---|---|---|---|---|
+| F18 | **A route cannot start inside the home**: the area of the house spans both floors (the scan follows the ladder, y 55 to 71), so in the basement `!rememberRoute("basement")` said five times `too short: I stand where it starts`. | Claude log 04:14 to 04:17 | In `routeStart` two steps of the same area count as different known things when their y differs by 3 or more; `from.name` is `<area>, level <y>`. | A |
+| F19 | The model answered "go to the basement" with `!goToRememberedPlace("basement")` and got `No location named "basement"`: a route has no place at its end. | Claude log 04:16:30 | `rememberRoute(name)` also saves the place `name` at its end when none exists, and says so. | A |
+| F20 | `!goToCoordinates(12, 67, 46)` "to go down the ladder" ended on the closed trapdoor. The path search of every walk to a point ignores ladders downward and trapdoors. | Claude log 04:16:08; Luna log 04:07 | The ladder step of part L becomes one helper used by `goToPlayer`, `followPlayer` and `goToPosition` (so `!goToCoordinates` and `!goToRememberedPlace` too): before the path search and again when it ends 2 or more blocks above or below the target. | C |
+| F21 | The door service closed the trapdoor over the owner's head 11 s after "follow me", before the bot had passed it, and shut its own way. The owner also sees trapdoors left open. | Claude log 04:14:01 | The service closes only openables the bot itself passed (for a trapdoor: above then below, or the reverse), 2 blocks past them, never one only a player opened, never with an entity within 1 block. After a ladder pass it closes the trapdoor behind the bot. | A (home pack) |
+| L1 | `!goToPlayer` from 3 blocks away never took the ladder and said `You have reached w_player.` on the closed trapdoor. | W75 part 3 | Reach 6; the pass also after the path search; "You have reached" only within the asked distance in 3D, else `I stopped at (x, y, z), N blocks from <name>.` | C |
+| L2 | Following up stalled under the closed trapdoor while the player waited beside it. | W75 part 2 | No distance condition for the pass; the still clock looks at the feet cell. | C |
+| L3 | Halfway down a column no column was found. | W75 run 1 | `ladderColumnAt` finds the column from inside it. | C |
+
+Luna session of 53 minutes (13 cents, median answer 3 s), other findings, waiting for the owner's go:
+the warning spam of `entity.objectType` (15,000 lines), `craftSupplies("torch")` failing with logs in the
+inventory, a trip without torches in a mine of the player, `!goToMine` not knowing a mine of the player,
+"do not dig" refused as a digging request, the item reflex opening the gate of the pen, `!rememberMine`
+texts before any sky step.
+
 ## Not corrected in this release
 
 - A mine named with a number (`"16"`) collides with the key of a mine of the bot at that level.
