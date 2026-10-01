@@ -11,6 +11,9 @@
 // deepslate_iron_ore), or (b) with one of find, get, collect, gather, search, look, bring, fetch, need,
 // want, hunt, mine within the 3 words before it ("get me some iron", "find diamonds"). An ore name alone
 // names a material: "craft an iron pickaxe" is no digging request (decision of the tech lead).
+// A word within 3 words after a negation (not, no, never, don't, dont, without, avoid; "no need to") in the
+// same clause does not count: "do not dig straight down" is no digging request, "dig a tunnel, do not dig
+// straight down" is one (the first dig counts).
 
 /** The ores of the mining pack (packs/mining/ore_table.js, not imported). */
 export const DIG_ORES = Object.freeze(['coal', 'copper', 'iron', 'lapis', 'gold', 'redstone', 'diamond']);
@@ -47,6 +50,20 @@ const WORD_PATTERN = new RegExp(
     + ')(?![\\p{L}\\p{N}_])',
     'giu');
 
+/** The words of a negation: a digging word within 3 words after one of them does not count. */
+export const NEGATIONS = Object.freeze(['not', 'no', 'never', "don't", 'dont', 'without', 'avoid']);
+const NEGATION_SET = new Set(NEGATIONS);
+const NEGATION_REACH = 3; // words after the negation ("no need to dig": dig is the third word after "no")
+
+// True when one of the 3 words before `index`, in the same clause (after the last . , ; : ! ?), is a negation:
+// "do not dig straight down", "without digging" (the owner's Luna session: !newAction("... do not dig") was refused).
+function negatedBefore(text, index) {
+    const before = text.slice(0, index);
+    const clause = before.slice(before.search(/[^.,;:!?]*$/));
+    const words = (clause.replace(/\u2019/g, "'").match(/[\p{L}\p{N}_']+/gu) ?? []).map((word) => word.toLowerCase());
+    return words.slice(-NEGATION_REACH).some((word) => NEGATION_SET.has(word));
+}
+
 // True when one of the 3 words before `index` is a word of ORE_VERBS.
 function verbBefore(text, index) {
     const before = text.slice(0, index).match(/[\p{L}\p{N}_']+/gu) ?? [];
@@ -69,6 +86,8 @@ export function isDiggingRequest(text) {
         for (const match of text.matchAll(WORD_PATTERN)) {
             if (match.groups?.bare !== undefined && !verbBefore(text, match.index))
                 continue; // a material: "an iron pickaxe"
+            if (negatedBefore(text, match.index))
+                continue; // "do not dig", "without digging"
             const word = match[0].toLowerCase().replace(/[\s_-]+/g, ' ');
             if (!words.includes(word))
                 words.push(word);

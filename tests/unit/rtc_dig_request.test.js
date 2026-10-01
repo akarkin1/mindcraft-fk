@@ -78,6 +78,23 @@ describe('isDiggingRequest', () => {
         assert.deepEqual(D.isDiggingRequest('dig, dig and DIG a shaft, then dig').words, ['dig', 'shaft']);
     });
 
+    test('a dig word within 3 words after a negation does not count (the Luna session of the owner)', () => {
+        assert.deepEqual([...D.NEGATIONS], ['not', 'no', 'never', "don't", 'dont', 'without', 'avoid']);
+        assert.deepEqual(D.isDiggingRequest('do not dig straight down'), { digging: false, words: [] });
+        assert.deepEqual(D.isDiggingRequest('dig a tunnel, do not dig straight down'), { digging: true, words: ['dig', 'tunnel'] }, 'the first dig counts');
+        assert.deepEqual(D.isDiggingRequest('go back to the house without digging'), { digging: false, words: [] });
+        for (const text of ['Climb the ladder up to the house, do not dig.', 'Get unstuck: walk out of the hole. Do not dig.', 'no need to dig',
+            'never dig down', "don't dig here", 'dont dig', 'don\u2019t dig', 'avoid mining']) {
+            assert.deepEqual(D.isDiggingRequest(text), { digging: false, words: [] }, text);
+        }
+    });
+
+    test('the negation reaches 3 words and ends at the end of its clause', () => {
+        assert.equal(D.isDiggingRequest('do not ever go and dig').digging, true, 'dig is 4 words after not');
+        assert.deepEqual(D.isDiggingRequest('Do not stop. Dig a tunnel'), { digging: true, words: ['dig', 'tunnel'] });
+        assert.equal(D.isDiggingRequest('nothing, dig here').digging, true, '"nothing" is no negation word');
+    });
+
     test('never throws: no text', () => {
         for (const bad of [undefined, null, 5, {}, ['dig']]) assert.deepEqual(D.isDiggingRequest(bad), { digging: false, words: [] });
     });
