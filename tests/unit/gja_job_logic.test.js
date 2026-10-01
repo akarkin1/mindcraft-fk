@@ -229,6 +229,19 @@ describe('readJobSettings and sameWork', () => {
     });
 });
 
+test('oreOf: the table of ore items inside job_logic.js (no import of the mining pack)', () => {
+    assert.deepEqual(L.oreOf('iron'), { ore: 'iron', item: 'raw_iron', block: false });
+    assert.deepEqual(L.oreOf('deepslate_iron_ore'), { ore: 'iron', item: 'raw_iron', block: true });
+    assert.equal(L.oreOf('lapis').item, 'lapis_lazuli');
+    assert.equal(L.oreOf('iron_ingot').ore, 'iron');
+    assert.equal(L.oreOf('diamonds').item, 'diamond');
+    assert.equal(L.oreOf('ancient_debris').item, 'ancient_debris');
+    assert.equal(L.oreOf('mithril'), null);
+    assert.equal(L.dropOf('coal_ore'), 'coal');
+    assert.equal(L.dropOf('stone'), 'cobblestone');
+    assert.equal(L.dropOf('raw_iron'), 'raw_iron');
+});
+
 test('resultOf reads a pack result, a text and a stop', () => {
     assert.deepEqual(L.resultOf({ ok: true, reason: null, text: 'I mined 8 iron.' }), { ok: true, reason: null, text: 'I mined 8 iron.' });
     assert.equal(L.resultOf('Could not find a path.').ok, false);

@@ -2,7 +2,6 @@
 // what is left of it, and which failure of a skill is a blocker that steps can remove. Pure: the clock
 // and the state of the bot are passed in. Nothing here throws.
 import { commandText, looksLikeFailure } from '../repeat_guard.js';
-import { oreOf } from '../packs/mining/ore_table.js';
 
 /** The fixed numbers of the job. */
 export const JOB_RULES = Object.freeze({
@@ -20,6 +19,49 @@ const DROPS = Object.freeze({
     deepslate: 'cobbled_deepslate',
     grass_block: 'dirt',
 });
+
+// The item of each ore (the ore table of the mining pack, kept here: no module outside the packs imports a
+// pack statically). Ancient debris drops itself.
+const ORE_ITEMS = Object.freeze({
+    coal: 'coal', copper: 'raw_copper', iron: 'raw_iron', lapis: 'lapis_lazuli', gold: 'raw_gold',
+    redstone: 'redstone', diamond: 'diamond', emerald: 'emerald', ancient_debris: 'ancient_debris',
+});
+// Other names that lead to an ore: the item, the smelted metal, a plural.
+const ORE_NAMES = Object.freeze({
+    raw_copper: 'copper', raw_iron: 'iron', raw_gold: 'gold', lapis_lazuli: 'lapis', copper_ingot: 'copper',
+    iron_ingot: 'iron', gold_ingot: 'gold', netherite_scrap: 'ancient_debris', redstone_dust: 'redstone', diamonds: 'diamond', emeralds: 'emerald',
+});
+
+/**
+ * The ore of a name: the ore (`iron`), one of its blocks (`deepslate_iron_ore`), its item (`raw_iron`) or
+ * another name of it; as { ore, item, block } where block tells whether the name was a block. null else.
+ * @param {*} name
+ * @returns {{ore: string, item: string, block: boolean}|null}
+ */
+export function oreOf(name) {
+    if (typeof name !== 'string') {
+        return null;
+    }
+    const clean = name.trim().toLowerCase().replace(/^minecraft:/, '').replace(/[\s-]+/g, '_');
+    if (clean.length === 0) {
+        return null;
+    }
+    if (ORE_ITEMS[clean]) {
+        return { ore: clean, item: ORE_ITEMS[clean], block: clean === 'ancient_debris' };
+    }
+    if (ORE_NAMES[clean]) {
+        return { ore: ORE_NAMES[clean], item: ORE_ITEMS[ORE_NAMES[clean]], block: false };
+    }
+    const block = clean.match(/^(?:deepslate_)?([a-z]+)_ore$/);
+    if (block && ORE_ITEMS[block[1]]) {
+        return { ore: block[1], item: ORE_ITEMS[block[1]], block: true };
+    }
+    const plural = clean.replace(/s$/, '');
+    if (ORE_ITEMS[plural]) {
+        return { ore: plural, item: ORE_ITEMS[plural], block: false };
+    }
+    return null;
+}
 
 // The kinds of tools; a tool kind alone matches every material of it.
 const TOOL_KINDS = Object.freeze(['pickaxe', 'axe', 'shovel', 'hoe', 'sword']);
@@ -60,7 +102,7 @@ export function dropOf(block) {
         return null;
     }
     const row = oreOf(name);
-    if (row && row.blocks.includes(name)) {
+    if (row && row.block) {
         return row.item;
     }
     return DROPS[name] ?? name;
