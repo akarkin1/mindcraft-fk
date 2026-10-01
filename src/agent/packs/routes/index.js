@@ -19,7 +19,7 @@ export { TRAIL_RULES, WATER_NAMES, cellBetween, cleanStep, columnIsOpen, feetCel
 export { DIRECTIONS, OPENABLE_KINDS, ROUTE_RULES, backOf, cleanLeg, dirVector, directionTo, isDirection, knownThings, legCells, legCounts,
     nearCell, nearestRoute, normalizeRouteName, reverseRoute, routeEnds, routeFromSteps, routeStart, skyStart, startOffLadder,
     trapdoorOverLadder } from './route_logic.js';
-export { TEXTS, emptyRouteText, forgotText, legsText, noRouteText, noWayToStartText, placeSavedText, posText, rememberedText, replacedText, routeDoneText,
+export { TEXTS, emptyRouteText, forgotText, legsText, needLaddersText, noRouteText, noWayToStartText, placeSavedText, posText, rememberedText, replacedText, routeDoneText,
     routeErrorText, routeFailedText, routeLabel, routeLineText, routeListText, routeStoppedText, routeTimeText, startText,
     stoppedBeforeRouteText, tooShortText } from './texts.js';
 export { ROUTE_FILE, ROUTE_SOURCES, RouteStore, START_KINDS } from './route_store.js';

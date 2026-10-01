@@ -79,6 +79,18 @@ export function replacedText(name) {
 }
 
 /**
+ * `I need 1 ladder at (8, 42, 47) to climb out.`, `I need 2 ladders at (8, 41, 47) and (8, 42, 47) to climb out.`
+ * (v0.1.4.9, F22b), the cells from the lowest.
+ * @param {{x,y,z}[]} cells
+ * @returns {string}
+ */
+export function needLaddersText(cells) {
+    const list = (Array.isArray(cells) ? cells : []).slice().sort((a, b) => a.y - b.y).map(posText);
+    const where = list.length <= 1 ? list.join('') : `${list.slice(0, -1).join(', ')} and ${list[list.length - 1]}`;
+    return `I need ${plural(list.length, 'ladder')} at ${where} to climb out.`;
+}
+
+/**
  * `I saved the place "basement" there too.` (v0.1.4.9, F19)
  * @param {string} name
  * @returns {string}

@@ -13,7 +13,7 @@ import { doorState, openDoor } from '../home/doors.js';
 import { goals, gotoGoal, isNear, makeMovements, walkNear } from '../home/motion.js';
 import { climbUp, enterColumn, footOf, slideDown, waitStanding, walkStairs, yawOf } from '../mining/ladder.js';
 import { backOf, nearCell, nearestRoute, reverseRoute, routeEnds, trapdoorOverLadder } from './route_logic.js';
-import { TEXTS, emptyRouteText, noWayToStartText, routeDoneText, routeErrorText, routeFailedText, routeLabel, routeStoppedText,
+import { TEXTS, emptyRouteText, needLaddersText, noWayToStartText, routeDoneText, routeErrorText, routeFailedText, routeLabel, routeStoppedText,
     routeTimeText, stoppedBeforeRouteText } from './texts.js';
 import { readBlock } from './trail.js';
 
@@ -231,8 +231,14 @@ async function ladderLeg(bot, ctx, leg, clock, ms) {
                 return w;
             }
             const into = await enterColumn(bot, { ...leg, foot }, { clock });
+            if (Number.isFinite(into.bottom)) {
+                leg.bottom = into.bottom; // F22b: the ladders placed under the column
+            }
             if (!into.ok) {
-                return into.reason === 'interrupted' || bot.interrupt_code ? INTERRUPTED : { ok: false, reason: 'no_path' };
+                if (into.reason === 'interrupted' || bot.interrupt_code) {
+                    return INTERRUPTED;
+                }
+                return { ok: false, reason: 'no_path', note: into.missing?.length > 0 ? needLaddersText(into.missing) : null };
             }
         }
         if (trap && !trap.open) {
@@ -243,7 +249,10 @@ async function ladderLeg(bot, ctx, leg, clock, ms) {
         }
         const r = await climbUp(bot, leg, { clock });
         if (!r.ok) {
-            return r.reason === 'interrupted' || bot.interrupt_code ? INTERRUPTED : { ok: false, reason: 'no_path' };
+            if (r.reason === 'interrupted' || bot.interrupt_code) {
+                return INTERRUPTED;
+            }
+            return { ok: false, reason: 'no_path', note: r.missing?.length > 0 ? needLaddersText(r.missing) : null };
         }
     }
     await waitStanding(bot, clock, 2000);
@@ -334,15 +343,19 @@ async function walkLeg(bot, ctx, legs, i, clock, limit) {
  *   deadline: a time of the clock; timeoutMs (120000): the whole route
  * @returns {Promise<{ok: boolean, reason: string|null, text: string, leg: number|null, at: {x,y,z}|null}>}
  *   reasons: no_path, blocked_door, interrupted, time, error; `leg` is the index (in the order walked) of the
- *   leg that failed
+ *   leg that failed. F22b: `changed` lists { leg, bottom } of the ladder legs (index in route.legs) whose bottom
+ *   moved down because ladders were placed under the column; route.legs gets the new bottom. A leg that failed
+ *   for want of ladders adds `I need N ladders at (x, y, z) to climb out.` to the failure text.
  */
 export async function walkRoute(bot, ctx, route, options = {}) {
     const clock = options?.clock ?? clockOf(ctx, options);
     const walked = options?.reverse === true ? reverseRoute(route) : route;
     const legs = Array.isArray(walked?.legs) ? walked.legs : [];
     const total = legs.length;
-    const result = (ok, reason, text, leg) => ({ ok, reason, text, leg, at: feetOf(bot) });
-    const failed = (i, reason) => result(false, reason, routeFailedText(route, i + 1, total, feetOf(bot)), i);
+    // F22b: ladder legs whose bottom moved down (ladders placed under the column), as indexes of route.legs
+    const changed = [];
+    const result = (ok, reason, text, leg) => ({ ok, reason, text, leg, at: feetOf(bot), changed });
+    const failed = (i, reason, note = null) => result(false, reason, `${routeFailedText(route, i + 1, total, feetOf(bot))}${note ? ` ${note}` : ''}`, i);
     const stopped = i => result(false, 'interrupted', routeStoppedText(route, i + 1, total), i);
     let i = 0;
     try {
@@ -367,7 +380,17 @@ export async function walkRoute(bot, ctx, route, options = {}) {
             if (trapdoorOverLadder(leg, next) && leg.from?.y > leg.y && !ladderIntact(bot, next, REPLAY_RULES.fallGap)) {
                 return failed(i + 1, 'no_path');
             }
+            const bottom = leg?.kind === 'ladder' ? leg.bottom : null;
             const r = await walkLeg(bot, ctx, legs, i, clock, limit);
+            if (bottom !== null && leg.bottom !== bottom) {
+                // F22b: the leg of the caller gets the new bottom too (a reversed route walks copies)
+                const index = options?.reverse === true ? total - 1 - i : i;
+                const own = Array.isArray(route?.legs) ? route.legs[index] : null;
+                if (own && typeof own === 'object') {
+                    own.bottom = leg.bottom;
+                }
+                changed.push({ leg: index, bottom: leg.bottom });
+            }
             if (r.reason === 'interrupted' || bot.interrupt_code) {
                 return stopped(i);
             }
@@ -375,7 +398,7 @@ export async function walkRoute(bot, ctx, route, options = {}) {
                 if (clock.now() > limit && r.reason !== 'blocked_door') {
                     return result(false, 'time', routeTimeText(route, i + 1, total, feetOf(bot)), i);
                 }
-                return failed(i, r.reason === 'blocked_door' || r.reason === 'error' ? r.reason : 'no_path');
+                return failed(i, r.reason === 'blocked_door' || r.reason === 'error' ? r.reason : 'no_path', r.note);
             }
             noteProgress(bot, 'route');
         }

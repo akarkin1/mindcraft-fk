@@ -279,13 +279,34 @@ describe('F22 on the fake bot: down with the drop, up with a jump onto the ladde
         assert.equal(s.world.nameAt(2, Math.floor(s.bot.entity.position.y), -2), 'ladder');
     });
 
-    test('up to a ladder 2 empty cells above the feet: no jump reaches it; no_path after at most 5 s, nothing dug', async () => {
+    test('F22b: ladders 3 cells above the floor, 2 ladders carried: the bot places them from the floor up and climbs out', async () => {
+        const s = shaft(44, [3.5, 41, 0.5]);
+        s.world.set(2, 60, -2, 'air'); // open above the top ladder
+        MF.give(s.bot, 'ladder', 2);
+        const leg = { kind: 'ladder', x: 2, z: -2, top: 59, bottom: 44, face: 'south', entry: { x: 2, y: 61, z: -1 }, foot: { x: 2, y: 41, z: -2 } };
+        const route = { name: 'mine', legs: [leg] };
+        const r = await P.walkRoute(s.bot, {}, route, { clock: s.clock });
+        assert.equal(r.ok, true, r.text);
+        assert.deepEqual([s.world.nameAt(2, 42, -2), s.world.nameAt(2, 43, -2)], ['ladder', 'ladder']);
+        assert.deepEqual(s.bot.calls.filter(c => c[0] === 'place').map(c => c[2]), [42, 43], 'from the floor up');
+        assert.equal(Math.floor(s.bot.entity.position.y), 61, 'out at the top');
+        assert.deepEqual(r.changed, [{ leg: 0, bottom: 42 }]);
+        assert.equal(route.legs[0].bottom, 42, 'the leg of the caller has the new bottom');
+        assert.equal(s.bot.calls.filter(c => c[0] === 'dig').length, 0);
+    });
+
+    test('F22b: no ladder carried: no_path within 5 s, the failure text says which ladders it needs, nothing dug', async () => {
         const s = shaft(43, [3.5, 41, 0.5]);
         const leg = { kind: 'ladder', x: 2, z: -2, top: 59, bottom: 43, face: 'south', entry: { x: 2, y: 61, z: -1 }, foot: { x: 2, y: 41, z: -2 } };
         const t0 = s.clock.now();
-        const into = await LAD.enterColumn(s.bot, leg, { clock: s.clock });
-        assert.deepEqual(into, { ok: false, reason: 'no_path' });
+        const into = await LAD.enterColumn(s.bot, { ...leg }, { clock: s.clock });
+        assert.deepEqual(into, { ok: false, reason: 'no_ladder', missing: [{ x: 2, y: 42, z: -2 }] });
         assert.ok(s.clock.now() - t0 < 8000, `${s.clock.now() - t0} ms`);
+        const r = await P.walkRoute(s.bot, {}, { name: 'mine', legs: [leg] }, { clock: s.clock });
+        assert.equal(r.text, 'I could not follow the route "mine" at step 1 of 1, at (2, 41, -2). Show me the way again. I need 1 ladder at (2, 42, -2) to climb out.');
+        const two = shaft(44, [3.5, 41, 0.5]);
+        const r2 = await P.walkRoute(two.bot, {}, { name: 'mine', legs: [{ ...leg, bottom: 44 }] }, { clock: two.clock });
+        assert.ok(r2.text.endsWith(' I need 2 ladders at (2, 42, -2) and (2, 43, -2) to climb out.'), r2.text);
         assert.equal(s.bot.calls.filter(c => c[0] === 'dig').length, 0);
     });
 });
