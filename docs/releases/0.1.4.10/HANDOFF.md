@@ -155,3 +155,64 @@ when the fake path search arrives), `fxc_stand` and `fxe_farming` (the plain pat
 the composter). Tests: `tests/unit/gjp_pathfinder.test.js`, 25, on the installed library with the real
 physics. To run on the real server: `route_to_bed route_reverse mine_known follow_ladder first_minutes
 come_here_floors`; no "I go down the ladder" or "I climb up the ladder" line for the follow and the walks.
+
+## From part T (the tools, E4), done in round 2
+
+| Module | Exports |
+|---|---|
+| `scripts/scorecard_logic.js` | `parseLog(text) -> { lines, events }`, `scorecard(events, { name }) -> [row]`, `totalRow(rows)`, `formatTable(rows)`, `decodeLog(buf)` (UTF-8 or the UTF-16 of PowerShell), `modelOfAwait`, `endReason`, `cells`, `countsText`, `COLUMNS`, `RESULT_WINDOW_S`, `USAGE` |
+| `scripts/scorecard.js` | `main(argv, { read, log }) -> exit code`; `node scripts/scorecard.js <log> [<log>...]` |
+| `scripts/dump_region_logic.js` | `parseArgs`, `boxOf(center, radius)`, `chunksOf(box)`, `compact(blocks)`, `dumpOf`, `dumpText`, `formatTable`, `KEPT_PROPS`, `DEFAULT_OUT` |
+| `scripts/dump_region.js` | `main(argv, deps)`; `node scripts/dump_region.js --port <p> --center <x> <y> <z> [--radius <r>] [--host <h>] [--name <n>] [--out <file>] [--wait <s>]` |
+| `tests/world/owner_region.js` | `buildFromDump(dump, origin, { clear, batch }) -> { ok, commands, failed }`, `spotsFromDump(dump, origin?) -> { beds, bed, chests, doors, trapdoors, ladders, ladderColumns }`, `loadDump(file)`, `isDump`, `buildCommands`, `blockState`, `placeOf`, `boxAt`, `OWNER_REGION_FILE` |
+| `tests/play/play_logic.js` | `parseArgs`, `apiOf`, `keyCheck(profile, env)`, `KEY_OF_API`, `STEPS`, `commandIn`, `rowOf`, `formatTable`, `FAKE_USAGE`; `npm run test:play -- [--profile <file>] [--fake] [--verbose]` |
+
+Decisions beyond the spec, accepted: the dump keeps hinge, part, type, axis and shape besides facing, half
+and open (doors, beds, slabs, logs and double chests); `buildFromDump` clears the box first, places supports
+before attached blocks, keeps the halves of a door or bed together and merges runs along x into one `fill`;
+a typed command counts as answered by its `parsed command` line; in a log without times an order is without
+result when nothing came before the next order (a line under the table says so); a cost line that "includes
+N earlier processes" replaces the running sum; the play test adds "come here" and "this is the mine"
+between the five sentences; with `--fake` the cost comes from made-up usage and the table says so;
+`test:play` without a test server exits 1.
+
+Proven: the dump against the test server of this container only (a house dumped, rebuilt 100 blocks away,
+dumped again: the same blocks); `npm run test:play -- --fake` 8 of 8 facts, 0 calls to a real model;
+without the key it refuses with one line and exit 1.
+
+For the round-3 tester (`base_world.js`): `loadDump()` gives null without `tests/world/owner_region.json`
+(then the hand-built owner variant); choose an origin, `prepareRegion` with a radius of `dump.radius` or
+more, `await buildFromDump(dump, origin)` and fail the build when `ok` is false; fill the plan from
+`spotsFromDump(dump, origin)` (`bed.foot`/`bed.head`, `trapdoors[0]`, `ladderColumns`, `chests`,
+`doors[0]`); the basement and room boxes come from the owner, a dump names no rooms; chest contents are not
+in a dump (`buildChest` stays). `play.js` calls `basePlan(r, { owner: true })`: pass `{ dump }` there too when
+`basePlan` uses it.
+
+## From part G (the glue, E5), done in round 2
+
+| File | Change |
+|---|---|
+| `settings.js`, `settings_spec.json` | `job_memory` false, `job_resume_seconds` 60 (whole number, 10 or more), `idle_jobs` [] (command texts), `idle_jobs_minutes` 15 (1 or more), `area_floors` false |
+| `src/agent/agent.js` | `agent.job` only with `job_memory` (else null); system orders run through `_runJobOrder`; `onRestart` at spawn after the restart note; `tick()` every 5 s, not awaited, stopped at exit; the job line in the knowledge block (the block shrinks so that block and line stay within `knowledge_max_chars`); `!mines` and `!forgetMine` hidden without the mining pack |
+| `src/agent/commands/index.js` | `onCommand` before and `onResult` after each command (the pack result or the text, `undefined` when stopped, the inventory gain), only when `agent.job` exists; `onResult` not awaited |
+| `src/agent/commands/actions.js` | `!mines`, `!forgetMine`, the rule flag, the floor scan, the duplicate-box check |
+| `src/models/prompter.js` | `promptPlan(prompt)`: one call of the chat model under the cost purpose `'plan'` |
+| `tests/routing/commands.js`, `sentences.json` | the two commands under `mining_pack`; 6 sentences |
+
+Prompt sizes: every switch on 16,981 characters (limit 17,000; the two descriptions are "List your mines."
+and "Forget a mine."); every switch off 9,511. Any further growth needs a cut elsewhere.
+
+Decisions beyond the spec, accepted: a call of `executeCommand` without options that is not a typed order
+counts as a system order, and `by: 'system'` is never typed; the hooks run for system orders too (a resumed
+`!mineOre` gets its gain) and their result text goes into the history; `idle_jobs` without `job_memory`
+warns once at start (`idle_jobs needs job_memory. The list does not run.`); `!rememberRule` naming a saved
+area adds `I marked the area "chicken_pen" as keep out.` (the stored name, spaces as `_`); `!rememberArea`
+refuses the same box only under another name; `!rememberHere` uses the floor scan with `area_floors` too,
+without the same-box check; a saved area reads "1 door, 1 trapdoor" (only the floor scan finds trapdoors).
+
+For the testers: `job.json` is per bot (`bots/<name>/job.json`); the standing list needs `job_memory`; the
+purpose `'plan'` is not in the cost meter's `PURPOSES` list but the meter counts it; with `area_floors` off
+"this is the basement" below the house answers `That is the area "home" already.`
+
+The end-to-end scenarios `skill_capture` and `skill_flags_off` fail on the base of this branch too (checked
+by E5 on the untouched commit); the lead looks at them on the fix branch.
