@@ -103,6 +103,10 @@ closing the socket at login; 3 orders, none with a result; 9 calls, 4 cents.
 | L2 | Following up stalled under the closed trapdoor while the player waited beside it. | W75 part 2 | No distance condition for the pass; the still clock looks at the feet cell. | C |
 | L3 | Halfway down a column no column was found. | W75 run 1 | `ladderColumnAt` finds the column from inside it. | C |
 
+| F22 | **A ladder that ends above the floor.** In the mine of the owner the second ladder ends at y 43, two blocks above the room floor at y 41. The bot dropped off it going down; going up the route's walk targets a cell in the air, so `!leaveMine` failed at step 1 and step 5 and the bot stayed underground. | bots/gpt `mines.json`, the Luna log 03:45 and 03:48 | The foot of such a ladder is the cell directly under the column at the floor; the bot enters the column from there with a jump (the physics patch lets a jump climb a ladder); the slide down ends with the drop. | A, with `ladder.js` |
+| F23 | `!rememberArea("basement")` and `!rememberHere("bed")` saved two more areas with the same box as `home`. | bots/gpt `areas.json` | Not corrected now: a scan that gives the box of an existing area should answer that it is that area already. Next release. | none |
+| F24 | **The walk back to the way out failed** after a trip with side steps and branches: `I could not get to the way out at (10, 30, 16).` The cause is not in the files. | the Luna log 03:43 | The walk back follows the cells the bot knows, branch to junction to corners to the route end, digs a natural block that is in the way, and names the cell that blocked. | B |
+
 Luna session of 53 minutes (13 cents, median answer 3 s), other findings, waiting for the owner's go:
 the warning spam of `entity.objectType` (15,000 lines), `craftSupplies("torch")` failing with logs in the
 inventory, a trip without torches in a mine of the player, `!goToMine` not knowing a mine of the player,
