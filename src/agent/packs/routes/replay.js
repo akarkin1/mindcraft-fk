@@ -10,6 +10,7 @@
 import { botPos, clockOf, logTo, noteProgress } from '../home/context.js';
 import { sideOf } from '../home/door_logic.js';
 import { closeDoor, doorState, openDoor } from '../home/doors.js';
+import { holdOnLadder } from '../../library/ladder_pass.js';
 import { goals, gotoGoal, isNear, makeMovements, walkNear } from '../home/motion.js';
 import { climbUp, enterColumn, footOf, slideDown, waitStanding, walkStairs, yawOf } from '../mining/ladder.js';
 import { backOf, nearCell, nearestRoute, reverseRoute, routeEnds, trapdoorOverLadder } from './route_logic.js';
@@ -414,6 +415,7 @@ export async function walkRoute(bot, ctx, route, options = {}) {
                 changed.push({ leg: index, bottom: leg.bottom });
             }
             if (r.reason === 'interrupted' || bot.interrupt_code) {
+                holdOnLadder(bot); // F36: a bot stopped on a ladder holds on
                 return stopped(i);
             }
             if (!r.ok) {

@@ -392,13 +392,23 @@ async function runSteps(bot, ctx, steps, clock) {
             if (short) {
                 continue;
             }
-            const before = await settledCount(bot, clock, item);
-            try {
-                await craft(bot, item, times);
-            } catch (err) {
-                console.warn(`Wood pack: crafting ${item} failed: ${err?.message ?? err}`);
+            // F32c of the journeys (the real server): bot.craft with a count over 1 crafts once and throws
+            // "missing ingredient" on its second craft, because the slots of the inventory are stale right
+            // after a craft. One craft per call, the inventory settled between them.
+            for (let k = 0; k < times && !bot.interrupt_code; k++) {
+                const before = await settledCount(bot, clock, item);
+                try {
+                    await craft(bot, item, 1);
+                } catch (err) {
+                    console.warn(`Wood pack: crafting ${item} failed: ${err?.message ?? err}`);
+                    break;
+                }
+                const got = Math.max(0, (await settledCount(bot, clock, item)) - before);
+                made += got;
+                if (got === 0) {
+                    break;
+                }
             }
-            made += Math.max(0, (await settledCount(bot, clock, item)) - before);
         }
         if (made === 0) {
             if (short) {

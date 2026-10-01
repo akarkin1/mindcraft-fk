@@ -322,6 +322,24 @@ describe('the fixes of W75', () => {
         }
     });
 
+    test('F36: an order that interrupts the climb: the bot holds on the ladder with sneak instead of sliding', { timeout: 30000 }, async () => {
+        agentSettings.setSettings({ routes_pack: true });
+        const s = scene({ pos: [2.5, 53, -1.5], player: [2.5, 61, 2.5] }); // the bot at the foot, the player up in the house
+        try {
+            const run = skills.followPlayer(s.bot, PLAYER, 4);
+            const climbing = await until(() => s.feet().x === 2 && s.feet().z === -2 && s.feet().y >= 55 && s.feet().y <= 58, 20000);
+            s.bot.interrupt_code = true; // "come here" interrupts the follow mid-column
+            await run;
+            assert.ok(climbing, `the bot never climbed: ${JSON.stringify(s.feet())} ${s.bot.output}`);
+            assert.equal(s.bot.controls.sneak, true, 'holds on with sneak');
+            assert.equal(s.bot.controls.forward, false);
+            assert.equal(s.bot.controls.jump, false);
+        } finally {
+            s.bot.interrupt_code = true;
+            s.stop();
+        }
+    });
+
     test('L1: not arrived: "I stopped at (x, y, z), N blocks from <name>." instead of "You have reached" (the player at the same height, no ladder step)', { timeout: 30000 }, async () => {
         agentSettings.setSettings({ routes_pack: false });
         const s = scene({ pos: [2.5, 61, -0.5], player: [10.5, 61, -0.5] });

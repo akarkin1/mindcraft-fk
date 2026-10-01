@@ -77,14 +77,17 @@ describe('passLadder: down', () => {
         assert.deepEqual(s.bot.clicks, []);
     });
 
-    test('stopped half way: reason interrupted, the text says so, the controls are released', async () => {
+    test('stopped half way: reason interrupted, the text says so, the controls are released and the bot holds on with sneak (F36)', async () => {
         const s = scene([2.5, 61, -0.5]);
         s.clock.onTick = () => {
             if (s.bot.entity.position.y < 52) s.bot.interrupt_code = true;
         };
         const r = await P.passLadder(s.bot, COLUMN, 'down', { clock: s.clock });
         assert.deepEqual(r, { ok: false, reason: 'interrupted', text: 'I could not go down the ladder at (2, 60, -2): I was stopped.' });
-        assert.ok(Object.values(s.bot.controls).every((on) => on === false), JSON.stringify(s.bot.controls));
+        const { sneak, ...rest } = s.bot.controls;
+        assert.ok(Object.values(rest).every((on) => on === false), JSON.stringify(s.bot.controls));
+        const onLadder = s.world.nameAt(s.feet().x, s.feet().y, s.feet().z) === 'ladder' && !s.bot.entity.onGround;
+        assert.equal(sneak, onLadder, `sneak only while hanging on a ladder: ${JSON.stringify(s.feet())} ${JSON.stringify(s.bot.controls)}`);
     });
 });
 

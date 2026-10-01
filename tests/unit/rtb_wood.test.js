@@ -26,7 +26,8 @@ function scene({ onWait = null } = {}) {
     const ctx = { areas: [], log: () => {}, now: clock.now, skills: { craftRecipe: fakeCraftRecipe(bot) } };
     return { bot, clock, ctx, opts: { now: clock.now, wait: clock.wait } };
 }
-const crafts = bot => bot.calls.filter(c => c[0] === 'craft').map(c => c[1]);
+// F32c: one craft per call, so the same item repeats; the steps are what the tests compare
+const crafts = bot => bot.calls.filter(c => c[0] === 'craft').map(c => c[1]).filter((x, i, a) => i === 0 || a[i - 1] !== x);
 
 describe('craftSupplies: torches and sticks from the logs the bot carries', () => {
     test('2 oak logs and 9 coal: planks, sticks, 8 torches; 32 torches too', async () => {
