@@ -240,20 +240,35 @@ export function mineLabel(mine) {
     return mine?.entrance ? `the mine at ${posText(mine.entrance)}` : 'the mine';
 }
 
+/** The steps a trail keeps when the setting trail_max_steps is missing (spec section 2). */
+export const TRAIL_MAX_STEPS = 500;
+
 /**
- * The text of rememberMine without an entrance (spec B2):
- * `I was not under open sky in my last 40 steps. Walk with me from the entrance of the mine and tell me again.`
+ * The text of rememberMine without an entrance (spec B2), no step of the trail under open sky. A
+ * trail that is not full has every step since the bot started (fix round F24, item 4: a bot that
+ * spawned underground):
+ * `I have not been under open sky since I started. Walk with me from the entrance of the mine and tell me again.`
+ * A full trail (`maxSteps` steps, the setting trail_max_steps) may have lost the step under the sky:
+ * `I was not under open sky in my last 500 steps. Walk with me from the entrance of the mine and tell me again.`
+ * Fewer than 2 steps: `I have no trail yet. ...`
  * @param {number} steps the steps of the trail
+ * @param {number} [maxSteps]
  * @returns {string}
  */
-export function noEntranceText(steps) {
+export function noEntranceText(steps, maxSteps = TRAIL_MAX_STEPS) {
     const n = Number.isFinite(steps) ? steps : 0;
     if (n < 2) {
         // the fix round of v0.1.4.9: "my last 0 steps" read oddly
         return 'I have no trail yet. Walk with me from the entrance of the mine and tell me again.';
     }
+    if (n < (Number.isFinite(maxSteps) && maxSteps > 0 ? maxSteps : TRAIL_MAX_STEPS)) {
+        return 'I have not been under open sky since I started. Walk with me from the entrance of the mine and tell me again.';
+    }
     return `I was not under open sky in my last ${n} steps. Walk with me from the entrance of the mine and tell me again.`;
 }
+
+/** The end of the text of a trip that had no torches (fix round F24, item 3). */
+export const NO_TORCHES_TEXT = 'I had no torches, the tunnel is dark.';
 
 /**
  * The way in of a mine in words (spec B2, like A2): `6 steps with 1 ladder and 1 trapdoor`; the

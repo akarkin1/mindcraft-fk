@@ -194,6 +194,34 @@ export function woodOfInventory(inventory, prefer = null) {
     return { kind: best.kind, planks: best.planks, logs: best.logs };
 }
 
+/**
+ * The kind of log to make planks from (fix round F24, item 2): the preferred kind when it has the
+ * logs for `crafts` crafts, else oak when it has them, else the kind with most logs, oak first among
+ * equals. null when the bot carries no log of any kind.
+ * @param {object[]} inventory
+ * @param {number} crafts the planks crafts needed (1 log each)
+ * @param {string|null} [prefer]
+ * @returns {string|null}
+ */
+export function logKindFor(inventory, crafts, prefer = null) {
+    const counts = countsOf(inventory);
+    const logs = kind => counts[logItemOf(kind)] ?? 0;
+    const n = Math.max(1, Number.isFinite(crafts) ? crafts : 1);
+    if (WOOD_KINDS.includes(prefer) && logs(prefer) >= n) {
+        return prefer;
+    }
+    if (logs('oak') >= n) {
+        return 'oak';
+    }
+    let best = null;
+    for (const kind of WOOD_KINDS) {
+        if (logs(kind) > 0 && (!best || logs(kind) > logs(best))) {
+            best = kind;
+        }
+    }
+    return best;
+}
+
 // The planner behind craftSteps and supplySteps. `need` lists what one product needs in all:
 // planks, sticks, other items ({ name, count, accepts, sum }), a crafting table. The steps are:
 // the things to get, planks from logs, sticks from planks, the crafting table, the product.
@@ -213,8 +241,34 @@ function plan(inventory, need, options) {
     const sticks = need.sticks ?? 0;
     const stickCrafts = Math.ceil(Math.max(0, sticks - (counts.stick ?? 0)) / STICKS_PER_CRAFT) + (need.stickCrafts ?? 0);
     const tableCrafts = need.table && !(counts.crafting_table > 0) && options?.table !== true ? 1 : 0;
-    const planksNeeded = (need.planks ?? 0) + stickCrafts * PLANKS_PER_STICK_CRAFT + tableCrafts * PLANKS_PER_TABLE;
-    const plankCrafts = Math.ceil(Math.max(0, planksNeeded - wood.planks) / PLANKS_PER_LOG) + (need.plankCrafts ?? 0);
+    // Fix round F24 (item 2): sticks take 2 planks of one kind per craft, of any kind: when sticks
+    // are the only use of planks (torches, sticks), the pairs of the planks of the other kinds count
+    // for them; otherwise (a table, a chest, a wooden tool need planks of one kind, and the library
+    // may take any kind for the sticks) one kind as before. Planks are made from logs: the kind with
+    // the fewest logs short, the kind with most wood first, else the logs the bot carries, oak first.
+    const otherPlanks = (need.planks ?? 0) + tableCrafts * PLANKS_PER_TABLE;
+    const stickPlanks = stickCrafts * PLANKS_PER_STICK_CRAFT;
+    const crafting = kind => {
+        const planks = counts[planksOf(kind)] ?? 0;
+        const pairs = need.woodKind || otherPlanks > 0 ? 0 : WOOD_KINDS.filter(k => k !== kind)
+            .reduce((sum, k) => sum + Math.floor((counts[planksOf(k)] ?? 0) / PLANKS_PER_STICK_CRAFT) * PLANKS_PER_STICK_CRAFT, 0);
+        const needed = otherPlanks + Math.max(0, stickPlanks - pairs);
+        return Math.ceil(Math.max(0, needed - planks) / PLANKS_PER_LOG) + (need.plankCrafts ?? 0);
+    };
+    let plankCrafts = crafting(wood.kind);
+    if (!need.woodKind && plankCrafts > wood.logs) {
+        const kind = logKindFor(inventory, plankCrafts);
+        if (kind && kind !== wood.kind) {
+            const crafts = crafting(kind);
+            const logs = counts[logItemOf(kind)] ?? 0;
+            if (Math.max(0, crafts - logs) <= Math.max(0, plankCrafts - wood.logs)) {
+                wood.kind = kind;
+                wood.planks = counts[planksOf(kind)] ?? 0;
+                wood.logs = logs;
+                plankCrafts = crafts;
+            }
+        }
+    }
     const logsShort = Math.max(0, plankCrafts - wood.logs);
     if (logsShort > 0) {
         missing.push({ name: logItemOf(wood.kind), count: logsShort });
@@ -226,6 +280,9 @@ function plan(inventory, need, options) {
         }
     };
     craft(planksOf(wood.kind), plankCrafts, PLANKS_PER_LOG);
+    if (!need.woodKind && plankCrafts > 0) {
+        steps[steps.length - 1].anyWood = true; // the kind of log may change at run time (logKindFor)
+    }
     craft('stick', stickCrafts, STICKS_PER_CRAFT);
     craft('crafting_table', tableCrafts, 1);
     if (need.product) {
@@ -342,7 +399,9 @@ export function stepIngredients(step, inventory) {
         const log = logItemOf(item.replace(/_planks$/, ''));
         add(log, 1, counts[log] ?? 0);
     } else if (item === 'stick') {
-        add(planks.name, PLANKS_PER_STICK_CRAFT, planks.count);
+        // fix round F24 (item 2): a stick craft takes 2 planks of one kind, any kind: the pairs of every kind count
+        const pairs = WOOD_KINDS.reduce((sum, k) => sum + Math.floor((counts[planksOf(k)] ?? 0) / PLANKS_PER_STICK_CRAFT) * PLANKS_PER_STICK_CRAFT, 0);
+        add(planks.name, PLANKS_PER_STICK_CRAFT, pairs);
     } else if (item === 'crafting_table') {
         add(planks.name, PLANKS_PER_TABLE, planks.count);
     } else if (item === 'chest') {

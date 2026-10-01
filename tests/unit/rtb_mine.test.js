@@ -164,7 +164,11 @@ describe('rememberMine (B2)', () => {
         s.ctx.routes = fakeRoutes(s.bot, { steps: trailSteps().map(p => ({ ...p, sky: false })) });
         const r = await P.rememberMine(s.bot, s.ctx, 'mine');
         assert.equal(r.reason, 'no_entrance');
-        assert.equal(r.text, 'I was not under open sky in my last 48 steps. Walk with me from the entrance of the mine and tell me again.');
+        assert.equal(r.text, 'I have not been under open sky since I started. Walk with me from the entrance of the mine and tell me again.',
+            'fix round F24 (item 4): 48 steps, the trail is not full');
+        s.ctx.settings = { mine_routes: true, trail_max_steps: 48 };
+        assert.equal((await P.rememberMine(s.bot, s.ctx, 'mine')).text,
+            'I was not under open sky in my last 48 steps. Walk with me from the entrance of the mine and tell me again.', 'a full trail');
         assert.equal(s.ctx.mines.list().length, 0);
     });
 });
@@ -648,5 +652,61 @@ describe('F24: the side step of digTunnel keeps the corners for the way back', (
         assert.deepEqual(key(P.wayBackHops(s.ctx.mines.byName('mine'), t.end)), ['21,34,13', '21,34,5', '21,34,2', '21,34,10', '21,34,13'], 'whole');
         assert.deepEqual(P.wayBack(s.ctx.mines.byName('mine'), t.end), { hops: [{ x: 21, y: 34, z: 13 }], leg: 5 },
             'this way in runs along the tunnel: the walk back ends at the corner, on the last leg');
+    });
+});
+
+describe('fix round F24, items 1, 3 and 4', () => {
+    test('item 1: a dropped item is known by its name; the deprecated objectType is never read', async () => {
+        const s = await scene({ pos: [0.5, 64, 0.5], world: makeWorld() });
+        let warned = 0;
+        const item = { id: 700, name: 'item', item: 'raw_iron', count: 1, position: { x: 2.5, y: 64, z: 0.5 } };
+        Object.defineProperty(item, 'objectType', { get() { warned++; console.trace('Warning: entity.objectType is deprecated.'); return 'Item'; } });
+        s.bot.entities[700] = item;
+        assert.equal(P.isDroppedItem(item), true);
+        assert.equal(P.isDroppedItem({ name: 'zombie' }), false);
+        assert.equal(P.isDroppedItem({ displayName: 'Item' }), false, 'no name: no item');
+        const out = [];
+        const saved = { trace: console.trace, log: console.log, warn: console.warn, error: console.error };
+        for (const k of Object.keys(saved)) console[k] = (...a) => out.push(a.join(' '));
+        try {
+            const r = await P.collectDrops(s.bot, { x: 0, y: 64, z: 0 }, { clock: s.clock, radius: 6 });
+            assert.equal(r.ok, true);
+        } finally {
+            Object.assign(console, saved);
+        }
+        assert.equal(warned, 0, 'objectType read');
+        assert.deepEqual(out, [], 'no console output');
+        assert.equal(count(s.bot, 'raw_iron'), 1);
+    });
+
+    test('item 3: a trip in the mine of the player without torches asks for them first; without any it says the tunnel is dark', async () => {
+        const s = await known();
+        s.bot.inventory.list = s.bot.inventory.list.filter(i => i.name !== 'torch');
+        s.world.set(21, 34, 15, 'iron_ore');
+        const asked = [];
+        const said = [];
+        s.ctx.say = t => said.push(t);
+        s.ctx.storage.fetchItem = async (b, c, name, n) => { asked.push(['fetch', name, n]); return { ok: false, taken: 0 }; };
+        s.ctx.tools = { async craftSupplies(b, c, name, n) { asked.push(['craft', name, n, digs(s.bot).length]); return { ok: false, text: 'no' }; } };
+        const r = await P.mineOre(s.bot, s.ctx, 'iron', 1, s.opts);
+        assert.equal(r.ok, true, r.text);
+        assert.deepEqual(said, ['I get my supplies: 16 torches.']);
+        assert.deepEqual(asked, [['fetch', 'torch', 16], ['craft', 'torch', 16, 0]], 'from the chests, then crafted, before any dig; no ladder, no chest');
+        assert.match(r.text, / I had no torches, the tunnel is dark\.$/);
+        const lit = await known();
+        lit.world.set(21, 34, 15, 'iron_ore');
+        const ok = await P.mineOre(lit.bot, lit.ctx, 'iron', 1, lit.opts);
+        assert.doesNotMatch(ok.text, /tunnel is dark/);
+    });
+
+    test('item 4: goToMine with mine_routes takes the nearest mine with a tunnel, whatever the ore, and walks in by the route', async () => {
+        const s = await known();
+        const g = await P.goToMine(s.bot, s.ctx, 'coal', s.opts);
+        assert.deepEqual([g.ok, g.text], [true, 'I am in the mine "mine".']);
+        assert.deepEqual(s.ctx.routes.calls.map(c => c.reverse), [false]);
+        assert.equal((await P.goToMine(s.bot, s.ctx, 'mithril', s.opts)).reason, 'unknown_ore');
+        const off = await known({ settings: {} });
+        const o = await P.goToMine(off.bot, off.ctx, 'coal', off.opts);
+        assert.equal(o.text, 'I know no mine for coal. Tell me to mine coal and I make one.', 'without the switch as before');
     });
 });

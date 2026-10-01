@@ -30,7 +30,9 @@ describe('B2: rememberMine', () => {
 
     test('no trail, no entrance', () => {
         assert.equal(T.TEXTS.noTrail, 'I have no trail. The routes pack is off.');
-        assert.equal(T.noEntranceText(40), 'I was not under open sky in my last 40 steps. Walk with me from the entrance of the mine and tell me again.');
+        assert.equal(T.noEntranceText(40), 'I have not been under open sky since I started. Walk with me from the entrance of the mine and tell me again.');
+        assert.equal(T.noEntranceText(500, 500), 'I was not under open sky in my last 500 steps. Walk with me from the entrance of the mine and tell me again.');
+        assert.equal(T.noEntranceText(40, 40), 'I was not under open sky in my last 40 steps. Walk with me from the entrance of the mine and tell me again.');
     });
 });
 

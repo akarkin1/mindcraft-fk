@@ -31,10 +31,10 @@ import {
     usablePickaxes, veinParts,
 } from './mine_logic.js';
 import { MineStore } from './mine_store.js';
-import { chooseMine, mineRoutesOn, senseRangeOf, walksRoute, wayIn, wayOut } from './mine_way.js';
+import { MINE_RANGE, chooseMine, mineRoutesOn, senseRangeOf, walksRoute, wayIn, wayOut } from './mine_way.js';
 import { ORES, isOreBlock, oreOf, targetLevel, tripPickaxe } from './ore_table.js';
 import {
-    STOP_REASONS, TEXTS, askMineText, cannotMineText, descendText, mineLabel, mineOreText, noTunnelText, passedText, posText,
+    NO_TORCHES_TEXT, STOP_REASONS, TEXTS, askMineText, cannotMineText, descendText, mineLabel, mineOreText, noTunnelText, passedText, posText,
     suppliesStoppedText, suppliesText, tunnelText, unknownOreText,
 } from './texts.js';
 
@@ -1997,13 +1997,14 @@ export async function mineOre(bot, ctx = {}, ore = '', count = 8, options = {}) 
     let mine = null;
     let tunnel = null;
     let reason = null;
+    let dark = false; // fix round F24 (item 3): the tunnel was dug without a torch
     const mined = () => Math.max(0, countOf(bot, row.item) - startCount) + (stored[row.item] ?? 0);
     const finish = (ok, why, extra = '') => ({
         ok, reason: why, mined: mined(), stored, mine,
         text: mineOreText({
             item: row.item, mined: mined(), wanted, reason: why, mine: shownMine(mine, tunnel),
             stored: Object.fromEntries(Object.entries(stored).filter(([k]) => k !== row.item)),
-            extra: [passedText(leftOnTrip(mine, left)), extra].filter(t => t.length > 0).join(' '),
+            extra: [passedText(leftOnTrip(mine, left)), dark ? NO_TORCHES_TEXT : '', extra].filter(t => t.length > 0).join(' '),
         }),
     });
     // the clock of the tests goes to every step
@@ -2097,6 +2098,9 @@ export async function mineOre(bot, ctx = {}, ore = '', count = 8, options = {}) 
                 tunnel = 0;
             }
         }
+        // the supplies of prepareMiningTrip were asked for (chests, then crafted); none at all: the trip
+        // still runs, and its text says so at the end
+        dark = countOf(bot, 'torch') === 0;
         const depth = mine.entrance.y - (shownMine(mine, tunnel)?.level ?? mine.level);
         const tunnelLength = () => shownMine(mine, tunnel)?.length ?? mine.length;
         let depositsWithoutProgress = 0;
@@ -2163,7 +2167,10 @@ export async function mineOre(bot, ctx = {}, ore = '', count = 8, options = {}) 
 /**
  * `!goToMine`: goes down into the mine of the ore, without an ore the nearest mine, and sets up
  * its base when it has none. With mine_routes (v0.1.4.9) the mines of the player count too: the
- * way of such a mine is walked with walkRoute, and its room is left as it is.
+ * way of such a mine is walked with walkRoute, and its room is left as it is. Fix round F24 (item
+ * 4): with mine_routes the mine is the nearest one within 64 blocks that has a tunnel (else the
+ * nearest within 64), whatever the ore; an ore only has to be known. Without a mine in reach, the
+ * choice of v0.1.4.8.
  * @param {object} bot
  * @param {object} ctx
  * @param {string} [ore]
@@ -2175,19 +2182,28 @@ export async function goToMine(bot, ctx = {}, ore = '', options = {}) {
         const store = storeOf(ctx);
         const routes = makeJob(bot, ctx, options).mineRoutes;
         let mine = null;
+        if (routes) {
+            let near = [];
+            try {
+                near = store?.within?.(feetOf(bot), dimensionOf(bot) ?? undefined, MINE_RANGE) ?? [];
+            } catch {
+                near = [];
+            }
+            mine = near.find(m => tunnelsOf(m).length > 0) ?? near[0] ?? null;
+        }
         if (typeof ore === 'string' && ore.trim().length > 0) {
             const row = oreOf(ore);
             if (!row) {
                 return { ok: false, reason: 'unknown_ore', text: unknownOreText(ore), mine: null };
             }
-            mine = (routes ? chooseMine(store, feetOf(bot), dimensionOf(bot), row).mine : null) ?? store?.get(row.ore, dimensionOf(bot) ?? undefined) ?? null;
+            mine = mine ?? store?.get(row.ore, dimensionOf(bot) ?? undefined) ?? null;
             if (!mine) {
                 return { ok: false, reason: 'no_mine', text: `I know no mine for ${row.ore}. Tell me to mine ${row.ore} and I make one.`, mine: null };
             }
         } else {
             const feet = feetOf(bot);
             const list = (store ? store.list(dimensionOf(bot) ?? undefined) : []).filter(m => routes || m.source !== 'player');
-            mine = list.map(m => ({ m, d: feet ? Math.hypot(m.entrance.x - feet.x, m.entrance.z - feet.z) : 0 })).sort((a, b) => a.d - b.d)[0]?.m ?? null;
+            mine = mine ?? list.map(m => ({ m, d: feet ? Math.hypot(m.entrance.x - feet.x, m.entrance.z - feet.z) : 0 })).sort((a, b) => a.d - b.d)[0]?.m ?? null;
             if (!mine) {
                 return { ok: false, reason: 'no_mine', text: TEXTS.noMine, mine: null };
             }

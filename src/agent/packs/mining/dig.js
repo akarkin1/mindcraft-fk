@@ -675,10 +675,23 @@ export async function walkTo(bot, p, options = {}) {
     return { ok: false, reason: r.reason ?? 'no_path' };
 }
 
+/** The names prismarine-entity gives a dropped item (its getDroppedItem uses the same three). */
+const ITEM_ENTITY_NAMES = Object.freeze(['item', 'Item', 'item_stack']);
+
+/**
+ * True for the entity of an item on the ground, by its `name`, as world.getNearbyItems of the
+ * library and getDroppedItem of prismarine-entity read it. Never reads the deprecated
+ * `objectType` or `mobType`: their getters print a warning with a stack on every read.
+ * @param {object} entity
+ * @returns {boolean}
+ */
+export function isDroppedItem(entity) {
+    return Boolean(entity) && typeof entity.name === 'string' && ITEM_ENTITY_NAMES.includes(entity.name);
+}
+
 function droppedItems(bot, center, radius) {
     try {
-        return Object.values(bot.entities ?? {}).filter(e => e && e !== bot.entity && e.position
-            && (e.name === 'item' || e.displayName === 'Item' || e.objectType === 'Item')
+        return Object.values(bot.entities ?? {}).filter(e => e && e !== bot.entity && e.position && isDroppedItem(e)
             && Math.hypot(e.position.x - center.x, e.position.y - center.y, e.position.z - center.z) <= radius);
     } catch {
         return [];

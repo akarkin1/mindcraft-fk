@@ -21,12 +21,12 @@ export { AIR_NAMES, AREA_DISTANCE, DEFAULT_TUNNEL_LENGTH, DIRECTIONS, ENTRANCE_A
 export { BRANCH_EVERY, BRANCH_FROM, BRANCH_LENGTH, CORRIDOR_LIMIT, MAX_PASSED, MAX_SENSE_RANGE, PASSED_REASONS, addPassedEntry, branchCells,
     branchPlan, cleanPassedEntry, corridorDirections, isCorridor, legCells, legEnd, measureTunnel, mineAt, mineDistance, nearestLeg,
     removePassedAt, roomBox, senseCut, NATURAL_NAMES, WAY_BACK_HOP, WAY_BACK_REACH, isNaturalBlock, knownCells, wayBack, wayBackHops, senseOres, tunnelCells, tunnelDirection, tunnelFor, tunnelsOf, veinParts } from './mine_logic.js';
-export { STOP_REASONS, TEXTS, article, askMineText, cannotMineText, collectPassedText, descendText, mineLabel, mineOreText, mineText,
+export { NO_TORCHES_TEXT, STOP_REASONS, TEXTS, TRAIL_MAX_STEPS, article, askMineText, cannotMineText, collectPassedText, descendText, mineLabel, mineOreText, mineText,
     noEntranceText, noTunnelText, passedText, rememberMineText, rememberTunnelText, suppliesStoppedText, suppliesText, tunnelText,
     unknownOreText, wayBlockedText, wayWords } from './texts.js';
 export { DOOR_KINDS, MINE_FILE, MineStore, NEAREST_RANGE, SHAFT_KINDS, cleanMineName, mineKey } from './mine_store.js';
 export { FALL_TRIES, FILLERS, REACH, blockAt, collectDrops, countOf, digBlock, digClear, equipPickaxe, fillerCount, fillerOf, freeSlots,
-    inventoryList, isFree, isSolid, logicName, nameReader, patchAll, placeInto, placeTorch, race, referenceFor, usesLeftOf,
+    inventoryList, isDroppedItem, isFree, isSolid, logicName, nameReader, patchAll, placeInto, placeTorch, race, referenceFor, usesLeftOf,
     walkTo } from './dig.js';
 export { climbUp, followDown, followUp, placeLadder, slideDown, waitStanding, yawOf } from './ladder.js';
 export { BRANCH_BLOCKED, DEFAULT_MAX_MINUTES, MAX_SHAFT_MOVES, PROPOSAL_MS, TUNNEL_CHUNK, climbToSurface, currentMine, depositAtBase,
