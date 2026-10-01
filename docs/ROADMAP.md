@@ -38,6 +38,29 @@ From the play of 2026-10-01: the bot mined well until it ran out of torches, the
 
 Why first: the owner saw the bot idle through 20 minutes of guided crafting and never return to the job. The same idea made `!farmCycle` work once the whole cycle was code.
 
+The same release takes the path search in hand. mindcraft-ce was checked on 2026-10-01: its navigation is upstream Mindcraft unchanged, its pathfinder patch is byte-identical to ours; nothing to take. The gains are in our own patch of `mineflayer-pathfinder`:
+
+| Part | Content |
+|---|---|
+| Trapdoors | A closed trapdoor counts as a block to stand on only over solid ground, never over a ladder or air; an openable block is passable only when the move goes through it. Today the bot stands on the closed trapdoor. |
+| Down a ladder | A move of one rung down when the block below is a ladder or a vine; the bot slides when the next point is lower. The path search then descends a shaft by itself, and the ladder code of the packs becomes the fallback. |
+| Doors | Every door point of a path is centred, not only the first; the arrival tolerance at doors and ladders stays at 0.35. The doorway swinging goes. |
+| Holes and hollow blocks | Slabs, stairs, cauldrons, composters and hoppers get a no-stand rule in the search itself (the list of `stand_logic.js`), and a one-wide pit with a high exit a cost. |
+| Stuck | A cell where the bot got stuck gets a temporary high cost before the path is planned again, so the next plan takes another way. Part of the unstuck escape becomes unnecessary. |
+| Known routes | Later: the cells of a walked route get a discount in the search, so the bot prefers known ways. |
+
+Also in 0.1.4.10, from the play tests of 0.1.4.9:
+
+| Part | Content |
+|---|---|
+| The pen | The item reflex never opens a gate of a pen or a farm and never enters an area of type pen; a saved rule of the player about an area reaches the reflexes as a flag of the area. |
+| Floors | The scan of a building stops at a floor: a house above a basement gives two areas, or one area with floors, so that "the basement" and "the house" are different places for the bot and the shelter. A scan that gives the box of an existing area answers that it is that area. |
+| `!forgetMine`, `!mines` | A mine can be forgotten by name and listed. A mine named with a number no longer collides with a mine of the bot. |
+| Scorecard | `node scripts/scorecard.js <log>`: the numbers of a play log in one table: minutes, processes and why they ended, orders and orders without a result, calls and cost per model, "I'm stuck", doors left open. The analysis of a play test takes a minute. |
+| Test base from the owner's world | `scripts/dump_region.js`, run by the owner once: the blocks around home into a JSON; the test base is built from it. |
+| A play scenario with the model | `npm run test:play`: the first ten minutes with the chat model of the profile, on the owner's machine only, about 10 cents with Luna. The only test in which the model talks. |
+| Chat model | Decided from the routing check with Luna and Haiku: accuracy, time per answer, cost. |
+
 ## 0.1.4.11 Understanding and watching
 
 ### Part A: the bot picks better examples
