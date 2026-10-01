@@ -38,10 +38,11 @@ import * as homePack from './packs/home/index.js';
 import { whereAmI as whereAmIOf } from './reflex/where_am_i.js';
 import { installChatLimit } from './reflex/chat_limit.js';
 import { WAKE_RULES, shouldWakeFor } from './reflex/wake_logic.js';
-import { knowledgeText } from './knowledge/knowledge_text.js';
+import { knowledgeText, whereLine, KNOWLEDGE_HEADER } from './knowledge/knowledge_text.js';
 import { writeExit, readExit, restartNote } from './restart_context.js';
 import { RepeatGuard } from './repeat_guard.js';
 import { withTimeLimit } from '../utils/kill_timer.js';
+import { createJob, JobStore, JOB_FILE } from './job/index.js'; // v0.1.4.10: no pack; createJob runs only with job_memory
 
 // v0.1.4.8: the longest wait of a step at spawn that talks to the server (the move out of the off-hand)
 const SPAWN_STEP_MS = 5000;
@@ -62,6 +63,25 @@ export function trailMaxSteps(value) {
 
 // v0.1.4.9: the warning at the start when mine_routes is on without routes_pack
 export const MINE_ROUTES_WARNING = 'mine_routes needs routes_pack. The mine routes are off.';
+
+// v0.1.4.10 (I4): the job of the bot is looked at every this many milliseconds, with job_memory
+export const JOB_TICK_MS = 5000;
+// v0.1.4.10: the warning at the start when idle_jobs has entries without job_memory
+export const IDLE_JOBS_WARNING = 'idle_jobs needs job_memory. The list does not run.';
+
+// v0.1.4.10 (I4, G 2): the knowledge block with the line of the job right after the where line (after the
+// header when the block has no where line); the block alone without a line; the header and the line without a
+// block. where: the where line of the block, '' without one.
+export function withJobLine(block, where, line) {
+    if (typeof line !== 'string' || line.trim() === '')
+        return block;
+    if (typeof block !== 'string' || block === '')
+        return `${KNOWLEDGE_HEADER}\n${line}`;
+    const lines = block.split('\n');
+    const at = typeof where === 'string' && where !== '' && lines[1] === where ? 2 : 1;
+    lines.splice(at, 0, line);
+    return lines.join('\n');
+}
 
 // v0.1.4.9 (I6, C for G 2): a mine without its list of the ore left behind, for the knowledge block while
 // mine_routes is off, so that old entries do not show
@@ -183,6 +203,24 @@ export class Agent {
             }
         }
 
+        // v0.1.4.10 (I4): with job_memory, the job of the bot in bots/<name>/job.json; null without it (no object,
+        // no tick). The orders it runs itself are system orders; the model is asked only for the steps of a plan.
+        this.job = null;
+        if (settings.job_memory === true) {
+            try {
+                this.job = createJob(this, new JobStore(`./bots/${this.name}/${JOB_FILE}`), {
+                    settings,
+                    executeCommand: (text, options) => this._runJobOrder(text, options),
+                    askModel: (prompt) => this.prompter.promptPlan(prompt),
+                });
+            } catch (error) {
+                this.job = null;
+                console.warn('Could not start the job memory:', error);
+            }
+        } else if (Array.isArray(settings.idle_jobs) && settings.idle_jobs.length > 0) {
+            console.warn(IDLE_JOBS_WARNING);
+        }
+
         if (settings.world_memory)
             this.history = new History(this, { defer_storage: true }); // storage is set when the world is known
         else
@@ -279,6 +317,8 @@ export class Agent {
             this.blocked_actions.push('!chopTrees', '!getTool', '!craftSupplies');
         if (!settings.mining_pack || !this.work_packs?.mining)
             this.blocked_actions.push('!mineOre', '!goToMine', '!leaveMine');
+        if (!settings.mining_pack || !this.work_packs?.mining)
+            this.blocked_actions.push('!mines', '!forgetMine'); // v0.1.4.10 (R4): the mines the bot knows
         // the parts of v0.1.4.9: the ways of the player (routes_pack), the mine of the player (mine_routes as it
         // takes effect, with mining_pack and routes_pack, both packs loaded)
         if (!settings.routes_pack || !this.work_packs?.routes)
@@ -371,9 +411,11 @@ export class Agent {
                 if (settings.routes_pack && this.work_packs)
                     this._trail(); // v0.1.4.9 (I1): the trail of this world starts
                 const restart_note = await this._atSpawn(); // v0.1.4.8: off-hand, house, doors, restart note
+                this._jobAtSpawn(); // v0.1.4.10 (I4): a running job says that it goes on
               
                 this._setupEventHandlers(save_data, withRestartNote(init_message, restart_note));
                 this.startEvents();
+                this._startJobTimer(); // v0.1.4.10 (I4): the job is looked at every 5 s
               
                 if (!load_mem) {
                     if (settings.task) {
@@ -687,16 +729,87 @@ export class Agent {
             const stores = this._workStores();
             const areas = (this.area_store?.list?.() ?? []).filter((area) => plain(area?.dimension) === plain(dimension));
             const mines = stores.mines?.list?.(dimension) ?? [];
-            return knowledgeText({
+            const where = { ...this.whereAmI(), pos: { x: pos.x, y: pos.y, z: pos.z } };
+            const max = numberSetting(settings.knowledge_max_chars, 600);
+            // v0.1.4.10 (I4): the line of the job after the where line, within knowledge_max_chars
+            const job = this._jobStatus();
+            const block = knowledgeText({
                 chests: stores.chests?.list?.(dimension) ?? [],
                 areas,
                 mines: this._mineRoutesOn() ? mines : mines.map(withoutPassed), // v0.1.4.9: the ore left behind only with mine_routes
                 places: this.memory_bank ?? null,
-                where: { ...this.whereAmI(), pos: { x: pos.x, y: pos.y, z: pos.z } },
-            }, numberSetting(settings.knowledge_max_chars, 600));
+                where,
+            }, job ? Math.max(max - job.length - 1, 1) : max);
+            return job ? withJobLine(block, whereLine(where), job) : block;
         } catch (error) {
             console.warn('Could not tell what the bot knows:', error);
             return '';
+        }
+    }
+
+    _jobStatus() {
+        // v0.1.4.10 (I4): the line of the job for the knowledge block, '' without job_memory or a job. Never throws.
+        if (!this.job)
+            return '';
+        try {
+            const line = this.job.status();
+            return typeof line === 'string' ? line.trim() : '';
+        } catch (error) {
+            console.warn('Could not tell the job:', error);
+            return '';
+        }
+    }
+
+    async _runJobOrder(text, options = {}) {
+        // v0.1.4.10 (I4): an order of the job (the resumed command, a step, an entry of idle_jobs) as a system
+        // order: through executeCommand, not through the model. Its result goes into the history, so the model
+        // knows it later. Never throws.
+        let result;
+        try {
+            result = await executeCommand(this, text, { ...options, by: 'system', typed: false });
+        } catch (error) {
+            console.warn('The order of the job failed:', error);
+            return { ok: false, reason: 'error', text: `${error?.message ?? error}` };
+        }
+        console.log(...(result === undefined ? ['Job order:', text, 'was stopped.'] : ['Job order:', text, 'got:', result]));
+        if (typeof result === 'string' && result !== '') {
+            try {
+                Promise.resolve(this.history?.add('system', shortenCommandResult(result, numberSetting(settings.max_command_result_chars, 0))))
+                    .catch((error) => console.warn('Could not note the result of the job order:', error));
+            } catch (error) {
+                console.warn('Could not note the result of the job order:', error);
+            }
+        }
+        return result;
+    }
+
+    _jobAtSpawn() {
+        // v0.1.4.10 (I4): at spawn, after the note about the restart: a running job says that it goes on. Never throws.
+        if (!this.job)
+            return;
+        try {
+            this.job.onRestart();
+        } catch (error) {
+            console.warn('Could not go on with the job:', error);
+        }
+    }
+
+    _startJobTimer() {
+        // v0.1.4.10 (I4): tick() of the job every JOB_TICK_MS, not awaited (it answers busy while one runs); once,
+        // only with job_memory. The timer does not keep the process alive. Never throws.
+        if (!this.job || this._job_timer)
+            return;
+        try {
+            this._job_timer = setInterval(() => {
+                try {
+                    Promise.resolve(this.job?.tick()).catch((error) => console.warn('The job failed:', error));
+                } catch (error) {
+                    console.warn('The job failed:', error);
+                }
+            }, JOB_TICK_MS);
+            this._job_timer.unref?.();
+        } catch (error) {
+            console.warn('Could not start the timer of the job:', error);
         }
     }
 
@@ -942,6 +1055,10 @@ export class Agent {
             console.warn('Could not save the blocks that the bot placed:', error);
         }
         this._stopTrail(); // v0.1.4.9 (I1): the trail is written; never throws
+        if (this._job_timer) {
+            clearInterval(this._job_timer); // v0.1.4.10: the job is looked at no more
+            this._job_timer = null;
+        }
         try {
             this.bot?.chatLimiter?.drop?.(); // v0.1.4.8 (X9): the chat lines that still wait are dropped
         } catch (error) {

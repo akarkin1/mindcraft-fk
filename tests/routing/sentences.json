@@ -163,5 +163,12 @@
     { "say": "collect the coal you passed", "expect": ["!collectPassedOre"], "part": "mine_routes" },
     { "say": "go back for the gold you left behind", "expect": ["!collectPassedOre"], "part": "mine_routes" },
     { "say": "get the ore you skipped in the mine", "expect": ["!collectPassedOre"], "part": "mine_routes" },
-    { "say": "you have an iron pickaxe now, fetch the gold you passed", "expect": ["!collectPassedOre"], "part": "mine_routes" }
+    { "say": "you have an iron pickaxe now, fetch the gold you passed", "expect": ["!collectPassedOre"], "part": "mine_routes" },
+
+    { "say": "which mines do you know?", "expect": ["!mines"], "part": "mining_pack" },
+    { "say": "list ur mines", "expect": ["!mines"], "part": "mining_pack" },
+    { "say": "how many mines do we have", "expect": ["!mines"], "part": "mining_pack" },
+    { "say": "forget the mine called old_mine", "expect": ["!forgetMine"], "part": "mining_pack" },
+    { "say": "the mine by the river caved in, forget it", "expect": ["!forgetMine", "!mines"], "part": "mining_pack" },
+    { "say": "that mine is gone, delete it from your list", "expect": ["!forgetMine", "!mines"], "part": "mining_pack" }
 ]

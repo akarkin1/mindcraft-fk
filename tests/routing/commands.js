@@ -2,7 +2,7 @@
 // (tests/unit/examples_valid.test.js) and the routing check (scripts/routing_check.js).
 // Pure data, no imports, no side effects.
 //
-// SPEC_COMMANDS are the commands of releases v0.1.4.6 to v0.1.4.9 that belong to a part, TAKEN FROM THE SPECS,
+// SPEC_COMMANDS are the commands of releases v0.1.4.6 to v0.1.4.10 that belong to a part, TAKEN FROM THE SPECS,
 // because they do not exist in the code while the parts are written. At the join the real
 // definitions in src/agent/commands/actions.js and queries.js take over: the example check
 // prefers a real definition over an entry of this table, and has a switch to use only the real
@@ -52,7 +52,7 @@ export const PART_COMMANDS = {
     storage_pack: ['!storeItems', '!fetchItem', '!chests'],
     farming_pack: ['!farmCycle', '!harvest', '!plant', '!makeBoneMeal', '!fertilize'],
     wood_pack: ['!chopTrees', '!getTool', '!craftSupplies'],
-    mining_pack: ['!mineOre', '!goToMine', '!leaveMine'],
+    mining_pack: ['!mineOre', '!goToMine', '!leaveMine', '!mines', '!forgetMine'], // v0.1.4.10 (R4): !mines, !forgetMine
     // v0.1.4.9: the commands of the routes pack and of the mine routes (I10 of its spec)
     routes_pack: ['!rememberRoute', '!routes', '!forgetRoute'],
     mine_routes: ['!rememberMine', '!rememberTunnel', '!collectPassedOre'],
@@ -110,6 +110,10 @@ export const SPEC_COMMANDS = [
     { name: '!goToMine', section: 'M5', part: 'mining_pack', params: [{ name: 'ore', type: 'string', default: '' }],
         description: 'Go down into your mine.' },
     { name: '!leaveMine', section: 'M5', part: 'mining_pack', params: [], description: 'Come up from the mine to the surface.' },
+    // v0.1.4.10 (R4 of its spec): the mines the bot knows; the descriptions are the glue's
+    { name: '!mines', section: 'R4', part: 'mining_pack', params: [], description: 'List your mines.' },
+    { name: '!forgetMine', section: 'R4', part: 'mining_pack', assumed: 'type of the parameter (string)', params: [{ name: 'name', type: 'string' }],
+        description: 'Forget a mine.' },
     // v0.1.4.9 (I10 of its spec): names, parameters and defaults; the descriptions are the glue's
     { name: '!rememberRoute', section: 'I10', part: 'routes_pack', assumed: 'type of the parameter (string)', params: [{ name: 'name', type: 'string' }] },
     { name: '!routes', section: 'I10', part: 'routes_pack', params: [] },

@@ -380,6 +380,19 @@ export class Prompter {
         return resp;
     }
 
+    // v0.1.4.10 (I4): one call of the chat model for the steps of a job (planPrompt of src/agent/job), counted
+    // under the purpose 'plan' of the cost meter. Returns the answer, '' for none.
+    async promptPlan(prompt) {
+        await this.checkCooldown();
+        let resp = await withPurposeOf(this.agent, 'plan', () => this.chat_model.sendRequest([], prompt));
+        await this._saveLog(prompt, [], resp, 'plan');
+        if (resp?.includes('</think>')) {
+            const [_, afterThink] = resp.split('</think>');
+            resp = afterThink;
+        }
+        return typeof resp === 'string' ? resp : '';
+    }
+
     async promptShouldRespondToBot(new_message) {
         await this.checkCooldown();
         let prompt = this.profile.bot_responder;

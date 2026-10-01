@@ -294,16 +294,76 @@ function typedBy(agent, options) {
     return typeof by === 'string' && by !== '' ? by : null;
 }
 
+// v0.1.4.10 (I4): who gave the command, for the job: 'system' for an order of the code (options.by 'system', or
+// a call without options.typed that is no typed order, such as the goal of a task), the name of the player (or
+// 'player') for a typed command, 'model' for a command of the model.
+function orderBy(agent, options, typed) {
+    if (options?.by === 'system')
+        return 'system';
+    if (typed)
+        return typedBy(agent, options) ?? 'player';
+    return options?.typed === false ? 'model' : 'system';
+}
+
+// v0.1.4.10 (I4): the items the bot carries, { name: count }; {} when they cannot be read. Never throws.
+function inventoryCounts(agent) {
+    const counts = {};
+    try {
+        for (const item of agent?.bot?.inventory?.items?.() ?? []) {
+            if (item && typeof item.name === 'string' && Number.isFinite(item.count))
+                counts[item.name] = (counts[item.name] ?? 0) + item.count;
+        }
+    } catch (error) {
+        // no inventory: no gain
+    }
+    return counts;
+}
+
+// v0.1.4.10 (I4): { name: after - before } for every item whose count changed.
+function inventoryGain(before, after) {
+    const gain = {};
+    for (const name of new Set([...Object.keys(before), ...Object.keys(after)])) {
+        const change = (after[name] ?? 0) - (before[name] ?? 0);
+        if (change !== 0)
+            gain[name] = change;
+    }
+    return gain;
+}
+
+// v0.1.4.10 (I4): onCommand of agent.job (job_memory) before the command runs. Never throws.
+function jobBefore(agent, running, by) {
+    try {
+        agent.job.onCommand(running.name, running.args, by, running.text);
+    } catch (error) {
+        console.warn('The job could not note the command:', error);
+    }
+}
+
+// v0.1.4.10 (I4): onResult of agent.job after the command ran: the result of the pack when there is one, else
+// the text; undefined for a stopped command; the gain of the inventory. Not awaited (a plan asks the model);
+// the part that ends a system order of the job runs at once. Never throws.
+function jobAfter(agent, running, result, before) {
+    try {
+        const value = result === undefined ? undefined : (running.pack ?? result);
+        Promise.resolve(agent.job.onResult(running.name, value, inventoryGain(before, inventoryCounts(agent))))
+            .catch((error) => console.warn('The job could not note the result:', error));
+    } catch (error) {
+        console.warn('The job could not note the result:', error);
+    }
+}
+
 /**
  * Runs the command in a message. v0.1.4.8: with the setting repeat_guard (agent.repeat_guard), a command
  * of the model that failed the same way again and again is refused before it runs; a command that the
  * player typed is recorded and never refused (see recordRepeat). While it runs, the command is on
  * agent.running_commands ({ name, args, text, typed, by?, pack? }), the last one is the newest. by (v0.1.4.8,
  * X4): the player who typed it, options.by or the player of agent.last_order; a stopped command tells him.
+ * v0.1.4.10 (I4): with agent.job (job_memory) its onCommand runs before the command and its onResult after it.
  * @param {object} agent
  * @param {string} message
  * @param {{typed?: boolean, by?: string}} [options] typed: the player typed the command in the chat; without it
- *   agent.last_order decides (an order with typed: true and the same command)
+ *   agent.last_order decides (an order with typed: true and the same command). by 'system' (v0.1.4.10): an
+ *   order of the job, never typed
  * @returns {Promise<string|undefined>}
  */
 export async function executeCommand(agent, message, options = {}) {
@@ -320,7 +380,7 @@ export async function executeCommand(agent, message, options = {}) {
         if (numArgs !== numParams(command))
             return `Command ${command.name} was given ${numArgs} args, but requires ${numParams(command)} args.`;
         else {
-            const typed = typeof options?.typed === 'boolean' ? options.typed : typedOrder(agent, command.name);
+            const typed = options?.by === 'system' ? false : (typeof options?.typed === 'boolean' ? options.typed : typedOrder(agent, command.name));
             const guard = agent?.repeat_guard ?? null;
             if (guard && !typed) {
                 const refusal = guard.check(command.name, parsed.args);
@@ -335,9 +395,15 @@ export async function executeCommand(agent, message, options = {}) {
                 running.by = by;
             const list = agent && typeof agent === 'object' ? (Array.isArray(agent.running_commands) ? agent.running_commands : (agent.running_commands = [])) : [];
             list.push(running);
+            const job = agent?.job ?? null; // v0.1.4.10: null without job_memory
+            const before = job ? inventoryCounts(agent) : null;
+            if (job)
+                jobBefore(agent, running, orderBy(agent, options, typed));
             try {
                 const result = await command.perform(agent, ...parsed.args);
                 recordRepeat(guard, command.name, parsed.args, result, running.pack);
+                if (job)
+                    jobAfter(agent, running, result, before);
                 return result;
             } finally {
                 const at = list.indexOf(running);
