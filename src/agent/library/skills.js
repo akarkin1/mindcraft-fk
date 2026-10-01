@@ -2268,13 +2268,16 @@ export async function followPlayer(bot, username, distance=4) {
             const cell = feetCellOf(bot);
             const gap = ladderGap(bot, player.position);
             // still_gap is the smallest height difference since the clock started: bobbing does not beat it
-            if (cell.x !== still_cell.x || cell.z !== still_cell.z || gap < still_gap - 0.5) {
+            // v0.1.4.10 (P6): the clock runs only while the player is 2 or more blocks above or below, so that the path
+            // search, which climbs and descends ladders itself, has its 3 s before the fallback step
+            if (cell.x !== still_cell.x || cell.z !== still_cell.z || gap < still_gap - 0.5 || gap < LADDER_GAP) {
                 still_cell = cell;
                 still_gap = gap;
                 still_since = Date.now();
             }
             const idle = Date.now() - still_since >= 3000 || !bot.pathfinder.goal;
-            if (idle && gap >= LADDER_GAP) {
+            // v0.1.4.10 (P6): a stop clears the goal of the path search; that is no reason for the step
+            if (idle && gap >= LADDER_GAP && !bot.interrupt_code) {
                 // the path search is stopped only when a pass begins
                 const step = await ladderStepTowards(bot, player.position, { after: username, passes: ladder_passes,
                     log: (text) => log(bot, text), onPass: () => bot.pathfinder.setGoal(null) });

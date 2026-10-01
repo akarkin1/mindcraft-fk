@@ -1,5 +1,5 @@
 diff --git a/node_modules/mineflayer-pathfinder/index.js b/node_modules/mineflayer-pathfinder/index.js
-index b38bd30..2ba8c31 100644
+index b38bd30..603dedc 100644
 --- a/node_modules/mineflayer-pathfinder/index.js
 +++ b/node_modules/mineflayer-pathfinder/index.js
 @@ -12,8 +12,11 @@ const Physics = require('./lib/physics')
@@ -14,16 +14,17 @@ index b38bd30..2ba8c31 100644
    const ladderId = bot.registry.blocksByName.ladder.id
    const vineId = bot.registry.blocksByName.vine.id
    let stateMovements = new Movements(bot)
-@@ -29,6 +32,8 @@ function inject (bot) {
+@@ -29,6 +32,9 @@ function inject (bot) {
    let lastNodeTime = performance.now()
    let returningPos = null
    let stopPathing = false
 +  let lastClimbY = null // P2: the height of the feet on a ladder at the last tick
++  let passedTrapdoor = null // P2: { x, y, z, since } of the trapdoor over a ladder the feet passed
 +  let stuckMarks = [] // P5: { x, y, z, until } of the points the bot got stuck before
    const physics = new Physics(bot)
    const lockPlaceBlock = new Lock()
    const lockEquipItem = new Lock()
-@@ -61,6 +66,10 @@ function inject (bot) {
+@@ -61,6 +67,10 @@ function inject (bot) {
    }
  
    bot.pathfinder.getPathTo = (movements, goal, timeout) => {
@@ -34,7 +35,7 @@ index b38bd30..2ba8c31 100644
      const generator = bot.pathfinder.getPathFromTo(movements, bot.entity.position, goal, { timeout })
      const { value: { result, astarContext: context } } = generator.next()
      astarContext = context
-@@ -84,6 +93,10 @@ function inject (bot) {
+@@ -84,13 +94,17 @@ function inject (bot) {
        const offset = (b && dy > 0.001 && bot.entity.onGround && !stateMovements.emptyBlocks.has(b.type)) ? 1 : 0
        start = new Move(p.x, p.y + offset, p.z, movements.countScaffoldingItems(), 0)
      }
@@ -45,7 +46,27 @@ index b38bd30..2ba8c31 100644
      if (movements.allowEntityDetection) {
        if (resetEntityIntersects) {
          movements.clearCollisionIndex()
-@@ -165,12 +178,41 @@ function inject (bot) {
+       }
+       movements.updateCollisionIndex()
+     }
+-    const astarContext = new AStar(start, movements, goal, timeout, tickTimeout, searchRadius)
++    const astarContext = new AStar(start, movements, floorGoal(goal), timeout, tickTimeout, searchRadius)
+     let result = astarContext.compute()
+     if (optimizePath) result.path = postProcessPath(result.path)
+     yield { result, astarContext }
+@@ -135,7 +149,10 @@ function inject (bot) {
+     lockPlaceBlock.release()
+     lockUseBlock.release()
+     stateMovements.clearCollisionIndex()
+-    if (clearStates) bot.clearControlStates()
++    if (clearStates) {
++      bot.clearControlStates()
++      holdOnLadder()
++    }
+     if (stopPathing) return stop()
+   }
+ 
+@@ -165,12 +182,41 @@ function inject (bot) {
  
    bot.on('physicsTick', monitorMovement)
  
@@ -89,7 +110,36 @@ index b38bd30..2ba8c31 100644
          curPoint.x = Math.floor(curPoint.x) + 0.5
          curPoint.y = Math.floor(curPoint.y)
          curPoint.z = Math.floor(curPoint.z) + 0.5
-@@ -524,6 +566,9 @@ function inject (bot) {
+@@ -329,6 +375,7 @@ function inject (bot) {
+    */
+   function fullStop () {
+     bot.clearControlStates()
++    holdOnLadder()
+ 
+     // Force horizontal velocity to 0 (otherwise inertia can move us too far)
+     // Kind of cheaty, but the server will not tell the difference
+@@ -417,6 +464,11 @@ function inject (bot) {
+   })
+ 
+   function monitorMovement () {
++    if (stateGoal && bot.entity) {
++      const feet = bot.entity.position.floored()
++      if (trapdoorOverLadder(feet)) passedTrapdoor = { x: feet.x, y: feet.y, z: feet.z, since: performance.now() }
++    }
++    closePassedTrapdoor()
+     // Test freemotion
+     if (stateMovements && stateMovements.allowFreeMotion && stateGoal && stateGoal.entity) {
+       const target = stateGoal.entity
+@@ -456,7 +508,7 @@ function inject (bot) {
+     if (path.length === 0) {
+       lastNodeTime = performance.now()
+       if (stateGoal && stateMovements) {
+-        if (stateGoal.isEnd(bot.entity.position.floored())) {
++        if (floorGoal(stateGoal).isEnd(bot.entity.position.floored())) {
+           if (!dynamicGoal) {
+             bot.emit('goal_reached', stateGoal)
+             stateGoal = null
+@@ -524,6 +576,9 @@ function inject (bot) {
          bot.activateBlock(bot.blockAt(new Vec3(placingBlock.x, placingBlock.y, placingBlock.z))).then(() => {
            lockUseBlock.release()
            placingBlock = nextPoint.toPlace.shift()
@@ -99,7 +149,7 @@ index b38bd30..2ba8c31 100644
          }, err => {
            console.error(err)
            lockUseBlock.release()
-@@ -550,6 +595,7 @@ function inject (bot) {
+@@ -550,6 +605,7 @@ function inject (bot) {
              lockEquipItem.release()
              const refBlock = bot.blockAt(new Vec3(placingBlock.x, placingBlock.y, placingBlock.z), false)
              if (!lockPlaceBlock.tryAcquire()) return
@@ -107,7 +157,7 @@ index b38bd30..2ba8c31 100644
              if (interactableBlocks.includes(refBlock.name)) {
                bot.setControlState('sneak', true)
              }
-@@ -557,6 +603,7 @@ function inject (bot) {
+@@ -557,6 +613,7 @@ function inject (bot) {
                .then(function () {
                  // Dont release Sneak if the block placement was not successful
                  bot.setControlState('sneak', false)
@@ -115,7 +165,7 @@ index b38bd30..2ba8c31 100644
                  if (bot.pathfinder.LOSWhenPlacingBlocks && placingBlock.returnPos) returningPos = placingBlock.returnPos.clone()
                })
                .catch(_ignoreError => {
-@@ -576,7 +623,8 @@ function inject (bot) {
+@@ -576,7 +633,8 @@ function inject (bot) {
      let dx = nextPoint.x - p.x
      const dy = nextPoint.y - p.y
      let dz = nextPoint.z - p.z
@@ -125,7 +175,20 @@ index b38bd30..2ba8c31 100644
        // arrived at next point
        lastNodeTime = performance.now()
        if (stopPathing) {
-@@ -604,6 +652,15 @@ function inject (bot) {
+@@ -587,9 +645,11 @@ function inject (bot) {
+       if (path.length === 0) { // done
+         // If the block the bot is standing on is not a full block only checking for the floored position can fail as
+         // the distance to the goal can get greater then 0 when the vector is floored.
+-        if (!dynamicGoal && stateGoal && (stateGoal.isEnd(p.floored()) || stateGoal.isEnd(p.floored().offset(0, 1, 0)))) {
++        if (!dynamicGoal && stateGoal && (floorGoal(stateGoal).isEnd(p.floored()) || floorGoal(stateGoal).isEnd(p.floored().offset(0, 1, 0)))) {
+           bot.emit('goal_reached', stateGoal)
+           stateGoal = null
++        } else if (stateGoal) {
++          pathUpdated = false // the path ran out short of the goal (a partial path, or a ladder end refused): plan again
+         }
+         fullStop()
+         return
+@@ -604,6 +664,24 @@ function inject (bot) {
        dz = nextPoint.z - p.z
      }
  
@@ -137,11 +200,20 @@ index b38bd30..2ba8c31 100644
 +      return
 +    }
 +    lastClimbY = null
++    if (holding) {
++      bot.setControlState('sneak', false)
++      holding = false
++    }
++    if (strafing) {
++      bot.setControlState('left', false)
++      bot.setControlState('right', false)
++      strafing = false
++    }
 +
      bot.look(Math.atan2(-dx, -dz), 0)
      bot.setControlState('forward', true)
      bot.setControlState('jump', false)
-@@ -611,6 +668,9 @@ function inject (bot) {
+@@ -611,6 +689,9 @@ function inject (bot) {
      if (bot.entity.isInWater) {
        bot.setControlState('jump', true)
        bot.setControlState('sprint', false)
@@ -151,7 +223,7 @@ index b38bd30..2ba8c31 100644
      } else if (stateMovements.allowSprinting && physics.canStraightLine(path, true)) {
        bot.setControlState('jump', false)
        bot.setControlState('sprint', true)
-@@ -628,12 +688,78 @@ function inject (bot) {
+@@ -628,12 +709,178 @@ function inject (bot) {
        bot.setControlState('sprint', false)
      }
  
@@ -198,6 +270,80 @@ index b38bd30..2ba8c31 100644
 +    return null
 +  }
 +
++  // v0.1.4.10 (T3-2): a walk never ends hanging on a ladder (the follow ended 2 blocks under the trapdoor and the bot
++  // stayed there): a ladder cell without a floor under it is no end, unless the goal's own cell is a ladder
++  function hangsAt (node) {
++    const cell = new Vec3(Math.floor(node.x), Math.floor(node.y), Math.floor(node.z))
++    if (!climbingBlock(cell) && !trapdoorOverLadder(cell)) return false
++    const under = bot.blockAt(cell.offset(0, -1, 0), false)
++    return !(under && under.boundingBox === 'block' && !isClimbable(under))
++  }
++
++  // a trapdoor, open or closed, over a ladder or a vine: the bot in its cell hangs in the column
++  function trapdoorOverLadder (cell) {
++    const b = bot.blockAt(cell, false)
++    if (!b || !b.name.endsWith('_trapdoor')) return false
++    const under = bot.blockAt(cell.offset(0, -1, 0), false)
++    return Boolean(under) && isClimbable(under)
++  }
++
++  // As a player holds on a ladder with sneak (F36 of v0.1.4.9): when the path search lets go of the controls, a bot
++  // in the air on a ladder holds on instead of sliding down, until the climb or the next walk takes the controls.
++  let holding = false
++  let strafing = false // P2: stepping sideways off a ladder to its way out
++  function holdOnLadder () {
++    const feet = bot.entity?.position?.floored()
++    if (!feet || bot.entity.onGround || (!climbingBlock(feet) && !trapdoorOverLadder(feet))) return
++    bot.setControlState('sneak', true)
++    holding = true
++  }
++
++  function floorGoal (goal) {
++    if (!goal || goal.floorGoal || ![goal.x, goal.y, goal.z].every(Number.isFinite)) return goal
++    if (climbingBlock(new Vec3(Math.floor(goal.x), Math.floor(goal.y), Math.floor(goal.z)))) return goal
++    const wrapped = Object.create(goal)
++    wrapped.floorGoal = true
++    wrapped.isEnd = (node) => goal.isEnd(node) && !hangsAt(node)
++    wrapped.heuristic = (node) => goal.heuristic(node)
++    wrapped.hasChanged = () => goal.hasChanged()
++    wrapped.isValid = () => goal.isValid()
++    return wrapped
++  }
++
++  // v0.1.4.10 (T3-2, as the ladder pass of v0.1.4.9): a trapdoor over a ladder whose cell the feet passed while a goal
++  // is walked is closed behind the bot: going down when the feet are 2 blocks below it, going up from beside it once
++  // the bot stands on the floor. Not while another player is near it; not by the ladder pass, which closes its own.
++  function closePassedTrapdoor () {
++    const t = passedTrapdoor
++    if (!t || !bot.entity) return
++    if (performance.now() - t.since > 15000) {
++      passedTrapdoor = null
++      return
++    }
++    const p = bot.entity.position
++    const feet = p.floored()
++    const inColumn = feet.x === t.x && feet.z === t.z
++    // down: 2 blocks below it in the column; up: on the floor beside it
++    const ready = (inColumn && feet.y <= t.y - 2) ||
++      (!inColumn && feet.y >= t.y + 1 && bot.entity.onGround && Math.hypot(t.x + 0.5 - p.x, t.z + 0.5 - p.z) <= 3)
++    if (!ready) return
++    passedTrapdoor = null
++    const pos = new Vec3(t.x, t.y, t.z)
++    const b = bot.blockAt(pos, false)
++    if (!b || !b.name.endsWith('_trapdoor') || b._properties?.open !== true) return
++    for (const e of Object.values(bot.entities ?? {})) {
++      if (e !== bot.entity && e?.type === 'player' && e.position && e.position.distanceTo(pos.offset(0.5, 0.5, 0.5)) < 2.5) return
++    }
++    bot.activateBlock(b).catch(() => {})
++    try {
++      // the door service of the bot reads the new state at once and does not click it a second time
++      const closed = require('prismarine-block')(bot.registry).fromProperties(b.name, { ...b._properties, open: false }, 0)
++      bot.world.setBlockStateId(pos, closed.stateId)
++    } catch (err) {
++      // the server sends the new state
++    }
++  }
++
 +  // P2: the controls on a ladder while the next point is above or below. Up the column: look at the wall and hold
 +  // forward. Up to a point beside (the way out at the top): look at it and hold forward, the block there lifts the
 +  // bot. Down the column: look at the wall, release forward and sneak, and slide. Never jump on a ladder; under the
@@ -219,11 +365,37 @@ index b38bd30..2ba8c31 100644
 +      bot.setControlState('jump', true)
 +      return true
 +    }
-+    if (!(up && !down) && !(down && sameColumn)) return false
-+    const yaw = sameColumn ? wallYaw(here) : null
++    // down to a point beside: slide in the column until level with it, then walk (sideways first, the head of a
++    // bot above the opening hits the wall, and a ladder lifts a bot that pushes against a wall)
++    const slideFirst = down && !sameColumn && !bot.entity.onGround && nextPoint.y < p.y - 0.1
++    if (!up && !(down && sameColumn) && !slideFirst) return false
++    const wall = wallYaw(here)
++    let side = 0
++    let climbFirst = false
++    let turnHeld = false
++    if (up && !sameColumn && wall !== null) {
++      // up to a point beside (the way out at the top). Turned towards it the bot leaves the wall, nothing lifts it and
++      // it drops a quarter block: a way out along the wall is reached by pressing into the wall and stepping sideways;
++      // a way out behind the bot by climbing at the wall into the top cell, then turning to it with sneak, which holds
++      // the bot on the ladder until the block of the way out lifts it
++      const dx = nextPoint.x - p.x
++      const dz = nextPoint.z - p.z
++      const across = dx * Math.cos(wall) - dz * Math.sin(wall) // to the right of a bot that faces the wall
++      const ahead = -dx * Math.sin(wall) - dz * Math.cos(wall)
++      if (Math.abs(across) > Math.abs(ahead)) side = across > 0 ? 1 : -1
++      else {
++        climbFirst = nextPoint.y - p.y > 1
++        turnHeld = !climbFirst
++      }
++    }
++    bot.setControlState('right', side > 0)
++    bot.setControlState('left', side < 0)
++    strafing = side !== 0
++    const yaw = sameColumn || slideFirst || climbFirst || side !== 0 ? wall : null
 +    bot.look(yaw ?? Math.atan2(-(nextPoint.x - p.x), -(nextPoint.z - p.z)), 0)
 +    bot.setControlState('sprint', false)
-+    bot.setControlState('sneak', false)
++    bot.setControlState('sneak', turnHeld)
++    holding = turnHeld // the walk on the floor releases it
 +    bot.setControlState('forward', up)
 +    bot.setControlState('jump', up && sameColumn && yaw === null) // a vine without a wall is climbed by jumping
 +    return true
@@ -232,7 +404,7 @@ index b38bd30..2ba8c31 100644
  
  module.exports = {
 diff --git a/node_modules/mineflayer-pathfinder/lib/movements.js b/node_modules/mineflayer-pathfinder/lib/movements.js
-index a7e3505..5eacb11 100644
+index a7e3505..2d66afb 100644
 --- a/node_modules/mineflayer-pathfinder/lib/movements.js
 +++ b/node_modules/mineflayer-pathfinder/lib/movements.js
 @@ -15,6 +15,11 @@ const diagonalDirections = [
@@ -480,7 +652,7 @@ index a7e3505..5eacb11 100644
      neighbors.push(new Move(blockLand.position.x, blockLand.position.y, blockLand.position.z, node.remainingBlocks - toPlace.length, cost, toBreak, toPlace))
    }
  
-@@ -533,11 +638,22 @@ class Movements {
+@@ -533,11 +638,25 @@ class Movements {
      cost += this.safeOrBreak(block2, toBreak)
      if (cost > 100) return
  
@@ -489,6 +661,9 @@ index a7e3505..5eacb11 100644
 +    const blockHead = this.getBlock(node, 0, 1, 0)
 +    const ontoLadder = !block1.climbable && block1.safe && blockHead.climbable && this.getBlock(node, 0, -1, 0).physical
 +    if (ontoLadder) cost += 1
++    // P2: a climb never ends in the air above the top of a ladder (no floor there; the bot fell back); the way out at
++    // the top is the jump up to the side (getMoveJumpUp). Up into a trapdoor over the ladder is a climb.
++    if (block1.climbable && !blockHead.climbable && !this.isHatchOverLadder(node, 1)) return
 +    // P1: a closed trapdoor over the head of a bot on a ladder is opened before the climb goes on
 +    if (block1.climbable && blockHead.openable && blockHead._properties?.open !== true) {
 +      if (!this.canOpenDoors) return
@@ -505,7 +680,7 @@ index a7e3505..5eacb11 100644
          toBreak.push(block1.position)
        }
  
-@@ -551,7 +667,102 @@ class Movements {
+@@ -551,7 +670,110 @@ class Movements {
  
      if (cost > 100) return
  
@@ -540,6 +715,12 @@ index a7e3505..5eacb11 100644
 +    if (cost > 100) return
 +
 +    neighbors.push(new Move(blockD.position.x, blockD.position.y, blockD.position.z, node.remainingBlocks, cost, toBreak, toPlace))
++  }
++
++  // P2: a trapdoor, open or closed, over a ladder or a vine, dy blocks above the node
++  isHatchOverLadder (node, dy) {
++    const b = this.getBlock(node, 0, dy, 0)
++    return b.openable && b.name.includes('trapdoor') && this.getBlock(node, 0, dy - 1, 0).climbable
 +  }
 +
 +  // P4: a one-wide pit: every side of the cell is a wall of 2 blocks or more, the way out needs a jump of 2
@@ -595,6 +776,8 @@ index a7e3505..5eacb11 100644
 +    
 +    // Check if we can step on top of the ladder/vine and then jump up
 +    if (!blockAbove.safe) return
++    // P2: not into the air above the top of the ladder (no floor there): only up the column
++    if (!this.getBlock(node, 0, 2, 0).climbable && !this.isHatchOverLadder(node, 2)) return
 +    
 +    let cost = 2 // Cost for climbing to top of ladder and jumping
 +    const toBreak = []
@@ -609,7 +792,7 @@ index a7e3505..5eacb11 100644
    }
  
    // Jump up, down or forward over a 1 block gap
-@@ -642,6 +853,7 @@ class Movements {
+@@ -642,6 +864,7 @@ class Movements {
        this.getMoveForward(node, dir, neighbors)
        this.getMoveJumpUp(node, dir, neighbors)
        this.getMoveDropDown(node, dir, neighbors)
@@ -617,7 +800,7 @@ index a7e3505..5eacb11 100644
        if (this.allowParkour) {
          this.getMoveParkourForward(node, dir, neighbors)
        }
-@@ -656,8 +868,33 @@ class Movements {
+@@ -656,8 +879,33 @@ class Movements {
      this.getMoveDown(node, neighbors)
      this.getMoveUp(node, neighbors)
  

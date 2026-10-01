@@ -253,11 +253,13 @@ describe('P2: ladders inside the search', () => {
         assert.ok(moves.some((n) => n.y === 57), 'the drop is kept');
     });
 
-    test('down 19 rungs through the closed trapdoor: opened with one click, never a jump on the ladder, no stuck', { timeout: 30000 }, async () => {
-        const bot = simBot(ladderWorld(), [2.5, 61, -0.5]);
+    test('down 19 rungs through the closed trapdoor: opened, closed again 2 blocks below, never a jump on the ladder, no stuck', { timeout: 30000 }, async () => {
+        const world = ladderWorld();
+        const bot = simBot(world, [2.5, 61, -0.5]);
         const r = await walk(bot, new pf.goals.GoalNear(2, 41, 1, 1));
         assert.equal(r.done, 'ok', JSON.stringify(bot.entity.position));
-        assert.deepEqual(bot.clicks, ['2,60,-2']);
+        assert.deepEqual(bot.clicks, ['2,60,-2', '2,60,-2'], 'opened, then closed behind the bot');
+        assert.equal(world.propsAt(2, 60, -2).open, false);
         assert.equal(Math.floor(bot.entity.position.y), 41);
         assert.ok(r.ticks < 300, `${r.ticks} ticks`);
         assert.equal(bot.log.some((e) => e.name === 'ladder' && e.jump), false, 'jump on the ladder');
@@ -266,11 +268,14 @@ describe('P2: ladders inside the search', () => {
         assert.deepEqual(bot.digs, []);
     });
 
-    test('up 20 rungs through the closed trapdoor and out onto the grass: forward, never a jump on the ladder', { timeout: 30000 }, async () => {
-        const bot = simBot(ladderWorld(), [2.5, 41, 0.5]);
+    test('up 20 rungs through the closed trapdoor and out onto the grass: forward, never a jump on the ladder, closed from beside', { timeout: 30000 }, async () => {
+        const world = ladderWorld();
+        const bot = simBot(world, [2.5, 41, 0.5]);
         const r = await walk(bot, new pf.goals.GoalNear(2, 61, 1, 1));
+        for (let t = 0; t < 10; t++) bot.tick(); // the close comes from beside, on the floor
         assert.equal(r.done, 'ok', JSON.stringify(bot.entity.position));
-        assert.deepEqual(bot.clicks, ['2,60,-2']);
+        assert.deepEqual(bot.clicks, ['2,60,-2', '2,60,-2'], 'opened, then closed behind the bot');
+        assert.equal(world.propsAt(2, 60, -2).open, false);
         assert.equal(Math.floor(bot.entity.position.y), 61);
         assert.ok(r.ticks < 400, `${r.ticks} ticks`);
         assert.equal(bot.log.some((e) => e.name === 'ladder' && e.jump), false, 'jump on the ladder');
@@ -283,7 +288,7 @@ describe('P2: ladders inside the search', () => {
         bot.entity.onGround = false;
         const r = await walk(bot, new pf.goals.GoalNear(2, 61, 1, 1));
         assert.equal(r.done, 'ok');
-        assert.deepEqual(bot.clicks, ['2,60,-2']);
+        assert.equal(bot.clicks[0], '2,60,-2');
         assert.ok(r.ticks < 120, `${r.ticks} ticks`);
     });
 
@@ -294,13 +299,29 @@ describe('P2: ladders inside the search', () => {
         assert.deepEqual(bot.digs, [], 'nothing dug');
     });
 
-    test('down through an open hole without a trapdoor, and an open trapdoor: no click', { timeout: 30000 }, async () => {
-        for (const options of [{ trapdoor: false }, { open: true }]) {
+    test('down through an open hole without a trapdoor: no click; through an open trapdoor: only the close behind', { timeout: 30000 }, async () => {
+        for (const [options, clicks] of [[{ trapdoor: false }, []], [{ open: true }, ['2,60,-2']]]) {
             const bot = simBot(ladderWorld(options), [2.5, 61, -0.5]);
             const r = await walk(bot, new pf.goals.GoalNear(2, 41, 1, 1));
             assert.equal(r.done, 'ok', JSON.stringify(options));
-            assert.deepEqual(bot.clicks, []);
+            assert.deepEqual(bot.clicks, clicks);
         }
+    });
+
+    test('a walk never ends hanging on a ladder: the goal near the top is reached on the floor beside it', { timeout: 30000 }, async () => {
+        const bot = simBot(ladderWorld({ open: true }), [2.5, 41, 0.5]);
+        const r = await walk(bot, new pf.goals.GoalNear(4, 61, -2, 3)); // a ladder cell at y 59 is within 3 blocks
+        assert.equal(r.done, 'ok');
+        assert.equal(Math.floor(bot.entity.position.y), 61, JSON.stringify(bot.entity.position));
+    });
+
+    test('down a ladder to a point beside it one block lower (a basement with a low ceiling): slide first, then walk off', { timeout: 30000 }, async () => {
+        const world = ladderWorld();
+        world.fill(0, 44, -1, 4, 46, 2, 'stone'); // the room is 3 high: (2, 44, -1) beside the column is solid
+        const bot = simBot(world, [2.5, 61, -0.5]);
+        const r = await walk(bot, new pf.goals.GoalBlock(2, 41, 1));
+        assert.equal(r.done, 'ok', JSON.stringify(bot.entity.position));
+        assert.deepEqual(r.resets.filter((x) => x === 'stuck'), []);
     });
 
     test('the follow of a player (dynamic goal) down the ladder and up again', { timeout: 30000 }, async () => {
