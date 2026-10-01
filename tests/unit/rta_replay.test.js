@@ -87,7 +87,8 @@ describe('walkRoute (I3)', () => {
         assert.equal(r.ok, true, r.text);
         assert.deepEqual(feet(s.bot), [2, 41, 1]);
         assert.equal(digs(s.bot), 0);
-        assert.deepEqual(s.bot.calls.filter(c => c[0] === 'activate'), [['activate', 2, 60, -2]]);
+        assert.deepEqual(s.bot.calls.filter(c => c[0] === 'activate'), [['activate', 2, 60, -2], ['activate', 2, 60, -2]], 'opened from above, closed from 2 blocks below');
+        assert.equal(s.world.propsAt(2, 60, -2).open, false, 'the trapdoor is closed behind the bot');
     });
 
     test('W64: the ladder removed: the text with the step and the position, the trapdoor stays closed, nothing is dug', async () => {

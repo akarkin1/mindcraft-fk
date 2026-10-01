@@ -227,7 +227,10 @@ async function ladderLeg(bot, ctx, leg, clock, ms) {
                 return bot.interrupt_code ? INTERRUPTED : { ok: false, reason: 'blocked_door' };
             }
         }
+        // the trapdoor the bot came through is closed by the leg itself, 2 blocks below it (as the ladder pass does)
+        const closing = trap ? closeWhenBelow(bot, leg, trap, clock) : Promise.resolve();
         const r = await slideDown(bot, leg, { clock });
+        await closing;
         if (!r.ok) {
             return r.reason === 'interrupted' || bot.interrupt_code ? INTERRUPTED : { ok: false, reason: 'no_path' };
         }
@@ -279,6 +282,28 @@ async function ladderLeg(bot, ctx, leg, clock, ms) {
     }
     await waitStanding(bot, clock, 2000);
     return bot.interrupt_code ? INTERRUPTED : OK;
+}
+
+// Waits up to 4 s for the feet of the bot to be 2 or more blocks below the trapdoor over the column, then closes it
+// once, unless the command was stopped. Never throws.
+async function closeWhenBelow(bot, leg, trap, clock) {
+    try {
+        const start = clock.now();
+        while (clock.now() - start < 4000) {
+            if (bot.interrupt_code) {
+                return false;
+            }
+            const c = feetOf(bot);
+            if (c && c.x === leg.x && c.z === leg.z && c.y <= trap.y - 2) {
+                const state = doorState(bot, trap);
+                return Boolean(state && state.open === true) ? await closeDoor(bot, state, { now: clock.now, wait: clock.wait }) : false;
+            }
+            await clock.wait(50);
+        }
+        return false;
+    } catch {
+        return false;
+    }
 }
 
 async function stairsLeg(bot, leg, clock) {

@@ -146,18 +146,19 @@ describe('13, L: passLadder on the fake bot of the mining pack', () => {
         const clock = makeClock(bot);
         const r = await LP.passLadder(bot, { ...COLUMN }, 'down', { clock });
         assert.equal(r.ok, true, r.text);
-        assert.deepEqual(bot.clicks.map((c) => [c.x, c.y, c.z, c.sneak]), [[2, 60, -2, false]]);
-        assert.equal(world.propsAt(2, 60, -2).open, true);
+        assert.deepEqual(bot.clicks.map((c) => [c.x, c.y, c.z, c.sneak]), [[2, 60, -2, false], [2, 60, -2, false]], 'opened from above, closed 2 blocks below');
+        assert.equal(world.propsAt(2, 60, -2).open, false, 'the pass closes the trapdoor it came through');
         assert.deepEqual(feet(bot), { x: 2, y: 41, z: -2 });
         assert.equal(bot.calls.filter((c) => c[0] === 'dig').length, 0);
     });
 
-    test('down through an open trapdoor: no click', { timeout: 30000 }, async () => {
+    test('down through an open trapdoor: no click to open, one to close it 2 blocks below', { timeout: 30000 }, async () => {
         const world = ladderWorld({ open: true });
         const bot = ladderBot({ world });
         const r = await LP.passLadder(bot, { ...COLUMN }, 'down', { clock: makeClock(bot) });
         assert.equal(r.ok, true, r.text);
-        assert.deepEqual(bot.clicks, []);
+        assert.deepEqual(bot.clicks.map((c) => [c.x, c.y, c.z, c.sneak]), [[2, 60, -2, false]], 'the close');
+        assert.equal(world.propsAt(2, 60, -2).open, false);
         assert.equal(feet(bot).y, 41);
     });
 
@@ -210,7 +211,7 @@ describe('13, L: followPlayer and goToPlayer with routes_pack', () => {
         }
         assert.ok(bot.entity.position.y < 42.5, `the bot went down: y ${bot.entity.position.y}`);
         assert.deepEqual(bot.goals, ['GoalFollow', null, 'GoalFollow'], 'the follow, stopped for the pass, then set again');
-        assert.equal(bot.clicks.length, 1, 'the trapdoor clicked once: one pass');
+        assert.equal(bot.clicks.length, 2, 'the trapdoor clicked twice, open and close: one pass');
         assert.match(bot.output, /I go down the ladder at \(2, -?\d+, -2\) after MartyByrde2\.\n/);
         assert.ok(bot.progress.includes('ladder'), 'noteProgress("ladder") after the pass');
     });
@@ -277,7 +278,7 @@ describe('13, L: followPlayer and goToPlayer with routes_pack', () => {
         } finally {
             stop();
         }
-        assert.equal(bot.clicks.length, 1);
+        assert.equal(bot.clicks.length, 2, 'open and close');
         assert.ok(bot.entity.position.y < 42.5, `y ${bot.entity.position.y}`);
         assert.ok(gotos.length >= 1, 'the path search after the pass');
         assert.match(bot.output, /I go down the ladder at \(2, -?\d+, -2\) after MartyByrde2\./);
@@ -298,7 +299,7 @@ describe('13, L: routes_pack off, and the signatures', () => {
         assert.ok(line, `${r.stdout}\n${r.stderr}`);
         const out = JSON.parse(line);
         assert.ok(out.ladderModules.some((u) => /packs\/mining\/ladder\.js/.test(u)), `the ladder module of the mining pack: ${out.ladderModules.join(', ')}`);
-        assert.equal(out.clicks.length, 1, JSON.stringify(out.clicks));
+        assert.equal(out.clicks.length, 2, JSON.stringify(out.clicks));
         assert.ok(out.goals.includes(null), out.goals.join(','));
         assert.ok(/I go down the ladder/.test(out.output), out.output);
         assert.equal(out.result, true);

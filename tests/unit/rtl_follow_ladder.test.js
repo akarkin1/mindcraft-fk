@@ -91,7 +91,7 @@ describe('followPlayer with routes_pack on: the player below the ladder', () => 
             assert.equal(await run, true, 'the return value as before');
             assert.ok(arrived, `feet ${JSON.stringify(s.feet())}, goals ${JSON.stringify(s.bot.goals)}`);
             assert.deepEqual(s.bot.goals, ['GoalFollow', null, 'GoalFollow']);
-            assert.deepEqual(s.bot.clicks, [{ x: 2, y: 60, z: -2, sneak: false }], 'the trapdoor opened with one click without sneak');
+            assert.deepEqual(s.bot.clicks, [{ x: 2, y: 60, z: -2, sneak: false }, { x: 2, y: 60, z: -2, sneak: false }], 'opened with one click without sneak, closed 2 blocks below');
             assert.deepEqual(s.feet(), { x: 2, y: 53, z: -2 });
             assert.deepEqual(s.bot.output.trim().split('\n'), [`You are now actively following player ${PLAYER}.`, DOWN_TEXT]);
             assert.deepEqual(s.bot.progress, ['ladder']);
@@ -132,7 +132,7 @@ describe('no switch: the ladder step runs with routes_pack off and absent', () =
             s.bot.interrupt_code = true;
             assert.equal(await run, true);
             assert.ok(s.bot.goals.includes(null), s.bot.goals.join(','));
-            assert.deepEqual(s.bot.clicks, [{ x: 2, y: 60, z: -2, sneak: false }]);
+            assert.deepEqual(s.bot.clicks, [{ x: 2, y: 60, z: -2, sneak: false }, { x: 2, y: 60, z: -2, sneak: false }]);
             assert.ok(s.bot.output.includes(DOWN_TEXT), s.bot.output);
         } finally {
             s.bot.interrupt_code = true;
@@ -170,7 +170,7 @@ describe('goToPlayer with routes_pack on', () => {
         try {
             await skills.goToPlayer(s.bot, PLAYER, 3);
             assert.deepEqual(s.feet(), { x: 2, y: 53, z: -2 });
-            assert.deepEqual(s.bot.clicks, [{ x: 2, y: 60, z: -2, sneak: false }]);
+            assert.deepEqual(s.bot.clicks, [{ x: 2, y: 60, z: -2, sneak: false }, { x: 2, y: 60, z: -2, sneak: false }]);
             assert.ok(s.bot.output.startsWith(`${DOWN_TEXT}\n`), s.bot.output);
             assert.ok(s.bot.output.includes(`You have reached ${PLAYER}.`), s.bot.output);
             assert.ok(pathSearch >= 1, 'the path search ran after the pass');
@@ -185,7 +185,7 @@ describe('goToPlayer with routes_pack on', () => {
         stubFollowGoto(s.bot);
         try {
             await skills.goToPlayer(s.bot, PLAYER, 3);
-            assert.deepEqual(s.bot.clicks, [{ x: 2, y: 60, z: -2, sneak: false }]);
+            assert.deepEqual(s.bot.clicks, [{ x: 2, y: 60, z: -2, sneak: false }, { x: 2, y: 60, z: -2, sneak: false }]);
             assert.ok(s.bot.output.startsWith(`${DOWN_TEXT}\n`), s.bot.output);
         } finally {
             s.stop();
@@ -409,7 +409,7 @@ describe('goToPosition (L4 of the play test: "no idea about up and down")', () =
             assert.equal(lines.filter((l) => l.startsWith('I go down the ladder')).length, 1, lines.join(' | '));
             assert.equal(lines[0], 'I go down the ladder at (2, 60, -2) to (2, 41, 0).');
             assert.equal(lines.at(-1), `You have reached ${`(${Math.floor(s.bot.entity.position.x)}, 41, ${Math.floor(s.bot.entity.position.z)})`}.`);
-            assert.deepEqual(s.bot.clicks, [{ x: 2, y: 60, z: -2, sneak: false }]);
+            assert.deepEqual(s.bot.clicks, [{ x: 2, y: 60, z: -2, sneak: false }, { x: 2, y: 60, z: -2, sneak: false }]);
             assert.equal(s.feet().y, 41);
         } finally {
             s.stop();
@@ -421,7 +421,7 @@ describe('goToPosition (L4 of the play test: "no idea about up and down")', () =
         const s = scene({ pos: [5.5, 61, -0.5], low: 41 });
         try {
             await skills.goToPosition(s.bot, 2, 41, 0, 1);
-            assert.deepEqual(s.bot.clicks, [{ x: 2, y: 60, z: -2, sneak: false }]);
+            assert.deepEqual(s.bot.clicks, [{ x: 2, y: 60, z: -2, sneak: false }, { x: 2, y: 60, z: -2, sneak: false }]);
             assert.ok(s.bot.output.includes('I go down the ladder'), s.bot.output);
         } finally {
             s.stop();

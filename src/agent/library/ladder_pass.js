@@ -259,8 +259,35 @@ async function passDown(bot, lad, column, clock, walkMs) {
             return bot.interrupt_code ? 'interrupted' : 'blocked_door';
         }
     }
+    // F37 and W80 A2: the trapdoor the bot came through is closed by the pass itself, 2 blocks below it while it is
+    // within reach and the slide presses nothing (the door service never clicks at a bot on a ladder)
+    const closing = column.trapdoor ? closeWhenBelow(bot, column, clock) : Promise.resolve();
     const r = await lad.slideDown(bot, leg, { clock, walkMs });
+    await closing;
     return r.ok ? null : stopReason(r.reason, bot);
+}
+
+// Waits up to 4 s for the feet of the bot to be 2 or more blocks below the trapdoor of the column, then closes
+// it once, unless the bot is in the trapdoor cell or the command was stopped. Never throws.
+async function closeWhenBelow(bot, column, clock) {
+    try {
+        const trap = column.trapdoor;
+        const start = clock.now();
+        while (clock.now() - start < 4000) {
+            if (bot.interrupt_code) {
+                return false;
+            }
+            const c = feetOf(bot);
+            if (c && c.x === column.x && c.z === column.z && c.y <= trap.y - 2) {
+                const state = doorState(bot, trap);
+                return Boolean(state && state.open === true) ? await closeDoor(bot, state, doorOptions(clock)) : false;
+            }
+            await clock.wait(50);
+        }
+        return false;
+    } catch {
+        return false;
+    }
 }
 
 async function passUp(bot, lad, column, clock, walkMs) {
