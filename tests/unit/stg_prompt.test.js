@@ -222,7 +222,8 @@ describe('profiles/claude.json (section 11, item 12 of the task)', () => {
         const [before, after] = CLAUDE.conversing.split(`\n${rules}`);
         assert.equal(before, DEFAULT.conversing.slice(0, DEFAULT.conversing.indexOf('\nSummarized memory:')), 'the text before the rules');
         assert.equal(after, "'$MEMORY'\n$STATS\n$INVENTORY\n$COMMAND_DOCS\n$EXAMPLES\nConversation Begin:");
-        assert.deepEqual(Object.keys(CLAUDE), ['name', 'model', 'speak_model', 'conversing', 'code_model']);
+        // the owner's profile may carry an embedding model (v0.1.4.9 play guide); the five keys of the release are there
+        assert.deepEqual(Object.keys(CLAUDE).filter(k => k !== 'embedding'), ['name', 'model', 'speak_model', 'conversing', 'code_model']);
     });
 
     test('the file keeps one kind of line ending', () => {

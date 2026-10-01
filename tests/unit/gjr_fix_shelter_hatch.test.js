@@ -137,7 +137,12 @@ describe('T3-4: into the shelter through a trapdoor', () => {
         const r = await S.goToShelter(s.bot, s.ctx, opts(s));
         assert.deepEqual({ ok: r.ok, reason: r.reason }, { ok: false, reason: 'interrupted' });
         assert.equal(r.text, 'I stopped on my way to the shelter.');
-        assert.ok(Object.values(s.bot.controls).every(on => on === false), JSON.stringify(s.bot.controls));
+        // F36 of v0.1.4.9: a bot stopped in the air on a ladder holds on with sneak; every other control is released
+        const { sneak, ...rest } = s.bot.controls;
+        assert.ok(Object.values(rest).every(on => on === false), JSON.stringify(s.bot.controls));
+        const f = { x: Math.floor(s.bot.entity.position.x), y: Math.floor(s.bot.entity.position.y + 0.01), z: Math.floor(s.bot.entity.position.z) };
+        const hanging = s.world.nameAt(f.x, f.y, f.z) === 'ladder' && !s.bot.entity.onGround;
+        assert.equal(sneak, hanging, `sneak only while hanging on a ladder: ${JSON.stringify(s.bot.controls)}`);
     });
 
     test('a door entrance is still passed with passThrough (no ladder step)', async () => {
