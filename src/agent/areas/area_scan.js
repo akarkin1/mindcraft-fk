@@ -889,6 +889,26 @@ export function scanPen(getBlockName, origin, options = {}) {
     return scanFenced(getBlockName, origin, options, 'pen', 'scanPen');
 }
 
+/**
+ * The scan of an area without a type (v0.1.4.10, T3-6): `!rememberArea("chicken pen")` typed inside a pen saved the
+ * house beyond its fence, because the fence is built blocks too. When the position stands inside a fenced
+ * enclosure (scanPen finds one around it) the result is that pen; otherwise it is the scan of the building
+ * (scanBuilding with `options`), as before.
+ * @param {(x: number, y: number, z: number) => string|null} getBlockName
+ * @param {{x: number, y: number, z: number}} origin
+ * @param {object} [options] as scanBuilding
+ * @returns {object} the result of scanPen or of scanBuilding, plus `kind`: 'pen' or 'building'
+ * @throws {TypeError} when getBlockName is not a function or the origin has no finite x, y, z
+ */
+export function scanWithoutType(getBlockName, origin, options = {}) {
+    checkArgs(getBlockName, origin, 'scanWithoutType');
+    const pen = scanPen(getBlockName, origin);
+    if (pen.found) {
+        return { ...pen, kind: 'pen' };
+    }
+    return { ...scanBuilding(getBlockName, origin, options ?? {}), kind: 'building' };
+}
+
 // A fence, fence gate or wall block within `reach` blocks in x and z, 2 below the feet to 1 above.
 function fenceWithin(read, px, py, pz, reach) {
     for (let dx = -reach; dx <= reach; dx++) {

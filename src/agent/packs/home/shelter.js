@@ -241,7 +241,9 @@ export async function enterBuilding(bot, area, ctx = {}, options = {}) {
             return blockedByCreeper(standing);
         }
         entrance = ordered.find(e => !failed.has(`${e.x},${e.y},${e.z}`)) ?? ordered[0];
-        last = await passThrough(bot, entrance, ctx, { ...options, inside: area, areas: listAreas(ctx, dimensionOf(bot)) });
+        // v0.1.4.10 (T3-4): a trapdoor is no door to step through: the walk takes the ladder column under it
+        last = isHatch(bot, entrance) ? await throughHatch(bot, area, entrance, ctx, options, clock)
+            : await passThrough(bot, entrance, ctx, { ...options, inside: area, areas: listAreas(ctx, dimensionOf(bot)) });
         if (last.ok) {
             break;
         }
@@ -255,6 +257,9 @@ export async function enterBuilding(bot, area, ctx = {}, options = {}) {
         }
         if (last.reason === 'monster_near') {
             await escapeMonster(bot, last.mob, ctx, options, clock);
+        }
+        if (isHatch(bot, entrance) && ordered.every(e => failed.has(`${e.x},${e.y},${e.z}`))) {
+            break; // T3-4: the way through a trapdoor tried its passes already; no other entrance is left
         }
     }
     if (!last?.ok) {
@@ -280,7 +285,108 @@ export async function enterBuilding(bot, area, ctx = {}, options = {}) {
         await closeDoor(bot, entrance, { ...options, ctx, respectInterrupt: false });
         state = doorState(bot, entrance);
     }
-    return insideText(name, { found: state ? 1 : 0, open: state?.open === true ? 1 : 0 });
+    const inside = insideText(name, { found: state ? 1 : 0, open: state?.open === true ? 1 : 0 });
+    return last.ladder ? { ...inside, text: `${last.ladder} ${inside.text}` } : inside;
+}
+
+// ---- through a trapdoor (v0.1.4.10, T3-4) ----
+
+/** The walk into a shelter through a trapdoor: the ladder step when the room is this many blocks above or below. */
+export const HATCH_RULES = Object.freeze({ gap: 2, passes: 3, approach: 2 });
+
+// The ladder step of the library (library/ladder_pass.js), by a computed name: a pack imports no library module
+// statically, and ladder_pass.js imports this pack's doors.js.
+const LADDER_PASS = new URL('../../library/ladder_pass.js', import.meta.url).href;
+
+async function ladderStep(bot, target, options) {
+    try {
+        const pass = await import(LADDER_PASS);
+        return await pass.ladderStepTowards(bot, target, options);
+    } catch (err) {
+        console.warn('Home pack: the ladder step failed:', err?.message ?? err);
+        return { tried: false, ok: false, reason: 'no_module', text: '', way: null };
+    }
+}
+
+// True when the entrance is a trapdoor: as saved by the scan, or as read from the world now.
+function isHatch(bot, entrance) {
+    if (entrance?.kind === 'trapdoor') {
+        return true;
+    }
+    return entrance?.kind === undefined && doorState(bot, entrance)?.kind === 'trapdoor';
+}
+
+/**
+ * Into a building through a trapdoor in its ceiling or its floor (v0.1.4.10, T3-4): the walk to the standing
+ * place of the room (the path search opens doors and trapdoors and climbs ladders); when it ends with the room
+ * still 2 or more blocks above or below, the ladder step of the library (ladderStepTowards: the column within 6
+ * blocks, the trapdoor opened, the slide or the climb; its text `I went down the ladder at (x, y, z).`), first
+ * from where the bot stands and else from beside the trapdoor, then the walk again; at most 3 passes. Returns
+ * as passThrough { ok, reason, text } plus `ladder`, the text of the last pass that worked. A failure is
+ * no_path (a learned route may then lead in), interrupted or blocked. Never throws.
+ * @param {object} bot
+ * @param {object} area
+ * @param {{x,y,z}} hatch
+ * @param {object} ctx
+ * @param {object} options
+ * @param {object} clock
+ * @returns {Promise<{ok: boolean, reason: string|null, text: string, ladder?: string|null}>}
+ */
+export async function throughHatch(bot, area, hatch, ctx, options, clock) {
+    const where = `(${hatch.x}, ${hatch.y}, ${hatch.z})`;
+    const stopped = { ok: false, reason: 'interrupted', text: 'I stopped on my way to the shelter.' };
+    try {
+        const spot = chooseStandingPlace({ area, entrance: null, isFree: standingTest(bot) }) ?? floorPos(roomCenter(area));
+        const timeoutMs = isFiniteNumber(options.timeoutMs) ? options.timeoutMs : 60000;
+        const passes = [];
+        const stepOptions = { passes, clock, now: clock.now, log: text => logTo(ctx, text) };
+        let ladder = null;
+        let failed = null;
+        for (let round = 0; round <= HATCH_RULES.passes; round++) {
+            if (bot.interrupt_code) {
+                return stopped;
+            }
+            const walk = await walkNear(bot, spot, 1, { clock, timeoutMs, allowDoors: true });
+            if (isInsideArea(area, botPos(bot))) {
+                return { ok: true, reason: null, text: ladder ?? `I went through the trapdoor at ${where}.`, ladder };
+            }
+            if (walk.reason === 'interrupted' || bot.interrupt_code) {
+                return stopped;
+            }
+            if (round === HATCH_RULES.passes || Math.abs(spot.y - botPos(bot).y) < HATCH_RULES.gap) {
+                break; // no height left to climb: the ladder is no help
+            }
+            let step = await ladderStep(bot, spot, stepOptions);
+            if (!step.tried && step.reason !== 'limit') {
+                // no column near the bot that leads there: to the trapdoor first, above it or below it
+                const beside = { x: hatch.x, y: spot.y < hatch.y ? hatch.y + 1 : hatch.y - 1, z: hatch.z };
+                const near = await walkNear(bot, beside, HATCH_RULES.approach, { clock, timeoutMs, allowDoors: true });
+                if (near.reason === 'interrupted' || bot.interrupt_code) {
+                    return stopped;
+                }
+                step = await ladderStep(bot, spot, stepOptions);
+            }
+            if (!step.tried) {
+                break;
+            }
+            if (!step.ok) {
+                if (step.reason === 'interrupted' || bot.interrupt_code) {
+                    return stopped;
+                }
+                failed = step.text;
+                logTo(ctx, step.text);
+                break;
+            }
+            ladder = step.text;
+        }
+        if (isInsideArea(area, botPos(bot))) {
+            return { ok: true, reason: null, text: ladder ?? `I went through the trapdoor at ${where}.`, ladder };
+        }
+        return { ok: false, reason: 'no_path', text: failed ?? `I found no way through the trapdoor at ${where}.` };
+    } catch (err) {
+        console.warn('Home pack: the way through the trapdoor failed:', err?.message ?? err);
+        return { ok: false, reason: 'no_path', text: `I found no way through the trapdoor at ${where}.` };
+    }
 }
 
 /**

@@ -618,6 +618,13 @@ export async function closeDoorsBehind(bot, tracker, ctx = {}, options = {}) {
 const NOT_STANDING = new Set(['item', 'experience_orb', 'arrow', 'spectral_arrow', 'trident', 'snowball', 'egg', 'ender_pearl',
     'fishing_bobber', 'potion', 'experience_bottle', 'falling_block', 'painting', 'item_frame', 'glow_item_frame']);
 
+// The bot itself never holds a door open (v0.1.4.10, T3-5): its entity object, its id or its name.
+function isTheBot(bot, entity) {
+    const me = bot?.entity;
+    return entity === me || (Boolean(me) && entity.id !== undefined && entity.id === me.id)
+        || (typeof bot?.username === 'string' && entity.type === 'player' && entity.username === bot.username);
+}
+
 /**
  * True when an entity other than the bot stands in the openable: its box overlaps the block of a
  * gate or trapdoor, or the two blocks of a door. Items, orbs and projectiles do not count. Never throws.
@@ -631,7 +638,7 @@ export function somebodyInDoor(bot, door) {
         const cz = door.z + 0.5;
         const top = door.y + (door.kind === 'door' ? 2 : 1);
         for (const entity of Object.values(bot?.entities ?? {})) {
-            if (!entity || entity === bot.entity || !entity.position || NOT_STANDING.has(entity.name) || entity.type === 'projectile') {
+            if (!entity || isTheBot(bot, entity) || !entity.position || NOT_STANDING.has(entity.name) || entity.type === 'projectile') {
                 continue;
             }
             const p = entity.position;
@@ -658,7 +665,7 @@ export function somebodyInDoor(bot, door) {
 export function somebodyNear(bot, door) {
     try {
         for (const entity of Object.values(bot?.entities ?? {})) {
-            if (!entity || entity === bot.entity || !entity.position || NOT_STANDING.has(entity.name) || entity.type === 'projectile') {
+            if (!entity || isTheBot(bot, entity) || !entity.position || NOT_STANDING.has(entity.name) || entity.type === 'projectile') {
                 continue;
             }
             const p = entity.position;
