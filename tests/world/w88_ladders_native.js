@@ -25,6 +25,9 @@ import {
     playerUpToHouse, walkPlayer, line, saidLines, journeyTrace, printJourney, waitBot,
 } from './journey.js';
 
+// the bot carries ladders as in W84: the second shaft of the owner's base ends 2 blocks above the room floor, and no
+// jump reaches its lowest ladder; the bot places the missing ones (F22b of v0.1.4.9) on its way up (C0)
+const KIT = [['ladder', 8]];
 const NAME = 'w_ladnat';
 
 await scenarioMain({
@@ -41,7 +44,7 @@ await scenarioMain({
         const s1 = b.shaft.column;
         let agent = null, orders = null, sampler = null, trace = null;
         try {
-            const j = await startJourney(NAME, b, { botAt: { x: sp.houseMiddle.x - 1, y: g + 1, z: sp.houseMiddle.z + 1 }, playerAt: sp.besideTrapdoor, settings: GOALS_SETTINGS() });
+            const j = await startJourney(NAME, b, { botAt: { x: sp.houseMiddle.x - 1, y: g + 1, z: sp.houseMiddle.z + 1 }, playerAt: sp.besideTrapdoor, settings: GOALS_SETTINGS(), kit: KIT });
             agent = j.agent;
             orders = j.orders;
             const s = j.s;
