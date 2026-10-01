@@ -12,6 +12,9 @@
 //   basement: within 60 s the bot is there; A2 the trapdoor is closed within 10 s after the bot passed it; A3
 //   !rememberRoute("basement") names 1 ladder and 1 trapdoor; A4 the player climbs back up, !goToPlayer: the bot is in
 //   the house within 60 s; A5 !goToRememberedPlace("basement"): the bot is in the basement within 60 s.
+// Every climb of the bot in A1, A4 and A5 (its own position every 100 ms) is smooth (the owner: "the climbing looked
+// jerky, advance, stall, flinch"): never more than 0.1 block against the direction between two samples, at most one
+// stall over 1 s, under 0.8 s per block.
 // And: nothing in the house, the shafts and the basement was dug or placed (the trapdoor may be open or closed); the
 // process lives; no request reached a real model.
 import { scenarioMain, check, note, exitSoon, stopRealAgent, env } from './helpers.js';
