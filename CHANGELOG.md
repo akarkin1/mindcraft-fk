@@ -39,7 +39,6 @@ Every new switch is off by default. Corrections have no switch.
 ### Changed
 
 - **`!collectBlocks` with an ore takes only ore in sight**: an ore block needs a face towards an open cell. Before, the bot saw ore through the rock and dug to it. When every ore is inside the rock it says so and, with `mining_pack`, points to `!mineOre`. This holds with every switch off; `ore_sense_range` 3 widens it to ore within 3 blocks of an open cell. In a tunnel the bot no longer sends an ore beside it to `!mineOre` because a ray from its eyes did not reach it, and underground it never does.
-- **`!followPlayer` and `!goToPlayer` go down and up a ladder after the player.** When the player is 2 or more blocks below or above and a ladder column is within reach, the bot opens a closed trapdoor and slides down or climbs up the column, then follows on. With `routes_pack`. Before, the bot stood in the cell of the open trapdoor until the unstuck reflex killed the process, so the way into the mine could not be learned by following.
 - **`!goToRememberedPlace` walks a learned route first** when one leads to the place, then the path search does the rest. With `routes_pack`.
 - **`!mineOre` no longer breaks an ore its pickaxe cannot harvest** beside the tunnel; it is listed as passed. With `mine_routes`.
 - The block "what I know" shows a mine of the player by its name.
@@ -50,6 +49,17 @@ Every new switch is off by default. Corrections have no switch.
 - **The bot could not climb out of a shaft through an open trapdoor.** `prismarine-physics` 1.10.0 treats an open trapdoor above a ladder as climbable only up to Minecraft 1.20, and knows no trapdoor newer than mangrove. Corrected by `patches/prismarine-physics+1.10.0.patch`, which also lets a jump climb a ladder in 1.21; `npm install` applies it. The climb has a second way out at the top: jump and walk towards the entry.
 - **The path search climbed any ladder it entered**, so a walk to the foot of a ladder hung in the column. The bot now walks to the cell beside the column and steps in.
 - **The sky light the bot reads is stale** on a chunk border (15 inside a house). Open sky is decided by the column above the bot, never by the light.
+- **`!craftSupplies("torch", 32)` said it had no logs while it carried some.** The crafting chain of the wood pack chose one plank kind and read the inventory once. It now uses the logs the bot carries, oak first, reads the inventory again before each step, tries a step up to 4 times, and names the item that is really missing.
+- **The log exploded during `!mineOre`**: 15,000 copies of a deprecation warning of prismarine-entity, printed as `[object Object]`. The mining pack no longer reads `entity.objectType`, and the stamped console formats objects and traces like Node does.
+- **"do not dig" in a code request was refused as a digging request.** A dig word within 3 words after not, no, never, don't, without or avoid does not count.
+- **`!goToMine` knew only mines the bot dug** and climbed down with the shaft code. With `mine_routes` it takes the nearest known mine, the mine of the player included, and walks in by its route.
+- **A trip without torches dug in the dark and said nothing.** The text at the end says `I had no torches, the tunnel is dark.`
+- **`!rememberMine` after a start underground** said "in my last 0 steps". It says that it has not been under open sky since it started.
+- **The way out of a mine** after side steps and branches walks back along the cells the bot dug, digs a natural block in the way, and names the cell when it may not.
+- **`!leaveMine` from a room whose ladder ends above the floor** targeted a cell in the air. The foot of such a ladder is the cell under it; the bot places the missing ladder blocks when it carries ladders, else says which cells need one.
+- **A route could not start inside the house**: the area of the house spans both floors, so "remember the path here" in the basement answered "too short". Floors 3 or more blocks apart count as different places, and a route saves the place of its name at its end, so "go to the basement" walks it.
+- **The door service closed the trapdoor over the player's head** while the bot was about to follow. It closes only what the bot itself passed, 2 blocks past it, and never with an entity within 1 block.
+- **The bot could not follow the player down a ladder.** `!followPlayer`, `!goToPlayer` and every walk to a point open a closed trapdoor and go down or up a ladder column within 6 blocks when the target is 2 or more blocks below or above. With `routes_pack`.
 - **A resume action such as `!followPlayer` used a global `assert`** that only the sandbox lockdown supplies. The action manager imports it.
 - Nothing of a play test: `0.1.4.8` was not played before this release.
 

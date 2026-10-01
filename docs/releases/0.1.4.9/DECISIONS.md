@@ -107,7 +107,7 @@ closing the socket at login; 3 orders, none with a result; 9 calls, 4 cents.
 | F23 | `!rememberArea("basement")` and `!rememberHere("bed")` saved two more areas with the same box as `home`. | bots/gpt `areas.json` | Not corrected now: a scan that gives the box of an existing area should answer that it is that area already. Next release. | none |
 | F24 | **The walk back to the way out failed** after a trip with side steps and branches: `I could not get to the way out at (10, 30, 16).` The cause is not in the files. | the Luna log 03:43 | The walk back follows the cells the bot knows, branch to junction to corners to the route end, digs a natural block that is in the way, and names the cell that blocked. | B |
 
-Luna session of 53 minutes (13 cents, median answer 3 s), other findings, waiting for the owner's go:
+Luna session of 53 minutes (13 cents, median answer 3 s), the other findings, corrected with the owner's go (F25 to F30):
 the warning spam of `entity.objectType` (15,000 lines), `craftSupplies("torch")` failing with logs in the
 inventory, a trip without torches in a mine of the player, `!goToMine` not knowing a mine of the player,
 "do not dig" refused as a digging request, the item reflex opening the gate of the pen, `!rememberMine`
