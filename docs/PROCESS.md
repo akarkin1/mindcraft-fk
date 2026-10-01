@@ -28,6 +28,23 @@ The owner decides what is built. One Claude session leads: it writes the plan an
 - Every text the spec gives is used word for word.
 - Say plainly what you decided yourself and where the spec was unclear or wrong.
 
+## Journey scenarios, the gate of a release
+
+Learned from v0.1.4.9: 72 scenarios passed and the bot could not follow the owner down a ladder, because
+the spec told the tester to move the bot with the test control where the bot could not walk. So:
+
+- A release is done only when the journey scenarios pass: the first minutes of the owner with the bot,
+  played by a second bot with the owner's own words and walks, in the owner's base, with an empty memory.
+  They pass on facts of the world, never on texts alone.
+- The test control never moves the bot under test. It builds the world and plays the owner. What the bot
+  cannot do by itself is a failure of the bot.
+- The tester of the journeys gets what the owner gets: `PLAYTEST.md`, `CHANGELOG.md`, the README of the
+  tests and the owner's logs. Never the spec, never the handoff. Every promise of the play test guide is
+  a scenario, or it is not in the guide.
+- The journeys are written from the plan, before the build, and fail on the old code.
+- The journeys run at every integration; the full set once, in the fresh checkout.
+- The test base is built from the owner's world (a dump of the blocks around home), not from a description.
+
 ## Rules for testers
 
 - Test what the spec demands, not what the code does. Leave a failing test failing, with a comment that names the finding.

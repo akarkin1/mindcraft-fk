@@ -185,7 +185,8 @@ function rememberMineNow(bot, ctx, name, options) {
         const start = logic.skyStart(steps);
         const entrance = Number.isInteger(start) && start >= 0 ? cellOf(steps[start]) : null;
         if (!entrance) {
-            return { ok: false, reason: 'no_entrance', text: noEntranceText(steps.length), mine: null };
+            const max = ctx?.settings?.trail_max_steps;
+            return { ok: false, reason: 'no_entrance', text: noEntranceText(steps.length, Number.isFinite(max) ? max : undefined), mine: null };
         }
         const way = steps.slice(start);
         const route = logic.routeFromSteps(way);

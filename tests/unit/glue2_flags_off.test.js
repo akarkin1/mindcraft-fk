@@ -378,8 +378,12 @@ describe('runtime with the four switches off', () => {
         const text = readRepoFile('src/agent/commands/actions.js').replace(/\r\n/g, '\n');
         for (const skill of ['putInChest(agent.bot, item_name, num)', 'takeFromChest(agent.bot, item_name, num)', 'viewChest(agent.bot)']) {
             const block = `            const chest = chestToRecord(agent); // v0.1.4.7, S4: null while storage_pack is off\n            await skills.${skill};\n            await recordChest(agent, chest);\n`;
-            assert.ok(text.includes(block), skill);
+            // F32 (hotfix follow-ladder): !viewChest records the chest it showed (recordChest of the storage pack) and
+            // looks into it the old way only when that did not happen
+            const viewBlock = `            const chest = chestToRecord(agent); // v0.1.4.7, S4: null while storage_pack is off\n            const before = String(agent.bot.output ?? '').length;\n            await skills.${skill};\n            // F32: the chest that was shown into the chest index; else as before\n            if (!(await recordViewedChest(agent, String(agent.bot.output ?? '').slice(before))))\n                await recordChest(agent, chest);\n`;
+            assert.ok(text.includes(skill.startsWith('viewChest') ? viewBlock : block), skill);
         }
+        assert.ok(text.includes('async function recordViewedChest(agent, output) {\n    if (!settings.storage_pack || !agent.work_packs?.storage)\n        return false;'), 'recordViewedChest returns first while storage_pack is off');
         const helper = text.slice(text.indexOf('function chestToRecord'), text.indexOf('// S4, Amendment 1'));
         assert.ok(helper.includes('if (!settings.storage_pack || !agent.work_packs?.storage)\n        return null;'), 'chestToRecord returns first while storage_pack is off');
     });

@@ -396,6 +396,58 @@ export async function lookIntoChest(bot, ctx = {}, pos, options = {}) {
 }
 
 /**
+ * Updates the chest index from a list of items that the bot saw in a chest without this pack (fix
+ * round F32: `!viewChest` of the library; the glue calls this after it, so that a chest the player
+ * showed is known to fetchItem and craftSupplies). `items` is a list of `{ name, count }` (several
+ * entries per name add up) or counts by name; the kind is `chest` unless `options.kind` says
+ * otherwise, the dimension that of `options.dimension`, `pos.dimension` or the overworld; the free
+ * slots of the chest are those the index knew, else unknown. Never throws.
+ * @param {object} ctx with `chests`, the chest index
+ * @param {{x: number, y: number, z: number, dimension?: string}} pos
+ * @param {{name: string, count: number}[]|Object<string, number>} items
+ * @param {{kind?: string, dimension?: string, free_slots?: number}} [options]
+ * @returns {{ok: boolean, reason: string|null, chest: object|null}}
+ */
+export function recordChest(ctx, pos, items, options = {}) {
+    try {
+        const index = indexOf(ctx);
+        if (!index) {
+            return { ok: false, reason: 'no_index', chest: null };
+        }
+        if (!isPoint(pos)) {
+            return { ok: false, reason: 'bad_position', chest: null };
+        }
+        const counts = {};
+        const add = (name, n) => {
+            const clean = cleanName(name);
+            if (clean && isFiniteNumber(n) && n > 0) {
+                counts[clean] = (counts[clean] ?? 0) + Math.floor(n);
+            }
+        };
+        if (Array.isArray(items)) {
+            for (const item of items) {
+                add(item?.name, item?.count);
+            }
+        } else if (items && typeof items === 'object') {
+            for (const [name, n] of Object.entries(items)) {
+                add(name, n);
+            }
+        }
+        const dimension = normalizeDimension(options?.dimension ?? pos.dimension ?? 'overworld');
+        const old = typeof index.get === 'function' ? index.get({ x: pos.x, y: pos.y, z: pos.z, dimension }) : null;
+        const chest = { x: pos.x, y: pos.y, z: pos.z, dimension, kind: isContainerKind(options?.kind) ? options.kind : (old?.kind ?? 'chest'), items: counts };
+        const free = isFiniteNumber(options?.free_slots) ? options.free_slots : old?.free_slots;
+        if (isFiniteNumber(free)) {
+            chest.free_slots = free;
+        }
+        return { ok: true, reason: null, chest: index.update(chest) };
+    } catch (err) {
+        console.warn('Storage pack: could not record the chest:', err?.message ?? err);
+        return { ok: false, reason: 'error', chest: null };
+    }
+}
+
+/**
  * Updates the chest index from a container window that is open now, without moving. For code that
  * opened the container itself. Never throws.
  * @param {object} bot

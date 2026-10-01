@@ -26,9 +26,26 @@
 //           fence goes on above it: the owner's build as finding C4 describes it, a fence above the chest).
 //   pen     a pen of oak fence of 9 x 9 (x 8..16, z 4..12) with an oak gate in the middle of the north side,
 //           grass inside, a cow and a chicken.
+//
+// The owner variant (basePlan(r, { owner: true }) or buildBase(plan, { owner: true }); the journey scenarios W80 to
+// W84): the way into the mine as in the owner's world (seed-ce66bf80acdefa75, mines.json of 2026-09-30), two floors
+// and two ladders instead of one shaft:
+//   shaft 1   a closed oak trapdoor in the floor of the house at (-2, g, -3), ladders facing south at (-2, 53..59, -3),
+//             down to the basement (the owner: a ladder from the house floor y 67 to the basement at y 59).
+//   basement  air x -3..3, y 53..55, z -2..3 (stone floor at y 52), under the house, two torches. The area "home"
+//             of the owner spans both floors (y 55 to 71): homeBox spans y 52 to g+5.
+//   shaft 2   a hole in the floor of the basement at (3, 52, -2), ladders facing south at (3, 43..52, -2): the ladder
+//             ends 2 blocks ABOVE the floor of the room (feet y 41); the cells y 41 and 42 of the column are air (the
+//             owner: the ladder from y 58 down to 43, the room at 41). The bot drops 2 blocks down; on the way up it
+//             cannot reach the ladder by a jump (its feet reach y 42.25, the ladder starts at 43).
+//   doors     the room is closed to the east by a wall of stone at x 4 with a double door (two oak doors side by
+//             side, (4, 41, -1) and (4, 41, 0), facing west, hinges at the outer edges): the owner's "double door"
+//             at the entrance of the mine. The crafting table (4, 41, 2) stays in the wall, the torch of the room
+//             moves to (1, 41, -2). The first step of the descent is 2 wide (z -1 and 0), behind the doors.
+//   The default shaft at (2, -2) is not built. The mine box ends at y 51, under the basement.
 import { commands, env } from './control.js';
 import {
-    MC, passed, fieldPlan, buildField, buildChest, blockNames, chestItems, cropAges, positions, inBox, fmt,
+    MC, passed, fieldPlan, buildField, buildChest, blockNames, chestItems, cropAges, positions, inBox, fmt, boxPositions,
 } from './world.js';
 
 const P = (p) => `${p.x} ${p.y} ${p.z}`;
@@ -66,11 +83,73 @@ export const DEFAULT_CROPS = (i, j) => (j === 2 ? { crop: 'wheat', age: 7 } : { 
 
 export const PEN_TAG = 'mcw_pen';
 
+// The owner variant (see the head of the file).
+export const OWNER_SHAFT1 = Object.freeze({ dx: -2, dz: -3 }); // trapdoor in the house floor, ladders down to the basement
+export const OWNER_BASEMENT = Object.freeze({ y: 53, x0: -3, x1: 3, z0: -2, z1: 3, height: 3 });
+export const OWNER_BASEMENT_TORCHES = Object.freeze([{ dx: -3, dz: 3 }, { dx: 3, dz: 3 }]);
+export const OWNER_SHAFT2 = Object.freeze({ dx: 3, dz: -2, bottom: 43 }); // from the basement floor to 2 above the room floor
+export const OWNER_DOORS = Object.freeze([{ dx: 4, dz: -1, hinge: 'right' }, { dx: 4, dz: 0, hinge: 'left' }]); // facing west
+export const OWNER_ROOM_TORCH = Object.freeze({ dx: 1, dz: -2 });
+
 // ------------------------------------------------------------------ the plan
 
 // The coordinates of every part in the region r of region() (absolute). `crops(i, j)` chooses the cells of
 // the farm as fieldPlan does.
-export function basePlan(r, { crops = DEFAULT_CROPS } = {}) {
+export function basePlan(r, { crops = DEFAULT_CROPS, owner = false } = {}) {
+    const b = defaultPlan(r, crops);
+    return owner ? ownerPlan(b) : b;
+}
+
+// The owner variant of a plan (see the head of the file): it replaces the trapdoor, the shaft, the torch of the room
+// and the mine box, and adds b.owner with the basement, the second ladder and the double door. Returns the plan.
+export function ownerPlan(b) {
+    if (b.owner) return b;
+    const { ox, oz, g } = b;
+    const at = (d, y) => ({ x: ox + d.dx, y, z: oz + d.dz });
+    const s1Ladders = [];
+    for (let y = OWNER_BASEMENT.y; y <= g - 1; y++) s1Ladders.push(at(OWNER_SHAFT1, y));
+    const bm = OWNER_BASEMENT;
+    const basement = {
+        box: { min: { x: ox + bm.x0, y: bm.y, z: oz + bm.z0 }, max: { x: ox + bm.x1, y: bm.y + bm.height - 1, z: oz + bm.z1 } },
+        floorY: bm.y - 1,
+        middle: { x: ox, y: bm.y, z: oz + 1 },
+        torches: OWNER_BASEMENT_TORCHES.map((d) => at(d, bm.y)),
+    };
+    const s2Ladders = [];
+    for (let y = OWNER_SHAFT2.bottom; y <= bm.y - 1; y++) s2Ladders.push(at(OWNER_SHAFT2, y));
+    const roomY = b.room.box.min.y;
+    const doors = OWNER_DOORS.map((d) => ({ lower: at(d, roomY), upper: at(d, roomY + 1), hinge: d.hinge }));
+    // the wall at x 4 of the room: stone where there is no door and no crafting table
+    const wall = [];
+    for (let z = b.room.box.min.z; z <= b.room.box.max.z; z++) {
+        for (let y = roomY; y <= b.room.box.max.y; y++) {
+            const p = { x: ox + OWNER_DOORS[0].dx, y, z };
+            const door = doors.some((d) => (d.lower.z === z && (d.lower.y === y || d.upper.y === y)));
+            const table = b.room.table.x === p.x && b.room.table.z === z && b.room.table.y === y;
+            if (!door && !table) wall.push(p);
+        }
+    }
+    b.trapdoor = at(OWNER_SHAFT1, g);
+    b.shaft = { column: at(OWNER_SHAFT1, 0), ladders: s1Ladders };
+    b.room = { ...b.room, torch: at(OWNER_ROOM_TORCH, roomY) };
+    b.mineBox = { min: { ...b.mineBox.min }, max: { ...b.mineBox.max, y: bm.y - 2 } };
+    b.owner = {
+        basement,
+        shaft2: {
+            column: at(OWNER_SHAFT2, 0), ladders: s2Ladders, top: bm.y - 1, bottom: OWNER_SHAFT2.bottom,
+            gap: [at(OWNER_SHAFT2, roomY), at(OWNER_SHAFT2, roomY + 1)], // the 2 cells of air under the last ladder
+        },
+        doors,
+        wall,
+        // the second cell of the first step of the descent, behind the north door
+        stepBeside: { feet: { x: b.steps[0].feet.x, y: b.steps[0].feet.y, z: b.steps[0].feet.z - 1 }, floor: { x: b.steps[0].floor.x, y: b.steps[0].floor.y, z: b.steps[0].floor.z - 1 } },
+        // both floors, as the owner's area "home" (y 55 to 71 in his world)
+        homeBox: { min: { x: b.house.box.min.x, y: basement.floorY, z: b.house.box.min.z }, max: { ...b.house.box.max } },
+    };
+    return b;
+}
+
+function defaultPlan(r, crops) {
     const ox = r.ox, oz = r.oz, g = r.g;
     const at = (d, y) => ({ x: ox + d.dx, y, z: oz + d.dz });
     const house = {
@@ -205,6 +284,7 @@ export async function buildHouse(b) {
 }
 
 export async function buildMine(b) {
+    if (b.owner) return buildOwnerMine(b);
     const g = b.g;
     const col = b.shaft.column;
     const room = b.room.box;
@@ -229,6 +309,51 @@ export async function buildMine(b) {
     cmds.push(`setblock ${P(b.room.torch)} minecraft:torch`);
     cmds.push(`setblock ${P(b.landing.torch)} minecraft:torch`);
     await run(cmds, 'the mine');
+}
+
+// The mine of the owner variant: shaft 1 to the basement, the basement, shaft 2 ending 2 blocks above the floor of
+// the room, the room closed by a wall with a double door, the descent, the landing and the tunnel.
+async function buildOwnerMine(b) {
+    const g = b.g;
+    const o = b.owner;
+    const s1 = b.shaft.column;
+    const s2 = o.shaft2.column;
+    const bm = o.basement.box;
+    const room = b.room.box;
+    const cmds = [
+        `fill ${P(room.min)} ${P(room.max)} minecraft:air`,
+        `fill ${P(bm.min)} ${P(bm.max)} minecraft:air`,
+        // shaft 1: from under the floor of the house down to the floor of the basement, ladders on its north wall
+        `fill ${s1.x} ${bm.min.y} ${s1.z} ${s1.x} ${g - 1} ${s1.z} minecraft:air`,
+        `fill ${s1.x} ${bm.min.y} ${s1.z - 1} ${s1.x} ${g - 1} ${s1.z - 1} minecraft:stone replace minecraft:air`,
+        `fill ${s1.x} ${bm.min.y} ${s1.z} ${s1.x} ${g - 1} ${s1.z} minecraft:ladder[facing=south]`,
+        `setblock ${P(b.trapdoor)} minecraft:oak_trapdoor[facing=south,half=top,open=false]`,
+        // shaft 2: through the floor of the basement down into the room; the last ladder 2 blocks above the floor
+        `fill ${s2.x} ${room.min.y} ${s2.z} ${s2.x} ${o.shaft2.top} ${s2.z} minecraft:air`,
+        `fill ${s2.x} ${o.shaft2.bottom} ${s2.z - 1} ${s2.x} ${o.shaft2.top} ${s2.z - 1} minecraft:stone replace minecraft:air`,
+        `fill ${s2.x} ${o.shaft2.bottom} ${s2.z} ${s2.x} ${o.shaft2.top} ${s2.z} minecraft:ladder[facing=south]`,
+    ];
+    for (const t of o.basement.torches) cmds.push(`setblock ${P(t)} minecraft:torch`);
+    for (const s of b.steps) {
+        cmds.push(`fill ${s.feet.x} ${s.feet.y} ${s.feet.z} ${s.feet.x} ${s.feet.y + 2} ${s.feet.z} minecraft:air`);
+        cmds.push(`setblock ${P(s.floor)} minecraft:cobblestone`);
+    }
+    const sb = o.stepBeside;
+    cmds.push(`fill ${sb.feet.x} ${sb.feet.y} ${sb.feet.z} ${sb.feet.x} ${sb.feet.y + 2} ${sb.feet.z} minecraft:air`);
+    cmds.push(`setblock ${P(sb.floor)} minecraft:cobblestone`);
+    cmds.push(`fill ${P(b.landing.box.min)} ${P(b.landing.box.max)} minecraft:air`);
+    cmds.push(`fill ${P(b.tunnel.box.min)} ${P(b.tunnel.box.max)} minecraft:air`);
+    // the wall of the room with the double door
+    for (const p of o.wall) cmds.push(`setblock ${P(p)} minecraft:stone`);
+    for (const d of o.doors) {
+        cmds.push(`setblock ${P(d.lower)} minecraft:oak_door[facing=west,half=lower,hinge=${d.hinge},open=false]`);
+        cmds.push(`setblock ${P(d.upper)} minecraft:oak_door[facing=west,half=upper,hinge=${d.hinge},open=false]`);
+    }
+    cmds.push(`setblock ${P(b.room.table)} minecraft:crafting_table`);
+    cmds.push(`setblock ${P(b.room.furnace)} minecraft:furnace[facing=east]`);
+    cmds.push(`setblock ${P(b.room.torch)} minecraft:torch`);
+    cmds.push(`setblock ${P(b.landing.torch)} minecraft:torch`);
+    await run(cmds, 'the mine of the owner variant');
 }
 
 export async function buildFarm(b) {
@@ -269,9 +394,11 @@ export async function penAnimals(b) {
 
 // Builds the whole base in the region of the plan. options.parts limits it (for example ['house', 'farm']);
 // options.chests false leaves the chests empty. The region must be prepared (prepareRegion) and its
-// chunks loaded (prepareRegion loads them).
-export async function buildBase(b, { parts = ['house', 'mine', 'farm', 'pen'], chests = true, animals = true } = {}) {
+// chunks loaded (prepareRegion loads them). options.owner true builds the owner variant (the plan is changed into
+// it with ownerPlan when basePlan did not make it so).
+export async function buildBase(b, { parts = ['house', 'mine', 'farm', 'pen'], chests = true, animals = true, owner = false } = {}) {
     if (env.world !== 'base') throw new Error(`the base is built in the base world, not in the ${env.world} world`);
+    if (owner) ownerPlan(b);
     if (parts.includes('house')) {
         await buildHouse(b);
         await buildChest(b.house.chest, chests ? HOUSE_CHEST_ITEMS : {}, { facing: 'west' });
@@ -338,7 +465,8 @@ export async function verifyBase(b, { parts = ['house', 'mine', 'farm', 'pen'], 
         lines.push(`${okItems ? 'ok' : 'WRONG'} house: the chest holds ${JSON.stringify(items)}`);
         if (!okItems) failed.push(`house chest: ${JSON.stringify(items)}`);
     }
-    if (parts.includes('mine')) {
+    if (parts.includes('mine') && b.owner) await verifyOwnerMine(b, expect);
+    if (parts.includes('mine') && !b.owner) {
         await expect('shaft: trapdoor closed in the floor', [{ pos: b.trapdoor, name: 'oak_trapdoor[half=top,open=false,facing=south]' }], ['oak_trapdoor[half=top,open=false,facing=south]']);
         await expect(`shaft: ladders from y ${b.room.box.min.y} to ${g - 1}`, b.shaft.ladders.map((pos) => ({ pos, name: 'ladder[facing=south]' })), ['ladder[facing=south]']);
         const roomAir = [];
@@ -394,6 +522,51 @@ export async function verifyBase(b, { parts = ['house', 'mine', 'farm', 'pen'], 
         }
     }
     return { ok: failed.length === 0, lines, failed };
+}
+
+// The mine of the owner variant read back (verifyBase): `expect(what, [{ pos, name }], names)` of verifyBase.
+async function verifyOwnerMine(b, expect) {
+    const g = b.g;
+    const o = b.owner;
+    const same = (p, q) => p.x === q.x && p.y === q.y && p.z === q.z;
+    await expect('shaft 1: trapdoor closed in the floor of the house', [{ pos: b.trapdoor, name: 'oak_trapdoor[half=top,open=false,facing=south]' }], ['oak_trapdoor[half=top,open=false,facing=south]']);
+    await expect(`shaft 1: ladders from y ${b.shaft.ladders[0].y} to ${g - 1}`, b.shaft.ladders.map((pos) => ({ pos, name: 'ladder[facing=south]' })), ['ladder[facing=south]']);
+    const bmAir = [];
+    for (const pos of boxPositions(o.basement.box)) if (!o.basement.torches.some((t) => same(t, pos))) bmAir.push({ pos, name: 'air' });
+    await expect(`basement at y ${o.basement.box.min.y}: air`, bmAir, ['air']);
+    await expect('basement: torches, stone floor, the hole of shaft 2 in the floor', [
+        ...o.basement.torches.map((pos) => ({ pos, name: 'torch' })), { pos: { ...o.basement.middle, y: o.basement.floorY }, name: 'stone' },
+        { pos: { ...o.shaft2.column, y: o.basement.floorY }, name: 'ladder[facing=south]' },
+    ], ['torch', 'stone', 'ladder[facing=south]']);
+    await expect(`shaft 2: ladders from y ${o.shaft2.bottom} to ${o.shaft2.top}, air in the 2 cells under them`, [
+        ...o.shaft2.ladders.map((pos) => ({ pos, name: 'ladder[facing=south]' })), ...o.shaft2.gap.map((pos) => ({ pos, name: 'air' })),
+        { pos: { ...o.shaft2.gap[0], y: b.room.floorY }, name: 'stone' },
+    ], ['ladder[facing=south]', 'air', 'stone']);
+    const doorParts = o.doors.flatMap((d) => [
+        { pos: d.lower, name: `oak_door[half=lower,open=false,facing=west,hinge=${d.hinge}]` }, { pos: d.upper, name: `oak_door[half=upper,open=false,facing=west,hinge=${d.hinge}]` },
+    ]);
+    await expect('room: a double door, closed, in a wall of stone', [...doorParts, ...o.wall.map((pos) => ({ pos, name: 'stone' }))], [...new Set(doorParts.map((x) => x.name)), 'stone']);
+    const roomAir = [];
+    for (const pos of boxPositions(b.room.box)) {
+        const special = [b.room.chest, b.room.table, b.room.torch, b.room.furnace, ...o.shaft2.ladders, ...o.wall, ...o.doors.flatMap((d) => [d.lower, d.upper])].some((q) => same(q, pos));
+        if (!special) roomAir.push({ pos, name: 'air' });
+    }
+    await expect(`room at y ${b.room.box.min.y}: air`, roomAir, ['air']);
+    await expect('room: chest, crafting table, furnace, torch, stone floor', [
+        { pos: b.room.chest, name: 'chest' }, { pos: b.room.table, name: 'crafting_table' }, { pos: b.room.furnace, name: 'furnace' },
+        { pos: b.room.torch, name: 'torch' }, { pos: { ...b.room.middle, y: b.room.floorY }, name: 'stone' },
+    ], ['chest', 'crafting_table', 'furnace', 'torch', 'stone']);
+    // the column of the default shaft is rock in the owner variant
+    const old = { x: b.ox + SHAFT.dx, z: b.oz + SHAFT.dz };
+    await expect('no default shaft: its column is rock', [{ pos: { ...old, y: 50 }, name: 'stone' }, { pos: { ...old, y: g }, name: 'oak_planks' }], ['stone', 'oak_planks']);
+    const sb = o.stepBeside;
+    const steps = [...b.steps, sb].flatMap((s) => [
+        { pos: s.floor, name: 'cobblestone' }, { pos: s.feet, name: 'air' }, { pos: { ...s.feet, y: s.feet.y + 1 }, name: 'air' }, { pos: { ...s.feet, y: s.feet.y + 2 }, name: 'air' },
+    ]);
+    await expect(`descent: ${b.steps.length} steps (the first 2 wide) from y ${b.steps[0].feet.y} to ${b.steps[b.steps.length - 1].feet.y}`, steps, ['cobblestone', 'air']);
+    await expect('landing: air and torch', [{ pos: b.landing.middle, name: 'air' }, { pos: b.landing.torch, name: 'torch' }], ['air', 'torch']);
+    const tunnel = b.tunnel.cells.flatMap((c) => [{ pos: c, name: 'air' }, { pos: { ...c, y: c.y + 1 }, name: 'air' }, { pos: { ...c, y: c.y + 2 }, name: 'stone' }]);
+    await expect(`tunnel: 1 x 2, ${b.tunnel.cells.length} blocks long`, tunnel, ['air', 'stone']);
 }
 
 // Where the cow and the chicken of the pen are (server) and whether each is inside the fence.

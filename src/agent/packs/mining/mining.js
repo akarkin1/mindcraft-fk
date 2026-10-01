@@ -20,21 +20,21 @@ import { botPos, clockOf, dimensionOf, listAreas, logTo, recallHome } from '../h
 import { chooseFood, isEdibleFood } from '../home/food_logic.js';
 import { walkNear } from '../home/motion.js';
 import {
-    blockAt, collectDrops, countOf, digClear, equipPickaxe, fillerCount, freeSlots, inventoryList, isFree, isSolid,
+    FILLERS, blockAt, collectDrops, countOf, digClear, equipPickaxe, fillerCount, freeSlots, inventoryList, isFree, isSolid,
     logicName, nameReader, patchAll, placeInto, placeTorch, stepInto, walkTo, REACH,
 } from './dig.js';
 import { followDown, followUp, placeLadder, waitStanding } from './ladder.js';
 import {
     BRANCH_LENGTH, addPassedEntry, backOf, branchCells, branchPlan, cellOf, chooseEntrance, classify, faceNeighbours, isDirection, leftOf, mineAt, offset, posKey,
     removePassedAt, returnTimeMs, rightOf, roomBox, roomPlan, senseCut, shaftAllowed, shaftStep, shaftView, shouldReturn, staircaseStep,
-    staircaseView, tripNeeds, tripStart, tunnelAllowed, tunnelCells, tunnelFor, tunnelSlots, tunnelStep, tunnelView, tunnelsOf,
+    staircaseView, torchDue, tripNeeds, tripStart, tunnelAllowed, tunnelCells, tunnelFor, tunnelSlots, tunnelStep, tunnelView, tunnelsOf,
     usablePickaxes, veinParts,
 } from './mine_logic.js';
 import { MineStore } from './mine_store.js';
-import { chooseMine, mineRoutesOn, senseRangeOf, walksRoute, wayIn, wayOut } from './mine_way.js';
-import { ORES, isOreBlock, oreOf, targetLevel, tripPickaxe } from './ore_table.js';
+import { MINE_RANGE, chooseMine, mineRoutesOn, senseRangeOf, walksRoute, wayIn, wayOut } from './mine_way.js';
+import { ORES, isOreBlock, oreOf, pickaxeMaterial, targetLevel, tripPickaxe } from './ore_table.js';
 import {
-    STOP_REASONS, TEXTS, askMineText, cannotMineText, descendText, mineLabel, mineOreText, noTunnelText, passedText, posText,
+    NO_TORCHES_TEXT, STOP_REASONS, TEXTS, askMineText, cannotMineText, descendText, mineLabel, mineOreText, noTunnelText, passedText, posText,
     suppliesStoppedText, suppliesText, tunnelText, unknownOreText,
 } from './texts.js';
 
@@ -1684,7 +1684,9 @@ export async function digTunnel(bot, ctx = {}, length = 8, options = {}) {
             feet = slots['ahead.lower'];
             advance(mine, target, feet, n);
             steps++;
-            if (step.torch) {
+            // fix round F31: with mine_routes a torch when none stands in the last 8 cells of the tunnel (the
+            // count goes on from the tunnel that is there); without it every 8 steps of the tunnel as before
+            if (job.mineRoutes ? torchDue(nameReader(bot), feet, d) : step.torch) {
                 const t = await placeTorch(bot, feet, { clock: job.clock });
                 job.stats.torches += t.placed;
             }
@@ -1707,6 +1709,58 @@ export async function digTunnel(bot, ctx = {}, length = 8, options = {}) {
 }
 
 // ------------------------------------------------------------------ storing at the base
+
+/** The food a trip keeps when it stores at the base, in pieces (fix round F31). */
+export const TRIP_FOOD_KEEP = 16;
+/** The filler blocks a trip keeps when it stores at the base, all kinds together, cobblestone first. */
+export const TRIP_FILLER_KEEP = 32;
+
+/**
+ * What the bot keeps when it stores at the base of a mine (fix round F31): the supplies of a trip,
+ * whatever `extra` says: every torch, ladder and pickaxe, the food up to 16 pieces, the fillers up to
+ * 32 (cobblestone first), one chest; `extra` adds to it (mineOre keeps the ore of the trip, -1 all).
+ * Counts by name for the keep plan of the storage pack.
+ * @param {object} bot
+ * @param {Object<string, number>} [extra]
+ * @returns {Object<string, number>}
+ */
+export function tripKeep(bot, extra = {}) {
+    const keep = { torch: -1, ladder: -1, chest: 1 };
+    const list = inventoryList(bot);
+    const totals = new Map();
+    for (const item of list) {
+        totals.set(item.name, (totals.get(item.name) ?? 0) + item.count);
+        if (pickaxeMaterial(item.name)) {
+            keep[item.name] = -1;
+        }
+    }
+    const foods = bot.registry?.foodsByName ?? {};
+    let food = TRIP_FOOD_KEEP;
+    for (const [name, n] of [...totals].filter(([name]) => isEdibleFood(name, foods)).sort((a, b) => b[1] - a[1])) {
+        const k = Math.min(n, food);
+        if (k > 0) {
+            keep[name] = k;
+            food -= k;
+        }
+    }
+    let fill = TRIP_FILLER_KEEP;
+    for (const name of FILLERS) {
+        const k = Math.min(totals.get(name) ?? 0, fill);
+        if (k > 0) {
+            keep[name] = Math.max(keep[name] ?? 0, k);
+            fill -= k;
+        }
+    }
+    if (!keep.cobblestone) {
+        keep.cobblestone = TRIP_FILLER_KEEP; // as before: up to 32 cobblestone
+    }
+    for (const [name, n] of Object.entries(extra && typeof extra === 'object' ? extra : {})) {
+        if (isFiniteNumber(n)) {
+            keep[name] = keep[name] === -1 || n === -1 ? -1 : Math.max(keep[name] ?? 0, n);
+        }
+    }
+    return keep;
+}
 
 /**
  * Walks back to the chest of the mine and stores by the keep plan through ctx.storage (spec M4,
@@ -1744,7 +1798,7 @@ export async function depositAtBase(bot, ctx = {}, options = {}) {
             if (!w.ok) {
                 return done(false, w.reason === 'interrupted' ? 'interrupted' : 'stuck', `I could not get back to the chest of the mine at ${posText(chest)}.`);
             }
-            const last = await ctx.storage.storeItems(bot, ctx, { chest, keep: { cobblestone: 32, chest: 1, ...(options.keep ?? {}) } });
+            const last = await ctx.storage.storeItems(bot, ctx, { chest, keep: tripKeep(bot, options.keep) });
             addCounts(stored, last?.stored);
             const ok = Boolean(last) && (last.ok === true || last.reason === null);
             return done(ok, ok ? null : last?.reason ?? 'error', `At the base of the mine: ${last?.text ?? 'I stored nothing.'}`, last?.left ?? {});
@@ -1755,7 +1809,7 @@ export async function depositAtBase(bot, ctx = {}, options = {}) {
             return done(false, w.reason === 'interrupted' ? 'interrupted' : 'stuck', `I could not get back to the base of the mine at ${posText(mine.base)}.`);
         }
         // one chest stays with the bot for the day the chest of the mine is full
-        const keep = { cobblestone: 32, chest: 1, ...(options.keep ?? {}) };
+        const keep = tripKeep(bot, options.keep);
         const chests = [];
         for (const p of [mine.chest, plan.chest, plan.chest2]) {
             if (p && blockAt(bot, p)?.name === 'chest' && !chests.some(c => c.x === p.x && c.y === p.y && c.z === p.z)) {
@@ -1997,13 +2051,14 @@ export async function mineOre(bot, ctx = {}, ore = '', count = 8, options = {}) 
     let mine = null;
     let tunnel = null;
     let reason = null;
+    let dark = false; // fix round F24 (item 3): the tunnel was dug without a torch
     const mined = () => Math.max(0, countOf(bot, row.item) - startCount) + (stored[row.item] ?? 0);
     const finish = (ok, why, extra = '') => ({
         ok, reason: why, mined: mined(), stored, mine,
         text: mineOreText({
             item: row.item, mined: mined(), wanted, reason: why, mine: shownMine(mine, tunnel),
             stored: Object.fromEntries(Object.entries(stored).filter(([k]) => k !== row.item)),
-            extra: [passedText(leftOnTrip(mine, left)), extra].filter(t => t.length > 0).join(' '),
+            extra: [passedText(leftOnTrip(mine, left)), dark ? NO_TORCHES_TEXT : '', extra].filter(t => t.length > 0).join(' '),
         }),
     });
     // the clock of the tests goes to every step
@@ -2097,6 +2152,9 @@ export async function mineOre(bot, ctx = {}, ore = '', count = 8, options = {}) 
                 tunnel = 0;
             }
         }
+        // the supplies of prepareMiningTrip were asked for (chests, then crafted); none at all: the trip
+        // still runs, and its text says so at the end
+        dark = countOf(bot, 'torch') === 0;
         const depth = mine.entrance.y - (shownMine(mine, tunnel)?.level ?? mine.level);
         const tunnelLength = () => shownMine(mine, tunnel)?.length ?? mine.length;
         let depositsWithoutProgress = 0;
@@ -2163,7 +2221,10 @@ export async function mineOre(bot, ctx = {}, ore = '', count = 8, options = {}) 
 /**
  * `!goToMine`: goes down into the mine of the ore, without an ore the nearest mine, and sets up
  * its base when it has none. With mine_routes (v0.1.4.9) the mines of the player count too: the
- * way of such a mine is walked with walkRoute, and its room is left as it is.
+ * way of such a mine is walked with walkRoute, and its room is left as it is. Fix round F24 (item
+ * 4): with mine_routes the mine is the nearest one within 64 blocks that has a tunnel (else the
+ * nearest within 64), whatever the ore; an ore only has to be known. Without a mine in reach, the
+ * choice of v0.1.4.8.
  * @param {object} bot
  * @param {object} ctx
  * @param {string} [ore]
@@ -2175,19 +2236,28 @@ export async function goToMine(bot, ctx = {}, ore = '', options = {}) {
         const store = storeOf(ctx);
         const routes = makeJob(bot, ctx, options).mineRoutes;
         let mine = null;
+        if (routes) {
+            let near = [];
+            try {
+                near = store?.within?.(feetOf(bot), dimensionOf(bot) ?? undefined, MINE_RANGE) ?? [];
+            } catch {
+                near = [];
+            }
+            mine = near.find(m => tunnelsOf(m).length > 0) ?? near[0] ?? null;
+        }
         if (typeof ore === 'string' && ore.trim().length > 0) {
             const row = oreOf(ore);
             if (!row) {
                 return { ok: false, reason: 'unknown_ore', text: unknownOreText(ore), mine: null };
             }
-            mine = (routes ? chooseMine(store, feetOf(bot), dimensionOf(bot), row).mine : null) ?? store?.get(row.ore, dimensionOf(bot) ?? undefined) ?? null;
+            mine = mine ?? store?.get(row.ore, dimensionOf(bot) ?? undefined) ?? null;
             if (!mine) {
                 return { ok: false, reason: 'no_mine', text: `I know no mine for ${row.ore}. Tell me to mine ${row.ore} and I make one.`, mine: null };
             }
         } else {
             const feet = feetOf(bot);
             const list = (store ? store.list(dimensionOf(bot) ?? undefined) : []).filter(m => routes || m.source !== 'player');
-            mine = list.map(m => ({ m, d: feet ? Math.hypot(m.entrance.x - feet.x, m.entrance.z - feet.z) : 0 })).sort((a, b) => a.d - b.d)[0]?.m ?? null;
+            mine = mine ?? list.map(m => ({ m, d: feet ? Math.hypot(m.entrance.x - feet.x, m.entrance.z - feet.z) : 0 })).sort((a, b) => a.d - b.d)[0]?.m ?? null;
             if (!mine) {
                 return { ok: false, reason: 'no_mine', text: TEXTS.noMine, mine: null };
             }

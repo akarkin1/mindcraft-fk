@@ -294,7 +294,8 @@ describe('depositAtBase', () => {
         };
         const r = await M.depositAtBase(s.bot, s.ctx, { ...s.opts, mine: s.mine, keep: { raw_iron: -1 } });
         assert.equal(r.ok, true, r.text);
-        assert.deepEqual(calls[0], { chest: { x: -1, y: 56, z: 0 }, keep: { cobblestone: 32, chest: 1, raw_iron: -1 } });
+        // fix round F31: the supplies of a trip are kept whatever `keep` says
+        assert.deepEqual(calls[0], { chest: { x: -1, y: 56, z: 0 }, keep: { cobblestone: 32, chest: 1, raw_iron: -1, torch: -1, ladder: -1, iron_pickaxe: -1, bread: 8 } });
         assert.deepEqual(calls[1].chest, { x: -1, y: 56, z: -1 });
         assert.equal(s.world.nameAt(-1, 56, -1), 'chest');
         assert.deepEqual(r.stored, { cobblestone: 20, dirt: 5 });
@@ -370,7 +371,7 @@ describe('mineOre, the whole trip', () => {
         assert.match(r.text, /^I mined 3 coal\. The mine is at \(0, 64, 0\), its tunnel is \d+ blocks long at level 56\. I also stored 40 cobblestone in the chest of the mine\.$/);
         assert.ok(count(s.bot, 'coal') >= 3);
         assert.ok(s.bot.entity.position.y >= 64, 'on the surface');
-        assert.deepEqual(stored[0].keep, { cobblestone: 32, chest: 1, coal: -1 });
+        assert.deepEqual(stored[0].keep, { cobblestone: 32, chest: 1, coal: -1, torch: -1, ladder: -1, iron_pickaxe: -1, bread: 8 }, 'fix round F31: the supplies kept');
         assert.ok(s.ctx.logs.some(l => /^I am ready for the trip to level 56\./.test(l)));
     });
 

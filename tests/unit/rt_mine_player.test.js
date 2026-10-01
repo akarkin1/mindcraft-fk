@@ -187,11 +187,15 @@ describe('B2: rememberMine', () => {
         assert.equal(s.ctx.mines.list('overworld').length, 0);
     });
 
-    test('no step under the open sky: reason no_entrance, the text with the number of steps', async () => {
+    test('no step under the open sky: reason no_entrance; the text with the number of steps only for a full trail (fix round F24, item 4)', async () => {
         const steps = wayIn().filter((step) => !step.sky);
         const s = await scene({ steps });
         const r = await M.rememberMine(s.bot, s.ctx, 'mine');
         assert.deepEqual({ ok: r.ok, reason: r.reason, text: r.text }, { ok: false, reason: 'no_entrance',
+            text: 'I have not been under open sky since I started. Walk with me from the entrance of the mine and tell me again.' });
+        const full = await scene({ steps, settings: { trail_max_steps: steps.length } });
+        const f = await M.rememberMine(full.bot, full.ctx, 'mine');
+        assert.deepEqual({ ok: f.ok, reason: f.reason, text: f.text }, { ok: false, reason: 'no_entrance',
             text: `I was not under open sky in my last ${steps.length} steps. Walk with me from the entrance of the mine and tell me again.` });
     });
 });
@@ -499,7 +503,7 @@ describe('B4 to B7: mineOre in the mine of the player (W67, W64, W68, W69 in sma
         const r = await M.mineOre(s.bot, s.ctx, 'iron', 2, opts(s));
         assert.equal(r.ok, true, r.text);
         for (const [x, y, z] of [[37, 41, 4], [37, 42, 4], [37, 41, 3], [37, 42, 3], [37, 41, 2], [37, 42, 2]]) {
-            assert.equal(world.nameAt(x, y, z), 'air', `the branch at (${x}, ${y}, ${z})`);
+            assert.ok(['air', 'torch'].includes(world.nameAt(x, y, z)), `the branch at (${x}, ${y}, ${z}): air, or a torch on its floor (fix round F31)`);
         }
         assert.equal(world.nameAt(36, 41, 3), 'stone', '1 wide');
         assert.equal(world.nameAt(37, 43, 3), 'stone', '2 high');

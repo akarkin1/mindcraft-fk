@@ -288,10 +288,77 @@ Where this text and the spec disagree, this text wins.
   with `unstuck` paused; a failed route is the whole answer. `collectWork` decides ore in sight with
   `oreInSight` and `sightRange`; underground it never goes to `!mineOre`.
 
+## From part L (the follow down a ladder, E3), the fix after the play test
+
+- `src/agent/library/ladder_logic.js`, pure: `ladderColumnAt(getName, feet, { reach = 2, maxHeight = 64 })`
+  (`getName` may return a name or `{ name, facing }`; the facing is guessed at every cell of the column
+  when the block gives none), `ladderWay(column, feet, target)`, `heightWay`, `entryOf`, `ladderPlace`,
+  `wallYaw`, `LADDER_RULES`.
+- `src/agent/library/ladder_pass.js`: `passLadder(bot, column, way, { clock, timeoutMs = 30000 })`
+  returns `{ ok, reason, text }`, reasons `no_column`, `no_path`, `no_foot`, `no_floor`, `blocked_door`,
+  `stuck`, `timeout`, `interrupted`, `no_module`, `error`. It loads the ladder module of the mining pack
+  with a dynamic `import()` of a computed URL on the first pass (the flags-off test forbids a literal
+  pack import outside `agent.js`). Also `columnNear(bot)`, `ladderReader(bot)`, `passText`, `PASS_RULES`.
+- `followPlayer`: its own 3 s timer for the ladder step (the existing `stuck_since` restarts while the
+  player is within 6 blocks); down only while the bot is above the bottom of the column, up only while
+  below the top; at most 3 passes per sliding minute; a failed text once. `goToPlayer`: the pass by
+  the height rule, then the path search. Down is refused with `no_floor` when there is air under the
+  column. The texts name the cell of the trapdoor, or the top ladder without one.
+- `agent.js` line 1276: an action whose result is `undefined` prints `and was stopped.`
+- Tests read no switch from `settings.js` any more: the prompt-size tests and `rtc_collect_sight` pin
+  what they measure (the owner's `settings.js` on `main` has every pack on).
+
+## From the journey scenarios (the fix round F31 to F33)
+
+- `packs/mining/mining.js`: `tripKeep(bot, extra)` is the keep plan of `depositAtBase` (torches, ladders,
+  pickaxes all; food up to `TRIP_FOOD_KEEP` 16; fillers up to `TRIP_FILLER_KEEP` 32, cobblestone first; one
+  chest; `extra` adds). `mine_logic.js`: `torchDue(getName, feet, dir, every = 8)` and `TORCH_NAMES`;
+  `digTunnel` places by it with `mine_routes`, every 8 steps without.
+- `packs/wood/tools.js`: `craftSupplies` crafts what the inventory gives, gathers the rest (known chests
+  through `ctx.storage.fetchItem`, then trees), crafts again, up to 6 rounds. Its success text is
+  `I made 32 torches.` for every supply (was `I crafted 9 ladder.`); `count` is what was made.
+  `wood/texts.js`: `madeSuppliesText`, `supplyWords`.
+- `packs/storage/storage.js`: `recordChest(ctx, pos, items, options)` updates the chest index from a list
+  or counts by name; exported from the pack. `!viewChest` parses its own output (`viewedChest(output)` in
+  `commands/actions.js`) and records the chest while the storage pack is on.
+- `library/ladder_pass.js`: `ladderWayTowards(bot, target, { reach, height })` gives the column and the
+  way or null; `ladderStepTowards` uses it. `library/skills.js`: `walkWatchingLadders(bot, makeGoal,
+  target, passes, after)` wraps the path search of `goToPlayer` and `goToPosition`: still in its cell
+  for 3 s with the target 2 or more blocks above or below and a column near, `setGoal(null)`, the ladder
+  step, the path search again; at most 3 passes a minute per call.
+
+## From the journey runs on the real server (the fix round F33 to F38, the lead)
+
+- `library/skills.js`: `walkWatchingLadders(bot, makeGoal, target, passes, after)` wraps the path search of
+  `goToPlayer` and `goToPosition` (F33); `goToPlayer` waits up to `PLAYER_WAIT_MS` (2000) for the entity of the
+  player (F38).
+- `library/ladder_pass.js`: `ladderWayTowards(bot, target, { reach, height })`; `holdOnLadder(bot)` (a bot in
+  the air on a ladder holds on with sneak and drops its upward speed; used by `agent.js` after it ends the path
+  search in `requestInterrupt`, and by the mode `self_preservation`, which no longer clears the controls of a
+  bot that hangs on a ladder); `climbToOpen` holds only jump during the click on the trapdoor and looks back at
+  the wall at once (F34); after a pass up the trapdoor is closed from beside it, `closeBehind` (F35); a pass up
+  of a bot that hangs keeps the hold until the climb presses forward (F36). The same hold and click rules in
+  `packs/mining/ladder.js` (`holdOnLadder` exported there for the packs; `climbUp` clears sneak as it presses
+  forward) and in the route replay (`packs/routes/replay.js`).
+- `packs/home/doors.js`: the door service does not click while the bot climbs (feet in a ladder, a vine or an
+  open trapdoor cell, not on the ground, forward or jump pressed): a click turns the look and knocks the bot off
+  the ladder (F37). A slide down presses nothing, so the trapdoor above is closed during the slide, while it is
+  within reach.
+- `packs/wood/tools.js`: `freeCraftingGrid` before every craft (an open window closed, the grid and the cursor
+  put back), one craft per call of `bot.craft` (a count over 1 crafts once and throws on the real server), and
+  after a failed step the next round crafts what the inventory gives (F32b, F32c).
+- `action_manager.js`: the end of a stopped action is polled every 50 ms (the interrupt asked every 300 ms as
+  before), so the next order starts at once.
+- `tests/e2e/helpers.js`: every boolean switch of `settings_spec.json` is put at its default before the
+  overrides of a scenario; a scenario never reads a switch from the owner's `settings.js`.
+- `tests/world/journey.js`: the climb checks (`climbSampler`, `climbsOf`, `smooth`, `checkClimbs`): a reversal
+  is a step of more than 0.2 blocks against the direction, outside the first 0.5 s of a climb up and the first
+  1.5 s of a climb down (the step into the column).
+
 ## State of the unit tests
 
 After parts A, B and C: E2 reports `npm test` with 5476 tests, 1 failure (the pack list, corrected by
 the tech lead). After parts D, E and G: E5 reports 5965 tests, 2 failures, both in the tester's files
 against part A (`rt_route_logic` trapdoor leg, `rt_routes_pack` `too_short`). After the tester T1:
 6041 tests, 8 failures (T1-1 to T1-5). After both fix rounds: 6078 tests, 0 failures, 1 skipped
-(Windows only). End-to-end: 17 of 17.
+(Windows only). End-to-end: 17 of 17. After the fix of the follow and the journeys: 6202 tests, 0 failures.

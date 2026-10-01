@@ -9,6 +9,7 @@
 //   - !goToRememberedPlace: a way of the player (ctx.routes.walkTo) when the path search did not arrive; F2: a way
 //     that routeFor finds for the place goes first, with unstuck paused, and a failed way is the answer;
 //   - F4: !collectBlocks decides whether an ore is in sight by the rule of part C; underground never !mineOre;
+//   - F32: !viewChest records the chest it showed with recordChest(ctx, pos, items) of the storage pack;
 //   - !newAction with skills_over_code: a digging request gets digRefusalText with the commands that are on,
 //     before the cost check, and the code model is never called; a typed !newAction runs.
 import { describe, test, before, after, beforeEach, afterEach } from 'node:test';
@@ -532,6 +533,70 @@ describe('F4: !collectBlocks and an ore, by the sight rule of part C (oreInSight
         M.settingsModule.setSettings({ ...BASE, mining_pack: true, ore_sense_range: 0 });
         const far = oreAgent({ open: ['5,60,0'] });
         assert.equal(await command('!collectBlocks').perform(far, 'iron_ore', 1), 'mineOre text');
+    });
+});
+
+describe('F32: !viewChest records the chest it showed in the chest index (recordChest of the storage pack)', () => {
+    // A fake bot with one chest at (5, 64, 2); goToPosition in cheat mode teleports; the chest holds `items`.
+    function chestAgent(items, { record = true } = {}) {
+        const agent = makeAgent({
+            bot: {
+                modes: { isOn: (name) => name === 'cheat', pause() {} },
+                findBlocks: () => [vec(5, 64, 2)],
+                blockAt: (pos) => ({ name: 'chest', position: pos }),
+                openContainer: async () => ({ containerItems: () => items, close: async () => {} }),
+                chat() {},
+            },
+        });
+        agent.recorded = [];
+        agent.looked = [];
+        agent.work_packs = {
+            storage: {
+                lookIntoChest: async (bot, ctx, pos) => { agent.looked.push(pos); return { ok: true, text: '' }; },
+                ...(record ? { recordChest: (ctx, pos, list) => { agent.recorded.push({ ctx, pos, list }); return { ok: true }; } } : {}),
+            },
+        };
+        return agent;
+    }
+
+    test('the position and the items of the text of viewChest; the old look into the chest is not needed', async () => {
+        M.settingsModule.setSettings({ ...BASE, storage_pack: true });
+        const agent = chestAgent([{ name: 'torch', count: 20 }, { name: 'coal', count: 5 }, { name: 'torch', count: 12 }]);
+        const output = await command('!viewChest').perform(agent);
+        assert.ok(output.includes('The chest at (5, 64, 2) contains: torch 32, coal 5.'), output);
+        assert.equal(agent.recorded.length, 1);
+        assert.deepEqual(agent.recorded[0].pos, { x: 5, y: 64, z: 2 });
+        assert.deepEqual(agent.recorded[0].list, [{ name: 'torch', count: 32 }, { name: 'coal', count: 5 }]);
+        assert.deepEqual(agent.recorded[0].ctx.marker, 'ctx', 'the pack context');
+        assert.deepEqual(agent.looked, []);
+    });
+
+    test('an empty chest records an empty list', async () => {
+        M.settingsModule.setSettings({ ...BASE, storage_pack: true });
+        const agent = chestAgent([]);
+        assert.ok((await command('!viewChest').perform(agent)).includes('The chest at (5, 64, 2) is empty.'));
+        assert.deepEqual(agent.recorded.map((r) => [r.pos, r.list]), [[{ x: 5, y: 64, z: 2 }, []]]);
+    });
+
+    test('a storage pack without recordChest: the old lookIntoChest; storage_pack off: nothing is recorded', async () => {
+        M.settingsModule.setSettings({ ...BASE, storage_pack: true });
+        const old = chestAgent([{ name: 'coal', count: 1 }], { record: false });
+        await command('!viewChest').perform(old);
+        assert.deepEqual(old.looked.map((p) => [p.x, p.y, p.z]), [[5, 64, 2]]);
+        M.settingsModule.setSettings({ ...BASE, storage_pack: false });
+        const off = chestAgent([{ name: 'coal', count: 1 }]);
+        await command('!viewChest').perform(off);
+        assert.deepEqual(off.recorded, []);
+        assert.deepEqual(off.looked, []);
+    });
+
+    test('viewedChest reads the last text of viewChest in an output', () => {
+        const { viewedChest } = M.actions;
+        assert.deepEqual(viewedChest('Action output:\nThe chest at (-3, 41, 12) contains: oak_log 64, wheat_seeds 3.\n'),
+            { pos: { x: -3, y: 41, z: 12 }, items: [{ name: 'oak_log', count: 64 }, { name: 'wheat_seeds', count: 3 }] });
+        assert.deepEqual(viewedChest('The chest at (1, 2, 3) is empty.'), { pos: { x: 1, y: 2, z: 3 }, items: [] });
+        assert.equal(viewedChest('Could not find a chest nearby.'), null);
+        assert.equal(viewedChest(null), null);
     });
 });
 

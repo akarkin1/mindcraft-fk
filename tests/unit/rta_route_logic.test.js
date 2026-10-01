@@ -80,12 +80,15 @@ describe('routeFromSteps', () => {
         assert.equal(R.routeFromSteps(foot).legs[0].face, 'south', 'left the ladder to the south at the foot');
     });
 
-    test('a column that ends above the floor: the floor under it is the bottom', () => {
+    // v0.1.4.9, decision F22: a column that ends more than 1 block above the floor keeps its lowest ladder as the
+    // bottom; the floor under it is the foot (this test said "the floor under it is the bottom", bottom 54)
+    test('a column that ends 3 above the floor: the bottom is the lowest ladder, the floor under it the foot', () => {
         const steps = [st(3, 61, -2), ladder(59), ladder(58), ladder(57), st(2, 54, -2), st(2, 54, -1)];
         const leg = R.routeFromSteps(steps).legs.find(l => l.kind === 'ladder');
-        assert.deepEqual({ top: leg.top, bottom: leg.bottom, entry: leg.entry }, { top: 59, bottom: 54, entry: { x: 3, y: 61, z: -2 } });
+        assert.deepEqual({ top: leg.top, bottom: leg.bottom, entry: leg.entry, foot: leg.foot },
+            { top: 59, bottom: 57, entry: { x: 3, y: 61, z: -2 }, foot: { x: 2, y: 54, z: -2 } });
         const up = R.routeFromSteps(steps.slice().reverse()).legs.find(l => l.kind === 'ladder');
-        assert.deepEqual({ top: up.top, bottom: up.bottom }, { top: 59, bottom: 54 });
+        assert.deepEqual({ top: up.top, bottom: up.bottom, foot: up.foot }, { top: 59, bottom: 57, foot: { x: 2, y: 54, z: -2 } });
     });
 
     test('a door of the house: from the step before it to the step behind it', () => {

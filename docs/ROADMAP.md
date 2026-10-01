@@ -15,18 +15,59 @@ Rules that hold for every release:
 |---|---|---|
 | 0.1.4.8 | Stability | Released |
 | 0.1.4.9 | The mine, the routes of the player, and the model comparison | Released |
-| 0.1.4.10 | Understanding and watching | Planned, both trials passed |
+| 0.1.4.10 | Goals | Planned |
+| 0.1.4.11 | Understanding and watching | Planned, both trials passed |
 | Later | See the backlog | Not decided |
 
 ## 0.1.4.9 The mine, the routes of the player, and the model comparison
 
 Released on 2026-09-30; `CHANGELOG.md` says what it contains. Left for later: a mine named with a number collides with the mines the bot dug itself; `ore_sense_range` accepts 1 and 2 as well as 0 and 3; a plain `!goToCoordinates` into the mine still stands on the closed trapdoor (the path search of v0.1.4.7), while `!goToRememberedPlace` walks the learned route.
 
-## 0.1.4.10 Understanding and watching
+## 0.1.4.10 Goals
+
+From the play of 2026-10-01: the bot mined well until it ran out of torches, then waited for an order at every step while the owner guided it to wood, planks, sticks and torches, and never came back to the mining by itself. The goal mechanism of the original project (`!goal`) is a loop of the model that any message of the player ends, and the model has to be told to use it.
+
+| Part | Content |
+|---|---|
+| The job | An order with a result that code can check is a job: mine 16 iron, farm the wheat, get 8 logs, make 32 torches. The bot keeps one current job with its state (6 of 16 iron, in the mine "mine"), on disk. An ordinary order becomes the job by itself; "set yourself the goal: ..." sets one explicitly, for the bigger ones. The player never has to say it. |
+| Errands do not end the job | "Follow me", "come here", "check the chest", "wait", "go to bed" are errands. When nothing more comes for a while and nothing runs, the bot returns to the job by itself (setting `job_resume_seconds`, default 60; the owner wants a minute or more): `I go back to the mining, 6 of 16 iron.` Code decides, no call of the model. |
+| Blockers become steps | No torches is not a reason to idle: the job gets the steps wood, planks, sticks, torches, then back to the mine. The model plans the steps once when no skill knows them; code checks each step. |
+| Ending a job is implicit | "Stop" or "that's enough" ends it. A new job replaces it, with one line: `I leave the mining at 6 of 16 iron.` |
+| Restarts | The job survives a restart of the process; the bot says where it stands and goes on. |
+| Nothing to do | A standing list the player gives once: keep the farm going, tidy the chests, make torches when fewer than 32. The bot works it when it has no job. |
+| Progress | One line when a step is done and when the job is done. No narration between. |
+| Later: milestones | "Beat the game" or "help me beat it" is the same machine with milestones instead of steps: iron tools, a bed, diamonds, the Nether, each a state that code checks, the model planning only the next one. It needs smelting, trading and the Nether as skills first. |
+
+Why first: the owner saw the bot idle through 20 minutes of guided crafting and never return to the job. The same idea made `!farmCycle` work once the whole cycle was code.
+
+The same release takes the path search in hand. mindcraft-ce was checked on 2026-10-01: its navigation is upstream Mindcraft unchanged, its pathfinder patch is byte-identical to ours; nothing to take. The gains are in our own patch of `mineflayer-pathfinder`:
+
+| Part | Content |
+|---|---|
+| Trapdoors | A closed trapdoor counts as a block to stand on only over solid ground, never over a ladder or air; an openable block is passable only when the move goes through it. Today the bot stands on the closed trapdoor. |
+| Ladders inside the search | A move of one rung down when the block below is a ladder or a vine; on a ladder the search looks at the wall and holds forward, as a player does, without steering or planning again. Every walk the search starts, by a command, a reflex, a pack or the model's code, then climbs and descends smoothly by default; the ladder code of the packs becomes the fallback. No switch: a correction of the path search. |
+| Doors | Every door point of a path is centred, not only the first; the arrival tolerance at doors and ladders stays at 0.35. The doorway swinging goes. |
+| Holes and hollow blocks | Slabs, stairs, cauldrons, composters and hoppers get a no-stand rule in the search itself (the list of `stand_logic.js`), and a one-wide pit with a high exit a cost. |
+| Stuck | A cell where the bot got stuck gets a temporary high cost before the path is planned again, so the next plan takes another way. Part of the unstuck escape becomes unnecessary. |
+| Known routes | Later: the cells of a walked route get a discount in the search, so the bot prefers known ways. |
+
+Also in 0.1.4.10, from the play tests of 0.1.4.9:
+
+| Part | Content |
+|---|---|
+| The pen | The item reflex never opens a gate of a pen or a farm and never enters an area of type pen; a saved rule of the player about an area reaches the reflexes as a flag of the area. |
+| Floors | The scan of a building stops at a floor: a house above a basement gives two areas, or one area with floors, so that "the basement" and "the house" are different places for the bot and the shelter. A scan that gives the box of an existing area answers that it is that area. |
+| `!forgetMine`, `!mines` | A mine can be forgotten by name and listed. A mine named with a number no longer collides with a mine of the bot. |
+| Scorecard | `node scripts/scorecard.js <log>`: the numbers of a play log in one table: minutes, processes and why they ended, orders and orders without a result, calls and cost per model, "I'm stuck", doors left open. The analysis of a play test takes a minute. |
+| Test base from the owner's world | `scripts/dump_region.js`, run by the owner once: the blocks around home into a JSON; the test base is built from it. |
+| A play scenario with the model | `npm run test:play`: the first ten minutes with the chat model of the profile, on the owner's machine only, about 10 cents with Luna. The only test in which the model talks. |
+| Chat model | Decided from the routing check with Luna and Haiku: accuracy, time per answer, cost. |
+
+## 0.1.4.11 Understanding and watching
 
 ### Part A: the bot picks better examples
 
-Before each call of the model the bot puts 2 of its examples into the prompt. Two steps of this part are released with 0.1.4.8: examples for the commands that had none, and the choice by the last request of the player (`examples_by_last_request`).
+Before each call of the model the bot puts 2 of its examples into the prompt. Two steps of this part were released with 0.1.4.8: examples for the commands that had none, and the choice by the last request of the player (`examples_by_last_request`).
 
 | Step | Content |
 |---|---|
@@ -61,7 +102,7 @@ Ordered by recommendation. Nothing here is decided.
 | 1 | Journal and scorecard | Each session leaves a record that a script can read. The analysis of a play test takes minutes, not hours. |
 | 2 | Stronger chat model, paid by prompt caching | To be measured. |
 | 3 | Saved lessons | A recorded round is replayed on order. The bot checks the world before each step. |
-| 4 | Long goals as a plan on disk | Steps that code verifies. Milestones: iron tools alone, diamonds, the Nether. |
+| 4 | Guides of big goals | A short file per big goal, ten lines: the milestones in order, each with the state that code checks (an iron pickaxe in the inventory, 5 diamonds, the portal lit). The model plans only the next milestone; the skills do the work; the player edits the file. The guide is also the list of skills to build: smelting, trading, the Nether. "Beat the game" first. Stashed on 2026-10-01 until the job of v0.1.4.10 and smelting exist. |
 | 5 | Review after the session | A strong model reads the journal after play and proposes rules and corrections. The player approves. |
 | 6 | Smelting | The bot makes iron tools by itself. |
 | 7 | New skills from a record | The strong model writes a skill from what it watched. The player approves each one. Experimental. |

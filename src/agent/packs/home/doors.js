@@ -647,6 +647,33 @@ export function somebodyInDoor(bot, door) {
     }
 }
 
+/**
+ * True when an entity other than the bot (a player climbing below a trapdoor) is within 1 block of the
+ * openable: its feet cell at most 1 block sideways of the cell of the openable, and the openable at most 1
+ * block below its feet or above its head (v0.1.4.9, F21). Items, orbs and projectiles do not count. Never throws.
+ * @param {object} bot
+ * @param {{x,y,z}} door
+ * @returns {boolean}
+ */
+export function somebodyNear(bot, door) {
+    try {
+        for (const entity of Object.values(bot?.entities ?? {})) {
+            if (!entity || entity === bot.entity || !entity.position || NOT_STANDING.has(entity.name) || entity.type === 'projectile') {
+                continue;
+            }
+            const p = entity.position;
+            const height = isFiniteNumber(entity.height) ? entity.height : 1.8;
+            if (Math.max(Math.abs(Math.floor(p.x) - door.x), Math.abs(Math.floor(p.z) - door.z)) <= 1
+                && door.y >= Math.floor(p.y) - 1 && door.y <= Math.floor(p.y + height) + 1) {
+                return true;
+            }
+        }
+        return false;
+    } catch {
+        return true; // when in doubt, leave it open
+    }
+}
+
 function botStandsIn(bot, door) {
     const me = botPos(bot);
     return Boolean(me) && Math.abs(me.x - (door.x + 0.5)) < 0.8 && Math.abs(me.z - (door.z + 0.5)) < 0.8
@@ -675,6 +702,32 @@ function where3(door) {
  * @param {{now?: Function, wait?: Function, scanMs?: number, checkMs?: number}} [options] for tests
  * @returns {{tick: () => void, stop: () => void, closeNear: (range?: number) => Promise<object>}}
  */
+// F37 of the journeys (W84, the way out of the mine): the service closed a door while the bot climbed a ladder; the
+// click turned its look away from the wall, the bot stepped out of the column and fell, and the climb failed.
+// The service waits while the bot is on a ladder, a vine or an open trapdoor off the ground (a click during a
+// slide stalled the slide, W80 run 13). The ladder passes close the trapdoor they came through themselves, on
+// the way down 2 blocks below it (closeWhenBelow of ladder_pass.js and of the route replay) and on the way up
+// from beside it (F35).
+const CLIMBABLE = new Set(['ladder', 'vine']);
+
+function botOnLadder(bot) {
+    try {
+        const me = botPos(bot);
+        if (!me || bot.entity?.onGround === true) {
+            return false; // standing at the foot of a ladder (its lowest rung is at the floor) is no climb
+        }
+        const b = bot.blockAt(new Vec3(Math.floor(me.x), Math.floor(me.y + 0.01), Math.floor(me.z)));
+        const name = b?.name ?? '';
+        if (CLIMBABLE.has(name)) {
+            return true;
+        }
+        const props = (typeof b?.getProperties === 'function' ? b.getProperties() : b?._properties) ?? {};
+        return name.endsWith('_trapdoor') && (props.open === true || props.open === 'true');
+    } catch {
+        return false;
+    }
+}
+
 export function createDoorService(bot, ctx = {}, options = {}) {
     const clock = clockOf(ctx, options);
     const watch = new DoorWatch();
@@ -692,7 +745,7 @@ export function createDoorService(bot, ctx = {}, options = {}) {
             ...door,
             inArea: areas.some(({ box }) => containsPos(box, door)),
             gated: door.kind === 'gate' && areas.some(({ area, box }) => isGatedArea(area) && containsPos(box, door)),
-            occupied: somebodyInDoor(bot, door),
+            occupied: somebodyInDoor(bot, door) || somebodyNear(bot, door), // F21: nobody within 1 block
         }));
         const moving = now - movedAt <= DOOR_SERVICE_RULES.movedWithinMs || bot.pathfinder?.isMoving?.() === true;
         return watch.observe({ now, botPos: me, moving, doors, players: otherPlayerPositions(bot, 16) });
@@ -710,7 +763,7 @@ export function createDoorService(bot, ctx = {}, options = {}) {
                 watch.forget(door);
                 return;
             }
-            if (somebodyInDoor(bot, door) || botStandsIn(bot, door)) {
+            if (somebodyInDoor(bot, door) || somebodyNear(bot, door) || botStandsIn(bot, door)) {
                 return; // tried again on a later look
             }
             const closed = await closeDoor(bot, before, { tries: 1, checkMs, respectInterrupt: false, ctx, now: options?.now, wait: options?.wait });
@@ -753,8 +806,8 @@ export function createDoorService(bot, ctx = {}, options = {}) {
                     console.log(doorClosedLog(door));
                 }
                 if (busy || toClose.length === 0 || isPassingThrough(bot) || bot.usingHeldItem === true || bot.currentWindow
-                    || bot.isSleeping === true) {
-                    return;
+                    || bot.isSleeping === true || botOnLadder(bot)) {
+                    return; // F37: a click turns the look; a bot on a ladder would step out of the column and fall
                 }
                 busy = true;
                 closeOne(toClose[0]).finally(() => {

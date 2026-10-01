@@ -1,4 +1,5 @@
 import * as skills from './library/skills.js';
+import { holdOnLadder } from './library/ladder_pass.js';
 import * as world from './library/world.js';
 import * as mc from '../utils/mcdata.js';
 import settings from './settings.js'
@@ -108,8 +109,10 @@ const modes_list = [
                     await skills.moveAway(bot, 20);
                 });
             }
-            else if (agent.isIdle()) {
-                bot.clearControlStates(); // clear jump if not in danger or doing anything else
+            else if (agent.isIdle() && !holdOnLadder(bot)) {
+                // clear jump if not in danger or doing anything else. F36 of the journeys: a bot that hangs on a
+                // ladder between two orders holds on with sneak instead (holdOnLadder), else it slid in the gap
+                bot.clearControlStates();
             }
         }
     },

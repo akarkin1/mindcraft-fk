@@ -308,7 +308,8 @@ describe('a craft step: the inventory is read again, a failure names the item an
     test('stepIngredients and missingIngredient, every kind of step', () => {
         const have = inv('oak_log', 2, 'oak_planks', 5, 'birch_planks', 7, 'stick', 3, 'charcoal', 1, 'cobbled_deepslate', 3);
         assert.deepEqual(L.stepIngredients({ item: 'oak_planks', times: 2 }, have), [{ name: 'oak_log', need: 2, have: 2 }]);
-        assert.deepEqual(L.stepIngredients({ item: 'stick', times: 2 }, have), [{ name: 'birch_planks', need: 4, have: 7 }], 'one kind of planks, the most');
+        assert.deepEqual(L.stepIngredients({ item: 'stick', times: 2 }, have), [{ name: 'birch_planks', need: 4, have: 10 }],
+            'fix round F24: a stick craft takes a pair of any one kind: the pairs of every kind (oak 4, birch 6)');
         assert.deepEqual(L.stepIngredients({ item: 'crafting_table', times: 1 }, have), [{ name: 'birch_planks', need: 4, have: 7 }]);
         assert.deepEqual(L.stepIngredients({ item: 'chest', times: 1 }, have), [{ name: 'birch_planks', need: 8, have: 7 }]);
         assert.deepEqual(L.stepIngredients({ item: 'ladder', times: 1 }, have), [{ name: 'stick', need: 7, have: 3 }]);

@@ -8,7 +8,7 @@
 //   - !collectBlocks: crops, logs and ores lead to harvestCrops, chopTrees and mineOre while their
 //     switch is on; an ore in sight is collected the old way;
 //   - !putInChest updates the chest index with lookIntoChest; !chests lists the index;
-//   - !goToMine finds the mine of the ore or the nearest mine.
+//   - !goToMine hands the order to goToMine of the mining pack (hotfix follow-ladder) and passes its text on.
 // The packs are fakes that are put into agent.work_packs, as the agent does after loading them; the
 // real functions of the finished packs are used where the glue calls a helper of them.
 import { describe, test, before, after, beforeEach, afterEach } from 'node:test';
@@ -84,7 +84,7 @@ function makePacks() {
         storage: fakePack(['storeItems', 'fetchItem', 'lookIntoChest'], { chestsText: (ctx, dimension) => `chests of ${dimension} ${ctx.marker}` }),
         farming: fakePack(['farmCycle', 'harvestCrops', 'plantField', 'makeBoneMeal', 'fertilize'], { harvestTarget: FARMING.harvestTarget }),
         wood: fakePack(['chopTrees', 'ensureTool', 'craftSupplies'], { woodKind: WOOD.woodKind }),
-        mining: fakePack(['mineOre', 'descendToLevel', 'climbToSurface'], { oreOf: (name) => (/iron|coal|diamond/.test(name) ? { ore: name.match(/iron|coal|diamond/)[0] } : null) }),
+        mining: fakePack(['mineOre', 'descendToLevel', 'climbToSurface', 'goToMine'], { oreOf: (name) => (/iron|coal|diamond/.test(name) ? { ore: name.match(/iron|coal|diamond/)[0] } : null) }),
     };
 }
 
@@ -365,35 +365,26 @@ describe('storage: the old chest commands and !chests', () => {
 });
 
 describe('!goToMine', () => {
-    const MINES = [
-        { ore: 'iron', level: 16, entrance: { x: 20, y: 64, z: -14 } },
-        { ore: 'diamond', level: -59, entrance: { x: -5, y: 70, z: 3 } },
-    ];
-    const store = (list) => ({ list: () => list, get: (ore) => list.find((m) => m.ore === ore) ?? null });
-
-    test('with an ore: descendToLevel to the level of its mine', async () => {
-        const agent = makeAgent();
-        agent.mines = store(MINES);
-        assert.equal(await command('!goToMine').perform(agent, 'iron'), 'descendToLevel text');
-        assert.deepEqual(agent.work_packs.mining.calls[0].args.slice(2), [16, { mine: MINES[0] }]);
+    // since the hotfix follow-ladder (decision of the tech lead): the command hands the order to pack.goToMine, which
+    // chooses the mine (of the player with mine_routes) and walks in; an unknown ore and no mine are the pack's answer
+    test('the command calls pack.goToMine(bot, ctx, ore) as an action and answers with the text of the result', async () => {
+        for (const ore of ['iron', '']) {
+            const agent = makeAgent();
+            assert.equal(await command('!goToMine').perform(agent, ore), 'goToMine text');
+            const calls = agent.work_packs.mining.calls;
+            assert.deepEqual(calls.map((c) => c.name), ['goToMine'], ore);
+            assert.equal(calls[0].args[0], agent.bot);
+            assert.equal(calls[0].args[1], agent.contexts[0], 'the pack context of the agent');
+            assert.deepEqual(calls[0].args.slice(2), [ore]);
+            assert.deepEqual(agent.runs, [{ label: 'action:goToMine', options: { timeout: -1, resume: false } }]);
+        }
     });
 
-    test('without an ore: the nearest mine', async () => {
-        const agent = makeAgent();
-        agent.mines = store(MINES);
-        await command('!goToMine').perform(agent, '');
-        assert.equal(agent.work_packs.mining.calls[0].args[2], -59);
-    });
-
-    test('an unknown ore, an ore without a mine, no mine at all', async () => {
-        const agent = makeAgent();
-        agent.mines = store(MINES);
-        assert.equal(await command('!goToMine').perform(agent, 'mithril'), 'I do not know the ore "mithril". I know coal, copper, iron, lapis, gold, redstone and diamond.');
-        assert.equal(await command('!goToMine').perform(agent, 'coal'), 'I know no mine for coal.');
-        agent.mines = store([]);
-        assert.equal(await command('!goToMine').perform(agent, ''), 'I know no mine in this world.');
-        agent.mines = null;
-        assert.equal(await command('!goToMine').perform(agent, ''), 'I know no mine in this world.');
-        assert.deepEqual(agent.work_packs.mining.calls, []);
+    test('the text of the pack is passed through unchanged (an unknown ore, no mine)', async () => {
+        for (const text of ['I do not know the ore "mithril". I know coal, copper, iron, lapis, gold, redstone and diamond.', 'I know no mine in this world.']) {
+            const packs = makePacks();
+            packs.mining.goToMine = async () => ({ ok: false, reason: 'no_mine', text });
+            assert.equal(await command('!goToMine').perform(makeAgent({ packs }), 'mithril'), text);
+        }
     });
 });

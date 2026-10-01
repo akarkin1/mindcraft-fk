@@ -400,6 +400,43 @@ async function recordChest(agent, pos) {
     }
 }
 
+// F32 (hotfix follow-ladder, decision of the tech lead): the position and the items of the last text of viewChest
+// in an output, `The chest at (x, y, z) contains: name count, name count.` or `The chest at (x, y, z) is empty.`, as
+// { pos, items: [{ name, count }] }; null when the output has no such text.
+export function viewedChest(output) {
+    const all = [...String(output ?? '').matchAll(/The chest at \((-?\d+), (-?\d+), (-?\d+)\) (?:contains: ([^\n]*)\.|is empty\.)/g)];
+    const last = all[all.length - 1];
+    if (!last)
+        return null;
+    const items = [];
+    for (const part of (last[4] ?? '').split(', ')) {
+        const m = /^(\S+) (\d+)$/.exec(part.trim());
+        if (m)
+            items.push({ name: m[1], count: Number(m[2]) });
+    }
+    return { pos: { x: Number(last[1]), y: Number(last[2]), z: Number(last[3]) }, items };
+}
+
+// F32: after !viewChest the chest that was shown goes into the chest index of the storage pack
+// (recordChest(ctx, pos, items)), with the storage pack loaded. Returns true when it was recorded; false sends
+// the command to the old way (lookIntoChest). Its messages go to the console. Never throws.
+async function recordViewedChest(agent, output) {
+    if (!settings.storage_pack || !agent.work_packs?.storage)
+        return false;
+    try {
+        const seen = viewedChest(output);
+        if (!seen || typeof agent.work_packs?.storage?.recordChest !== 'function')
+            return false;
+        const ctx = agent.packContext();
+        ctx.log = (text) => console.log(text);
+        await agent.work_packs?.storage?.recordChest?.(ctx, seen.pos, seen.items);
+        return true;
+    } catch (error) {
+        console.warn('Could not record the chest in the chest index:', error);
+        return false;
+    }
+}
+
 // M5: true when a block of the ore, in stone or deepslate, is within 16 blocks and in sight. v0.1.4.9 (F4, decision
 // of the tech lead): in sight by the rule of part C (oreInSight of library/ore_sight_logic.js, the range of
 // ore_sense_range): 0 a face in the open, 3 an open cell within 3 blocks. The ray from the eyes of v0.1.4.7
@@ -455,25 +492,6 @@ function collectWork(agent, type) {
 
 // M5: !goToMine goes down into the mine of the ore, without an ore into the nearest mine of the store,
 // with descendToLevel of the mining pack.
-async function goToMine(pack, bot, ctx, ore) {
-    const mines = ctx.mines;
-    let mine = null;
-    if (ore !== '') {
-        const row = pack.oreOf(ore);
-        if (!row)
-            return { ok: false, reason: 'unknown_ore', text: UNKNOWN_ORE(ore) };
-        mine = mines?.get(row.ore ?? ore) ?? null;
-        if (!mine)
-            return { ok: false, reason: 'no_mine', text: `I know no mine for ${row.ore ?? ore}.` };
-    } else {
-        const pos = bot.entity.position;
-        const distance = (m) => Math.hypot(m.entrance.x - pos.x, m.entrance.y - pos.y, m.entrance.z - pos.z);
-        mine = (mines?.list() ?? []).filter((m) => m?.entrance).sort((a, b) => distance(a) - distance(b))[0] ?? null;
-        if (!mine)
-            return { ok: false, reason: 'no_mine', text: 'I know no mine in this world.' };
-    }
-    return await pack.descendToLevel(bot, ctx, mine.level, { mine });
-}
 
 // v0.1.4.9 (B3, I10): the yaw of the player who gave the order that runs (agent.last_order), in radians as
 // mineflayer gives it, when that player is in bot.players and has an entity; else undefined. Never throws.
@@ -1079,8 +1097,11 @@ export const actionsList = [
         params: { },
         perform: runAsAction(async (agent) => {
             const chest = chestToRecord(agent); // v0.1.4.7, S4: null while storage_pack is off
+            const before = String(agent.bot.output ?? '').length;
             await skills.viewChest(agent.bot);
-            await recordChest(agent, chest);
+            // F32: the chest that was shown into the chest index; else as before
+            if (!(await recordViewedChest(agent, String(agent.bot.output ?? '').slice(before))))
+                await recordChest(agent, chest);
         })
     },
     {
@@ -1382,7 +1403,7 @@ export const actionsList = [
         perform: async function (agent, ore) {
             if (!settings.mining_pack)
                 return MINING_OFF;
-            return await runPack(agent, 'goToMine', agent.work_packs?.mining, 'mining', (pack, bot, ctx) => goToMine(pack, bot, ctx, ore));
+            return await runPack(agent, 'goToMine', agent.work_packs?.mining, 'mining', (pack, bot, ctx) => pack.goToMine(bot, ctx, ore));
         }
     },
     {

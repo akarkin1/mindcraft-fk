@@ -28,8 +28,8 @@ function fakeConsole() {
 }
 
 describe('module', () => {
-    test('imports nothing', () => {
-        assertImportRules(MODULE, { allowBuiltins: [], allowedRelative: [] });
+    test('imports nothing but node:util (v0.1.4.9: util.format)', () => {
+        assertImportRules(MODULE, { allowBuiltins: ['util'], allowedRelative: [] });
     });
 
     test('imports without output, without files and without touching the console', () => {
@@ -81,17 +81,66 @@ describe('installLogTime', () => {
         assert.deepEqual(c.lines(), [`${STAMP} claude has 3 logs`, `${STAMP} Agent executed: !stats and got: ok`]);
     });
 
-    test('a first argument that is no string: the stamp is an argument of its own', () => {
+    // v0.1.4.9 (the owner's Luna session): the arguments are formatted as console does, the stamp goes before the line
+    test('a first argument that is no string: formatted as console does, the stamp before the line', () => {
         const c = fakeConsole();
         L.installLogTime(true, () => AT, c.target);
         const error = new Error('boom');
         c.target.error(error);
         c.target.log({ a: 1 });
         c.target.log();
-        assert.equal(c.calls[0].args[0], STAMP);
-        assert.equal(c.calls[0].args[1], error);
+        assert.equal(c.calls[0].args.length, 1);
+        assert.equal(c.calls[0].line, `${STAMP} ${format(error)}`);
         assert.equal(c.calls[1].line, `${STAMP} { a: 1 }`);
         assert.equal(c.calls[2].line, STAMP);
+    });
+
+    test('console.warn(new Error(\'x\')) prints "x" and the stack; an object prints its keys, never [object Object]', () => {
+        const c = fakeConsole();
+        L.installLogTime(true, () => AT, c.target);
+        const error = new Error('x');
+        c.target.warn(error);
+        c.target.warn({ name: 'Trace', message: 'entity.mobType is deprecated' });
+        c.target.warn('%s', { depth: { of: 2 } });
+        const [first, second, third] = c.lines();
+        assert.ok(first.startsWith(`${STAMP} Error: x\n`), first);
+        assert.ok(first.includes(error.stack.split('\n')[1].trim()), 'the stack');
+        assert.equal(second, `${STAMP} { name: 'Trace', message: 'entity.mobType is deprecated' }`);
+        assert.ok(!c.lines().some((l) => l.includes('[object Object]')), c.lines().join(' | '));
+        assert.match(third, /depth/);
+    });
+
+    test('console.trace (the warning of prismarine-entity): "Trace: <message>" and the stack, through the stamped error', () => {
+        const c = fakeConsole();
+        let traced = 0;
+        c.target.trace = () => { traced++; };
+        L.installLogTime(true, () => AT, c.target);
+        c.target.trace('Warning: entity.mobType is deprecated. Use %s instead', 'entity.displayName');
+        assert.equal(traced, 0, 'the original trace is not used while the stamps are on');
+        const line = c.lines()[0];
+        assert.ok(line.startsWith(`${STAMP} Trace: Warning: entity.mobType is deprecated. Use entity.displayName instead\n`), line);
+        assert.match(line, /\n\s+at /, 'the stack');
+        assert.equal(c.calls[0].method, 'error');
+        L.installLogTime(false, () => AT, c.target);
+        c.target.trace('off');
+        assert.equal(traced, 1, 'stamps off: the original trace');
+    });
+
+    test('under the SES lockdown of the agent process, console.trace prints its message, not [object Object]', () => {
+        const source = `
+            import 'ses';
+            const L = await import(${JSON.stringify(repoUrl('src/agent/library/lockdown.js'))});
+            L.lockdown();
+            const { installLogTime } = await import(${JSON.stringify(repoUrl(MODULE))});
+            installLogTime(true);
+            console.trace('Warning: entity.mobType is deprecated.');
+            console.warn({ a: 1 });
+        `;
+        const run = runNodeModuleSource(source);
+        assert.equal(run.status, 0, describeRun(run));
+        assert.match(run.stderr, /^\[\d\d:\d\d:\d\d\] Trace: Warning: entity\.mobType is deprecated\.\n/, describeRun(run));
+        assert.match(run.stderr, /\[\d\d:\d\d:\d\d\] \{ a: 1 \}/, describeRun(run));
+        assert.ok(!run.stderr.includes('[object Object]'), describeRun(run));
     });
 
     test('off on a console that was never wrapped: nothing changes', () => {

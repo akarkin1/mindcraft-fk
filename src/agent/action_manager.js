@@ -67,10 +67,17 @@ export class ActionManager {
         const timeout = setTimeout(() => {
             this.agent.cleanKill('Code execution refused stop after 10 seconds. Killing process.');
         }, 10000);
+        // F36 of the journeys (the hand-over): the next action started up to 300 ms after the stopped one ended, and
+        // a bot stopped on a ladder slid in the gap. The end of the action is polled every 50 ms; the interrupt is
+        // asked again every 300 ms as before.
+        let asked = 0;
         while (this.executing && (ticket === null || ticket === this.start_ticket)) {
-            this.agent.requestInterrupt(by);
-            console.log('waiting for code to finish executing...');
-            await new Promise(resolve => setTimeout(resolve, 300));
+            if (Date.now() - asked >= 300) {
+                this.agent.requestInterrupt(by);
+                console.log('waiting for code to finish executing...');
+                asked = Date.now();
+            }
+            await new Promise(resolve => setTimeout(resolve, 50));
         }
         clearTimeout(timeout);
     }

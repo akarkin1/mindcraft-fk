@@ -13,11 +13,11 @@ import { goals, gotoGoal, makeMovements, walkNear } from '../home/motion.js';
 import { EXEC_REACH, digBlock, eyeOfBot, feetOf, isAirLike, nameAt } from './actions.js';
 import { countItems, inventoryOf, itemCounts } from './inventory.js';
 import { chopTrees } from './wood.js';
-import { craftFailedText, craftedSupplyText, craftedToolsText, haveToolText, needText, notCraftableText, unknownMaterialText,
+import { craftFailedText, craftedToolsText, haveToolText, madeSuppliesText, needText, notCraftableText, supplyWords, unknownMaterialText,
     unknownSupplyText, unknownToolText, withArticle } from './texts.js';
-import { bestTool, chooseMaterial, craftSteps, isWoodItem, missingIngredient, normaliseSupply, normaliseToolRequest, parseTool,
+import { bestTool, chooseMaterial, craftSteps, isWoodItem, logKindFor, missingIngredient, normaliseSupply, normaliseToolRequest, parseTool,
     supplySteps, toolName, toolsOf, usesLeft } from './tool_logic.js';
-import { WOOD_KINDS, inReach } from './tree_logic.js';
+import { WOOD_KINDS, inReach, planksOf } from './tree_logic.js';
 
 /** Stone is broken for cobblestone within this distance. */
 export const STONE_RANGE = 16;
@@ -264,7 +264,7 @@ async function gather(bot, ctx, planFn, target, run) {
         plan = planFn();
         const still = plan.missing.find(m => isWoodItem(m.name));
         if (still) {
-            return { ok: false, reason: bot.interrupt_code ? 'interrupted' : 'missing', text: `${needFor(bot, still, target)} ${res?.text ?? ''}`.trim() };
+            return { ok: false, reason: bot.interrupt_code ? 'interrupted' : 'missing', text: `${needFor(bot, still, target)} ${res?.text ?? ''}`.trim(), chop: res?.text ?? '' };
         }
     }
     if (plan.missing.length > 0) {
@@ -308,48 +308,113 @@ async function settledInventory(bot, clock, ms = 2000) {
     return inventoryOf(bot);
 }
 
+/** Tries of one craft step; between two tries the inventory settles (fix round F24, item 2). */
+export const CRAFT_TRIES = 4;
+/** The wait before another try of a craft step that made nothing, in ms. */
+export const CRAFT_RETRY_MS = 700;
+
+/** The crafting grid of the inventory window of mineflayer (slot 0 is the result). */
+const GRID_SLOTS = Object.freeze([1, 2, 3, 4]);
+
+// Fix round F32 (from W83 on the real server): bot.craft clicks in bot.currentWindow when one is open,
+// not in the inventory, and a craft that failed half way leaves its ingredients in the crafting grid
+// or on the cursor, where inventory.items() does not see them. Before a craft: an open window is
+// closed, the grid and the cursor are emptied into the inventory, and the inventory may settle. Never throws.
+async function freeCraftingGrid(bot, clock) {
+    try {
+        if (bot.currentWindow) {
+            if (typeof bot.closeWindow === 'function') {
+                bot.closeWindow(bot.currentWindow);
+            } else {
+                bot.currentWindow.close?.();
+            }
+            const start = clock.now();
+            while (bot.currentWindow && clock.now() - start < 2000) {
+                await clock.wait(50);
+            }
+        }
+        for (const slot of GRID_SLOTS) {
+            if (bot.inventory?.slots?.[slot] && typeof bot.putAway === 'function') {
+                await bot.putAway(slot);
+            }
+        }
+        if (bot.inventory?.selectedItem && typeof bot.putSelectedItemRange === 'function') {
+            await bot.putSelectedItemRange(bot.inventory.inventoryStart ?? 9, bot.inventory.inventoryEnd ?? 45, bot.inventory, null);
+        }
+    } catch (err) {
+        console.warn('Wood pack: could not empty the crafting grid:', err?.message ?? err);
+    }
+}
+
+// The item of a planks step for the inventory now: a step whose kind the planner chose (`anyWood`)
+// takes the logs the bot carries, oak first (logKindFor); a kind the player named stays.
+function planksItemNow(step, inventory, times) {
+    if (!step.anyWood) {
+        return step.item;
+    }
+    const kind = logKindFor(inventory, times, step.item.replace(/_planks$/, ''));
+    return kind ? planksOf(kind) : step.item;
+}
+
 // Crafts the craft steps in order through ctx.skills.craftRecipe. A step that makes less than
 // planned is tried again with the rest (a recipe variant runs out: coal, then charcoal). Since
 // v0.1.4.8 (E3, M12) the inventory is read again before each step, and a failed step names the
-// item and the ingredient it lacks.
+// item and the ingredient it lacks. Fix round F24 (item 2), from the play of the owner: the
+// inventory of mineflayer can lack items for a moment after a craft (they came back seconds later),
+// so a step is tried up to 4 times, each time with the inventory read again after it settled, and
+// the planks are made from whatever logs the bot carries then (oak first); the text of a failure
+// names what the inventory lacks at the last try.
 async function runSteps(bot, ctx, steps, clock) {
     const craft = ctx.skills?.craftRecipe;
     if (typeof craft !== 'function') {
         return { ok: false, reason: 'craft_failed', text: 'I cannot craft: the crafting skill is missing.' };
     }
-    for (const s of steps) {
-        if (s.action !== 'craft') {
+    for (const step of steps) {
+        if (step.action !== 'craft') {
             continue;
         }
-        if (bot.interrupt_code) {
-            return { ok: false, reason: 'interrupted', text: `I was stopped before I crafted ${s.item}.` };
-        }
-        const short = missingIngredient(s, await settledInventory(bot, clock));
-        if (short) {
-            console.warn(`Wood pack: crafting ${s.item} failed: missing ${short.name}, ${short.have} of ${short.need}.`);
-            return { ok: false, reason: 'craft_failed', text: craftFailedText(s.item, short) };
-        }
-        const per = s.makes / s.times;
+        const per = step.makes / step.times;
         let made = 0;
-        for (let i = 0; i < 3 && made < s.makes; i++) {
-            const before = await settledCount(bot, clock, s.item);
-            let done = false;
-            try {
-                done = await craft(bot, s.item, Math.ceil((s.makes - made) / per)) === true;
-            } catch (err) {
-                const miss = missingIngredient({ ...s, times: Math.ceil((s.makes - made) / per) }, inventoryOf(bot));
-                console.warn(`Wood pack: crafting ${s.item} failed: ${err?.message ?? err}`
-                    + (miss ? ` (missing ${miss.name}, ${miss.have} of ${miss.need})` : ''));
+        let item = step.item;
+        let short = null;
+        for (let attempt = 0; attempt < CRAFT_TRIES && made < step.makes; attempt++) {
+            if (bot.interrupt_code) {
+                return { ok: false, reason: 'interrupted', text: `I was stopped before I crafted ${item}.` };
             }
-            const gained = (await settledCount(bot, clock, s.item)) - before;
-            if (gained <= 0 || !done) {
-                made += Math.max(0, gained);
-                break;
+            if (attempt > 0) {
+                await clock.wait(CRAFT_RETRY_MS);
             }
-            made += gained;
+            await freeCraftingGrid(bot, clock);
+            const inventory = await settledInventory(bot, clock);
+            const times = Math.ceil((step.makes - made) / per);
+            item = planksItemNow(step, inventory, times);
+            short = missingIngredient({ ...step, item, times }, inventory);
+            if (short) {
+                continue;
+            }
+            // F32c of the journeys (the real server): bot.craft with a count over 1 crafts once and throws
+            // "missing ingredient" on its second craft, because the slots of the inventory are stale right
+            // after a craft. One craft per call, the inventory settled between them.
+            for (let k = 0; k < times && !bot.interrupt_code; k++) {
+                const before = await settledCount(bot, clock, item);
+                try {
+                    await craft(bot, item, 1);
+                } catch (err) {
+                    console.warn(`Wood pack: crafting ${item} failed: ${err?.message ?? err}`);
+                    break;
+                }
+                const got = Math.max(0, (await settledCount(bot, clock, item)) - before);
+                made += got;
+                if (got === 0) {
+                    break;
+                }
+            }
         }
         if (made === 0) {
-            return { ok: false, reason: bot.interrupt_code ? 'interrupted' : 'craft_failed', text: craftFailedText(s.item, missingIngredient(s, inventoryOf(bot))) };
+            if (short) {
+                console.warn(`Wood pack: crafting ${item} failed: missing ${short.name}, ${short.have} of ${short.need}.`);
+            }
+            return { ok: false, reason: bot.interrupt_code ? 'interrupted' : 'craft_failed', text: craftFailedText(item, short) };
         }
     }
     return { ok: true };
@@ -423,12 +488,36 @@ export async function ensureTool(bot, ctx = {}, kind = '', minMaterial = '', opt
     }
 }
 
+// The most of a supply the inventory gives now, in whole crafts of `unit`, at most `rest`; 0 for none.
+function craftableNow(bot, name, rest, unit) {
+    for (let c = Math.ceil(rest / unit); c >= 1; c--) {
+        const plan = supplySteps(name, c * unit, inventoryOf(bot), { table: tableNear(bot) });
+        if (plan && plan.missing.length === 0) {
+            return c * unit;
+        }
+    }
+    return 0;
+}
+
+// True when a known chest holds the item (coal: charcoal too; a log: any log or planks).
+function chestHas(totals, name) {
+    if (name === 'coal') {
+        return (totals.coal ?? 0) + (totals.charcoal ?? 0) > 0;
+    }
+    if (isWoodItem(name)) {
+        return Object.entries(totals).some(([n, c]) => c > 0 && (isWoodItem(n) || (n.endsWith('_planks') && WOOD_KINDS.includes(n.replace(/_planks$/, '')))));
+    }
+    return (totals[name] ?? 0) > 0;
+}
+
 /**
  * Crafts supplies (spec T4): torch, ladder, chest, crafting_table, stick or planks (`planks` is
  * the wood the bot has most of; `birch_planks` works too). The count is rounded up to what the
- * recipe gives. Wood is collected when it is missing (chests first when ctx.storage is there,
- * then trees). Torches need coal or charcoal: `I need 2 coal for 8 torch and have none.`
- * Text: `I crafted 9 ladder.` Never throws.
+ * recipe gives. Fix round F32: first it crafts what the inventory gives now (6 coal and 6 sticks:
+ * 24 torches), then gets what the rest lacks (from the chests it knows through ctx.storage, then
+ * wood from trees), crafts again, and only then says what is still missing:
+ * `I made 32 torches.`, `I made 24 torches of 32. I need 2 coal more and know no chest with coal.`
+ * Never throws.
  * @param {object} bot
  * @param {object} ctx as ensureTool
  * @param {string} item
@@ -444,27 +533,69 @@ export async function craftSupplies(bot, ctx = {}, item = '', count = 1, options
     }
     const n = positiveInt(count, 1);
     let product = name;
+    let made = 0;
     try {
-        const planFn = () => supplySteps(name, n, inventoryOf(bot), { table: tableNear(bot) });
-        const first = planFn();
-        product = first.item;
-        const got = await gather(bot, ctx, planFn, `${first.makes} ${first.item}`, { depth: 0, crafted: [], options });
-        if (!got.ok) {
-            return { ok: false, reason: got.reason, item: product, count: 0, text: got.text };
-        }
-        product = got.plan.item;
         const clock = clockOf(ctx, options);
-        const before = await settledCount(bot, clock, product);
-        const made = await runSteps(bot, ctx, got.plan.steps, clock);
-        const gained = Math.max(0, (await settledCount(bot, clock, product)) - before);
-        if (!made.ok) {
-            return { ok: false, reason: made.reason, item: product, count: gained, text: made.text };
+        const first = supplySteps(name, n, inventoryOf(bot), { table: tableNear(bot) });
+        product = first.item;
+        const wanted = first.makes;
+        const unit = supplySteps(name, 1, inventoryOf(bot), { table: true }).makes;
+        const start = await settledCount(bot, clock, product);
+        const gained = () => Math.max(0, countItems(bot, product) - start);
+        let failure = null;
+        let failures = 0;
+        let chop = '';
+        for (let round = 0; round < 6 && gained() < wanted; round++) {
+            if (bot.interrupt_code) {
+                failure = { reason: 'interrupted', text: `I was stopped after I made ${supplyWords(gained(), product)}.` };
+                break;
+            }
+            const rest = wanted - gained();
+            const k = craftableNow(bot, name, rest, unit);
+            if (k > 0) {
+                const plan = supplySteps(name, k, inventoryOf(bot), { table: tableNear(bot) });
+                const r = await runSteps(bot, ctx, plan.steps, clock);
+                if (!r.ok) {
+                    // a step that failed: the next round crafts what the inventory gives then (6 coal and
+                    // 6 sticks left over are 24 torches); a stop or a third failure ends it
+                    failure = { reason: r.reason, text: r.text };
+                    if (r.reason === 'interrupted' || ++failures >= 3) {
+                        break;
+                    }
+                }
+                continue;
+            }
+            // nothing more to craft now: what the rest lacks, from the chests, then wood from trees
+            const before = JSON.stringify(itemCounts(bot));
+            const planFn = () => supplySteps(name, rest, inventoryOf(bot), { table: tableNear(bot) });
+            const got = await gather(bot, ctx, planFn, `${rest} ${product}`, { depth: 0, crafted: [], options });
+            chop = typeof got.chop === 'string' ? got.chop : chop;
+            if (!got.ok && JSON.stringify(itemCounts(bot)) === before) {
+                failure = got.reason === 'interrupted' ? { reason: 'interrupted', text: got.text } : null;
+                break;
+            }
         }
-        const text = craftedSupplyText(gained, product);
-        logTo(ctx, text);
-        return { ok: true, reason: null, item: product, count: gained, text };
+        made = (await settledCount(bot, clock, product)) - start;
+        made = Math.max(0, made);
+        if (made >= wanted) {
+            const text = madeSuppliesText(made, wanted, product);
+            logTo(ctx, text);
+            return { ok: true, reason: null, item: product, count: made, text };
+        }
+        if (failure?.reason === 'interrupted') {
+            return { ok: false, reason: 'interrupted', item: product, count: made, text: failure.text };
+        }
+        const missing = supplySteps(name, wanted - made, inventoryOf(bot), { table: tableNear(bot) })?.missing ?? [];
+        if (missing.length === 0 && failure) {
+            return { ok: false, reason: failure.reason, item: product, count: made, text: failure.text };
+        }
+        const totals = chestCounts(bot, ctx);
+        // the text of the trees cut for wood that is still missing ("I found no tree within 48 blocks.")
+        const trees = chop && missing.some(m => isWoodItem(m.name)) ? ` ${chop}` : '';
+        const text = `${madeSuppliesText(made, wanted, product, missing, missing.filter(m => !chestHas(totals, m.name)).map(m => m.name))}${trees}`;
+        return { ok: false, reason: 'missing', item: product, count: made, text };
     } catch (err) {
         console.warn('Wood pack: crafting supplies failed:', err?.message ?? err);
-        return { ok: false, reason: 'error', item: product, count: 0, text: `I could not craft ${product}: ${err?.message ?? err}` };
+        return { ok: false, reason: 'error', item: product, count: made, text: `I could not craft ${product}: ${err?.message ?? err}` };
     }
 }

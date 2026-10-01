@@ -65,12 +65,15 @@ describe('C5: DoorWatch, what is noted', () => {
         assert.equal(w.noted(DOOR), null);
     });
 
-    test('opened and not passed: closed when the bot is 4 blocks away', () => {
+    // v0.1.4.9, decision F21 (E1): this test read "opened and not passed: closed when the bot is 4 blocks away";
+    // the service now closes only what the bot passed
+    test('opened and not passed: never closed (F21)', () => {
         const w = new L.DoorWatch();
         look(w, 0, at(4.5, 10), { ...DOOR, open: false });
         look(w, 300, at(4.5, 10), { ...DOOR, open: true });
         assert.deepEqual(look(w, 600, at(4.5, 11.4), { ...DOOR, open: true }), []);
-        assert.equal(look(w, 900, at(4.5, 11.5), { ...DOOR, open: true }).length, 1);
+        assert.deepEqual(look(w, 900, at(4.5, 11.5), { ...DOOR, open: true }), []);
+        assert.deepEqual(look(w, 1200, at(4.5, 14), { ...DOOR, open: true }), []);
     });
 
     test('iron doors are never noted', () => {
@@ -271,6 +274,43 @@ describe('C5: createDoorService', () => {
         delete s.bot.entities[cow.id];
         await s.step();
         assert.equal(s.isOpen(4, 64, 7), false);
+    });
+
+    test('F37: the bot climbs a ladder 2 blocks past the door: no click while it hangs on the ladder, closed once it is off', async () => {
+        const s = scene();
+        s.world.set(4, 64, 5, 'ladder', { facing: 'south' });
+        s.world.set(4, 65, 5, 'ladder', { facing: 'south' });
+        await s.step([4.5, 64, 10.5]);
+        s.world.toggle(4, 64, 7);
+        await s.step([4.5, 64, 8.5]);
+        await s.step([4.5, 64, 7.5]);
+        s.bot.entity.onGround = false;
+        s.bot.controlState = { forward: true }; // climbing
+        await s.step([4.5, 64.6, 5.5]); // the feet in the ladder cell
+        await s.step([4.5, 65.2, 5.5]);
+        assert.equal(s.isOpen(4, 64, 7), true, 'no click while the bot climbs');
+        assert.equal(s.bot.calls.filter(c => c[0] === 'activate').length, 0);
+        s.bot.entity.onGround = true;
+        s.bot.controlState = {};
+        await s.step([4.5, 66, 4.5]); // off the ladder, on the floor above
+        assert.equal(s.isOpen(4, 64, 7), false, 'closed once the bot is off the ladder');
+    });
+
+    test('F37: no click at a bot that hangs or slides on a ladder either; closed once it stands', async () => {
+        const s = scene();
+        s.world.set(4, 64, 5, 'ladder', { facing: 'south' });
+        await s.step([4.5, 64, 10.5]);
+        s.world.toggle(4, 64, 7);
+        await s.step([4.5, 64, 8.5]);
+        await s.step([4.5, 64, 7.5]);
+        s.bot.entity.onGround = false;
+        s.bot.controlState = {};
+        await s.step([4.5, 64.6, 5.5]);
+        await s.step([4.5, 64.3, 5.5]);
+        assert.equal(s.isOpen(4, 64, 7), true, 'no click while the bot is on the ladder: the ladder pass closes the trapdoor itself');
+        s.bot.entity.onGround = true;
+        await s.step([4.5, 64, 4.5]);
+        assert.equal(s.isOpen(4, 64, 7), false, 'closed once the bot stands on the ground');
     });
 
     test('an item lying in the doorway does not keep it open', async () => {

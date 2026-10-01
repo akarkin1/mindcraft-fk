@@ -23,6 +23,7 @@ import { WorldMemory } from './world/world_memory.js';
 import { shouldResumeGoal, ResumeGuard } from './world/resume_policy.js';
 import { SkillManager, skillFlags } from './skills/skill_manager.js';
 import * as skills from './library/skills.js';
+import { holdOnLadder } from './library/ladder_pass.js';
 import * as world from './library/world.js';
 import { Vec3 } from 'vec3';
 import { setUsageSink } from './cost/usage_context.js';
@@ -1119,7 +1120,8 @@ export class Agent {
         // the walk now and clears the flag of stop()
         try {
             this.bot.pathfinder.stop();
-            this.bot.pathfinder.setGoal(null);
+            this.bot.pathfinder.setGoal(null); // this clears every control of the bot
+            holdOnLadder(this.bot); // F36: a bot stopped on a ladder holds on until the next order takes the ladder
         } catch (error) {
             console.warn('Could not end the path search:', error);
         }
@@ -1273,7 +1275,7 @@ export class Agent {
                 if (typeof execute_res === 'string' && execute_res !== '' && execute_res === this.last_pack_text)
                     pack_text = execute_res; // the text of a work skill (runPack, the home pack)
 
-                console.log('Agent executed:', command_name, 'and got:', execute_res);
+                console.log(...(execute_res === undefined ? ['Agent executed:', command_name, 'and was stopped.'] : ['Agent executed:', command_name, 'and got:', execute_res]));
                 used_command = true;
 
                 if (execute_res)
