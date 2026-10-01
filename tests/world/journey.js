@@ -483,8 +483,9 @@ export function climbsOf(rows, b) {
                     const where = [];
                     for (let i = 1; i < run.length; i++) {
                         const back = -sign * (run[i].y - run[i - 1].y);
-                        // the first 0.5 s is the step into the column (a hop of up to 0.25 at the top), no flinch
-                        if (back > 0.2 && run[i].t - run[0].t > 0.5) { reversals++; worst = Math.max(worst, back); where.push(`t=${run[i].t.toFixed(1)}s y ${run[i - 1].y.toFixed(2)}->${run[i].y.toFixed(2)}`); }
+                        // the start of a climb is the step into the column: a hop of up to 0.25 at the top rung when
+                        // the bot drops in from the floor (1.5 s on the way down), no flinch
+                        if (back > 0.2 && run[i].t - run[0].t > (dir === 'down' ? 1.5 : 0.5)) { reversals++; worst = Math.max(worst, back); where.push(`t=${run[i].t.toFixed(1)}s y ${run[i - 1].y.toFixed(2)}->${run[i].y.toFixed(2)}`); }
                     }
                     let s = 0;
                     for (let i = 1; i <= run.length; i++) {
