@@ -29,12 +29,14 @@ From the play of 2026-10-01: the bot mined well until it ran out of torches, the
 
 | Part | Content |
 |---|---|
-| A plan from an order | An order with a result that code can check ("get me 16 iron", "farm the wheat", "make 32 torches") becomes a plan of steps on disk. The bot makes it by itself; the player never says "set yourself a goal". |
-| Steps that code checks | Each step has a check: 32 torches in the inventory, 16 raw iron, the farm harvested. A step that fails gives a reason, and the plan takes the step that fixes it: no torches, so wood, planks, sticks, torches, then back to the mine. |
-| The player's messages | A message pauses the plan and does not end it. "Stop" ends it. After an answer the bot goes on with the next step. |
-| Restarts | The plan survives a restart of the process; the bot says where it stands and goes on. |
-| Progress | One line when a step is done and when the plan is done. No narration between. |
-| Cost | Steps are code; the model is called only to make the plan and when a step has no skill. |
+| The job | An order with a result that code can check is a job: mine 16 iron, farm the wheat, get 8 logs, make 32 torches. The bot keeps one current job with its state (6 of 16 iron, in the mine "mine"), on disk. The player never says "set a goal". |
+| Errands do not end the job | "Follow me", "come here", "check the chest", "wait", "go to bed" are errands. When nothing more comes for about 20 s and nothing runs, the bot returns to the job by itself: `I go back to the mining, 6 of 16 iron.` Code decides, no call of the model. |
+| Blockers become steps | No torches is not a reason to idle: the job gets the steps wood, planks, sticks, torches, then back to the mine. The model plans the steps once when no skill knows them; code checks each step. |
+| Ending a job is implicit | "Stop" or "that's enough" ends it. A new job replaces it, with one line: `I leave the mining at 6 of 16 iron.` |
+| Restarts | The job survives a restart of the process; the bot says where it stands and goes on. |
+| Nothing to do | A standing list the player gives once: keep the farm going, tidy the chests, make torches when fewer than 32. The bot works it when it has no job. |
+| Progress | One line when a step is done and when the job is done. No narration between. |
+| Later: milestones | "Beat the game" or "help me beat it" is the same machine with milestones instead of steps: iron tools, a bed, diamonds, the Nether, each a state that code checks, the model planning only the next one. It needs smelting, trading and the Nether as skills first. |
 
 Why first: the owner saw the bot idle through 20 minutes of guided crafting and never return to the job. The same idea made `!farmCycle` work once the whole cycle was code.
 
