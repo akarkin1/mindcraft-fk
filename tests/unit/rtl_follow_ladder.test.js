@@ -4,7 +4,8 @@
 // y 60, a room at y 53. The bot stands on the grass beside the trapdoor, the player MartyByrde2 in the room at the
 // foot of the ladder, 8 blocks below. The path search of the fake does not move the bot, as the real one stops
 // above the ladder (F14). With routes_pack on: after 3 s without moving the bot goes down once (the path search
-// stopped, the follow goal set again); with the switch off nothing changes.
+// stopped, the follow goal set again); the step runs whatever the settings are: a correction of the path search,
+// no switch (decision of the owner and the tech lead on 2026-10-01).
 import { describe, test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { register } from 'node:module';
@@ -121,36 +122,36 @@ describe('followPlayer with routes_pack on: the player below the ladder', () => 
     });
 });
 
-describe('the switch off', () => {
-    test('routes_pack off: no pass, no click, the follow as in v0.1.4.8', { timeout: 30000 }, async () => {
+describe('no switch: the ladder step runs with routes_pack off and absent', () => {
+    test('routes_pack off: the pass runs all the same (a correction, no switch)', { timeout: 30000 }, async () => {
         agentSettings.setSettings({ routes_pack: false });
         const s = scene();
         try {
             const run = skills.followPlayer(s.bot, PLAYER, 4);
-            await new Promise((r) => setTimeout(r, 4500));
+            await until(() => s.bot.clicks.length > 0 && s.feet().y <= 53, 12000);
             s.bot.interrupt_code = true;
             assert.equal(await run, true);
-            assert.deepEqual(s.bot.goals, ['GoalFollow']);
-            assert.deepEqual(s.bot.clicks, []);
-            assert.equal(s.feet().y, 61);
-            assert.equal(s.bot.output, `You are now actively following player ${PLAYER}.\n`);
+            assert.ok(s.bot.goals.includes(null), s.bot.goals.join(','));
+            assert.deepEqual(s.bot.clicks, [{ x: 2, y: 60, z: -2, sneak: false }]);
+            assert.ok(s.bot.output.includes(DOWN_TEXT), s.bot.output);
         } finally {
             s.bot.interrupt_code = true;
             s.stop();
         }
     });
 
-    test('routes_pack absent from the agent settings: the value of settings.js decides (here false)', { timeout: 30000 }, async () => {
+    test('routes_pack absent from the agent settings and false in settings.js: the pass runs all the same', { timeout: 30000 }, async () => {
         agentSettings.setSettings({});
         const saved = fileSettings.routes_pack;
         fileSettings.routes_pack = false;
         const s = scene();
         try {
             const run = skills.followPlayer(s.bot, PLAYER, 4);
-            await new Promise((r) => setTimeout(r, 3800));
+            await until(() => s.bot.clicks.length > 0, 12000);
             s.bot.interrupt_code = true;
             await run;
-            assert.deepEqual(s.bot.goals, ['GoalFollow']);
+            assert.ok(s.bot.goals.includes(null), s.bot.goals.join(','));
+            assert.equal(s.bot.clicks.length, 1);
         } finally {
             s.bot.interrupt_code = true;
             s.stop();
@@ -178,15 +179,14 @@ describe('goToPlayer with routes_pack on', () => {
         }
     });
 
-    test('the switch off: no pass', { timeout: 30000 }, async () => {
+    test('routes_pack off: the pass runs all the same', { timeout: 30000 }, async () => {
         agentSettings.setSettings({ routes_pack: false });
         const s = scene();
         stubFollowGoto(s.bot);
         try {
             await skills.goToPlayer(s.bot, PLAYER, 3);
-            assert.deepEqual(s.bot.clicks, []);
-            assert.equal(s.feet().y, 61);
-            assert.ok(!s.bot.output.includes('ladder'), s.bot.output);
+            assert.deepEqual(s.bot.clicks, [{ x: 2, y: 60, z: -2, sneak: false }]);
+            assert.ok(s.bot.output.startsWith(`${DOWN_TEXT}\n`), s.bot.output);
         } finally {
             s.stop();
         }
@@ -254,9 +254,9 @@ describe('the fixes of W75', () => {
         }
     });
 
-    test('L1: not arrived: "I stopped at (x, y, z), N blocks from <name>." instead of "You have reached" (also with the switch off)', { timeout: 30000 }, async () => {
+    test('L1: not arrived: "I stopped at (x, y, z), N blocks from <name>." instead of "You have reached" (the player at the same height, no ladder step)', { timeout: 30000 }, async () => {
         agentSettings.setSettings({ routes_pack: false });
-        const s = scene({ pos: [2.5, 61, -0.5] });
+        const s = scene({ pos: [2.5, 61, -0.5], player: [10.5, 61, -0.5] });
         stubFollowGoto(s.bot);
         try {
             await skills.goToPlayer(s.bot, PLAYER, 2);
@@ -285,13 +285,13 @@ describe('goToPosition (L4 of the play test: "no idea about up and down")', () =
         }
     });
 
-    test('the switch off: no pass, the texts of v0.1.4.8', { timeout: 30000 }, async () => {
+    test('routes_pack off: the pass runs all the same', { timeout: 30000 }, async () => {
         agentSettings.setSettings({ routes_pack: false });
         const s = scene({ pos: [5.5, 61, -0.5], low: 41 });
         try {
             await skills.goToPosition(s.bot, 2, 41, 0, 1);
-            assert.deepEqual(s.bot.clicks, []);
-            assert.ok(!s.bot.output.includes('ladder'), s.bot.output);
+            assert.deepEqual(s.bot.clicks, [{ x: 2, y: 60, z: -2, sneak: false }]);
+            assert.ok(s.bot.output.includes('I go down the ladder'), s.bot.output);
         } finally {
             s.stop();
         }

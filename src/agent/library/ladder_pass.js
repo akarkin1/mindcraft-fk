@@ -2,7 +2,8 @@
 // path search climbs a ladder but never descends one, and it stops in the cell of an open trapdoor above a
 // ladder. The ladder walking of the mining pack (packs/mining/ladder.js: slideDown, climbUp, enterColumn,
 // footOf) does it with control states. That module is loaded with a dynamic import() on the first pass, so
-// that the library loads without the pack; skills.js calls passLadder only with routes_pack on.
+// that the library loads without the pack. It runs whatever the settings are (a correction of the path search,
+// no switch; decision of the owner and the tech lead), also when the mining pack is off and agent.work_packs is null.
 //
 // Down: a closed trapdoor over the column is opened from above with a click without sneak (a sneaking click
 // with an item in the hand uses the item, F11 of the real server), then slideDown from the cell beside the

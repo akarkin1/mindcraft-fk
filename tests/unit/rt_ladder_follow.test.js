@@ -3,7 +3,8 @@
 //   ladder_pass.js   passLadder(bot, column, way, { clock, timeoutMs }) -> { ok, reason, text }, never throws
 //   skills.js        followPlayer and goToPlayer: behind routes_pack (the agent settings first, then the file), a
 //                    ladder pass when stuck or without a goal (at most 3 per minute), the log texts, the signatures and
-//                    the return values unchanged; with the switch off nothing changes and the mining pack is not
+//                    the return values unchanged; the ladder step runs with the switch off too (a correction of the
+//                    path search, no switch: decision of the owner and the tech lead on 2026-10-01), and the mining pack is
 //                    imported (checked in a child process, tests/helpers/rt_ladder_off_child.js).
 // The scene (tests/helpers/rt_ladder_env.js): the base of the world tests on the fake bot of the mining pack; the bot
 // beside the closed trapdoor at (2, 60, -2) over ladders facing south at (2, 41..59, -2), the player 20 blocks below.
@@ -287,17 +288,19 @@ describe('13, L: followPlayer and goToPlayer with routes_pack', () => {
 // ------------------------------------------------------------------------------ the switch off, the signatures
 
 describe('13, L: routes_pack off, and the signatures', () => {
-    test('off: no pass, no click, the goal set once; the mining pack is not imported (child process)', { timeout: 60000 }, (t) => {
+    test('off: the pass runs all the same, the mining ladder module is loaded on the first pass (child process)', { timeout: 60000 }, (t) => {
+        // Decision of the owner and the tech lead on 2026-10-01: the ladder step is a correction of the path search
+        // and has no switch. The child runs followPlayer with routes_pack off and the player 20 blocks below.
         const [major, minor] = process.versions.node.split('.').map(Number);
         if (major < 22 || (major === 22 && minor < 15)) return t.skip('module.registerHooks needs Node 22.15');
         const r = spawnSync(process.execPath, [repoPath('tests/helpers/rt_ladder_off_child.js')], { encoding: 'utf8', timeout: 50000, cwd: repoPath('') });
         const line = r.stdout.trim().split('\n').filter((l) => l.startsWith('{')).at(-1);
         assert.ok(line, `${r.stdout}\n${r.stderr}`);
         const out = JSON.parse(line);
-        assert.deepEqual(out.ladderModules, [], 'no module of the mining pack');
-        assert.deepEqual(out.clicks, []);
-        assert.deepEqual(out.goals, ['GoalFollow']);
-        assert.ok(!/ladder/.test(out.output), out.output);
+        assert.ok(out.ladderModules.some((u) => /packs\/mining\/ladder\.js/.test(u)), `the ladder module of the mining pack: ${out.ladderModules.join(', ')}`);
+        assert.equal(out.clicks.length, 1, JSON.stringify(out.clicks));
+        assert.ok(out.goals.includes(null), out.goals.join(','));
+        assert.ok(/I go down the ladder/.test(out.output), out.output);
         assert.equal(out.result, true);
     });
 
