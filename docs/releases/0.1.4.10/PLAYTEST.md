@@ -78,6 +78,7 @@ Look for lines `I go down the ladder at` or `I climb up the ladder at` in the lo
 ## 7. Known limits
 
 - A staircase built of bottom slabs or bottom stairs is no way for the path search any more; it walks around.
+- A ladder that ends 2 blocks above the floor (your second shaft) needs ladders in the bot's bag: it places the missing ones. Without ladders it says so.
 - The standing list needs `job_memory`.
 - The job comes back while "follow me" runs: a minute of silence ends the follow.
 

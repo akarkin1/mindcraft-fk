@@ -258,3 +258,24 @@ by E5 on the untouched commit); the lead looks at them on the fix branch.
 - Risk: when `!leaveMine` cannot climb out, the step still runs and fails twice, using one of the 3 plans.
 - Tests: 6 new in `gja_job_index`, new ones in `gja_plan_logic`, `gja_job_texts`, `gja_job_store`; 162 of the
   job tests pass, `npm test` 6654 of 6655 (1 skipped).
+
+## From the server round of part P (E2): T3-2, T3-3
+
+Four rounds on the real server (logs `scratchpad/p_logs/r1` to `r4` of the session). The native ladder moves
+now win: `first_minutes`, `come_here_floors` and `ten_minutes` pass with no fallback line in the follows and
+the walks. Changes in the patch (`index.js`, `movements.js`) and `skills.js`:
+
+| What the server showed | Fix |
+|---|---|
+| A walk ended hanging on the ladder: `GoalFollow` 3 was reached at y 59, or in the trapdoor cell | a walk may not end in a ladder or trapdoor cell without a floor under it unless the goal is in one; a path that runs out short of the goal is planned again |
+| A stop at y 54.4 on the way down: the next point was the floor beside the column, the bot walked sideways too high and the ladder lifted it | slide down in the column until level with that point, then walk off |
+| The trapdoor stayed open after a native descent | closed 2 blocks below on the way down, from beside it after the climb, never with another player within 2.5 blocks |
+| Slides while the controls were released (re-plans, the trapdoor click) | the hold with sneak, as F36, until the climb takes the controls again |
+| Drops of 0.27 to 0.77 at the way out | out beside the wall: keep pressing into the wall and step sideways; out behind: climb into the top cell, then turn with sneak; no plan node in the air above a ladder (`getMoveClimbTop`) |
+| Fallback lines in the follow: its 3 s clock counted standing beside the player, a stop counted as no goal | the clock runs only while the gap is 2 or more; no step after a stop (`followPlayer`) |
+| The timeout of the path search (T3-3) | three stuck marks at the foot of ladder 1 from the hover; gone with the fix above, the stuck cost stays 100 |
+
+`gjp_pathfinder`: a trapdoor walk opens and closes (2 clicks); two cases added (a walk never ends on a ladder,
+the slide before walking off). W88 C0 (up the second shaft of the owner's base, whose lowest ladder is 2
+blocks above the floor): no jump reaches it; the bot needs ladders in the bag (F22b), so the journey gives it 8
+ladders as W84 does.
