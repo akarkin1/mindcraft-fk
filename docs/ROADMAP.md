@@ -15,18 +15,34 @@ Rules that hold for every release:
 |---|---|---|
 | 0.1.4.8 | Stability | Released |
 | 0.1.4.9 | The mine, the routes of the player, and the model comparison | Released |
-| 0.1.4.10 | Understanding and watching | Planned, both trials passed |
+| 0.1.4.10 | Goals | Planned |
+| 0.1.4.11 | Understanding and watching | Planned, both trials passed |
 | Later | See the backlog | Not decided |
 
 ## 0.1.4.9 The mine, the routes of the player, and the model comparison
 
 Released on 2026-09-30; `CHANGELOG.md` says what it contains. Left for later: a mine named with a number collides with the mines the bot dug itself; `ore_sense_range` accepts 1 and 2 as well as 0 and 3; a plain `!goToCoordinates` into the mine still stands on the closed trapdoor (the path search of v0.1.4.7), while `!goToRememberedPlace` walks the learned route.
 
-## 0.1.4.10 Understanding and watching
+## 0.1.4.10 Goals
+
+From the play of 2026-10-01: the bot mined well until it ran out of torches, then waited for an order at every step while the owner guided it to wood, planks, sticks and torches, and never came back to the mining by itself. The goal mechanism of the original project (`!goal`) is a loop of the model that any message of the player ends, and the model has to be told to use it.
+
+| Part | Content |
+|---|---|
+| A plan from an order | An order with a result that code can check ("get me 16 iron", "farm the wheat", "make 32 torches") becomes a plan of steps on disk. The bot makes it by itself; the player never says "set yourself a goal". |
+| Steps that code checks | Each step has a check: 32 torches in the inventory, 16 raw iron, the farm harvested. A step that fails gives a reason, and the plan takes the step that fixes it: no torches, so wood, planks, sticks, torches, then back to the mine. |
+| The player's messages | A message pauses the plan and does not end it. "Stop" ends it. After an answer the bot goes on with the next step. |
+| Restarts | The plan survives a restart of the process; the bot says where it stands and goes on. |
+| Progress | One line when a step is done and when the plan is done. No narration between. |
+| Cost | Steps are code; the model is called only to make the plan and when a step has no skill. |
+
+Why first: the owner saw the bot idle through 20 minutes of guided crafting and never return to the job. The same idea made `!farmCycle` work once the whole cycle was code.
+
+## 0.1.4.11 Understanding and watching
 
 ### Part A: the bot picks better examples
 
-Before each call of the model the bot puts 2 of its examples into the prompt. Two steps of this part are released with 0.1.4.8: examples for the commands that had none, and the choice by the last request of the player (`examples_by_last_request`).
+Before each call of the model the bot puts 2 of its examples into the prompt. Two steps of this part were released with 0.1.4.8: examples for the commands that had none, and the choice by the last request of the player (`examples_by_last_request`).
 
 | Step | Content |
 |---|---|
