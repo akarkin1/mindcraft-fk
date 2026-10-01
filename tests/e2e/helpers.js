@@ -145,10 +145,15 @@ export async function startServer({ seedHigh = 0, seedLow = 0, motd = 'e2e fake 
 
 // The switches of the fork at their defaults of settings_spec.json (every boolean with a default): a scenario
 // never reads a switch from the owner's settings.js (the rule of CLAUDE.md; the owner's file has every pack on).
+const SECURITY_KEYS = new Set(['sandbox_lockdown', 'allow_insecure_coding']);
+
 async function switchDefaults() {
     const spec = JSON.parse(fs.readFileSync(new URL('../../src/mindcraft/public/settings_spec.json', import.meta.url), 'utf8'));
     const out = {};
     for (const [key, rule] of Object.entries(spec)) {
+        if (SECURITY_KEYS.has(key)) {
+            continue; // the fork's own values: a scenario asserts the lockdown as the fork sets it
+        }
         if (rule && rule.type === 'boolean' && typeof rule.default === 'boolean') {
             out[key] = rule.default;
         }
