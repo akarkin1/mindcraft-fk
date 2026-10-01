@@ -176,6 +176,44 @@ export function craftedSupplyText(count, item) {
 }
 
 /**
+ * A supply in words with its count: `1 torch`, `24 torches`, `9 ladders`, `8 oak_planks`.
+ * @param {number} count
+ * @param {string} item
+ * @returns {string}
+ */
+export function supplyWords(count, item) {
+    if (count === 1 || item.endsWith('s')) {
+        return `${count} ${item}`;
+    }
+    return `${count} ${item === 'torch' ? 'torches' : `${item}s`}`;
+}
+
+function andList(words) {
+    return words.length <= 1 ? words.join('') : `${words.slice(0, -1).join(', ')} and ${words[words.length - 1]}`;
+}
+
+/**
+ * The text of craftSupplies (fix round F32): `I made 32 torches.`, or with less than wanted
+ * `I made 24 torches of 32. I need 2 coal more and know no chest with coal.`; the clause of the
+ * chests names the missing items that no known chest holds, and is left out when a known chest
+ * holds all of them.
+ * @param {number} made
+ * @param {number} wanted
+ * @param {string} item
+ * @param {{name: string, count: number}[]} [missing]
+ * @param {string[]} [noChest] names of missing items no known chest holds
+ * @returns {string}
+ */
+export function madeSuppliesText(made, wanted, item, missing = [], noChest = []) {
+    if (made >= wanted) {
+        return `I made ${supplyWords(made, item)}.`;
+    }
+    const need = andList((Array.isArray(missing) ? missing : []).map(m => `${m.count} ${m.name}`));
+    const where = Array.isArray(noChest) && noChest.length > 0 ? ` and know no chest with ${noChest.join(' or ')}` : '';
+    return `I made ${supplyWords(made, item)} of ${wanted}.${need ? ` I need ${need} more${where}.` : ''}`;
+}
+
+/**
  * `I do not know the tool "spoon". I know pickaxe, axe, shovel, hoe and sword.`
  * @param {string} kind
  * @returns {string}

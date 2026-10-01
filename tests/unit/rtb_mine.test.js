@@ -337,7 +337,7 @@ describe('side branches (B5)', () => {
         const r = await P.mineOre(s.bot, s.ctx, 'iron', 2, s.opts);
         assert.equal(r.ok, true, r.text);
         for (const x of [22, 23]) {
-            assert.equal(s.world.nameAt(x, 34, 6), 'air', `feet ${x}`);
+            assert.ok(['air', 'torch'].includes(s.world.nameAt(x, 34, 6)), `feet ${x}: air or the torch of F31`);
             assert.equal(s.world.nameAt(x, 35, 6), 'air', `head ${x}`);
         }
         assert.deepEqual([s.world.nameAt(24, 34, 6), s.world.nameAt(25, 34, 6)], ['air', 'air'], 'the ore beyond step 2, taken as a vein');
@@ -385,7 +385,7 @@ describe('side branches of a mine of the bot (B5)', () => {
         on.world.set(-3, 56, -6, 'coal_ore'); // in the first branch to the left (west) at 4 from the start (0, 56, -2)
         const r = await P.mineOre(on.bot, on.ctx, 'coal', 1, on.opts);
         assert.equal(r.ok, true, r.text);
-        assert.equal(on.world.nameAt(-1, 56, -6), 'air');
+        assert.ok(['air', 'torch'].includes(on.world.nameAt(-1, 56, -6)), 'air or the torch of F31');
         assert.equal(on.world.nameAt(-1, 57, -6), 'air');
         assert.deepEqual(on.ctx.mines.get('coal').tunnels[0].branches.map(b => [b.at, b.side]), [[4, 'left']]);
         assert.equal(on.ctx.mines.get('coal').length, 32, 'the main tunnel waits');
@@ -708,5 +708,72 @@ describe('fix round F24, items 1, 3 and 4', () => {
         const off = await known({ settings: {} });
         const o = await P.goToMine(off.bot, off.ctx, 'coal', off.opts);
         assert.equal(o.text, 'I know no mine for coal. Tell me to mine coal and I make one.', 'without the switch as before');
+    });
+});
+
+describe('fix round F31: the supplies stay with the bot, torches in the dug tunnel', () => {
+    test('a trip with 16 torches: stored in the room chest is all but the supplies; the torches placed come from the 16', async () => {
+        const s = await known();
+        give(s.bot, 'ladder', 8);
+        s.world.set(21, 34, 21, 'iron_ore');
+        const chest = {};
+        s.ctx.storage.storeItems = async (bot, ctx, options) => {
+            // stores exactly what `keep` does not keep (-1 keeps all)
+            const totals = {};
+            for (const i of bot.inventory.items()) totals[i.name] = (totals[i.name] ?? 0) + i.count;
+            for (const [name, n] of Object.entries(totals)) {
+                const k = options.keep?.[name] === -1 ? n : Math.min(n, options.keep?.[name] ?? 0);
+                if (n - k > 0) {
+                    chest[name] = (chest[name] ?? 0) + n - k;
+                    let rest = n - k;
+                    for (const i of bot.inventory.list.filter(x => x.name === name)) {
+                        const t = Math.min(i.count, rest);
+                        i.count -= t;
+                        rest -= t;
+                    }
+                    bot.inventory.list = bot.inventory.list.filter(x => x.count > 0);
+                }
+            }
+            return { ok: true, reason: null, stored: {}, left: {}, text: 'I stored things.' };
+        };
+        const r = await P.mineOre(s.bot, s.ctx, 'iron', 1, s.opts);
+        assert.equal(r.ok, true, r.text);
+        const placed = s.bot.calls.filter(c => c[0] === 'place' && c[4] === 'torch').length;
+        assert.ok(placed >= 1, 'a torch in the new part of the tunnel');
+        assert.equal(count(s.bot, 'torch'), 16 - placed);
+        assert.equal(count(s.bot, 'ladder'), 8);
+        assert.equal(count(s.bot, 'stone_pickaxe'), 1);
+        assert.equal(count(s.bot, 'bread'), 8);
+        assert.equal(chest.torch, undefined);
+        assert.equal(chest.ladder, undefined);
+        assert.ok(count(s.bot, 'cobblestone') <= 32 && count(s.bot, 'cobblestone') > 0, 'fillers up to 32');
+    });
+
+    test('tripKeep: whatever `keep` says; the fillers together up to 32, cobblestone first', async () => {
+        const s = await scene();
+        give(s.bot, 'cobbled_deepslate', 40);
+        give(s.bot, 'iron_pickaxe', 1);
+        const keep = P.tripKeep(s.bot, { raw_iron: -1, torch: 2, cobblestone: 5 });
+        assert.deepEqual([keep.torch, keep.ladder, keep.stone_pickaxe, keep.iron_pickaxe, keep.raw_iron, keep.chest, keep.bread],
+            [-1, -1, -1, -1, -1, 1, 8]);
+        assert.deepEqual([keep.cobblestone, keep.cobbled_deepslate], [32, undefined], '64 cobblestone: 32 of it, no deepslate');
+    });
+
+    const torchesAt = s => s.bot.calls.filter(c => c[0] === 'place' && c[4] === 'torch').map(c => c[3]);
+    async function digOn(torchZ) {
+        const s = await known();
+        if (torchZ !== null) s.world.set(21, 34, torchZ, 'torch');
+        s.bot.entity.position = { x: 21.5, y: 34, z: 13.5 };
+        const r = await P.digTunnel(s.bot, s.ctx, 3, { ...s.opts, mine: s.ctx.mines.byName('mine'), tunnel: 0 });
+        assert.equal(r.ok, true, r.text);
+        return torchesAt(s);
+    }
+
+    test('torches from the last one: none in the tunnel of 12, at its 13th block; 8 behind at once; within 3 when due', async () => {
+        assert.deepEqual(await digOn(null), [14], 'no torch in the last 8 cells: the first new block');
+        assert.deepEqual(await digOn(6), [14], 'the last torch 8 cells behind the first new block');
+        assert.deepEqual(await digOn(8), [16], '8 cells after the torch at z 8');
+        assert.deepEqual(await digOn(12), [], 'the next is due at z 20');
+        assert.equal(P.torchDue((x, y, z) => (z === 5 && y === 35 ? 'wall_torch' : 'air'), { x: 0, y: 34, z: 12 }, 'south'), false, 'a wall torch counts');
     });
 });

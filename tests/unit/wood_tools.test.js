@@ -229,7 +229,7 @@ describe('craftSupplies', () => {
         const { bot, ctx, opts } = scene();
         give(bot, 'oak_log', 4);
         const res = await K.craftSupplies(bot, ctx, 'ladder', 8, opts);
-        assert.deepEqual({ ok: res.ok, item: res.item, count: res.count, text: res.text }, { ok: true, item: 'ladder', count: 9, text: 'I crafted 9 ladder.' });
+        assert.deepEqual({ ok: res.ok, item: res.item, count: res.count, text: res.text }, { ok: true, item: 'ladder', count: 9, text: 'I made 9 ladders.' });
     });
 
     test('torches need coal or charcoal; the chests are asked first', async () => {
@@ -237,30 +237,30 @@ describe('craftSupplies', () => {
         s.ctx.storage = fakeStorage(s.bot, {});
         give(s.bot, 'oak_log', 1);
         const res = await K.craftSupplies(s.bot, s.ctx, 'torch', 8, s.opts);
-        assert.deepEqual([res.ok, res.text], [false, 'I need 2 coal for 8 torch and have none.']);
+        assert.deepEqual([res.ok, res.text], [false, 'I made 0 torches of 8. I need 2 coal more and know no chest with coal.']);
         assert.deepEqual(s.ctx.storage.calls, [['coal', 2]]);
         give(s.bot, 'coal', 1);
         give(s.bot, 'charcoal', 1);
-        assert.equal((await K.craftSupplies(s.bot, s.ctx, 'torches', 8, s.opts)).text, 'I crafted 8 torch.');
+        assert.equal((await K.craftSupplies(s.bot, s.ctx, 'torches', 8, s.opts)).text, 'I made 8 torches.');
     });
 
     test('wood is collected when it is missing', async () => {
         const { world, bot, ctx, opts } = scene();
         plantTree(world, { x: 8, z: 0 });
         const res = await K.craftSupplies(bot, ctx, 'chest', 1, opts);
-        assert.equal(res.text, 'I crafted 1 chest.');
+        assert.equal(res.text, 'I made 1 chest.');
     });
 
     test('planks, sticks, a crafting table; unknown supplies', async () => {
         const { bot, ctx, opts } = scene();
         give(bot, 'birch_log', 3);
-        assert.equal((await K.craftSupplies(bot, ctx, 'planks', 6, opts)).text, 'I crafted 8 birch_planks.');
-        assert.equal((await K.craftSupplies(bot, ctx, 'sticks', 4, opts)).text, 'I crafted 4 stick.');
-        assert.equal((await K.craftSupplies(bot, ctx, 'crafting table', 1, opts)).text, 'I crafted 1 crafting_table.');
+        assert.equal((await K.craftSupplies(bot, ctx, 'planks', 6, opts)).text, 'I made 8 birch_planks.');
+        assert.equal((await K.craftSupplies(bot, ctx, 'sticks', 4, opts)).text, 'I made 4 sticks.');
+        assert.equal((await K.craftSupplies(bot, ctx, 'crafting table', 1, opts)).text, 'I made 1 crafting_table.');
         const bad = await K.craftSupplies(bot, ctx, 'diamond_block', 1, opts);
         assert.deepEqual([bad.ok, bad.reason, bad.text], [false, 'unknown_item',
             'I cannot craft "diamond_block" with this command. I craft torch, ladder, chest, crafting_table, stick and planks.']);
         const none = await K.craftSupplies(bot, ctx, 'chest', 1, opts);
-        assert.match(none.text, /^I need 2 birch_log for 1 chest and have 1\. I found no tree/);
+        assert.match(none.text, /^I made 0 chests of 1\. I need 1 birch_log more and know no chest with birch_log\. I found no tree/, 'fix round F32');
     });
 });

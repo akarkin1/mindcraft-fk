@@ -13,7 +13,7 @@ import { goals, gotoGoal, makeMovements, walkNear } from '../home/motion.js';
 import { EXEC_REACH, digBlock, eyeOfBot, feetOf, isAirLike, nameAt } from './actions.js';
 import { countItems, inventoryOf, itemCounts } from './inventory.js';
 import { chopTrees } from './wood.js';
-import { craftFailedText, craftedSupplyText, craftedToolsText, haveToolText, needText, notCraftableText, unknownMaterialText,
+import { craftFailedText, craftedToolsText, haveToolText, madeSuppliesText, needText, notCraftableText, supplyWords, unknownMaterialText,
     unknownSupplyText, unknownToolText, withArticle } from './texts.js';
 import { bestTool, chooseMaterial, craftSteps, isWoodItem, logKindFor, missingIngredient, normaliseSupply, normaliseToolRequest, parseTool,
     supplySteps, toolName, toolsOf, usesLeft } from './tool_logic.js';
@@ -264,7 +264,7 @@ async function gather(bot, ctx, planFn, target, run) {
         plan = planFn();
         const still = plan.missing.find(m => isWoodItem(m.name));
         if (still) {
-            return { ok: false, reason: bot.interrupt_code ? 'interrupted' : 'missing', text: `${needFor(bot, still, target)} ${res?.text ?? ''}`.trim() };
+            return { ok: false, reason: bot.interrupt_code ? 'interrupted' : 'missing', text: `${needFor(bot, still, target)} ${res?.text ?? ''}`.trim(), chop: res?.text ?? '' };
         }
     }
     if (plan.missing.length > 0) {
@@ -444,12 +444,36 @@ export async function ensureTool(bot, ctx = {}, kind = '', minMaterial = '', opt
     }
 }
 
+// The most of a supply the inventory gives now, in whole crafts of `unit`, at most `rest`; 0 for none.
+function craftableNow(bot, name, rest, unit) {
+    for (let c = Math.ceil(rest / unit); c >= 1; c--) {
+        const plan = supplySteps(name, c * unit, inventoryOf(bot), { table: tableNear(bot) });
+        if (plan && plan.missing.length === 0) {
+            return c * unit;
+        }
+    }
+    return 0;
+}
+
+// True when a known chest holds the item (coal: charcoal too; a log: any log or planks).
+function chestHas(totals, name) {
+    if (name === 'coal') {
+        return (totals.coal ?? 0) + (totals.charcoal ?? 0) > 0;
+    }
+    if (isWoodItem(name)) {
+        return Object.entries(totals).some(([n, c]) => c > 0 && (isWoodItem(n) || (n.endsWith('_planks') && WOOD_KINDS.includes(n.replace(/_planks$/, '')))));
+    }
+    return (totals[name] ?? 0) > 0;
+}
+
 /**
  * Crafts supplies (spec T4): torch, ladder, chest, crafting_table, stick or planks (`planks` is
  * the wood the bot has most of; `birch_planks` works too). The count is rounded up to what the
- * recipe gives. Wood is collected when it is missing (chests first when ctx.storage is there,
- * then trees). Torches need coal or charcoal: `I need 2 coal for 8 torch and have none.`
- * Text: `I crafted 9 ladder.` Never throws.
+ * recipe gives. Fix round F32: first it crafts what the inventory gives now (6 coal and 6 sticks:
+ * 24 torches), then gets what the rest lacks (from the chests it knows through ctx.storage, then
+ * wood from trees), crafts again, and only then says what is still missing:
+ * `I made 32 torches.`, `I made 24 torches of 32. I need 2 coal more and know no chest with coal.`
+ * Never throws.
  * @param {object} bot
  * @param {object} ctx as ensureTool
  * @param {string} item
@@ -465,27 +489,64 @@ export async function craftSupplies(bot, ctx = {}, item = '', count = 1, options
     }
     const n = positiveInt(count, 1);
     let product = name;
+    let made = 0;
     try {
-        const planFn = () => supplySteps(name, n, inventoryOf(bot), { table: tableNear(bot) });
-        const first = planFn();
-        product = first.item;
-        const got = await gather(bot, ctx, planFn, `${first.makes} ${first.item}`, { depth: 0, crafted: [], options });
-        if (!got.ok) {
-            return { ok: false, reason: got.reason, item: product, count: 0, text: got.text };
-        }
-        product = got.plan.item;
         const clock = clockOf(ctx, options);
-        const before = await settledCount(bot, clock, product);
-        const made = await runSteps(bot, ctx, got.plan.steps, clock);
-        const gained = Math.max(0, (await settledCount(bot, clock, product)) - before);
-        if (!made.ok) {
-            return { ok: false, reason: made.reason, item: product, count: gained, text: made.text };
+        const first = supplySteps(name, n, inventoryOf(bot), { table: tableNear(bot) });
+        product = first.item;
+        const wanted = first.makes;
+        const unit = supplySteps(name, 1, inventoryOf(bot), { table: true }).makes;
+        const start = await settledCount(bot, clock, product);
+        const gained = () => Math.max(0, countItems(bot, product) - start);
+        let failure = null;
+        let chop = '';
+        for (let round = 0; round < 6 && gained() < wanted; round++) {
+            if (bot.interrupt_code) {
+                failure = { reason: 'interrupted', text: `I was stopped after I made ${supplyWords(gained(), product)}.` };
+                break;
+            }
+            const rest = wanted - gained();
+            const k = craftableNow(bot, name, rest, unit);
+            if (k > 0) {
+                const plan = supplySteps(name, k, inventoryOf(bot), { table: tableNear(bot) });
+                const r = await runSteps(bot, ctx, plan.steps, clock);
+                if (!r.ok) {
+                    failure = { reason: r.reason, text: r.text };
+                    break;
+                }
+                continue;
+            }
+            // nothing more to craft now: what the rest lacks, from the chests, then wood from trees
+            const before = JSON.stringify(itemCounts(bot));
+            const planFn = () => supplySteps(name, rest, inventoryOf(bot), { table: tableNear(bot) });
+            const got = await gather(bot, ctx, planFn, `${rest} ${product}`, { depth: 0, crafted: [], options });
+            chop = typeof got.chop === 'string' ? got.chop : chop;
+            if (!got.ok && JSON.stringify(itemCounts(bot)) === before) {
+                failure = got.reason === 'interrupted' ? { reason: 'interrupted', text: got.text } : null;
+                break;
+            }
         }
-        const text = craftedSupplyText(gained, product);
-        logTo(ctx, text);
-        return { ok: true, reason: null, item: product, count: gained, text };
+        made = (await settledCount(bot, clock, product)) - start;
+        made = Math.max(0, made);
+        if (made >= wanted) {
+            const text = madeSuppliesText(made, wanted, product);
+            logTo(ctx, text);
+            return { ok: true, reason: null, item: product, count: made, text };
+        }
+        if (failure?.reason === 'interrupted') {
+            return { ok: false, reason: 'interrupted', item: product, count: made, text: failure.text };
+        }
+        const missing = supplySteps(name, wanted - made, inventoryOf(bot), { table: tableNear(bot) })?.missing ?? [];
+        if (missing.length === 0 && failure) {
+            return { ok: false, reason: failure.reason, item: product, count: made, text: failure.text };
+        }
+        const totals = chestCounts(bot, ctx);
+        // the text of the trees cut for wood that is still missing ("I found no tree within 48 blocks.")
+        const trees = chop && missing.some(m => isWoodItem(m.name)) ? ` ${chop}` : '';
+        const text = `${madeSuppliesText(made, wanted, product, missing, missing.filter(m => !chestHas(totals, m.name)).map(m => m.name))}${trees}`;
+        return { ok: false, reason: 'missing', item: product, count: made, text };
     } catch (err) {
         console.warn('Wood pack: crafting supplies failed:', err?.message ?? err);
-        return { ok: false, reason: 'error', item: product, count: 0, text: `I could not craft ${product}: ${err?.message ?? err}` };
+        return { ok: false, reason: 'error', item: product, count: made, text: `I could not craft ${product}: ${err?.message ?? err}` };
     }
 }

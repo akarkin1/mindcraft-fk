@@ -1853,3 +1853,34 @@ export function wayBackHops(mine, feet, step = WAY_BACK_HOP) {
     }
     return hops.filter((c, i) => !samePos(c, f) && (i === 0 || !samePos(c, hops[i - 1])));
 }
+
+// ------------------------------------------------------------------ torches (fix round F31)
+
+/** Light blocks that count as a torch of a tunnel. */
+export const TORCH_NAMES = Object.freeze(['torch', 'wall_torch', 'soul_torch', 'soul_wall_torch', 'lantern', 'soul_lantern']);
+
+/**
+ * True when a torch is due at the feet in a tunnel going `dir` (fix round F31): no torch (TORCH_NAMES,
+ * at the feet or the head) in this cell and the cells behind it, `every` (8) cells in all. The count
+ * goes on from the tunnel that is there, so a new dig places its first torch at most 8 cells after
+ * the last one.
+ * @param {(x: number, y: number, z: number) => string|null} getName
+ * @param {{x,y,z}} feet
+ * @param {string} dir
+ * @param {number} [every]
+ * @returns {boolean}
+ */
+export function torchDue(getName, feet, dir, every = TORCH_EVERY) {
+    const f = cellOf(feet);
+    if (!f || typeof getName !== 'function') {
+        return false;
+    }
+    const n = isFiniteNumber(every) && every >= 1 ? Math.floor(every) : TORCH_EVERY;
+    for (let k = 0; k < n; k++) {
+        const c = offset(f, backOf(dir), k);
+        if ([c, { x: c.x, y: c.y + 1, z: c.z }].some(p => TORCH_NAMES.includes(readName(getName, p)))) {
+            return false;
+        }
+    }
+    return true;
+}
