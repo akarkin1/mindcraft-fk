@@ -466,7 +466,7 @@ function ladderColumns(b) {
 
 // Splits the samples into climbs: runs of samples in a ladder column strictly between its two floors, covering 2 blocks
 // or more. For each: direction, blocks, seconds, seconds per block, stalls (runs of more than 1 s without a height
-// change of 0.02), reversals (steps against the direction of more than 0.1 block) and the largest of them.
+// change of 0.02), reversals (steps against the direction of more than 0.2 block; a hop of 0.15 at the step into a column is no flinch) and the largest of them.
 export function climbsOf(rows, b) {
     const out = [];
     for (const c of ladderColumns(b)) {
@@ -483,7 +483,7 @@ export function climbsOf(rows, b) {
                     const where = [];
                     for (let i = 1; i < run.length; i++) {
                         const back = -sign * (run[i].y - run[i - 1].y);
-                        if (back > 0.1) { reversals++; worst = Math.max(worst, back); where.push(`t=${run[i].t.toFixed(1)}s y ${run[i - 1].y.toFixed(2)}->${run[i].y.toFixed(2)}`); }
+                        if (back > 0.2) { reversals++; worst = Math.max(worst, back); where.push(`t=${run[i].t.toFixed(1)}s y ${run[i - 1].y.toFixed(2)}->${run[i].y.toFixed(2)}`); }
                     }
                     let s = 0;
                     for (let i = 1; i <= run.length; i++) {
@@ -517,7 +517,7 @@ export const smooth = (c) => c.reversals === 0 && c.stalls <= 1 && c.perBlock < 
 
 export function climbText(c) {
     return `${c.column} ${c.dir} from y ${c.from.toFixed(1)} to ${c.to.toFixed(1)}: ${c.blocks.toFixed(1)} blocks in ${c.seconds.toFixed(1)} s, ${c.perBlock.toFixed(2)} s per block, ` +
-        `${c.stalls} stall(s) over 1 s (longest ${c.longestStall.toFixed(1)} s), ${c.reversals} reversal(s) over 0.1 (largest ${c.worstReversal.toFixed(2)})` +
+        `${c.stalls} stall(s) over 1 s (longest ${c.longestStall.toFixed(1)} s), ${c.reversals} reversal(s) over 0.2 (largest ${c.worstReversal.toFixed(2)})` +
         (c.where.length ? ` at ${c.where.join(', ')} (climb from t=${c.at.toFixed(1)}s)` : '');
 }
 
@@ -531,7 +531,7 @@ export function checkClimbs(label, rows, b, { expect = 1, window = null } = {}) 
     check(climbs.length >= expect, `${label}: the samples hold the bot's climb(s) on the ladder (${expect} or more)`, `${climbs.length}`);
     for (const c of climbs) {
         check(smooth(c),
-            `${label}: the climb is smooth (${c.column} ${c.dir}): no step against the direction of more than 0.1 block, at most one stall over 1 s, under 0.8 s per block`, climbText(c));
+            `${label}: the climb is smooth (${c.column} ${c.dir}): no step against the direction of more than 0.2 block, at most one stall over 1 s, under 0.8 s per block`, climbText(c));
     }
     return climbs;
 }

@@ -178,11 +178,11 @@ async function climbToOpen(bot, column, trap, clock, limitMs) {
         await clock.wait(50);
     }
     // F34 of the journeys (the flinch of the owner): the click turns the look to the trapdoor, so the bot no
-    // longer presses against the wall and slides down 0.3 blocks per click. Jump is held during the click (a
-    // jump climbs a ladder in 1.21, so the bot stays pressed up under the trapdoor), the look goes back to the
-    // wall at once, and the controls stay pressed for the climb that follows.
+    // longer presses against the wall; with forward pressed it walked out of the column and fell 0.3 blocks.
+    // Only jump is held during the click (a jump climbs a ladder in 1.21 without a step aside, so the bot stays
+    // pressed up under the trapdoor), the look goes back to the wall at once, then forward for the climb.
     bot.setControlState('sneak', false);
-    bot.setControlState('forward', true);
+    bot.setControlState('forward', false); // forward with the look turned walks the bot out of the column: it fell
     bot.setControlState('jump', true);
     await clock.wait(100);
     const opened = eyeDistance(bot, trap) <= PASS_RULES.reach && (await openDoor(bot, trap, doorOptions(clock)));
@@ -191,6 +191,7 @@ async function climbToOpen(bot, column, trap, clock, limitMs) {
     } catch {
         // looking is best effort
     }
+    bot.setControlState('forward', true);
     bot.setControlState('jump', false);
     if (bot.interrupt_code) {
         release(bot);

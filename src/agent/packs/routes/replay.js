@@ -181,11 +181,11 @@ async function climbToOpen(bot, ctx, leg, trap, clock) {
     // F11 of the real server: a sneaking click with an item in the hand uses the item, not the block, so the
     // trapdoor never opened while the bot held a pickaxe. The bot holds itself on the ladder by pressing
     // forward against the closed trapdoor instead of sneaking, and clicks without sneak.
-    // F34 of the journeys: the click turns the look to the trapdoor, so the bot no longer presses against the
-    // wall and slides down. Jump is held during the click (a jump climbs a ladder in 1.21), the look goes back
-    // to the wall at once, and the controls stay pressed for the climb that follows.
+    // F34 of the journeys: the click turns the look to the trapdoor; with forward pressed the bot walked out of
+    // the column and fell 0.3 blocks. Only jump is held during the click (a jump climbs a ladder in 1.21 without
+    // a step aside), the look goes back to the wall at once, then forward for the climb that follows.
     bot.setControlState('sneak', false);
-    bot.setControlState('forward', true);
+    bot.setControlState('forward', false); // forward with the look turned walks the bot out of the column: it fell
     bot.setControlState('jump', true);
     await clock.wait(100);
     const opened = eyeDistance(bot, trap) <= REPLAY_RULES.reach && (await openDoor(bot, trap, doorOptions(ctx, clock)));
@@ -194,6 +194,7 @@ async function climbToOpen(bot, ctx, leg, trap, clock) {
     } catch {
         // looking is best effort
     }
+    bot.setControlState('forward', true);
     bot.setControlState('jump', false);
     if (bot.interrupt_code) {
         release(bot);
