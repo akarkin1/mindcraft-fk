@@ -65,3 +65,52 @@ missing item is unknown.
 5. `onRestart()` at spawn; `status()` after the where line of the knowledge block when it is not empty.
 
 Tests: `tests/unit/gja_*.test.js`, 90.
+
+## From part R (reflex, areas, mines, E3), done in round 1
+
+### Exports
+
+| Module | Exports |
+|---|---|
+| `src/agent/areas/keep_out_logic.js` (pure) | `KEEP_OUT_COST` (100), `KEEP_OUT_TYPES`, `AREA_FLAGS`, `LEAVE_TEXT_MS`, `isGateName(name)`, `isKeepOutArea(area)`, `insideArea(area, pos)`, `keepOutAreas(areas, botPos, dimension)`, `keptOutBy(areas, pos)`, `stepCost(block, areas)`, `stepCostOf(areas)`, `itemNameOf(entity)`, `leaveText(item, area)`, `mayLeaveText(saidAt, now)` |
+| `src/agent/areas/keep_out.js` | `collectItems(bot, { areas, first, allow, log })` -> `{ ok, reason, text, picked }`, never throws |
+| `src/agent/rules/rule_logic.js` | `areaFlagOf(ruleText, areaNames)` -> `{ area, flag: 'no_enter' }` or null |
+| `src/agent/areas/area_store.js` | `ENTRANCE_KINDS` with `'trapdoor'`; `AREA_FLAG_NAMES`; `AreaStore.setFlag(name, flag, value)` -> a copy of the area or null; `sameBox(store, box)` -> the area or null; `sameBoxText(name)` |
+| `src/agent/areas/area_scan.js` | `scanBuilding(..., { floors: true })`; the result has `floor: true/false` only with `floors` |
+| `src/agent/packs/mining/mine_store.js` | `BOT_KEY_PREFIX`; `find(name, dimension)`; `remove(name, dimension)` |
+| `src/agent/packs/mining/mine_player.js` | `forgetMine(ctx, name)` -> `{ ok, reason, text }`; `minesText(ctx, dimension)` -> string; both exported from the pack's `index.js` (added by the lead) |
+| `src/agent/packs/mining/texts.js` | `tunnelsWords`, `mineEntryText`, `minesListText`, `forgetMineText` |
+
+### Decisions beyond the spec, accepted
+
+- The reflex stays out of: type `pen`, type `farm`, any area with `flags.no_enter`. A gate cell costs 100
+  everywhere; on the real `Movements` a cost of 100 drops the move.
+- The item walk of `item_collecting` is `collectItems` of `keep_out.js` (not `skills.pickupNearbyItems`,
+  which walks to every item): digging off, the step cost, 15 s per walk, at most 16 items; the second try
+  the same. The text once per item and at most once a minute, to `agent.sayText` and the behaviour log.
+- The mode reads `agent.area_store`; without it (protected areas and world memory off) no area is kept
+  out, gates still cost 100.
+- `set()` keeps the flags of an area whose box is saved again; unknown flags are dropped on load.
+- The floor scan: the box runs from the ground block to the highest ceiling plus the walls, from a cell
+  within 1 block of the bot; a floor that reaches the scan limit counts as no floor; without a floor the
+  old scan runs and the result has `floor: false`.
+- `remove` and `find` try the name, then a level ("16", "bot:16", 16), then an ore; the old key `'16'`
+  still finds `bot:16`.
+- `minesText` without a store returns the no-store text.
+
+### Migration of `mines.json`
+
+A version 1 file is read as before and written again at load as `version: 2`: `"16"` becomes `"bot:16"`,
+`"the_nether:40"` becomes `"the_nether:bot:40"`, `"mine"` stays. An empty or missing file is not written.
+
+### For part G (glue, E5)
+
+| Command | Call |
+|---|---|
+| `!forgetMine(name)` | `pack.forgetMine({ mines: store, log }, name)`, answer `.text` |
+| `!mines` | `pack.minesText({ mines: store }, bot.game.dimension)` |
+| `!rememberRule` | after saving: `const f = areaFlagOf(text, areaStore.list().map(a => a.name)); if (f) areaStore.setFlag(f.area, 'no_enter', true)` |
+| `!rememberArea` | `scanBuilding(blockNameOf(bot), origin, { floors: settings.area_floors === true })`; then `const same = sameBox(store, { min: scan.min, max: scan.max, dimension })`; when found, answer `sameBoxText(same.name)` |
+
+Existing tests changed: `sta_modes` (the fake of the item walk is `collectItems`), `mining_store`,
+`rt_mine_store`, `rtb_store` (the keys `bot:16`, version 2). Tests: `tests/unit/gjr_*.test.js`, 43.
