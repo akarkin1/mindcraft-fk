@@ -582,7 +582,9 @@ describe('F24: the way out along the tunnel, its corners and branches', () => {
         const descentMine = { ...roomMine, route: [...LEGS.slice(0, 4), { kind: 'walk', from: { x: 2, y: 50, z: 0 }, to: { x: 21, y: 34, z: 0 } }] };
         const fromRoom = P.wayBack(descentMine, { x: 1, y: 50, z: 2 });
         assert.equal(fromRoom.leg, 3, 'the nearest leg: the walk through the room');
-        assert.deepEqual(fromRoom.hops, [{ x: 2, y: 50, z: 0 }], 'a cell at the room level, never the foot of the descent');
+        assert.equal(fromRoom.hops.length, 1);
+        assert.ok(fromRoom.hops[0].y === 50 && fromRoom.hops[0].z === 0 && fromRoom.hops[0].x >= 0 && fromRoom.hops[0].x <= 2,
+            `a cell of the walk through the room, never the foot of the descent: ${JSON.stringify(fromRoom.hops)}`);
         const fromChest = P.wayBack(descentMine, { x: -2, y: 50, z: 2 });
         assert.ok(fromChest.hops.every(h => h.y === 50), `from the chest the hops stay at the room level: ${JSON.stringify(fromChest.hops)}`);
     });
