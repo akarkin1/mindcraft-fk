@@ -75,8 +75,8 @@ describe('walkRoute (I3)', () => {
         assert.deepEqual({ ok: r.ok, reason: r.reason, text: r.text, leg: r.leg }, { ok: true, reason: null, text: 'I followed the route "bed", 4 steps.', leg: null });
         assert.deepEqual(feet(s.bot), [-3, 61, 2]);
         assert.deepEqual(r.at, { x: -3, y: 61, z: 2 });
-        assert.equal(s.world.propsAt(2, 60, -2).open, true, 'opened, and not closed by walkRoute');
-        assert.deepEqual(s.bot.calls.filter(c => c[0] === 'activate'), [['activate', 2, 60, -2]]);
+        assert.equal(s.world.propsAt(2, 60, -2).open, false, 'F35: closed again by walkRoute once the bot stands beside it');
+        assert.deepEqual(s.bot.calls.filter(c => c[0] === 'activate'), [['activate', 2, 60, -2], ['activate', 2, 60, -2]], 'one click to open, one to close');
         assert.equal(digs(s.bot), 0);
         assert.deepEqual(s.progress, ['route', 'route', 'route', 'route'], 'noteProgress after every leg');
     });

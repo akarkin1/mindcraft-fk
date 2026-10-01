@@ -194,7 +194,8 @@ describe('goToPlayer with routes_pack on', () => {
 });
 
 describe('the fixes of W75', () => {
-    test('L2: up under the closed trapdoor with the player waiting beside it (nearer than the follow distance), bobbing between two cells', { timeout: 30000 }, async () => {
+    test('L2: up under the closed trapdoor with the player waiting beside it (nearer than the follow distance), bobbing between two cells', { timeout: 45000 }, async () => {
+        // the fake does not climb an open trapdoor: climbUp gets out with its third way (the path search), about 12 s
         agentSettings.setSettings({ routes_pack: true });
         const s = scene({ pos: [2.5, 58, -1.5], player: [2.5, 61, -0.5] }); // 3.2 blocks apart, follow distance 4
         let up = true;
@@ -206,7 +207,7 @@ describe('the fixes of W75', () => {
         }, 120);
         try {
             const run = skills.followPlayer(s.bot, PLAYER, 4);
-            const out = await until(() => s.feet().y >= 61 && s.bot.goals.length >= 3, 20000);
+            const out = await until(() => s.feet().y >= 61 && s.bot.goals.length >= 3 && s.bot.goals.at(-1) === 'GoalFollow', 35000);
             s.bot.interrupt_code = true;
             await run;
             assert.ok(out, `feet ${JSON.stringify(s.feet())}, goals ${JSON.stringify(s.bot.goals)}, output ${s.bot.output}`);
@@ -214,7 +215,7 @@ describe('the fixes of W75', () => {
             const g = s.bot.goals;
             assert.ok(g[0] === 'GoalFollow' && g.at(-1) === 'GoalFollow' && g.slice(1, -1).length >= 1 && g.slice(1, -1).every((x) => x === null),
                 `${JSON.stringify(g)} ${s.bot.output}`);
-            assert.deepEqual(s.bot.clicks, [{ x: 2, y: 60, z: -2, sneak: false }]);
+            assert.deepEqual(s.bot.clicks, [{ x: 2, y: 60, z: -2, sneak: false }, { x: 2, y: 60, z: -2, sneak: false }], 'F35: opened, then closed behind the bot');
             assert.ok(s.bot.output.includes(`I climb up the ladder at (2, 60, -2) after ${PLAYER}.`), s.bot.output);
         } finally {
             clearInterval(bob);

@@ -12,7 +12,7 @@
 // then climbUp. Nothing is closed: the door service closes the trapdoor behind the bot as it closes doors.
 import { Vec3 } from 'vec3';
 import { botPos, clockOf } from '../packs/home/context.js';
-import { doorState, openDoor } from '../packs/home/doors.js';
+import { closeDoor, doorState, openDoor } from '../packs/home/doors.js';
 import { entryOf, heightWay, LADDER_RULES, ladderColumnAt, ladderPlace, wallYaw } from './ladder_logic.js';
 
 /** The numbers of a pass. */
@@ -248,7 +248,25 @@ async function passUp(bot, lad, column, clock, walkMs) {
         }
     }
     const r = await lad.climbUp(bot, leg, { clock, walkMs });
+    if (r.ok && column.trapdoor) {
+        await closeBehind(bot, column, clock);
+    }
     return r.ok ? null : stopReason(r.reason, bot);
+}
+
+// F35 of the journeys (W82, step 2): the trapdoor stayed open behind the bot until the door service closed it
+// 2 blocks past; the path search walked the bot over the open trapdoor on its way to the player and it hung in
+// the hole. A trapdoor the bot climbed out of is closed at once, while the bot stands beside it.
+async function closeBehind(bot, column, clock) {
+    try {
+        const trap = doorState(bot, column.trapdoor);
+        if (!trap || trap.open !== true || inColumn(bot, column) || bot.interrupt_code) {
+            return;
+        }
+        await closeDoor(bot, trap, doorOptions(clock));
+    } catch {
+        // the door service closes it later
+    }
 }
 
 /**

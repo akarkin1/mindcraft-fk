@@ -9,7 +9,7 @@
 // A column with a missing ladder is never entered: the bot would fall.
 import { botPos, clockOf, logTo, noteProgress } from '../home/context.js';
 import { sideOf } from '../home/door_logic.js';
-import { doorState, openDoor } from '../home/doors.js';
+import { closeDoor, doorState, openDoor } from '../home/doors.js';
 import { goals, gotoGoal, isNear, makeMovements, walkNear } from '../home/motion.js';
 import { climbUp, enterColumn, footOf, slideDown, waitStanding, walkStairs, yawOf } from '../mining/ladder.js';
 import { backOf, nearCell, nearestRoute, reverseRoute, routeEnds, trapdoorOverLadder } from './route_logic.js';
@@ -267,6 +267,14 @@ async function ladderLeg(bot, ctx, leg, clock, ms) {
                 return INTERRUPTED;
             }
             return { ok: false, reason: 'no_path', note: r.missing?.length > 0 ? needLaddersText(r.missing) : null };
+        }
+        // F35: the trapdoor the bot climbed out of is closed at once (the next leg would walk over the hole)
+        if (trap) {
+            const now = doorState(bot, trap);
+            const f = feetOf(bot);
+            if (now?.open === true && !(f && f.x === leg.x && f.z === leg.z) && !bot.interrupt_code) {
+                await closeDoor(bot, now, doorOptions(ctx, clock));
+            }
         }
     }
     await waitStanding(bot, clock, 2000);
