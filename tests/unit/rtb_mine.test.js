@@ -580,9 +580,11 @@ describe('F24: the way out along the tunnel, its corners and branches', () => {
         // the fresh-checkout run of the fix of v0.1.4.9 (mine_known): the nearest leg from the room is the walk down to the
         // tunnel; its end lies below the room, so the hop is the cell of that leg nearest to the feet, at the room
         const descentMine = { ...roomMine, route: [...LEGS.slice(0, 4), { kind: 'walk', from: { x: 2, y: 50, z: 0 }, to: { x: 21, y: 34, z: 0 } }] };
-        const fromRoom = P.wayBack(descentMine, { x: 3, y: 50, z: 2 });
-        assert.equal(fromRoom.leg, 4);
-        assert.deepEqual(fromRoom.hops, [{ x: 2, y: 50, z: 0 }], 'the start of the walk down, not its end at the tunnel');
+        const fromRoom = P.wayBack(descentMine, { x: 1, y: 50, z: 2 });
+        assert.equal(fromRoom.leg, 3, 'the nearest leg: the walk through the room');
+        assert.deepEqual(fromRoom.hops, [{ x: 2, y: 50, z: 0 }], 'a cell at the room level, never the foot of the descent');
+        const fromChest = P.wayBack(descentMine, { x: -2, y: 50, z: 2 });
+        assert.ok(fromChest.hops.every(h => h.y === 50), `from the chest the hops stay at the room level: ${JSON.stringify(fromChest.hops)}`);
     });
 
     test('a trip that ends in a branch: back along the branch and the corners to the route, then up', async () => {
