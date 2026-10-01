@@ -254,6 +254,73 @@ describe('the fixes of W75', () => {
         }
     });
 
+    test('F33: the path search holds the bot at the top of the column: after 3 s the walk is stopped for the pass, then the path search again', { timeout: 30000 }, async () => {
+        agentSettings.setSettings({ routes_pack: true });
+        const s = scene({ pos: [12.5, 61, -0.5] }); // 10 blocks from the column: no pass before the path search
+        let searches = 0;
+        const stopped = [];
+        stubFollowGoto(s.bot, async () => {
+            searches++;
+            if (searches > 1) return;
+            s.bot.entity.position = v(3.5, 61, -0.5); // the path search brought it beside the trapdoor and holds it there
+            const t = Date.now();
+            await until(() => s.bot.goals.includes(null), 15000); // the walk is stopped with setGoal(null)
+            stopped.push(Date.now() - t);
+            throw new Error('GoalChanged'); // as goto of the path search rejects
+        });
+        try {
+            await skills.goToPlayer(s.bot, PLAYER, 2);
+            assert.equal(searches, 2);
+            assert.equal(stopped.length, 1);
+            assert.ok(stopped[0] >= 2500 && stopped[0] < 10000, `stopped after ${stopped[0]} ms`);
+            assert.deepEqual(s.feet(), { x: 2, y: 53, z: -2 });
+            assert.deepEqual(s.bot.output.trim().split('\n').filter((l) => !l.startsWith('Found ')), [DOWN_TEXT, `You have reached ${PLAYER}.`]);
+        } finally {
+            s.stop();
+        }
+    });
+
+    test('F33: goToPosition the same, and a walk that is held with no ladder near is not stopped', { timeout: 30000 }, async () => {
+        agentSettings.setSettings({ routes_pack: false });
+        const s = scene({ pos: [12.5, 61, -0.5] });
+        let searches = 0;
+        const goto = s.bot.pathfinder.goto.bind(s.bot.pathfinder);
+        s.bot.pathfinder.goto = async (goal, ...rest) => {
+            if (goal?.constructor?.name !== 'GoalNear' || goal.y !== 53) return goto(goal, ...rest); // the walks of the pass as the fake does them
+            searches++;
+            if (searches === 1) {
+                s.bot.entity.position = v(3.5, 61, -0.5);
+                await until(() => s.bot.goals.includes(null), 15000);
+                throw new Error('GoalChanged');
+            }
+        };
+        try {
+            assert.equal(await skills.goToPosition(s.bot, 2, 53, 0, 1), true);
+            assert.equal(searches, 2);
+            assert.deepEqual(s.feet(), { x: 2, y: 53, z: -2 });
+            assert.ok(s.bot.output.includes('I go down the ladder at (2, 60, -2) to (2, 53, 0).'), s.bot.output);
+        } finally {
+            s.stop();
+        }
+        // no ladder within reach of the held bot: the walk goes on until it ends by itself
+        const far = scene({ pos: [30.5, 61, -0.5] });
+        let held = 0;
+        const farGoto = far.bot.pathfinder.goto.bind(far.bot.pathfinder);
+        far.bot.pathfinder.goto = async (goal, ...rest) => {
+            if (goal?.constructor?.name !== 'GoalNear' || goal.y !== 53) return farGoto(goal, ...rest);
+            held++;
+            far.bot.entity.position = v(20.5, 61, -0.5); // 18 blocks from the column
+            await new Promise((r) => setTimeout(r, 4500));
+        };
+        try {
+            await skills.goToPosition(far.bot, 2, 53, 0, 1);
+            assert.equal(held, 1);
+            assert.ok(!far.bot.goals.includes(null), JSON.stringify(far.bot.goals));
+        } finally {
+            far.stop();
+        }
+    });
+
     test('L1: not arrived: "I stopped at (x, y, z), N blocks from <name>." instead of "You have reached" (the player at the same height, no ladder step)', { timeout: 30000 }, async () => {
         agentSettings.setSettings({ routes_pack: false });
         const s = scene({ pos: [2.5, 61, -0.5], player: [10.5, 61, -0.5] });

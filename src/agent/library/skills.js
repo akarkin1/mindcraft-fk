@@ -5,7 +5,7 @@ import Vec3 from 'vec3';
 import settings from "../../../settings.js";
 import agentSettings from "../settings.js";
 import { isOreName, oreInSight, oreKind, outOfSightText, sightRange, SIGHT_TEXT_DISTANCE } from "./ore_sight_logic.js";
-import { ladderStepTowards } from "./ladder_pass.js";
+import { ladderStepTowards, ladderWayTowards, STEP_RULES } from "./ladder_pass.js";
 import { findOpenables, openDoor, passThrough } from "../packs/home/doors.js";
 import { sideOf } from "../packs/home/door_logic.js";
 import { acquireEatLock } from "../packs/home/eat_lock.js";
@@ -1966,9 +1966,10 @@ export async function goToPosition(bot, x, y, z, min_distance=2) {
         if (bot.entity.position.distanceTo(target) > min_distance + 1)
             await ladderTowards(bot, target, passes);
         let failure = null;
+        const makeGoal = () => new pf.goals.GoalNear(x, y, z, min_distance);
         if (!bot.interrupt_code) {
             try {
-                await goToGoal(bot, new pf.goals.GoalNear(x, y, z, min_distance));
+                await walkWatchingLadders(bot, makeGoal, target, passes); // F33: the step mid-walk
             } catch (err) {
                 failure = err;
             }
@@ -1976,7 +1977,7 @@ export async function goToPosition(bot, x, y, z, min_distance=2) {
         if (!bot.interrupt_code && ladderGap(bot, target) >= LADDER_GAP && bot.entity.position.distanceTo(target) > min_distance + 1
             && (await ladderTowards(bot, target, passes)).tried && !bot.interrupt_code) {
             failure = null;
-            await goToGoal(bot, new pf.goals.GoalNear(x, y, z, min_distance));
+            await walkWatchingLadders(bot, makeGoal, target, passes);
         }
         if (failure)
             throw failure;
@@ -2093,6 +2094,61 @@ async function ladderTowards(bot, target, passes, after = null) {
     return step;
 }
 
+// F33 of the journeys (W84, D): the path search plans through the closed trapdoor over a ladder, walks the bot
+// to the top of the column and holds it there until the reflex unstuck stops the command; the ladder step after
+// the path search never came. The walk of goToPosition and goToPlayer is watched as followPlayer watches its
+// own: the bot still in its cell for 3 s (bobbing does not count as moving), the target 2 or more blocks above
+// or below and a column near that leads towards it, then the path search is stopped with setGoal(null) for the
+// ladder step and started again. At most 3 passes a minute (`passes`); each stop is followed by a walk.
+// Rejects with the error of the walk, as goToGoal; returns without a value when the command was stopped.
+const LADDER_STILL_MS = 3000;
+
+async function walkWatchingLadders(bot, makeGoal, target, passes, after = null) {
+    let failure = null;
+    for (let rounds = 0; rounds <= STEP_RULES.perMinute; rounds++) {
+        let wanted = false;
+        let cell = feetCellOf(bot);
+        let gap = ladderGap(bot, target);
+        let since = Date.now();
+        const watch = setInterval(() => {
+            try {
+                const c = feetCellOf(bot);
+                const g = ladderGap(bot, target);
+                if (c.x !== cell.x || c.z !== cell.z || g < gap - 0.5) {
+                    cell = c;
+                    gap = g;
+                    since = Date.now();
+                }
+                else if (!wanted && !bot.interrupt_code && Date.now() - since >= LADDER_STILL_MS && g >= LADDER_GAP
+                    && ladderWayTowards(bot, target)) {
+                    wanted = true;
+                    bot.pathfinder.setGoal(null); // goto rejects with GoalChanged
+                }
+            } catch (err) {
+                // the walk goes on without the step
+            }
+        }, 500);
+        failure = null;
+        try {
+            await goToGoal(bot, makeGoal());
+        } catch (err) {
+            failure = err;
+        } finally {
+            clearInterval(watch);
+        }
+        if (bot.interrupt_code)
+            return;
+        if (!wanted)
+            break;
+        failure = null; // the walk was stopped for the step
+        if (!(await ladderTowards(bot, target, passes, after)).tried || bot.interrupt_code)
+            break;
+    }
+    if (failure)
+        throw failure;
+}
+
+
 export async function goToPlayer(bot, username, distance=3) {
     /**
      * Navigate to the given player.
@@ -2132,7 +2188,7 @@ export async function goToPlayer(bot, username, distance=3) {
         return;
     let failure = null;
     try {
-        await goToGoal(bot, goal, true);
+        await walkWatchingLadders(bot, () => goal, player.position, passes, username); // F33: the step mid-walk
     } catch (err) {
         failure = err;
     }
@@ -2141,7 +2197,7 @@ export async function goToPlayer(bot, username, distance=3) {
         if (bot.interrupt_code)
             return;
         failure = null;
-        await goToGoal(bot, goal, true);
+        await walkWatchingLadders(bot, () => goal, player.position, passes, username);
     }
     if (failure)
         throw failure;

@@ -293,6 +293,35 @@ function pointText(p) {
 }
 
 /**
+ * The column of ladders near the bot that leads towards the height of the target, and the way on it: down only to
+ * a point below its top ladder, up only to a point 2 or more above its bottom (a pit 2 blocks deep beside the
+ * ladder is no reason to slide 20 blocks). Null without such a column. Never throws.
+ * @param {object} bot
+ * @param {{x: number, y: number, z: number}} target
+ * @param {{reach?: number, height?: number}} [options] as ladderStepTowards
+ * @returns {{column: object, way: 'down'|'up'}|null}
+ */
+export function ladderWayTowards(bot, target, options = {}) {
+    try {
+        const p = botPos(bot);
+        if (!p || !target || ![target.x, target.y, target.z].every(Number.isFinite)) {
+            return null;
+        }
+        const column = columnNear(bot, { reach: options.reach ?? STEP_RULES.reach, height: options.height ?? STEP_RULES.height });
+        if (!column) {
+            return null;
+        }
+        const way = heightWay(column, p, target);
+        if ((way === 'down' && target.y >= column.top) || (way === 'up' && target.y < column.bottom + STEP_RULES.gap)) {
+            return null;
+        }
+        return way ? { column, way } : null;
+    } catch {
+        return null;
+    }
+}
+
+/**
  * The ladder step towards a target (fixes of W75 and L4): the column within 6 blocks, when the target is 2 or
  * more blocks below the feet and below the top ladder, or 2 or more above the feet and 2 or more above the bottom: the log line
  * `I go down the ladder at (2, 60, -2) to (12, 41, 46).` (or `after MartyByrde2.` with `after`), the pass with
@@ -327,12 +356,8 @@ export async function ladderStepTowards(bot, target, options = {}) {
         if (!column) {
             return none('no_column');
         }
-        let way = heightWay(column, p, target);
-        // the ladder leads towards the height of the target: down only to a point below its top ladder, up only to
-        // a point 2 or more above its bottom (a pit 2 blocks deep beside the ladder is no reason to slide 20 blocks)
-        if ((way === 'down' && target.y >= column.top) || (way === 'up' && target.y < column.bottom + STEP_RULES.gap)) {
-            way = null;
-        }
+        // the ladder leads towards the height of the target (ladderWayTowards)
+        const way = ladderWayTowards(bot, target, options)?.way ?? null;
         if (!way) {
             return none('no_way');
         }
