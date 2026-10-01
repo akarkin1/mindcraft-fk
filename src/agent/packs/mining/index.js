@@ -33,4 +33,4 @@ export { BRANCH_BLOCKED, DEFAULT_MAX_MINUTES, MAX_SHAFT_MOVES, PROPOSAL_MS, TUNN
     descendToLevel, digTunnel, extendTunnel, goToMine, leaveMine, mineOre, prepareMiningTrip, setupMineBase, takePassedOre, TRIP_FILLER_KEEP,
     TRIP_FOOD_KEEP, tripKeep } from './mining.js';
 export { MINE_RANGE, chooseMine, hasDoorLeg, mineRoutesOn, routeEndOf, senseRangeOf, walkBack, walksRoute, wayIn, wayOut } from './mine_way.js';
-export { MIN_TUNNEL_AHEAD, MIN_TUNNEL_CELLS, ROOM_RANGE, SAME_TUNNEL, collectPassedOre, findRoom, rememberMine, rememberTunnel } from './mine_player.js';
+export { MIN_TUNNEL_AHEAD, MIN_TUNNEL_CELLS, ROOM_RANGE, SAME_TUNNEL, collectPassedOre, findRoom, forgetMine, minesText, rememberMine, rememberTunnel } from './mine_player.js';

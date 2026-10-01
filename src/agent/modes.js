@@ -14,6 +14,8 @@ import { mayTryItem, afterItemTry, isOwnDropSpawn, isRecentOwnDrop } from './ref
 import { STARVING_TEXT, STARVING_LOG_MS, HOSTILE_RANGE, PLAYER_RANGE, isHungerDamage, shouldRetreat, hurtText, retreatTarget } from './reflex/health_logic.js';
 import { HOLE_RULES, holeAt, escapeSides, walkControls, leftHole } from './reflex/hole_logic.js';
 import { sleepIsProgress } from './reflex/wake_logic.js';
+import { keepOutAreas, keptOutBy, itemNameOf, leaveText, mayLeaveText } from './areas/keep_out_logic.js';
+import { collectItems } from './areas/keep_out.js';
 
 async function say(agent, message) {
     agent.bot.modes.behavior_log += message + '\n';
@@ -229,14 +231,20 @@ const modes_list = [
         noticed_at: -1,
         tries: new Map(), // v0.1.4.8, A8: entity id -> { tries, nextAt, done } (see reflex/item_logic.js)
         own_drops: new Map(), // entity id -> when the bot dropped it
+        left_said_at: null, // v0.1.4.10, R1: when the text about an item left in a pen was said
+        left_items: new Set(), // the item entities that text was said for
         update: async function (agent) {
             const now = Date.now();
             forgetItems(this, agent.bot, now);
             if (ownDropNear(this, agent.bot, 8)) {
                 this.noticed_at = -1;
-                return; // pickupNearbyItems takes every item within 8 blocks: nothing while the bot's own drop lies there
+                return; // the walk takes every item within 8 blocks: nothing while the bot's own drop lies there
             }
-            let item = world.getNearestEntityWhere(agent.bot, entity => entity.name === 'item' && mayTryItem(this.tries.get(entity.id), now), 8);
+            // v0.1.4.10, R1: an item in a pen, a farm or a no_enter area that the bot is outside of is left
+            const keepOut = keepOutOf(agent);
+            noteLeftItem(this, agent, keepOut, now);
+            let item = world.getNearestEntityWhere(agent.bot, entity => entity.name === 'item' && mayTryItem(this.tries.get(entity.id), now)
+                && !keptOutBy(keepOut, entity.position), 8);
             let empty_inv_slots = agent.bot.inventory.emptySlotCount();
             if (item && await world.isClearPath(agent.bot, item) && empty_inv_slots > 1) {
                 if (this.tries.has(item.id)) {
@@ -618,6 +626,8 @@ function itemCount(bot) {
 
 // v0.1.4.8, A8: picks up the items near the bot as the mode item_collecting. A pick-up that gained
 // nothing is tried again after 3 s, at most 3 times (see reflex/item_logic.js).
+// v0.1.4.10, R1: every walk, a try again too, keeps out of the fence gates and of the pens, farms and
+// no_enter areas that the bot is outside of when it starts (areas/keep_out.js).
 function pickUpItem(mode, agent, item) {
     const bot = agent.bot;
     const id = item.id;
@@ -626,11 +636,47 @@ function pickUpItem(mode, agent, item) {
     mode.tries.set(id, { tries: record?.tries ?? 0, nextAt: Infinity, done: false }); // no candidate while it runs
     execute(mode, agent, async () => {
         try {
-            await skills.pickupNearbyItems(bot);
+            await collectItems(bot, { areas: keepOutOf(agent), first: item, log: (text) => skills.log(bot, text) });
         } finally {
             mode.tries.set(id, afterItemTry(record, itemCount(bot) > before, Date.now()));
         }
     });
+}
+
+// v0.1.4.10, R1: the pens, farms and no_enter areas of the bot's dimension that it is outside of. [] without areas.
+function keepOutOf(agent) {
+    try {
+        const bot = agent.bot;
+        const areas = agent.area_store?.list?.() ?? [];
+        return keepOutAreas(areas, bot.entity.position, bot.game?.dimension);
+    } catch (error) {
+        return [];
+    }
+}
+
+// v0.1.4.10, R1: an item within 8 blocks that lies in such an area gets the text, once per item and at
+// most once a minute; it goes into the chat and the behaviour log.
+function noteLeftItem(mode, agent, keepOut, now) {
+    if (keepOut.length === 0)
+        return;
+    try {
+        const bot = agent.bot;
+        const item = world.getNearestEntityWhere(bot, entity => entity.name === 'item' && keptOutBy(keepOut, entity.position) !== null, 8);
+        if (!item || mode.left_items.has(item.id) || !mayLeaveText(mode.left_said_at, now))
+            return;
+        mode.left_items.add(item.id);
+        mode.left_said_at = now;
+        const text = leaveText(itemNameOf(item), keptOutBy(keepOut, item.position));
+        if (typeof agent.sayText === 'function') {
+            bot.modes.behavior_log += text + '\n';
+            agent.sayText(text);
+        }
+        else {
+            say(agent, text);
+        }
+    } catch (error) {
+        // the text is a help, never a reason to stop the mode
+    }
 }
 
 // Forgets the tries of items that are gone and the drops of the bot that are older than 10 s.
@@ -643,6 +689,10 @@ function forgetItems(mode, bot, now) {
         for (const id of mode.tries.keys()) {
             if (!bot.entities[id])
                 mode.tries.delete(id);
+        }
+        for (const id of mode.left_items ?? []) {
+            if (!bot.entities[id])
+                mode.left_items.delete(id);
         }
     }
 }

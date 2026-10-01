@@ -36,8 +36,14 @@ export const AREA_SOURCES = Object.freeze(['scan', 'manual', 'radius', 'auto']);
 /** Smallest side of an area in x and z (v0.1.4.8, D1 and D7). */
 export const MIN_AREA_SIDE = 2;
 
-/** Kinds of an entrance: the lower block of a door, or a fence gate. */
-export const ENTRANCE_KINDS = Object.freeze(['door', 'gate']);
+/** Kinds of an entrance: the lower block of a door, a fence gate, or (v0.1.4.10, R3) a trapdoor. */
+export const ENTRANCE_KINDS = Object.freeze(['door', 'gate', 'trapdoor']);
+
+/**
+ * Flags of an area (v0.1.4.10, R2). no_enter: a rule of the player says the bot never enters it; the
+ * reflexes treat it like a pen.
+ */
+export const AREA_FLAG_NAMES = Object.freeze(['no_enter']);
 
 /** Largest box of an area, in blocks. */
 export const MAX_AREA_SIZE = Object.freeze({ x: 64, y: 48, z: 64 });
@@ -198,13 +204,31 @@ function cleanEntrances(value) {
     return result;
 }
 
+// v0.1.4.10 (R2): only known flags with the value true are kept; no flag at all: no field.
+function cleanFlags(value) {
+    if (!isPlainObject(value)) {
+        return null;
+    }
+    const flags = {};
+    for (const name of AREA_FLAG_NAMES) {
+        if (value[name] === true) {
+            flags[name] = true;
+        }
+    }
+    return Object.keys(flags).length > 0 ? flags : null;
+}
+
 function copyArea(area) {
-    return {
+    const copy = {
         ...area,
         min: { ...area.min },
         max: { ...area.max },
         entrances: area.entrances.map(entry => ({ ...entry })),
     };
+    if (area.flags) {
+        copy.flags = { ...area.flags };
+    }
+    return copy;
 }
 
 function tooBigMessage(name, size) {
@@ -234,7 +258,7 @@ function validateArea(area, nowIso) {
     if (size.x > MAX_AREA_SIZE.x || size.y > MAX_AREA_SIZE.y || size.z > MAX_AREA_SIZE.z) {
         throw new RangeError(tooBigMessage(name, size));
     }
-    return {
+    const clean = {
         name,
         type: area.type,
         min: box.min,
@@ -245,6 +269,60 @@ function validateArea(area, nowIso) {
         created: typeof area.created === 'string' ? area.created : nowIso,
         updated: typeof area.updated === 'string' ? area.updated : nowIso,
     };
+    const flags = cleanFlags(area.flags);
+    if (flags) {
+        clean.flags = flags; // v0.1.4.10 (R2); an area without flags has no field, as before
+    }
+    return clean;
+}
+
+/**
+ * True when two boxes are the same blocks (corners whole and ordered), in the same dimension.
+ * @param {{min: object, max: object, dimension?: string}} a
+ * @param {{min: object, max: object, dimension?: string}} b
+ * @returns {boolean}
+ */
+function boxesEqual(a, b) {
+    let x;
+    let y;
+    try {
+        x = normalizeBox(a.min, a.max);
+        y = normalizeBox(b.min, b.max);
+    } catch {
+        return false;
+    }
+    return normalizeDimension(a.dimension) === normalizeDimension(b.dimension)
+        && x.min.x === y.min.x && x.min.y === y.min.y && x.min.z === y.min.z
+        && x.max.x === y.max.x && x.max.y === y.max.y && x.max.z === y.max.z;
+}
+
+/**
+ * The saved area whose box is the given box (v0.1.4.10, R3), in the dimension of the box (default the
+ * overworld); the first by name when several are. For !rememberArea: a scan that gives the box of an
+ * existing area answers sameBoxText. Never throws.
+ * @param {{list: function}|null} store an AreaStore
+ * @param {{min: object, max: object, dimension?: string}} box
+ * @returns {object|null} a copy of the area, null when no area has that box
+ */
+export function sameBox(store, box) {
+    try {
+        if (!isPlainObject(box) || typeof store?.list !== 'function') {
+            return null;
+        }
+        return store.list().find(area => boxesEqual(area, box)) ?? null;
+    } catch {
+        return null;
+    }
+}
+
+/**
+ * The answer of !rememberArea when the box is that of an existing area (R3):
+ * `That is the area "home" already.`
+ * @param {string} name
+ * @returns {string}
+ */
+export function sameBoxText(name) {
+    return `That is the area "${name}" already.`;
 }
 
 // A farm first, then a mine, then the other types; then by name.
@@ -392,7 +470,8 @@ export class AreaStore {
      * (normalizeAreaName), so "Mining Area" replaces "mining_area". The store takes any box up to the
      * size limit; canReplace decides what the model may save.
      * @param {{name: string, type: 'home'|'building'|'farm'|'pen'|'mine', min: object, max: object, dimension?: string,
-     *   entrances?: {x: number, y: number, z: number, kind: 'door'|'gate'}[], source?: string}} area
+     *   entrances?: {x: number, y: number, z: number, kind: 'door'|'gate'|'trapdoor'}[], source?: string,
+     *   flags?: {no_enter?: boolean}}} area
      * @returns {object} a copy of the saved area
      * @throws {TypeError} for a name that is not 1 to 64 characters after normalising, an unknown type or bad corners
      * @throws {RangeError} for a box larger than 64 blocks in x or z, or 48 in y
@@ -403,11 +482,49 @@ export class AreaStore {
         const previous = this._areas.get(clean.name);
         if (previous) {
             clean.created = previous.created;
+            // v0.1.4.10 (R2): a new box for the area keeps its flags unless the call gives flags
+            if (!isPlainObject(area.flags) && previous.flags) {
+                clean.flags = { ...previous.flags };
+            }
         }
         this._areas.set(clean.name, clean);
         this._revision++;
         this._save();
         return copyArea(clean);
+    }
+
+    /**
+     * Sets or clears a flag of an area (v0.1.4.10, R2) and writes the file. Never throws.
+     * @param {string} name the name of the area (normalised)
+     * @param {'no_enter'} flag
+     * @param {boolean} value true sets it, false clears it
+     * @returns {object|null} a copy of the area, null when there is no such area or the flag is unknown
+     */
+    setFlag(name, flag, value) {
+        try {
+            const area = this._areas.get(lookupName(name));
+            if (!area || !AREA_FLAG_NAMES.includes(flag)) {
+                return null;
+            }
+            const flags = { ...(area.flags ?? {}) };
+            if (value === true) {
+                flags[flag] = true;
+            } else {
+                delete flags[flag];
+            }
+            if (Object.keys(flags).length > 0) {
+                area.flags = flags;
+            } else {
+                delete area.flags;
+            }
+            area.updated = this._nowIso();
+            this._revision++;
+            this._save();
+            return copyArea(area);
+        } catch (err) {
+            console.warn(`Could not set the flag ${flag} of the area "${name}":`, err?.message ?? err);
+            return null;
+        }
     }
 
     /** @returns {object|undefined} a copy of the area; the name is normalised */

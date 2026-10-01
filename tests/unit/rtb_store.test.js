@@ -53,7 +53,7 @@ describe('B1: the fields of v0.1.4.9', () => {
             const [t] = L.tunnelsOf(m);
             assert.deepEqual([t.start, t.dir, t.end, t.level, t.length], [{ x: 7, y: 16, z: 58 }, 'west', { x: 0, y: 16, z: 58 }, 16, 7], 'one tunnel when read');
             s.set(m);
-            assert.deepEqual(Object.keys(JSON.parse(fs.readFileSync(file, 'utf8')).mines), ['16'], 'the key stays the level');
+            assert.deepEqual(Object.keys(JSON.parse(fs.readFileSync(file, 'utf8')).mines), ['bot:16'], 'v0.1.4.10 (R4): the key of the level is bot:<level>');
         } finally {
             cleanup(file);
         }
@@ -73,10 +73,10 @@ describe('B1: the fields of v0.1.4.9', () => {
             assert.equal(m.area, 'mining_area');
             assert.equal(S.mineKey(m), 'mine');
             assert.equal(S.mineKey({ ...m, dimension: 'the_nether' }), 'the_nether:mine');
-            assert.equal(S.mineKey({ level: 16 }), '16');
+            assert.equal(S.mineKey({ level: 16 }), 'bot:16'); // v0.1.4.10 (R4)
             s.set({ ...PLAYER, name: 'deep', level: 16 });
             s.set(OLD_FILE.mines[16]);
-            assert.deepEqual(Object.keys(JSON.parse(fs.readFileSync(file, 'utf8')).mines).sort(), ['16', 'deep', 'mine']);
+            assert.deepEqual(Object.keys(JSON.parse(fs.readFileSync(file, 'utf8')).mines).sort(), ['bot:16', 'deep', 'mine']);
             const again = new S.MineStore(file, { now });
             assert.equal(again.load(), 3);
             assert.deepEqual(again.byName('MINE').tunnels, PLAYER.tunnels);

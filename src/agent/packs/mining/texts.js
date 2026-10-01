@@ -228,6 +228,65 @@ function plural(n, word) {
     return `${n} ${n === 1 ? word : `${word}s`}`;
 }
 
+// ------------------------------------------------------------------ !mines and !forgetMine (v0.1.4.10, R4)
+
+/**
+ * The tunnels of a mine in words: `2 tunnels at levels 30 and 25`, `1 tunnel at level 25`,
+ * `2 tunnels at level 25`, `no tunnel`.
+ * @param {object[]} tunnels tunnelsOf(mine)
+ * @returns {string}
+ */
+export function tunnelsWords(tunnels) {
+    const list = Array.isArray(tunnels) ? tunnels : [];
+    if (list.length === 0) {
+        return 'no tunnel';
+    }
+    const levels = [...new Set(list.map(t => t?.level).filter(Number.isFinite))].sort((a, b) => b - a);
+    const where = levels.length === 0 ? '' : ` at ${levels.length === 1 ? 'level' : 'levels'} ${listWords(levels.map(String))}`;
+    return `${plural(list.length, 'tunnel')}${where}`;
+}
+
+/**
+ * One mine in the text of !mines (spec I6): a mine with a name `"mine", entrance (9, 67, 52), 2 tunnels
+ * at levels 30 and 25`; a mine of the bot `the mine at (9, 67, 58) that I dug, level 16`; a mine of the
+ * player without a name `the mine at (9, 67, 58), level 16`.
+ * @param {object} mine
+ * @param {object[]} tunnels tunnelsOf(mine)
+ * @returns {string}
+ */
+export function mineEntryText(mine, tunnels) {
+    if (typeof mine?.name === 'string' && mine.name.length > 0) {
+        return `"${mine.name}", entrance ${posText(mine.entrance)}, ${tunnelsWords(tunnels)}`;
+    }
+    const dug = mine?.source === 'player' ? '' : ' that I dug';
+    return `the mine at ${posText(mine?.entrance)}${dug}, level ${mine?.level}`;
+}
+
+/**
+ * The text of !mines (spec I6):
+ * `I know 2 mines: "mine", entrance (9, 67, 52), 2 tunnels at levels 30 and 25; the mine at (9, 67, 58) that I dug, level 16.`
+ * or `I know no mines.`
+ * @param {string[]} entries mineEntryText of each mine
+ * @returns {string}
+ */
+export function minesListText(entries) {
+    const list = Array.isArray(entries) ? entries : [];
+    if (list.length === 0) {
+        return 'I know no mines.';
+    }
+    return `I know ${plural(list.length, 'mine')}: ${list.join('; ')}.`;
+}
+
+/**
+ * The text of !forgetMine (spec I6): `Forgot the mine "mine".` or `I know no mine "mine".`
+ * @param {string} name
+ * @param {boolean} forgot
+ * @returns {string}
+ */
+export function forgetMineText(name, forgot) {
+    return forgot ? `Forgot the mine "${name}".` : `I know no mine "${name}".`;
+}
+
 /**
  * `the mine "mine"` for a mine with a name, else `the mine at (20, 64, -14)`.
  * @param {object} mine

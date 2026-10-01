@@ -160,20 +160,36 @@ const BUILDING_DEFAULTS = Object.freeze({ radius: 24, height: 16, gap: 2, minBlo
  *
  * @param {(x: number, y: number, z: number) => string|null} getBlockName
  * @param {{x: number, y: number, z: number}} origin usually the position of the bot
- * @param {{radius?: number, height?: number, gap?: number, minBlocks?: number, startRadius?: number}} [options]
- *   defaults: radius 24, height 16, gap 2, minBlocks 12, startRadius 6
+ * v0.1.4.10 (R3): with `floors: true` (the setting area_floors) the scan is first that of the floor the
+ * origin stands on (scanFloor): the box of the room or rooms of that floor, which never takes in the floor
+ * above or below through a trapdoor or a ladder. When the floor scan finds no floor (the origin is not
+ * under a roof, or the floor is open to the limits), the scan of the building runs as without it.
+ *
+ * @param {(x: number, y: number, z: number) => string|null} getBlockName
+ * @param {{x: number, y: number, z: number}} origin usually the position of the bot
+ * @param {{radius?: number, height?: number, gap?: number, minBlocks?: number, startRadius?: number, floors?: boolean}} [options]
+ *   defaults: radius 24, height 16, gap 2, minBlocks 12, startRadius 6, floors false
  * @returns {{found: boolean, reason: null|'no_built_blocks'|'too_few_blocks', text: string,
  *   min: {x: number, y: number, z: number}|null, max: {x: number, y: number, z: number}|null,
- *   blocks: number, entrances: {x: number, y: number, z: number, kind: 'door'|'gate'}[], clipped: boolean}}
+ *   blocks: number, entrances: {x: number, y: number, z: number, kind: 'door'|'gate'|'trapdoor'}[], clipped: boolean,
+ *   floor?: boolean}}
  *   reason and text (v0.1.4.8, D5): why nothing was found and what to do; null and '' when found.
  *   min and max: the bounding box of the blocks found, grown by 1 on every side (null when not found).
  *   blocks: the number of blocks of the building. entrances: doors (lower block) and fence gates, sorted
- *   by x, z, y. clipped: the search hit its limit.
+ *   by x, z, y. clipped: the search hit its limit. floor: only with `floors: true`, true when the box is
+ *   that of the floor (blocks is then the number of floor cells, and the entrances include trapdoors).
  * @throws {TypeError} when getBlockName is not a function or the origin has no finite x, y, z
  */
 export function scanBuilding(getBlockName, origin, options = {}) {
     checkArgs(getBlockName, origin, 'scanBuilding');
     const opts = options ?? {};
+    if (opts.floors === true) {
+        const floor = scanFloor(getBlockName, origin, opts);
+        if (floor.found) {
+            return floor;
+        }
+        return { ...scanBuilding(getBlockName, origin, { ...opts, floors: false }), floor: false };
+    }
     const radius = Math.min(positiveInt(opts.radius, BUILDING_DEFAULTS.radius), 64);
     const height = Math.min(positiveInt(opts.height, BUILDING_DEFAULTS.height), 64);
     const gap = Math.min(positiveInt(opts.gap, BUILDING_DEFAULTS.gap), 8);
@@ -379,6 +395,179 @@ export function scanBuilding(getBlockName, origin, options = {}) {
         blocks: best.count,
         entrances: best.entrances.sort(compareEntrances),
         clipped: best.clipped,
+    };
+}
+
+// --- the floor of a building (v0.1.4.10, R3) -------------------------------------------------
+
+/** A floor has at least this many cells. */
+const FLOOR_MIN_CELLS = 4;
+/** The most cells of one floor (64 x 64 at three heights). */
+const FLOOR_MAX_CELLS = 64 * 64 * 3;
+const SIDES = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+
+function isClimbable(name) {
+    return name === 'ladder' || name.includes('vine');
+}
+
+function isTrapdoorName(name) {
+    return name.endsWith('_trapdoor');
+}
+
+// A cell the flood may stand in: a block a player walks through, not a ladder or a vine.
+function isOpenCell(name) {
+    return name !== null && isPassable(name) && !isClimbable(name);
+}
+
+/**
+ * The floor the origin stands on (v0.1.4.10, R3). A flood fill of the cells a player stands in: open
+ * (air and the passable blocks), on ground that is no trapdoor, ladder, vine or hole, and under a roof
+ * within `height` blocks. It moves to the four sides, up or down 1 block at most for a step, and never
+ * more than 1 block above or below the level of the first cell; a ladder or a trapdoor cell is a wall,
+ * so it never passes to the floor above or below. Doors, fence gates and trapdoors next to the floor,
+ * in its ground, in its ceiling or at the top of a ladder beside it are its entrances.
+ * The box: the cells grown by 1 to the sides (the walls), from the ground under the lowest cell to the
+ * highest ceiling.
+ * @returns {object} like scanBuilding with floor: true; found false (reason null) when there is no floor
+ */
+function scanFloor(getBlockName, origin, opts) {
+    const read = reader(getBlockName);
+    const radius = Math.min(positiveInt(opts.radius, BUILDING_DEFAULTS.radius), 64);
+    const height = Math.min(positiveInt(opts.height, BUILDING_DEFAULTS.height), 64);
+    const ox = Math.floor(origin.x);
+    const oy = Math.floor(origin.y);
+    const oz = Math.floor(origin.z);
+    const entrances = new Map();
+    const none = { found: false, reason: null, text: '', min: null, max: null, blocks: 0, entrances: [], clipped: false, floor: true };
+
+    const addEntrance = (x, y, z, kind) => {
+        entrances.set(`${x},${y},${z}`, { x, y, z, kind });
+    };
+    // the first block above that is not open: the ceiling, or null without one within height
+    const ceilingOf = (x, y, z) => {
+        for (let dy = 1; dy <= height; dy++) {
+            const name = read(x, y + dy, z);
+            if (name === null) {
+                return null;
+            }
+            if (!isPassable(name)) {
+                if (isTrapdoorName(name)) {
+                    addEntrance(x, y + dy, z, 'trapdoor');
+                }
+                return y + dy;
+            }
+        }
+        return null;
+    };
+    // the ceiling when a player can stand in the cell under a roof, else null; notes a trapdoor in its ground
+    const standCeiling = (x, y, z) => {
+        if (!isOpenCell(read(x, y, z))) {
+            return null;
+        }
+        const ground = read(x, y - 1, z);
+        if (ground === null || isPassable(ground) || isClimbable(ground)) {
+            return null;
+        }
+        if (isTrapdoorName(ground)) {
+            addEntrance(x, y - 1, z, 'trapdoor');
+            return null;
+        }
+        return ceilingOf(x, y, z);
+    };
+    // a ladder beside the floor: the trapdoor at the top of its column is an entrance
+    const ladderTop = (x, y, z) => {
+        for (let dy = 1; dy <= height; dy++) {
+            const name = read(x, y + dy, z);
+            if (name === null || (!isClimbable(name) && !isOpenCell(name))) {
+                if (name !== null && isTrapdoorName(name)) {
+                    addEntrance(x, y + dy, z, 'trapdoor');
+                }
+                return;
+            }
+        }
+    };
+    const sideBlock = (x, y, z) => {
+        const name = read(x, y, z);
+        if (name === null) {
+            return;
+        }
+        if (name.endsWith('_fence_gate')) {
+            addEntrance(x, y, z, 'gate');
+        } else if (name.endsWith('_door')) {
+            const lower = read(x, y - 1, z) === name ? y - 1 : y;
+            addEntrance(x, lower, z, 'door');
+        } else if (isClimbable(name)) {
+            ladderTop(x, y, z);
+        }
+    };
+
+    let start = null;
+    for (const [dx, dz] of [[0, 0], ...SIDES]) {
+        for (const dy of [0, 1, -1]) {
+            if (!start && standCeiling(ox + dx, oy + dy, oz + dz) !== null) {
+                start = { x: ox + dx, y: oy + dy, z: oz + dz };
+            }
+        }
+    }
+    if (!start) {
+        return none;
+    }
+    const level = start.y;
+    const seen = new Set([`${start.x},${start.y},${start.z}`]);
+    const columns = new Set([`${start.x},${start.z}`]);
+    const queue = [[start.x, start.y, start.z, standCeiling(start.x, start.y, start.z)]];
+    const box = { minX: start.x, maxX: start.x, minY: start.y, minZ: start.z, maxZ: start.z, top: -Infinity };
+    for (let head = 0; head < queue.length; head++) {
+        const [x, y, z, ceiling] = queue[head];
+        if (x < box.minX) box.minX = x;
+        if (x > box.maxX) box.maxX = x;
+        if (z < box.minZ) box.minZ = z;
+        if (z > box.maxZ) box.maxZ = z;
+        if (y < box.minY) box.minY = y;
+        if (ceiling > box.top) box.top = ceiling;
+        if (queue.length > FLOOR_MAX_CELLS) {
+            return none;
+        }
+        for (const [dx, dz] of SIDES) {
+            const nx = x + dx;
+            const nz = z + dz;
+            if (columns.has(`${nx},${nz}`)) {
+                continue;
+            }
+            sideBlock(nx, y, nz);
+            sideBlock(nx, y + 1, nz);
+            for (const dy of [0, 1, -1]) {
+                const ny = y + dy;
+                if (Math.abs(ny - level) > 1 || seen.has(`${nx},${ny},${nz}`)) {
+                    continue;
+                }
+                const top = standCeiling(nx, ny, nz);
+                if (top === null) {
+                    continue;
+                }
+                if (Math.abs(nx - ox) > radius || Math.abs(nz - oz) > radius) {
+                    return none; // open to the limits: no floor of a building
+                }
+                seen.add(`${nx},${ny},${nz}`);
+                columns.add(`${nx},${nz}`);
+                queue.push([nx, ny, nz, top]);
+                break;
+            }
+        }
+    }
+    if (queue.length < FLOOR_MIN_CELLS) {
+        return none;
+    }
+    return {
+        found: true,
+        reason: null,
+        text: '',
+        min: { x: box.minX - 1, y: box.minY - 1, z: box.minZ - 1 },
+        max: { x: box.maxX + 1, y: box.top, z: box.maxZ + 1 },
+        blocks: queue.length,
+        entrances: [...entrances.values()].sort(compareEntrances),
+        clipped: false,
+        floor: true,
     };
 }
 
