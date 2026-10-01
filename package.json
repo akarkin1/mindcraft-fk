@@ -60,7 +60,8 @@
         "test:coverage": "node tests/run.js --coverage",
         "bot:reset": "node scripts/bot_reset.js",
         "test:world": "node tests/world/run.js",
-        "test:e2e": "node tests/e2e/run.js"
+        "test:e2e": "node tests/e2e/run.js",
+        "test:play": "node tests/play/run.js"
     },
     "devDependencies": {
         "@eslint/js": "^9.13.0",
