@@ -30,7 +30,7 @@ From the play of 2026-10-01: the bot mined well until it ran out of torches, the
 | Part | Content |
 |---|---|
 | The job | An order with a result that code can check is a job: mine 16 iron, farm the wheat, get 8 logs, make 32 torches. The bot keeps one current job with its state (6 of 16 iron, in the mine "mine"), on disk. An ordinary order becomes the job by itself; "set yourself the goal: ..." sets one explicitly, for the bigger ones. The player never has to say it. |
-| Errands do not end the job | "Follow me", "come here", "check the chest", "wait", "go to bed" are errands. When nothing more comes for about 20 s and nothing runs, the bot returns to the job by itself: `I go back to the mining, 6 of 16 iron.` Code decides, no call of the model. |
+| Errands do not end the job | "Follow me", "come here", "check the chest", "wait", "go to bed" are errands. When nothing more comes for a while and nothing runs, the bot returns to the job by itself (setting `job_resume_seconds`, default 60; the owner wants a minute or more): `I go back to the mining, 6 of 16 iron.` Code decides, no call of the model. |
 | Blockers become steps | No torches is not a reason to idle: the job gets the steps wood, planks, sticks, torches, then back to the mine. The model plans the steps once when no skill knows them; code checks each step. |
 | Ending a job is implicit | "Stop" or "that's enough" ends it. A new job replaces it, with one line: `I leave the mining at 6 of 16 iron.` |
 | Restarts | The job survives a restart of the process; the bot says where it stands and goes on. |
