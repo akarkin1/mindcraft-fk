@@ -704,14 +704,14 @@ function where3(door) {
  */
 // F37 of the journeys (W84, the way out of the mine): the service closed a door while the bot climbed a ladder; the
 // click turned its look away from the wall, the bot stepped out of the column and fell, and the climb failed.
-// The service waits while the feet of the bot are in a ladder, a vine or an open trapdoor cell.
+// The service waits while the bot hangs in a ladder, a vine or an open trapdoor cell (not on the ground).
 const CLIMBABLE = new Set(['ladder', 'vine']);
 
 function botOnLadder(bot) {
     try {
         const me = botPos(bot);
-        if (!me) {
-            return false;
+        if (!me || bot.entity?.onGround === true) {
+            return false; // standing at the foot of a ladder (its lowest rung is at the floor) is no climb
         }
         const b = bot.blockAt(new Vec3(Math.floor(me.x), Math.floor(me.y + 0.01), Math.floor(me.z)));
         const name = b?.name ?? '';

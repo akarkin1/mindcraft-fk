@@ -503,6 +503,7 @@ export async function climbUp(bot, leg, options = {}) {
     const limit = options.timeoutMs ?? depth * 700 + 6000;
     await look(bot, backOf(leg.face));
     bot.setControlState('forward', true);
+    bot.setControlState('sneak', false); // F36: a hold on the ladder ends in the tick that presses forward
     const start = clock.now();
     let best = botPos(bot)?.y ?? 0;
     let still = clock.now();

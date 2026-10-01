@@ -155,6 +155,7 @@ async function climbToOpen(bot, column, trap, clock, limitMs) {
         // looking is best effort
     }
     bot.setControlState('forward', true);
+    bot.setControlState('sneak', false); // F36: the hold ends in the tick that presses forward
     const start = clock.now();
     let lastY = botPos(bot)?.y ?? 0;
     let still = clock.now();
@@ -303,7 +304,13 @@ export async function passLadder(bot, column, way, { clock = null, timeoutMs = P
         if (bot.interrupt_code) {
             return done('interrupted');
         }
-        release(bot); // the controls of the path search, which may hold the bot on a ladder
+        // the controls of the path search, which may hold the bot on a ladder; F36: a bot that hangs on the ladder
+        // with sneak (an interrupted climb) keeps the hold until the climb presses forward
+        const hanging = way === 'up' && inColumn(bot, column) && bot.entity?.onGround !== true;
+        release(bot);
+        if (hanging) {
+            lad.holdOnLadder?.(bot); // a slide down starts with the controls released
+        }
         const reason = way === 'down' ? await passDown(bot, lad, column, c, walkMs) : await passUp(bot, lad, column, c, walkMs);
         release(bot);
         if (reason === 'interrupted') {
