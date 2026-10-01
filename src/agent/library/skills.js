@@ -1960,11 +1960,10 @@ export async function goToPosition(bot, x, y, z, min_distance=2) {
 
     try {
         // v0.1.4.9 (L4 of the play test, "no idea about up and down"; a correction of the path search, no switch):
-        // the ladder step before the path search, and again when the path search ends with the goal still 2 or more
-        // blocks above or below; then the path search once more. The texts stay those of v0.1.4.8.
+        // the ladder step when the path search ends with the goal still 2 or more blocks above or below; then the
+        // path search once more. The texts stay those of v0.1.4.8. v0.1.4.10 (P6): the path search climbs and
+        // descends ladders itself, so the step before it is gone; the step is the fallback.
         const passes = [];
-        if (bot.entity.position.distanceTo(target) > min_distance + 1)
-            await ladderTowards(bot, target, passes);
         let failure = null;
         const makeGoal = () => new pf.goals.GoalNear(x, y, z, min_distance);
         if (!bot.interrupt_code) {
@@ -2067,8 +2066,9 @@ export async function goToNearestEntity(bot, entityType, min_distance=2, range=6
 // v0.1.4.9 (section 13, part L, F14 of the play test; fixes of W75 and L4): the path search climbs a ladder
 // but never descends one, and it stops in the cell of an open trapdoor above a ladder. goToPosition, goToPlayer
 // and followPlayer go down or up a column of ladders within 6 blocks with ladderStepTowards (ladder_pass.js, the
-// ladder walking of the mining pack, loaded with import() on the first pass): before the path search and when it
-// ends with the target still 2 or more blocks above or below; followPlayer when it stands still. At most 3 passes
+// ladder walking of the mining pack, loaded with import() on the first pass): when the path search ends with the
+// target still 2 or more blocks above or below (v0.1.4.10, P6: no longer before it, the path search climbs and
+// descends ladders itself), and mid-walk when the bot stands still; followPlayer when it stands still. At most 3 passes
 // a minute per call. Decision of the owner and the tech lead: a correction of a defect of the path search, so no
 // switch (it ran behind routes_pack first); the routes pack keeps its switch for the trail and the routes.
 const LADDER_GAP = 2; // blocks of height between the feet of the bot and the target
@@ -2180,12 +2180,10 @@ export async function goToPlayer(bot, username, distance=3) {
     distance = Math.max(distance, 0.5);
     const goal = new pf.goals.GoalFollow(player, distance);
 
-    // v0.1.4.9 (section 13, F14; W75, L1): the ladder step before the path search, and again when the path
-    // search ends with the player still 2 or more blocks above or below, then the path search once more
+    // v0.1.4.9 (section 13, F14; W75, L1): the ladder step when the path search ends with the player still 2 or
+    // more blocks above or below, then the path search once more. v0.1.4.10 (P6): no step before the path search,
+    // which climbs and descends ladders itself; the step is the fallback.
     const passes = [];
-    await ladderTowards(bot, player.position, passes, username);
-    if (bot.interrupt_code)
-        return;
     let failure = null;
     try {
         await walkWatchingLadders(bot, () => goal, player.position, passes, username); // F33: the step mid-walk

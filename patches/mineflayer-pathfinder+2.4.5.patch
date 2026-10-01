@@ -1,16 +1,29 @@
 diff --git a/node_modules/mineflayer-pathfinder/index.js b/node_modules/mineflayer-pathfinder/index.js
-index b38bd30..2ca8205 100644
+index b38bd30..f6a7796 100644
 --- a/node_modules/mineflayer-pathfinder/index.js
 +++ b/node_modules/mineflayer-pathfinder/index.js
-@@ -14,6 +14,7 @@ const interactableBlocks = require('./lib/interactable.json')
+@@ -12,8 +12,11 @@ const Physics = require('./lib/physics')
+ const nbt = require('prismarine-nbt')
+ const interactableBlocks = require('./lib/interactable.json')
  
++const STUCK_MS = 30000 // P5: how long the cells near a stuck point cost more
++
  function inject (bot) {
    const waterType = bot.registry.blocksByName.water.id
 +  const lavaType = bot.registry.blocksByName.lava.id
    const ladderId = bot.registry.blocksByName.ladder.id
    const vineId = bot.registry.blocksByName.vine.id
    let stateMovements = new Movements(bot)
-@@ -61,6 +62,10 @@ function inject (bot) {
+@@ -29,6 +32,8 @@ function inject (bot) {
+   let lastNodeTime = performance.now()
+   let returningPos = null
+   let stopPathing = false
++  let lastClimbY = null // P2: the height of the feet on a ladder at the last tick
++  let stuckMarks = [] // P5: { x, y, z, until } of the points the bot got stuck before
+   const physics = new Physics(bot)
+   const lockPlaceBlock = new Lock()
+   const lockEquipItem = new Lock()
+@@ -61,6 +66,10 @@ function inject (bot) {
    }
  
    bot.pathfinder.getPathTo = (movements, goal, timeout) => {
@@ -21,24 +34,62 @@ index b38bd30..2ca8205 100644
      const generator = bot.pathfinder.getPathFromTo(movements, bot.entity.position, goal, { timeout })
      const { value: { result, astarContext: context } } = generator.next()
      astarContext = context
-@@ -170,6 +175,16 @@ function inject (bot) {
+@@ -84,6 +93,10 @@ function inject (bot) {
+       const offset = (b && dy > 0.001 && bot.entity.onGround && !stateMovements.emptyBlocks.has(b.type)) ? 1 : 0
+       start = new Move(p.x, p.y + offset, p.z, movements.countScaffoldingItems(), 0)
+     }
++    // P5: the cells near a point where the bot got stuck in the last 30 s cost more in this search
++    const now = performance.now()
++    stuckMarks = stuckMarks.filter(s => s.until > now)
++    movements.stuckMarks = stuckMarks.slice()
+     if (movements.allowEntityDetection) {
+       if (resetEntityIntersects) {
+         movements.clearCollisionIndex()
+@@ -165,12 +178,41 @@ function inject (bot) {
+ 
+   bot.on('physicsTick', monitorMovement)
+ 
++  // P3: a door, a fence gate or a trapdoor (door is in the name of both doors)
++  function isDoorLike (b) {
++    return Boolean(b) && (b.name.includes('door') || b.name.includes('fence_gate'))
++  }
++
++  function isClimbable (b) {
++    return Boolean(b) && (b.type === ladderId || b.type === vineId || stateMovements.climbables?.has(b.type) === true)
++  }
++
++  // P3: the arrival tolerance of a path point: wide at a door, a gate, a trapdoor and a ladder, narrow elsewhere
++  function toleranceAt (b) {
++    return isDoorLike(b) || isClimbable(b) ? 0.35 : 0.175
++  }
++
+   function postProcessPath (path) {
+     for (let i = 0; i < path.length; i++) {
        const curPoint = path[i]
-       if (curPoint.toBreak.length > 0 || curPoint.toPlace.length > 0) break
+-      if (curPoint.toBreak.length > 0 || curPoint.toPlace.length > 0) break
++      // a point that digs or places changes the world, and the path is planned again after it (block_updated);
++      // a point that only opens a door, a gate or a trapdoor does not, so the points after it are processed too
++      if (curPoint.toBreak.length > 0 || curPoint.toPlace.some(p => !p.useOne)) break
        const b = bot.blockAt(new Vec3(curPoint.x, curPoint.y, curPoint.z))
+-      if (b && (b.type === waterType || ((b.type === ladderId || b.type === vineId) && i + 1 < path.length && path[i + 1].y < curPoint.y))) {
++      curPoint.tolerance = toleranceAt(b)
 +
 +      // openned doors have small Collision box
 +      // that may stop the bot from moving forward
-+      if(i === 0 && b?.name.includes('door')) {
++      // P3: every door point of the path, not only the first, and the gates and trapdoors
++      if (isDoorLike(b)) {
 +        curPoint.x = Math.floor(curPoint.x) + 0.5
 +        curPoint.y = Math.floor(curPoint.y)
 +        curPoint.z = Math.floor(curPoint.z) + 0.5
 +        continue
 +      }
 +
-       if (b && (b.type === waterType || ((b.type === ladderId || b.type === vineId) && i + 1 < path.length && path[i + 1].y < curPoint.y))) {
++      // P2: every point on a ladder or a vine is the middle of its cell, up and down
++      if (b && (b.type === waterType || isClimbable(b))) {
          curPoint.x = Math.floor(curPoint.x) + 0.5
          curPoint.y = Math.floor(curPoint.y)
-@@ -524,6 +539,9 @@ function inject (bot) {
+         curPoint.z = Math.floor(curPoint.z) + 0.5
+@@ -524,6 +566,9 @@ function inject (bot) {
          bot.activateBlock(bot.blockAt(new Vec3(placingBlock.x, placingBlock.y, placingBlock.z))).then(() => {
            lockUseBlock.release()
            placingBlock = nextPoint.toPlace.shift()
@@ -48,7 +99,7 @@ index b38bd30..2ca8205 100644
          }, err => {
            console.error(err)
            lockUseBlock.release()
-@@ -550,6 +568,7 @@ function inject (bot) {
+@@ -550,6 +595,7 @@ function inject (bot) {
              lockEquipItem.release()
              const refBlock = bot.blockAt(new Vec3(placingBlock.x, placingBlock.y, placingBlock.z), false)
              if (!lockPlaceBlock.tryAcquire()) return
@@ -56,7 +107,7 @@ index b38bd30..2ca8205 100644
              if (interactableBlocks.includes(refBlock.name)) {
                bot.setControlState('sneak', true)
              }
-@@ -557,6 +576,7 @@ function inject (bot) {
+@@ -557,6 +603,7 @@ function inject (bot) {
                .then(function () {
                  // Dont release Sneak if the block placement was not successful
                  bot.setControlState('sneak', false)
@@ -64,16 +115,32 @@ index b38bd30..2ca8205 100644
                  if (bot.pathfinder.LOSWhenPlacingBlocks && placingBlock.returnPos) returningPos = placingBlock.returnPos.clone()
                })
                .catch(_ignoreError => {
-@@ -576,7 +596,7 @@ function inject (bot) {
+@@ -576,7 +623,8 @@ function inject (bot) {
      let dx = nextPoint.x - p.x
      const dy = nextPoint.y - p.y
      let dz = nextPoint.z - p.z
 -    if (Math.abs(dx) <= 0.35 && Math.abs(dz) <= 0.35 && Math.abs(dy) < 1) {
-+    if (Math.abs(dx) <= 0.175 && Math.abs(dz) <= 0.175 && Math.abs(dy) < 1) {
++    const tolerance = nextPoint.tolerance ?? 0.175 // P3
++    if (Math.abs(dx) <= tolerance && Math.abs(dz) <= tolerance && Math.abs(dy) < 1) {
        // arrived at next point
        lastNodeTime = performance.now()
        if (stopPathing) {
-@@ -611,6 +631,9 @@ function inject (bot) {
+@@ -604,6 +652,14 @@ function inject (bot) {
+       dz = nextPoint.z - p.z
+     }
+ 
++    // P2: on a ladder or a vine the bot climbs and descends as a player does
++    if (climbTowards(p, nextPoint)) {
++      if (lastClimbY !== null && Math.abs(p.y - lastClimbY) >= 0.05) lastNodeTime = performance.now() // no stuck while the height changes
++      lastClimbY = p.y
++      return
++    }
++    lastClimbY = null
++
+     bot.look(Math.atan2(-dx, -dz), 0)
+     bot.setControlState('forward', true)
+     bot.setControlState('jump', false)
+@@ -611,6 +667,9 @@ function inject (bot) {
      if (bot.entity.isInWater) {
        bot.setControlState('jump', true)
        bot.setControlState('sprint', false)
@@ -83,11 +150,95 @@ index b38bd30..2ca8205 100644
      } else if (stateMovements.allowSprinting && physics.canStraightLine(path, true)) {
        bot.setControlState('jump', false)
        bot.setControlState('sprint', true)
+@@ -631,9 +690,71 @@ function inject (bot) {
+     // check for futility
+     if (performance.now() - lastNodeTime > 3500) {
+       // should never take this long to go to the next node
++      // P5: the point the bot could not reach; the cells within 1 block of it cost more for 30 s
++      stuckMarks.push({ x: Math.floor(nextPoint.x), y: Math.floor(nextPoint.y), z: Math.floor(nextPoint.z), until: performance.now() + STUCK_MS })
++      if (stuckMarks.length > 8) stuckMarks.shift()
+       resetPath('stuck')
+     }
+   }
++
++  // P2: the block of a cell that the bot climbs in: a ladder, a vine, or an open trapdoor over a ladder of the same
++  // facing (climbable by prismarine-physics, climbableTrapdoor)
++  function climbingBlock (pos) {
++    const b = bot.blockAt(pos, false)
++    if (!b) return null
++    if (isClimbable(b)) return b
++    if (b.name.endsWith('_trapdoor') && b._properties?.open === true) {
++      const under = bot.blockAt(pos.offset(0, -1, 0), false)
++      if (under && under.type === ladderId && under._properties?.facing === b._properties?.facing) return b
++    }
++    return null
++  }
++
++  // P2: the yaw towards the wall of a ladder or a trapdoor (the opposite of its facing), or of a vine (a side it
++  // hangs on); null for a climbable without a wall (weeping, twisting and cave vines)
++  function wallYaw (b) {
++    const props = b._properties ?? {}
++    const sides = { north: [0, -1], south: [0, 1], west: [-1, 0], east: [1, 0] }
++    if (b.type === ladderId || b.name.endsWith('_trapdoor')) {
++      const f = sides[props.facing]
++      return f ? Math.atan2(f[0], f[1]) : null
++    }
++    for (const [side, v] of Object.entries(sides)) {
++      if (props[side] === true) return Math.atan2(-v[0], -v[1])
++    }
++    return null
++  }
++
++  // P2: the controls on a ladder while the next point is above or below. Up the column: look at the wall and hold
++  // forward. Up to a point beside (the way out at the top): look at it and hold forward, the block there lifts the
++  // bot. Down the column: look at the wall, release forward and sneak, and slide. Never jump on a ladder; under the
++  // lowest ladder of a column that ends above the floor, a jump at the wall reaches it. true when it set the controls.
++  function climbTowards (p, nextPoint) {
++    const feet = p.floored()
++    const up = nextPoint.y > p.y + 0.01
++    const down = nextPoint.y < p.y - 0.01
++    const sameColumn = Math.floor(nextPoint.x) === feet.x && Math.floor(nextPoint.z) === feet.z
++    const here = climbingBlock(feet)
++    if (!here) {
++      const above = up && sameColumn && bot.entity.onGround ? climbingBlock(feet.offset(0, 1, 0)) : null
++      if (!above) return false
++      const yaw = wallYaw(above)
++      bot.look(yaw ?? bot.entity.yaw, 0)
++      bot.setControlState('sprint', false)
++      bot.setControlState('sneak', false)
++      bot.setControlState('forward', yaw !== null)
++      bot.setControlState('jump', true)
++      return true
++    }
++    if (!(up && !down) && !(down && sameColumn)) return false
++    const yaw = sameColumn ? wallYaw(here) : null
++    bot.look(yaw ?? Math.atan2(-(nextPoint.x - p.x), -(nextPoint.z - p.z)), 0)
++    bot.setControlState('sprint', false)
++    bot.setControlState('sneak', false)
++    bot.setControlState('forward', up)
++    bot.setControlState('jump', up && sameColumn && yaw === null) // a vine without a wall is climbed by jumping
++    return true
++  }
+ }
+ 
+ module.exports = {
 diff --git a/node_modules/mineflayer-pathfinder/lib/movements.js b/node_modules/mineflayer-pathfinder/lib/movements.js
-index a7e3505..84a0841 100644
+index a7e3505..5eacb11 100644
 --- a/node_modules/mineflayer-pathfinder/lib/movements.js
 +++ b/node_modules/mineflayer-pathfinder/lib/movements.js
-@@ -50,7 +50,12 @@ class Movements {
+@@ -15,6 +15,11 @@ const diagonalDirections = [
+   { x: 1, z: 1 }
+ ]
+ 
++// The scaffolding blocks a move places: a door, gate or trapdoor that it opens (useOne) costs none
++function placedCount (toPlace) {
++  return toPlace.filter(p => !p.useOne).length
++}
++
+ class Movements {
+   constructor (bot) {
+     const registry = bot.registry
+@@ -50,7 +55,12 @@ class Movements {
      this.blocksToAvoid.add(registry.blocksByName.fire.id)
      if (registry.blocksByName.cobweb) this.blocksToAvoid.add(registry.blocksByName.cobweb.id)
      if (registry.blocksByName.web) this.blocksToAvoid.add(registry.blocksByName.web.id)
@@ -101,7 +252,7 @@ index a7e3505..84a0841 100644
  
      this.liquids = new Set()
      this.liquids.add(registry.blocksByName.water.id)
-@@ -62,7 +67,13 @@ class Movements {
+@@ -62,7 +72,13 @@ class Movements {
  
      this.climbables = new Set()
      this.climbables.add(registry.blocksByName.ladder.id)
@@ -116,7 +267,7 @@ index a7e3505..84a0841 100644
      this.emptyBlocks = new Set()
  
      this.replaceables = new Set()
-@@ -92,13 +103,15 @@ class Movements {
+@@ -92,13 +108,36 @@ class Movements {
        }
      })
      registry.blocksArray.forEach(block => {
@@ -131,59 +282,275 @@ index a7e3505..84a0841 100644
  
 -    this.canOpenDoors = false // Causes issues. Probably due to none paper servers.
 +    this.canOpenDoors = true
++
++    // No-stand blocks (v0.1.4.10, P4): hollow blocks and containers are never ground to stand on, a bottom slab and
++    // bottom stairs neither (the bot stands half a block low and gets stuck). The list of isNoStandBlock of
++    // src/agent/packs/home/stand_logic.js, copied: the patch cannot import. A closed fence gate is a fence already.
++    const noStandNames = ['composter', 'cauldron', 'water_cauldron', 'lava_cauldron', 'powder_snow_cauldron', 'hopper',
++      'chest', 'trapped_chest', 'ender_chest']
++    this.noStandBlocks = new Set()
++    this.halfBlocks = new Set() // slabs and stairs: no stand only in their bottom half
++    this.keepBlocks = new Set() // the hollow ones: never broken by a move either (mayBreakOnPath)
++    registry.blocksArray.forEach(block => {
++      if (noStandNames.includes(block.name) || block.name.endsWith('_fence') || block.name.endsWith('_wall')) this.noStandBlocks.add(block.id)
++      if (noStandNames.includes(block.name)) this.keepBlocks.add(block.id)
++      if (block.name.endsWith('_slab') || block.name.endsWith('_stairs')) this.halfBlocks.add(block.id)
++    })
++    this.ladderId = registry.blocksByName.ladder.id
++
++    // A one-wide pit whose way out needs a jump of 2 (P4), and a cell near the place where the bot got stuck (P5):
++    // extra costs of a move into them. stuckMarks are set by the pathfinder before each search.
++    this.pitCost = 50
++    this.stuckCost = 100
++    this.stuckMarks = []
  
      this.exclusionAreasStep = []
      this.exclusionAreasBreak = []
-@@ -230,8 +243,13 @@ class Movements {
+@@ -230,8 +269,22 @@ class Movements {
        }
      }
      b.climbable = this.climbables.has(b.type)
 -    b.safe = (b.boundingBox === 'empty' || b.climbable || this.carpets.has(b.type)) && !this.blocksToAvoid.has(b.type)
 -    b.physical = b.boundingBox === 'block' && !this.fences.has(b.type)
-+    
++
 +    // Enhanced trapdoor logic - open trapdoors are safe to pass through
-+    const isOpenTrapdoor = this.openable.has(b.type) && b.name.includes('trapdoor') && b._properties?.open === true
-+    const isClosedTrapdoor = this.openable.has(b.type) && b.name.includes('trapdoor') && b._properties?.open !== true
-+    
++    const isTrapdoor = this.openable.has(b.type) && b.name.includes('trapdoor')
++    const isOpenTrapdoor = isTrapdoor && b._properties?.open === true
++    const isClosedTrapdoor = isTrapdoor && b._properties?.open !== true
++    // P1: a closed trapdoor is a floor only over a solid block, never over a ladder, a vine or air. An open trapdoor
++    // over a ladder with the same facing is climbable (prismarine-physics, climbableTrapdoor).
++    let overSolid = false
++    if (isTrapdoor) {
++      const under = this.bot.blockAt(new Vec3(pos.x + dx, pos.y + dy - 1, pos.z + dz), false)
++      overSolid = Boolean(under) && under.boundingBox === 'block' && !this.climbables.has(under.type) && !this.openable.has(under.type)
++      if (isOpenTrapdoor && under && under.type === this.ladderId && under._properties?.facing === b._properties?.facing) b.climbable = true
++    }
++
 +    b.safe = (b.boundingBox === 'empty' || b.climbable || this.carpets.has(b.type) || isOpenTrapdoor) && !this.blocksToAvoid.has(b.type)
-+    b.physical = (b.boundingBox === 'block' && !this.fences.has(b.type)) || isClosedTrapdoor
++    b.physical = (b.boundingBox === 'block' && !this.fences.has(b.type) && !isTrapdoor && !this.isNoStand(b)) || (isClosedTrapdoor && overSolid)
      b.replaceable = this.replaceables.has(b.type) && !b.physical
      b.liquid = this.liquids.has(b.type)
      b.height = pos.y + dy
-@@ -284,6 +302,18 @@ class Movements {
+@@ -244,6 +297,15 @@ class Movements {
+     return b
+   }
+ 
++  // P4: a block of the no-stand list, a closed fence gate, a bottom slab or a bottom stairs
++  isNoStand (b) {
++    if (this.noStandBlocks.has(b.type)) return true
++    const props = b._properties ?? {}
++    if (b.name.endsWith('_fence_gate')) return props.open !== true
++    if (this.halfBlocks.has(b.type)) return props.type === 'bottom' || props.half === 'bottom'
++    return false
++  }
++
+   /**
+    * Takes into account if the block is within a break exclusion area.
+    * @param {import('prismarine-block').Block} block
+@@ -273,6 +335,14 @@ class Movements {
+     return block.type && !this.blocksCantBreak.has(block.type) && this.exclusionBreak(block) < 100
+   }
+ 
++  // v0.1.4.10 (P1, P4): a move of the path search never breaks a door, a gate, a trapdoor, a ladder, nor a block that
++  // P4 made no floor (a slab, stairs, a cauldron, a composter, a hopper), where it would step down to place a block.
++  // safeToBreak stays as it was: the skills ask it what the bot may collect.
++  mayBreakOnPath (block) {
++    if (this.openable.has(block.type) || block.type === this.ladderId || this.keepBlocks.has(block.type) || this.halfBlocks.has(block.type)) return false
++    return this.safeToBreak(block)
++  }
++
+   /**
+    * Takes into account if the block is within the stepExclusionAreas. And returns 100 if a block to be broken is within break exclusion areas.
+    * @param {import('prismarine-block').Block} block block
+@@ -284,7 +354,15 @@ class Movements {
      cost += this.exclusionStep(block) // Is excluded so can't move or break
      cost += this.getNumEntitiesAt(block.position, 0, 0, 0) * this.entityCost
      if (block.safe) return cost
+-    if (!this.safeToBreak(block)) return 100 // Can't break, so can't move
 +
-+    // process door cost
-+    if ((this.canOpenDoors && block.openable)
-+      || (block.openable && block._properties?.open === true)) {
-+      return cost
++    // P1: an open door, gate or trapdoor is passed. A closed one is passed only by a move that opens it
++    // (getMoveForward, getMoveUp, the ladder and trapdoor moves put it in toPlace), never here: the bot would
++    // stand on it or bump its head under it.
++    if (block.openable) {
++      return block._properties?.open === true ? cost : 100
 +    }
 +
-+    // Handle trapdoors specifically - they can be opened instead of broken
-+    if (this.canOpenDoors && block.openable && block.name.includes('trapdoor') && !block.name.includes('iron')) {
-+      return cost + 1 // Small cost for opening trapdoor
-+    }
-+
-     if (!this.safeToBreak(block)) return 100 // Can't break, so can't move
++    if (!this.mayBreakOnPath(block)) return 100 // Can't break, so can't move
      toBreak.push(block.position)
  
-@@ -387,8 +417,8 @@ class Movements {
-     cost += this.safeOrBreak(blockB, toBreak)
+     if (block.physical) cost += this.getNumEntitiesAt(block.position, 0, 1, 0) * this.entityCost // Add entity cost if there is an entity above (a breakable block) that will fall
+@@ -324,7 +402,7 @@ class Movements {
+         if (this.getNumEntitiesAt(blockD.position, 0, 0, 0) > 0) return // Check for any entities in the way of a block placement
+ 
+         if (!blockD.replaceable) {
+-          if (!this.safeToBreak(blockD)) return
++          if (!this.mayBreakOnPath(blockD)) return
+           cost += this.exclusionBreak(blockD)
+           toBreak.push(blockD.position)
+         }
+@@ -334,7 +412,7 @@ class Movements {
+       }
+ 
+       if (!blockC.replaceable) {
+-        if (!this.safeToBreak(blockC)) return
++        if (!this.mayBreakOnPath(blockC)) return
+         cost += this.exclusionBreak(blockC)
+         toBreak.push(blockC.position)
+       }
+@@ -375,7 +453,7 @@ class Movements {
+       if (this.getNumEntitiesAt(blockD.position, 0, 0, 0) > 0) return // D intersects an entity hitbox
+ 
+       if (!blockD.replaceable) {
+-        if (!this.safeToBreak(blockD)) return
++        if (!this.mayBreakOnPath(blockD)) return
+         cost += this.exclusionBreak(blockD)
+         toBreak.push(blockD.position)
+       }
+@@ -384,11 +462,17 @@ class Movements {
+       cost += this.placeCost // additional cost for placing a block
+     }
+ 
+-    cost += this.safeOrBreak(blockB, toBreak)
++    const opensC = this.canOpenDoors && blockC.openable && !blockC._properties.open
++    // P1: the upper half of the door that this move opens opens with it
++    if (opensC && blockB.openable && blockB.type === blockC.type && blockB._properties?.half === 'upper') {
++      cost += this.exclusionStep(blockB)
++    } else {
++      cost += this.safeOrBreak(blockB, toBreak)
++    }
      if (cost > 100) return
  
 -    // Open fence gates
 -    if (this.canOpenDoors && blockC.openable && blockC.shapes && blockC.shapes.length !== 0) {
 +    // Open fence gates and doors
-+    if (this.canOpenDoors && blockC.openable && !blockC._properties.open) {
++    if (opensC) {
        toPlace.push({ x: node.x + dir.x, y: node.y, z: node.z + dir.z, dx: 0, dy: 0, dz: 0, useOne: true }) // Indicate that a block should be used on this block not placed
      } else {
        cost += this.safeOrBreak(blockC, toBreak)
-@@ -554,6 +584,54 @@ class Movements {
-     neighbors.push(new Move(node.x, node.y + 1, node.z, node.remainingBlocks - toPlace.length, cost, toBreak, toPlace))
+@@ -397,7 +481,7 @@ class Movements {
+ 
+     if (this.getBlock(node, 0, 0, 0).liquid) cost += this.liquidCost
+ 
+-    neighbors.push(new Move(blockC.position.x, blockC.position.y, blockC.position.z, node.remainingBlocks - toPlace.length, cost, toBreak, toPlace))
++    neighbors.push(new Move(blockC.position.x, blockC.position.y, blockC.position.z, node.remainingBlocks - placedCount(toPlace), cost, toBreak, toPlace))
    }
  
+   getMoveDiagonal (node, dir, neighbors) {
+@@ -503,6 +587,26 @@ class Movements {
+   getMoveDown (node, neighbors) {
+     const block0 = this.getBlock(node, 0, -1, 0)
+ 
++    // P2: one rung down a ladder or a vine, also when a drop to the bottom is allowed. A trapdoor over a ladder is
++    // a rung too; a closed one is opened first (P1). (A ladder is physical: the drop below lands on the next rung, the
++    // same move, and is left out; a vine is not.)
++    let rung = null
++    if (!this.getBlock(node, 0, 0, 0).liquid) {
++      const trapdoor = block0.openable && block0.name.includes('trapdoor') && this.getBlock(node, 0, -2, 0).climbable
++      if (block0.climbable || trapdoor) {
++        let rungCost = 1 + this.exclusionStep(block0) + this.getNumEntitiesAt(block0.position, 0, 0, 0) * this.entityCost
++        const rungPlace = []
++        if (trapdoor && block0._properties?.open !== true) {
++          rungPlace.push({ x: node.x, y: node.y - 1, z: node.z, dx: 0, dy: 0, dz: 0, useOne: true })
++          rungCost += 1
++        }
++        if (rungCost <= 100 && (rungPlace.length === 0 || this.canOpenDoors)) {
++          rung = new Move(node.x, node.y - 1, node.z, node.remainingBlocks, rungCost, [], rungPlace)
++          neighbors.push(rung)
++        }
++      }
++    }
++
+     let cost = 1 // move cost
+     const toBreak = []
+     const toPlace = []
+@@ -517,6 +621,7 @@ class Movements {
+ 
+     cost += this.getNumEntitiesAt(blockLand.position, 0, 0, 0) * this.entityCost // add cost for entities
+ 
++    if (rung && blockLand.position.y === rung.y) return
+     neighbors.push(new Move(blockLand.position.x, blockLand.position.y, blockLand.position.z, node.remainingBlocks - toPlace.length, cost, toBreak, toPlace))
+   }
+ 
+@@ -533,11 +638,22 @@ class Movements {
+     cost += this.safeOrBreak(block2, toBreak)
+     if (cost > 100) return
+ 
+-    if (!block1.climbable) {
++    // P2: under the lowest ladder of a column that ends one block above the floor, a jump reaches it
++    const blockHead = this.getBlock(node, 0, 1, 0)
++    const ontoLadder = !block1.climbable && block1.safe && blockHead.climbable && this.getBlock(node, 0, -1, 0).physical
++    if (ontoLadder) cost += 1
++    // P1: a closed trapdoor over the head of a bot on a ladder is opened before the climb goes on
++    if (block1.climbable && blockHead.openable && blockHead._properties?.open !== true) {
++      if (!this.canOpenDoors) return
++      toPlace.push({ x: node.x, y: node.y + 1, z: node.z, dx: 0, dy: 0, dz: 0, useOne: true })
++      cost += 1
++    }
++
++    if (!block1.climbable && !ontoLadder) {
+       if (!this.allow1by1towers || node.remainingBlocks === 0) return // not enough blocks to place
+ 
+       if (!block1.replaceable) {
+-        if (!this.safeToBreak(block1)) return
++        if (!this.mayBreakOnPath(block1)) return
+         toBreak.push(block1.position)
+       }
+ 
+@@ -551,7 +667,102 @@ class Movements {
+ 
+     if (cost > 100) return
+ 
+-    neighbors.push(new Move(node.x, node.y + 1, node.z, node.remainingBlocks - toPlace.length, cost, toBreak, toPlace))
++    neighbors.push(new Move(node.x, node.y + 1, node.z, node.remainingBlocks - placedCount(toPlace), cost, toBreak, toPlace))
++  }
++
++  // P2: from beside the top of a column of ladders (or vines) into it, one rung below the feet. A trapdoor over the
++  // column is the first rung; a closed one is opened first (P1). Then getMoveDown goes on rung by rung.
++  getMoveIntoLadderBelow (node, dir, neighbors) {
++    const blockB = this.getBlock(node, dir.x, 1, dir.z)
++    const blockC = this.getBlock(node, dir.x, 0, dir.z)
++    const blockD = this.getBlock(node, dir.x, -1, dir.z)
++    const trapdoor = blockD.openable && blockD.name.includes('trapdoor') && this.getBlock(node, dir.x, -2, dir.z).climbable
++    if (!blockD.climbable && !trapdoor) return
++    if (this.getBlock(node, 0, 0, 0).liquid) return
++
++    let cost = 2 // step over and down
++    const toBreak = []
++    const toPlace = []
++    cost += this.safeOrBreak(blockB, toBreak)
++    if (cost > 100) return
++    cost += this.safeOrBreak(blockC, toBreak)
++    if (cost > 100) return
++    cost += this.exclusionStep(blockD)
++    if (trapdoor && blockD._properties?.open !== true) {
++      if (!this.canOpenDoors) return
++      toPlace.push({ x: blockD.position.x, y: blockD.position.y, z: blockD.position.z, dx: 0, dy: 0, dz: 0, useOne: true })
++      cost += 1
++    }
++    cost += this.getNumEntitiesAt(blockD.position, 0, 0, 0) * this.entityCost
++    if (cost > 100) return
++
++    neighbors.push(new Move(blockD.position.x, blockD.position.y, blockD.position.z, node.remainingBlocks, cost, toBreak, toPlace))
++  }
++
++  // P4: a one-wide pit: every side of the cell is a wall of 2 blocks or more, the way out needs a jump of 2
++  isOneWidePit (pos) {
++    const here = this.getBlock(pos, 0, 0, 0)
++    if (here.climbable || here.liquid) return false
++    for (const dir of cardinalDirections) {
++      if (!this.getBlock(pos, dir.x, 0, dir.z).physical || !this.getBlock(pos, dir.x, 1, dir.z).physical) return false
++    }
++    return true
++  }
++
++  // P5: within 1 block of a place where the bot got stuck in the last 30 s
++  nearStuckMark (pos) {
++    for (const s of this.stuckMarks) {
++      if (Math.abs(pos.x - s.x) <= 1 && Math.abs(pos.y - s.y) <= 1 && Math.abs(pos.z - s.z) <= 1) return true
++    }
++    return false
++  }
++
 +  getMoveClimbUpThroughTrapdoor (node, neighbors) {
 +    const blockCurrent = this.getBlock(node, 0, 0, 0) // Current position (should be climbable)
 +    const blockAbove = this.getBlock(node, 0, 1, 0) // Block directly above
@@ -206,7 +573,7 @@ index a7e3505..84a0841 100644
 +    // Add cost for opening the trapdoor
 +    toPlace.push({ x: node.x, y: node.y + 2, z: node.z, dx: 0, dy: 0, dz: 0, useOne: true })
 +    
-+    neighbors.push(new Move(node.x, node.y + 2, node.z, node.remainingBlocks - toPlace.length, cost, toBreak, toPlace))
++    neighbors.push(new Move(node.x, node.y + 2, node.z, node.remainingBlocks - placedCount(toPlace), cost, toBreak, toPlace))
 +  }
 +
 +  // Enhanced ladder/vine climbing that can handle stepping on top and jumping
@@ -230,18 +597,30 @@ index a7e3505..84a0841 100644
 +    if (cost > 100) return
 +    
 +    neighbors.push(new Move(node.x, node.y + 2, node.z, node.remainingBlocks - toPlace.length, cost, toBreak, toPlace))
-+  }
-+
+   }
+ 
    // Jump up, down or forward over a 1 block gap
-   getMoveParkourForward (node, dir, neighbors) {
-     const block0 = this.getBlock(node, 0, -1, 0)
-@@ -656,8 +734,27 @@ class Movements {
+@@ -642,6 +853,7 @@ class Movements {
+       this.getMoveForward(node, dir, neighbors)
+       this.getMoveJumpUp(node, dir, neighbors)
+       this.getMoveDropDown(node, dir, neighbors)
++      this.getMoveIntoLadderBelow(node, dir, neighbors)
+       if (this.allowParkour) {
+         this.getMoveParkourForward(node, dir, neighbors)
+       }
+@@ -656,8 +868,33 @@ class Movements {
      this.getMoveDown(node, neighbors)
      this.getMoveUp(node, neighbors)
  
 +    // Enhanced climbing moves for ladders, vines, and trapdoors
 +    this.getMoveClimbUpThroughTrapdoor(node, neighbors)
 +    this.getMoveClimbTop(node, neighbors)
++
++    // P4 and P5: a move down into a one-wide pit, and a move into a cell near a place where the bot got stuck, cost more
++    for (const move of neighbors) {
++      if (move.y < node.y && this.isOneWidePit(move)) move.cost += this.pitCost
++      if (this.stuckMarks.length > 0 && this.nearStuckMark(move)) move.cost += this.stuckCost
++    }
 +
      return neighbors
    }
