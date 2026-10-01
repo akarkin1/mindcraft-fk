@@ -47,6 +47,12 @@ describe('the texts of I3', () => {
     test('noJobText', () => {
         assert.equal(X.noJobText(), 'I have no job.');
     });
+
+    test('idleStartText: the command of the standing list as configured (T3-8)', () => {
+        assert.equal(X.idleStartText('!farmCycle("farm")'), 'I take the next of my list: !farmCycle("farm").');
+        assert.equal(X.idleStartText(' !harvest '), 'I take the next of my list: !harvest.');
+        assert.equal(X.idleStartText(null), 'I take the next of my list: nothing.');
+    });
 });
 
 describe('the verbs of the restart text', () => {

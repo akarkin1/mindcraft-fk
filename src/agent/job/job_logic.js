@@ -11,6 +11,7 @@ export const JOB_RULES = Object.freeze({
     maxFails: 3,           // the same failing text this many times in a row pauses the job
     maxPlans: 3,           // plans of the model per job
     maxSteps: 6,           // steps per plan
+    stepRuns: 2,           // a failed step is run once more before the next plan (T3-1)
 });
 
 // The item that a block gives when it is mined, for the few blocks that do not drop themselves.

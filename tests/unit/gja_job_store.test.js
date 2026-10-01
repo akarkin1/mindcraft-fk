@@ -40,7 +40,7 @@ describe('JobStore', () => {
         const store = new S.JobStore(file, { now: clock() });
         assert.equal(store.load(), null);
         const job = { ...L.jobOf('!mineOre', ['iron', 16], { now: '2026-10-01T11:00:00.000Z' }), got: 6 };
-        job.steps = [{ command: '!chopTrees(4)', check: { item: 'log', count: 4 }, state: 'todo' }];
+        job.steps = [{ command: '!chopTrees(4)', check: { item: 'log', count: 4 }, state: 'todo' }, { command: '!getTool("axe")', check: { item: 'axe', count: null }, state: 'todo', fails: 1 }];
         const saved = store.set(job);
         assert.equal(saved.updated, '2026-10-01T12:00:00.000Z');
         assert.equal(saved.started, '2026-10-01T11:00:00.000Z');

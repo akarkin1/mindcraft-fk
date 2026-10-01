@@ -14,8 +14,10 @@ import {
     JOB_RULES, OVERRIDABLE_ACTIONS, cleanCommandName, endsJob, isDone, jobOf, nextIdleJob, progress, readJobSettings,
     resultOf, resumeCommand, sameWork, shouldResume, blockerOf,
 } from './job_logic.js';
-import { PLAN_COMMANDS, PLAN_COMMAND_NAMES, planPrompt, parsePlan, stepDone } from './plan_logic.js';
-import { doneText, leaveText, noJobText, noPlanText, planText, restartText, resumeText, statusText, stepText, stopText } from './job_texts.js';
+import { PLAN_COMMANDS, PLAN_COMMAND_NAMES, WAY_OUT_COMMAND, needsSurface, planPrompt, parsePlan, stepDone } from './plan_logic.js';
+import {
+    doneText, idleStartText, leaveText, noJobText, noPlanText, planText, restartText, resumeText, statusText, stepText, stopText,
+} from './job_texts.js';
 
 export { JobStore, JOB_FILE } from './job_store.js';
 
@@ -81,6 +83,16 @@ function defaultReaders(agent, settings) {
             return typeof modes?.isOn === 'function' ? modes.isOn('night_shelter') !== false : true;
         }, false),
         underground: safe(() => agent?.whereAmI?.()?.underground === true, false),
+        // for the plan prompt (T3-1): where the bot is, its position, the chests of the chest index of this world
+        where: safe(() => agent?.whereAmI?.() ?? null, null),
+        position: safe(() => {
+            const pos = agent?.bot?.entity?.position;
+            return pos ? { x: pos.x, y: pos.y, z: pos.z } : null;
+        }, null),
+        chests: safe(() => {
+            const index = agent?._workStores?.()?.chests ?? null;
+            return typeof index?.list === 'function' ? index.list(agent?.bot?.game?.dimension) : null;
+        }, null),
     };
 }
 
@@ -92,9 +104,11 @@ function defaultReaders(agent, settings) {
  * @param {{settings?: object, now?: () => number, executeCommand?: (text: string, options: object) => Promise<*>,
  *   askModel?: (prompt: string) => Promise<string>, say?: (text: string) => void, inventory?: () => object,
  *   actionRunning?: () => boolean, sleeping?: () => boolean, night?: () => boolean, nightShelter?: () => boolean,
- *   underground?: () => boolean}} [options] settings: read again at every tick (job_resume_seconds, idle_jobs,
- *   idle_jobs_minutes, home_reflexes); now: milliseconds; executeCommand: runs a command text as a system
- *   order; askModel: the call of the model for a plan (purpose 'plan' of the cost meter)
+ *   underground?: () => boolean, where?: () => object|null, position?: () => object|null, chests?: () => object[]|null}} [options]
+ *   settings: read again at every tick (job_resume_seconds, idle_jobs, idle_jobs_minutes, home_reflexes); now:
+ *   milliseconds; executeCommand: runs a command text as a system order; askModel: the call of the model for a
+ *   plan (purpose 'plan' of the cost meter); where, position, chests: for the plan prompt (whereAmI, the feet
+ *   of the bot, the chests { x, y, z, items } of the chest index; null when not known)
  * @returns {object}
  */
 export function createJob(agent, store, options = {}) {
@@ -109,6 +123,9 @@ export function createJob(agent, store, options = {}) {
     const night = pick('night');
     const nightShelter = pick('nightShelter');
     const underground = pick('underground');
+    const where = pick('where');
+    const position = pick('position');
+    const chests = pick('chests');
     const executeCommand = typeof options?.executeCommand === 'function' ? options.executeCommand : null;
     const askModel = typeof options?.askModel === 'function' ? options.askModel : null;
 
@@ -196,7 +213,8 @@ export function createJob(agent, store, options = {}) {
             setJob(job);
             const started = job.started;
             const text = typeof failText === 'string' && failText.length > 0 ? failText : null;
-            const prompt = planPrompt(job, text ? { ...b, text } : b, call(() => inventory(), {}), PLAN_COMMANDS);
+            const context = { where: call(() => where(), null), pos: call(() => position(), null), chests: call(() => chests(), null) };
+            const prompt = planPrompt(job, text ? { ...b, text } : b, call(() => inventory(), {}), PLAN_COMMANDS, context);
             let answer = null;
             try {
                 answer = await askModel(prompt);
@@ -282,6 +300,12 @@ export function createJob(agent, store, options = {}) {
             setJob(job);
             return result(true, 'step_done', speak(stepText(index + 1, steps.length, step)));
         }
+        step.fails = (Number.isInteger(step.fails) ? step.fails : 0) + 1;
+        if (step.fails < JOB_RULES.stepRuns) {
+            job.chainAt = iso(); // the step runs once more at the next tick, without the wait
+            setJob(job);
+            return result(false, 'step_again', '');
+        }
         step.state = 'failed';
         setJob(job);
         return await startPlan(job.blocker ?? blockerOf(r) ?? { kind: 'no_item', item: step.check?.item ?? null }, r.text, detached);
@@ -290,6 +314,10 @@ export function createJob(agent, store, options = {}) {
     async function handleResult(entry, value, gain) {
         if (entry.role === 'idle' || entry.role === 'other') {
             return result(true, entry.role, '');
+        }
+        if (entry.role === 'way_out') {
+            const r = resultOf(value);
+            return result(r.ok !== false, r.reason === 'interrupted' ? 'interrupted' : 'way_out', r.text);
         }
         const job = getJob();
         if (!job || job.state !== 'running' || job.started !== entry.started) {
@@ -338,6 +366,10 @@ export function createJob(agent, store, options = {}) {
         }
         if (state.system === mine) {
             state.system = null;
+        }
+        if (role === 'way_out') {
+            const r = resultOf(value); // whether the glue gave its onResult or not: the way out was stopped or not
+            out = result(r.ok !== false, r.reason === 'interrupted' ? 'interrupted' : 'way_out', r.text);
         }
         return out;
     }
@@ -465,7 +497,19 @@ export function createJob(agent, store, options = {}) {
                     const steps = Array.isArray(job.steps) ? job.steps : [];
                     const next = steps.findIndex(step => step.state === 'todo');
                     if (next >= 0) {
-                        return await runSystem(steps[next].command, 'step', job, next);
+                        const command = steps[next].command;
+                        if (needsSurface(command) && call(() => underground(), false)) {
+                            // T3-1: a step that needs the surface runs after the way out of the mine
+                            const orderAt = state.lastOrderAt;
+                            const out = await runSystem(WAY_OUT_COMMAND, 'way_out', job);
+                            const fresh = getJob();
+                            const same = fresh?.state === 'running' && fresh.started === job.started && fresh.steps?.[next]?.state === 'todo'
+                                && fresh.steps[next].command === command;
+                            if (out.reason === 'interrupted' || state.lastOrderAt !== orderAt || !same) {
+                                return result(true, 'way_out', '');
+                            }
+                        }
+                        return await runSystem(command, 'step', job, next);
                     }
                     const text = resumeCommand(job);
                     if (!text) {
@@ -482,6 +526,7 @@ export function createJob(agent, store, options = {}) {
                     return result(true, 'wait', '');
                 }
                 state.lastRun[text] = t;
+                speak(idleStartText(text));
                 return await runSystem(text, 'idle', null);
             } catch (error) {
                 return errorResult('go on with its job', error);

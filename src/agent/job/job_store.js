@@ -30,11 +30,15 @@ function cleanStep(step) {
         return null;
     }
     const check = isPlainObject(step.check) ? step.check : {};
-    return {
+    const out = {
         command: step.command,
         check: { item: typeof check.item === 'string' ? check.item : null, count: isFiniteNumber(check.count) ? check.count : null },
         state: STEP_STATES.includes(step.state) ? step.state : 'todo',
     };
+    if (Number.isInteger(step.fails) && step.fails > 0) {
+        out.fails = step.fails; // the failed runs of the step (T3-1: a failed step is tried once more)
+    }
+    return out;
 }
 
 /**

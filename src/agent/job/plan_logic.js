@@ -28,6 +28,29 @@ export const PLAN_COMMANDS = Object.freeze([
 /** The names of PLAN_COMMANDS. */
 export const PLAN_COMMAND_NAMES = Object.freeze(PLAN_COMMANDS.map(c => c.name));
 
+/**
+ * The steps that need the surface (a tree, a chest or a crafting table, T3-1 of the decisions): an
+ * underground bot leaves the mine before it runs one.
+ */
+export const SURFACE_COMMANDS = Object.freeze(['!chopTrees', '!fetchItem', '!craftSupplies', '!craftRecipe', '!getTool', '!collectBlocks']);
+
+/** The way out of the mine that runs before a surface step underground. */
+export const WAY_OUT_COMMAND = '!leaveMine';
+
+/** At most this many chests, and this many kinds per chest, in the plan prompt. */
+export const PROMPT_CHESTS = 8;
+export const PROMPT_CHEST_KINDS = 12;
+
+/**
+ * True when the command text of a step needs the surface (SURFACE_COMMANDS).
+ * @param {string} command `!fetchItem("oak_log", 8)`
+ * @returns {boolean}
+ */
+export function needsSurface(command) {
+    const name = typeof command === 'string' ? command.trim().match(/^!?(\w+)/)?.[1] : null;
+    return typeof name === 'string' && SURFACE_COMMANDS.includes(`!${name}`);
+}
+
 function isPlainObject(value) {
     return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
@@ -138,27 +161,102 @@ function allowedNames(commands) {
 }
 
 /**
- * The text the model gets for a plan: the job, the blocker (and the text of the failed skill, blocker.text),
- * what the bot carries, the commands it may use, and the format of the answer.
+ * Every missing supply of a blocker (T3-1): the blocker itself, and for a mining job the other supply the
+ * trip needs and the bot does not carry: a pickaxe, torches. Each kind once, the blocker first.
+ * @param {object} job the job record (I1)
+ * @param {{kind: string, item: string|null}} blocker
+ * @param {object|Array} inventory { name: count } or [{ name, count }]
+ * @returns {{kind: string, item: string|null}[]}
+ */
+export function missingSupplies(job, blocker, inventory) {
+    const b = isPlainObject(blocker) ? blocker : {};
+    const out = [{ kind: typeof b.kind === 'string' ? b.kind : 'unknown', item: typeof b.item === 'string' ? b.item : null }];
+    try {
+        if (isPlainObject(job) && job.kind === 'mineOre') {
+            const counts = inventoryCounts(inventory);
+            const has = (test) => Object.entries(counts).some(([name, n]) => n > 0 && test(name));
+            if (!has(name => name.endsWith('_pickaxe'))) {
+                out.push({ kind: 'no_pickaxe', item: 'pickaxe' });
+            }
+            if (!has(name => name === 'torch')) {
+                out.push({ kind: 'no_torches', item: 'torch' });
+            }
+        }
+    } catch {
+        // the blocker alone
+    }
+    return out.filter((m, i) => out.findIndex(o => o.kind === m.kind || (o.item !== null && o.item === m.item)) === i);
+}
+
+function posText(pos) {
+    return `(${Math.floor(pos.x)}, ${Math.floor(pos.y)}, ${Math.floor(pos.z)})`;
+}
+
+// `Where the bot is: underground in the mine "mine". ...` or `on the surface`; null when it is not known.
+function whereText(where) {
+    if (!isPlainObject(where) || typeof where.underground !== 'boolean') {
+        return null;
+    }
+    if (where.underground) {
+        const mine = typeof where.mine?.name === 'string' && where.mine.name.length > 0 ? ` in the mine "${where.mine.name}"` : '';
+        return `Where the bot is: underground${mine}. Before a step that needs a tree, a chest or a crafting table it leaves the mine by itself.`;
+    }
+    const area = typeof where.area?.name === 'string' && where.area.name.length > 0 ? `, in "${where.area.name}"` : '';
+    return `Where the bot is: on the surface${area}.`;
+}
+
+// The lines of the known chests, the nearest first when the position of the bot is given; null when the
+// chests are not known (no reader).
+function chestLines(chests, pos) {
+    if (!Array.isArray(chests)) {
+        return null;
+    }
+    const valid = chests.filter(c => isPlainObject(c) && isFiniteNumber(c.x) && isFiniteNumber(c.y) && isFiniteNumber(c.z));
+    const items = c => Object.entries(isPlainObject(c.items) ? c.items : {}).filter(([, n]) => isFiniteNumber(n) && n > 0);
+    const full = valid.filter(c => items(c).length > 0);
+    if (full.length === 0) {
+        return ['The chests the bot knows: none with items.'];
+    }
+    const here = isPlainObject(pos) && isFiniteNumber(pos.x) && isFiniteNumber(pos.y) && isFiniteNumber(pos.z) ? pos : null;
+    const dist = c => (here ? (c.x - here.x) ** 2 + (c.y - here.y) ** 2 + (c.z - here.z) ** 2 : 0);
+    const shown = [...full].sort((a, b) => dist(a) - dist(b)).slice(0, PROMPT_CHESTS);
+    return ['The chests the bot knows and what they hold:', ...shown.map(c => {
+        const kinds = items(c).sort(([a, n], [b, m]) => m - n || a.localeCompare(b)).slice(0, PROMPT_CHEST_KINDS);
+        return `the chest at ${posText(c)}: ${kinds.map(([name, n]) => `${n} ${name}`).join(', ')}`;
+    })];
+}
+
+/**
+ * The text the model gets for a plan: the job, every missing supply (missingSupplies) and the text of the
+ * failed skill (blocker.text), where the bot is, what the bot carries, the chests it knows and what they
+ * hold, the commands it may use, and the format of the answer. The first line never changes.
  * @param {object} job the job record (I1)
  * @param {{kind: string, item: string|null, text?: string}} blocker
  * @param {object|Array} inventory { name: count } or [{ name, count }]
  * @param {Array} [commands] names or { name, usage, description }; PLAN_COMMANDS without
+ * @param {{where?: {underground: boolean, mine?: object, area?: object}, chests?: object[], pos?: {x, y, z}}} [context]
+ *   where: whereAmI of the agent; chests: the chests of the chest index ({ x, y, z, items }); pos: the bot.
+ *   A part that is not given is left out.
  * @returns {string}
  */
-export function planPrompt(job, blocker, inventory, commands) {
+export function planPrompt(job, blocker, inventory, commands, context = {}) {
     const j = isPlainObject(job) ? job : {};
+    const c = isPlainObject(context) ? context : {};
     const count = isFiniteNumber(j.wanted) ? `, ${isFiniteNumber(j.got) ? j.got : 0} of ${j.wanted} done` : '';
     const b = isPlainObject(blocker) ? blocker : {};
-    const problem = [`${b.kind ?? 'unknown'}${b.item ? ` (${b.item})` : ''}`];
+    const problem = missingSupplies(j, b, inventory).map(m => `${m.kind}${m.item ? ` (${m.item})` : ''}`);
     if (typeof b.text === 'string' && b.text.trim().length > 0) {
         problem.push(`the skill said: "${b.text.trim()}"`);
     }
+    const where = whereText(c.where);
+    const chests = chestLines(c.chests, c.pos);
     return [
         'You plan the steps of a Minecraft bot. Its job stopped because something is missing.',
         `The job: ${j.command ?? resumeCommand(j) ?? 'unknown'}${count}.`,
         `What is missing: ${problem.join(', ')}.`,
+        ...(where ? [where] : []),
         `What the bot carries: ${inventoryText(inventory)}.`,
+        ...(chests ?? []),
         'The commands you may use:',
         ...commandLines(commands),
         `Answer with the steps that get what is missing, one command per line, in the order the bot runs them, at most ${JOB_RULES.maxSteps} lines.`,

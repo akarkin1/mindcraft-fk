@@ -44,12 +44,15 @@ function makeWorld({ handlers = {}, answers = [], settings = {}, hooks = true, s
         inventory: {},
         agent: null,
         job: null,
+        where: { underground: false },
+        chests: null,
     };
     w.agent = {
         sayText: (text) => w.said.push(text),
         actions: { executing: false, currentActionLabel: '' },
         bot: { inventory: { items: () => Object.entries(w.inventory).map(([name, count]) => ({ name, count })) }, time: { timeOfDay: 1000 }, isSleeping: false },
-        whereAmI: () => ({ underground: false }),
+        whereAmI: () => w.where,
+        _workStores: () => ({ chests: w.chests === null ? null : { list: () => w.chests }, mines: null }),
     };
     w.store = store ?? new J.JobStore(null, { now: () => new Date(w.t) });
     w.run = async (text, by) => {
@@ -248,7 +251,7 @@ describe('W86: a blocker becomes steps', () => {
         assert.equal(w.said.at(-1), 'I could not plan the steps for the torches. Tell me what to do.');
     });
 
-    test('a failed step plans again, at most 3 plans per job', async () => {
+    test('a failed step is tried once more, then plans again, at most 3 plans per job', async () => {
         const w = makeWorld({
             answers: ['!chopTrees(4)', '!chopTrees(4)', '!chopTrees(4)', '!chopTrees(4)'],
             handlers: {
@@ -257,7 +260,17 @@ describe('W86: a blocker becomes steps', () => {
             },
         });
         await w.run('!mineOre("iron", 4)', 'Steve');
-        for (let i = 0; i < 5; i++) {
+        w.wait(5);
+        await w.job.tick();
+        assert.equal(w.prompts.length, 1, 'the first failure of the step plans nothing');
+        assert.equal(w.job.get().steps[0].state, 'todo');
+        assert.equal(w.job.get().steps[0].fails, 1);
+        w.wait(5);
+        await w.job.tick(); // no wait of job_resume_seconds for the second run
+        await w.job.settled();
+        assert.deepEqual(w.ran.slice(1).map(r => r.text), ['!chopTrees(4)', '!chopTrees(4)']);
+        assert.equal(w.prompts.length, 2, 'the second failure plans again');
+        for (let i = 0; i < 6; i++) {
             w.wait(5);
             await w.job.tick();
             await w.job.settled();
@@ -304,6 +317,116 @@ describe('W86: a blocker becomes steps', () => {
     });
 });
 
+describe('T3-1: the prompt names the chests, every missing supply and where the bot is; the way out first', () => {
+    const CHEST = { x: 1803, y: 61, z: 4, dimension: 'overworld', kind: 'chest', items: { leaf_litter: 64, oak_log: 20, bread: 12, coal: 9 }, free_slots: 20 };
+    const ROOM = { x: 1810, y: 41, z: 0, dimension: 'overworld', kind: 'chest', items: { cobblestone: 64 }, free_slots: 26 };
+    const NO_PICK = { result: { ok: false, reason: 'pickaxe', text: 'I cannot mine iron. I need a stone pickaxe and have no pickaxe.' } };
+    const STEPS = '!fetchItem("oak_log", 8)\n!fetchItem("coal", 4)\n!craftSupplies("torch", 16)\n!getTool("pickaxe", "stone")';
+
+    function underground(answers = [STEPS], extra = {}) {
+        const w = makeWorld({
+            answers,
+            handlers: {
+                '!mineOre': () => NO_PICK,
+                '!leaveMine': (args, world) => {
+                    world.where = { underground: false, area: null };
+                    return { result: { ok: true, reason: null, text: 'I am out of the mine.' } };
+                },
+                '!fetchItem': (args) => ({ result: { ok: true, reason: null, text: `I took ${args[1]} ${args[0]}.` }, gain: { [args[0]]: args[1] } }),
+                '!craftSupplies': (args) => ({ result: { ok: true, reason: null, text: `I made ${args[1]} ${args[0]}.` }, gain: { [args[0]]: args[1] } }),
+                '!getTool': () => ({ result: { ok: true, reason: null, text: 'I made a stone_pickaxe.' }, gain: { stone_pickaxe: 1 } }),
+                ...extra,
+            },
+        });
+        w.where = { underground: true, depth: 36, area: null, mine: { name: 'mine', tunnel: 0, level: 25 } };
+        w.chests = [CHEST, ROOM];
+        w.inventory = { ladder: 8 };
+        return w;
+    }
+
+    test('the prompt: both missing supplies on one line, where the bot is, the chests and what they hold', async () => {
+        const w = underground();
+        await w.run('!mineOre("iron", 4)', 'Steve');
+        assert.equal(w.prompts.length, 1);
+        const lines = w.prompts[0].split('\n');
+        assert.equal(lines[0], 'You plan the steps of a Minecraft bot. Its job stopped because something is missing.');
+        assert.equal(lines[1], 'The job: !mineOre("iron", 4), 0 of 4 done.');
+        assert.equal(lines[2], 'What is missing: no_pickaxe (stone_pickaxe), no_torches (torch), the skill said: "I cannot mine iron. I need a stone pickaxe and have no pickaxe.".');
+        assert.equal(lines[3], 'Where the bot is: underground in the mine "mine". Before a step that needs a tree, a chest or a crafting table it leaves the mine by itself.');
+        assert.equal(lines[4], 'What the bot carries: 8 ladder.');
+        assert.equal(lines[5], 'The chests the bot knows and what they hold:');
+        assert.ok(lines.includes('the chest at (1803, 61, 4): 64 leaf_litter, 20 oak_log, 12 bread, 9 coal'), w.prompts[0]);
+        assert.ok(lines.includes('the chest at (1810, 41, 0): 64 cobblestone'), w.prompts[0]);
+        assert.equal(lines[8], 'The commands you may use:');
+        assert.equal(w.said.at(-1), 'I have no stone pickaxe. I get wood, coal, torches and a stone pickaxe, then I go on.');
+    });
+
+    test('underground, a surface step runs after !leaveMine as a system order; on the surface no way out', async () => {
+        const w = underground();
+        await w.run('!mineOre("iron", 4)', 'Steve');
+        w.wait(5);
+        await w.job.tick();
+        assert.deepEqual(w.ran.slice(1), [{ text: '!leaveMine', by: 'system' }, { text: '!fetchItem("oak_log", 8)', by: 'system' }]);
+        assert.equal(w.said.at(-1), 'Step 1 of 4 done: 8 oak_log.');
+        for (let i = 0; i < 3; i++) {
+            w.wait(5);
+            await w.job.tick();
+        }
+        assert.deepEqual(w.ran.slice(3).map(r => r.text), ['!fetchItem("coal", 4)', '!craftSupplies("torch", 16)', '!getTool("pickaxe", "stone")']);
+        assert.equal(w.ran.filter(r => r.text === '!leaveMine').length, 1, 'once: the bot is out');
+        assert.equal(w.prompts.length, 1);
+    });
+
+    test('a step that does not need the surface runs underground without the way out', async () => {
+        const w = underground(['!smeltItem("raw_iron", 1)'], { '!smeltItem': () => ({ result: { ok: true, reason: null, text: 'I smelted 1 raw_iron.' } }) });
+        await w.run('!mineOre("iron", 4)', 'Steve');
+        w.wait(5);
+        await w.job.tick();
+        assert.deepEqual(w.ran.slice(1).map(r => r.text), ['!smeltItem("raw_iron", 1)']);
+    });
+
+    test('a way out that is stopped, or an order of the player during it: the step waits', async () => {
+        const w = underground([STEPS], { '!leaveMine': () => ({ result: undefined }) });
+        await w.run('!mineOre("iron", 4)', 'Steve');
+        w.wait(5);
+        assert.equal((await w.job.tick()).reason, 'way_out');
+        assert.deepEqual(w.ran.slice(1).map(r => r.text), ['!leaveMine']);
+        assert.equal(w.job.get().steps[0].state, 'todo');
+        w.handlers['!leaveMine'] = (args, world) => {
+            world.job.onCommand('!goToPlayer', ['Steve'], 'Steve', '!goToPlayer("Steve")');
+            return { result: { ok: true, reason: null, text: 'I am out of the mine.' } };
+        };
+        w.wait(5);
+        assert.equal((await w.job.tick()).reason, 'way_out');
+        assert.equal(w.ran.at(-1).text, '!leaveMine');
+        assert.equal(w.job.get().steps[0].state, 'todo');
+    });
+
+    test('a way out that fails: the step still runs and is tried once more', async () => {
+        const w = underground([STEPS], {
+            '!leaveMine': () => ({ result: { ok: false, reason: 'no_path', text: 'I could not find the way up.' } }),
+            '!fetchItem': () => ({ result: { ok: false, reason: 'no_path', text: 'I could not get to the chest with oak_log at (1803, 61, 4).' } }),
+        });
+        await w.run('!mineOre("iron", 4)', 'Steve');
+        w.wait(5);
+        await w.job.tick();
+        w.wait(5);
+        await w.job.tick();
+        await w.job.settled();
+        assert.deepEqual(w.ran.slice(1).map(r => r.text), ['!leaveMine', '!fetchItem("oak_log", 8)', '!leaveMine', '!fetchItem("oak_log", 8)']);
+        assert.equal(w.prompts.length, 2);
+        assert.match(w.prompts[1], /the skill said: "I could not get to the chest with oak_log at \(1803, 61, 4\)\."/);
+    });
+
+    test('without a chest index and without whereAmI the prompt leaves those lines out', async () => {
+        const w = underground();
+        w.chests = null;
+        w.agent.whereAmI = undefined;
+        await w.run('!mineOre("iron", 4)', 'Steve');
+        assert.ok(!/Where the bot is|chests the bot knows/.test(w.prompts[0]), w.prompts[0]);
+    });
+});
+
 describe('the same failure three times', () => {
     test('pauses the job with the stop text', async () => {
         const w = makeWorld({ handlers: { '!mineOre': () => ({ result: { ok: false, reason: 'no_path', text: 'I found no way there.' } }) } });
@@ -344,7 +467,7 @@ describe('W87: the standing list', () => {
         assert.equal((await w.job.tick()).reason, 'wait');
         assert.deepEqual(w.ran, [{ text: '!farmCycle("farm")', by: 'system' }, { text: '!craftSupplies("torch", 8)', by: 'system' }]);
         assert.equal(w.job.get(), null, 'an entry is no job');
-        assert.equal(w.said.length, 0);
+        assert.deepEqual(w.said, ['I take the next of my list: !farmCycle("farm").', 'I take the next of my list: !craftSupplies("torch", 8).']);
         w.wait(15 * 60);
         await w.job.tick();
         assert.equal(w.ran.length, 3);

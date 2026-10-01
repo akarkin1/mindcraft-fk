@@ -183,6 +183,17 @@ export function noPlanText(blocker) {
 }
 
 /**
+ * `I take the next of my list: !farmCycle("farm").` when an entry of the standing list (idle_jobs) starts
+ * (T3-8 of the decisions); the command text as configured.
+ * @param {string} command
+ * @returns {string}
+ */
+export function idleStartText(command) {
+    const clean = typeof command === 'string' ? command.trim() : '';
+    return `I take the next of my list: ${clean.length > 0 ? clean : 'nothing'}.`;
+}
+
+/**
  * `I have no job.`
  * @returns {string}
  */
