@@ -113,6 +113,17 @@ inventory, a trip without torches in a mine of the player, `!goToMine` not knowi
 "do not dig" refused as a digging request, the item reflex opening the gate of the pen, `!rememberMine`
 texts before any sky step.
 
+## Found by the journey scenarios (black box, the owner's first minutes), 2026-10-01
+
+The gate removal of the ladder step and the journeys: W59, W80 (first minutes) and W82 (come here across
+floors) pass; W81 (first mine) walks down both ladders, through the double door, learns the mine, mines
+4 iron and comes back to the surface, and fails on one check; W83 fails on the torches.
+
+| Id | Defect | Evidence | Decision | Owner |
+|---|---|---|---|---|
+| F31 | **The bot stored its torches in the mine chest** before digging (`torch 16` in the room chest, none placed). `depositAtBase` keeps only the ore. | W81 B3 | `depositAtBase` keeps the supplies of a trip: torches, ladders, pickaxes, food up to 16, fillers up to 32, a chest. A torch is due within the first 8 new blocks when the last torch is 8 or more behind. | B |
+| F32 | **"check the chest", then "make 32 torches"** answered `I need 8 stick and have 6` with 19 logs in the chest it had just looked into: `!viewChest` does not record the chest in the index, and `craftSupplies` neither crafts what it can nor fetches from the chests. The owner saw the same ("why are you gathering oak logs while you have some in the chest"). | W83 | `craftSupplies` crafts what it can, fetches the missing ingredients from the chests it knows, then names what is still missing: `I made 24 torches of 32. I need 2 coal more and know no chest with coal.` `!viewChest` records the chest in the index. | B (wood, storage), G |
+
 ## Not corrected in this release
 
 - A mine named with a number (`"16"`) collides with the key of a mine of the bot at that level.
