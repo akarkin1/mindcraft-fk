@@ -48,6 +48,12 @@ export function holdOnLadder(bot) {
             return false;
         }
         bot.setControlState('sneak', true);
+        // a climb that was let go keeps its upward speed for a few ticks, rises above the top rung where nothing
+        // holds it and falls back 0.3 blocks: the upward speed is dropped, as the path search drops the sideways
+        // speed at a full stop
+        if (bot.entity?.velocity && bot.entity.velocity.y > 0) {
+            bot.entity.velocity.y = 0;
+        }
         return true;
     } catch {
         return false;
