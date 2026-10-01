@@ -308,10 +308,29 @@ Where this text and the spec disagree, this text wins.
 - Tests read no switch from `settings.js` any more: the prompt-size tests and `rtc_collect_sight` pin
   what they measure (the owner's `settings.js` on `main` has every pack on).
 
+## From the journey scenarios (the fix round F31 to F33)
+
+- `packs/mining/mining.js`: `tripKeep(bot, extra)` is the keep plan of `depositAtBase` (torches, ladders,
+  pickaxes all; food up to `TRIP_FOOD_KEEP` 16; fillers up to `TRIP_FILLER_KEEP` 32, cobblestone first; one
+  chest; `extra` adds). `mine_logic.js`: `torchDue(getName, feet, dir, every = 8)` and `TORCH_NAMES`;
+  `digTunnel` places by it with `mine_routes`, every 8 steps without.
+- `packs/wood/tools.js`: `craftSupplies` crafts what the inventory gives, gathers the rest (known chests
+  through `ctx.storage.fetchItem`, then trees), crafts again, up to 6 rounds. Its success text is
+  `I made 32 torches.` for every supply (was `I crafted 9 ladder.`); `count` is what was made.
+  `wood/texts.js`: `madeSuppliesText`, `supplyWords`.
+- `packs/storage/storage.js`: `recordChest(ctx, pos, items, options)` updates the chest index from a list
+  or counts by name; exported from the pack. `!viewChest` parses its own output (`viewedChest(output)` in
+  `commands/actions.js`) and records the chest while the storage pack is on.
+- `library/ladder_pass.js`: `ladderWayTowards(bot, target, { reach, height })` gives the column and the
+  way or null; `ladderStepTowards` uses it. `library/skills.js`: `walkWatchingLadders(bot, makeGoal,
+  target, passes, after)` wraps the path search of `goToPlayer` and `goToPosition`: still in its cell
+  for 3 s with the target 2 or more blocks above or below and a column near, `setGoal(null)`, the ladder
+  step, the path search again; at most 3 passes a minute per call.
+
 ## State of the unit tests
 
 After parts A, B and C: E2 reports `npm test` with 5476 tests, 1 failure (the pack list, corrected by
 the tech lead). After parts D, E and G: E5 reports 5965 tests, 2 failures, both in the tester's files
 against part A (`rt_route_logic` trapdoor leg, `rt_routes_pack` `too_short`). After the tester T1:
 6041 tests, 8 failures (T1-1 to T1-5). After both fix rounds: 6078 tests, 0 failures, 1 skipped
-(Windows only). End-to-end: 17 of 17.
+(Windows only). End-to-end: 17 of 17. After the fix of the follow and the journeys: 6202 tests, 0 failures.

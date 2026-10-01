@@ -70,6 +70,8 @@ The mine is in `bots\claude\worlds\<world>\mines.json`. Delete the entry and rep
 | 11 | Be in the mine at dusk. | The bot stays. No walk to the shelter. |
 | 12 | Say **"write code to dig a tunnel to the east"**. | `I do not write code for digging. I have skills for it: ...` No code is written. |
 | 13 | Once a tunnel is 32 blocks long, ask for ore again. | It digs branches of 8 blocks to the left and the right, every 4 blocks. |
+| 13a | Stand at a chest with logs and coal, say **"check the chest"**, then **"make 32 torches"**. | It names the items of the chest, takes what it needs from it and says `I made 32 torches.` or what is still missing: `I made 28 torches of 32. I need 1 coal more and know no chest with coal.` |
+| 13b | After a trip, look into the chest of the mine. | No torches, ladders or pickaxes in it: the bot keeps its supplies. The new part of the tunnel has a torch. |
 
 ## 5. The way to your bed
 

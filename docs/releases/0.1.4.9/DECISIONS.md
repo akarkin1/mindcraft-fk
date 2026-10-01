@@ -117,12 +117,14 @@ texts before any sky step.
 
 The gate removal of the ladder step and the journeys: W59, W80 (first minutes) and W82 (come here across
 floors) pass; W81 (first mine) walks down both ladders, through the double door, learns the mine, mines
-4 iron and comes back to the surface, and fails on one check; W83 fails on the torches.
+4 iron and comes back to the surface, and fails on one check; W83 fails on the torches; W84 (ten minutes) fails on
+the same torch check and on the last "come here".
 
 | Id | Defect | Evidence | Decision | Owner |
 |---|---|---|---|---|
 | F31 | **The bot stored its torches in the mine chest** before digging (`torch 16` in the room chest, none placed). `depositAtBase` keeps only the ore. | W81 B3 | `depositAtBase` keeps the supplies of a trip: torches, ladders, pickaxes, food up to 16, fillers up to 32, a chest. A torch is due within the first 8 new blocks when the last torch is 8 or more behind. | B |
 | F32 | **"check the chest", then "make 32 torches"** answered `I need 8 stick and have 6` with 19 logs in the chest it had just looked into: `!viewChest` does not record the chest in the index, and `craftSupplies` neither crafts what it can nor fetches from the chests. The owner saw the same ("why are you gathering oak logs while you have some in the chest"). | W83 | `craftSupplies` crafts what it can, fetches the missing ingredients from the chests it knows, then names what is still missing: `I made 24 torches of 32. I need 2 coal more and know no chest with coal.` `!viewChest` records the chest in the index. | B (wood, storage), G |
+| F33 | **"come here" from the mine room after sleeping left the bot standing on the trapdoor** for 20 s until the reflex unstuck stopped the command: the bed is 7 blocks from the ladder, so no ladder step came before the path search; the path search planned through the closed trapdoor, walked the bot to the top and held it there; the ladder step after the path search never came. | W84 D | The walk of `goToPlayer` and `goToPosition` watches the bot as `followPlayer` does: still in its cell for 3 s, the target 2 or more blocks above or below, a column near, then the path search is stopped for the ladder step and started again. | lead |
 
 ## Not corrected in this release
 
