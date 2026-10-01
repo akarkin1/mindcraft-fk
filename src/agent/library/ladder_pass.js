@@ -127,6 +127,27 @@ function feetOf(bot) {
     return p ? { x: Math.floor(p.x), y: Math.floor(p.y + 0.01), z: Math.floor(p.z) } : null;
 }
 
+/**
+ * F36 of the journeys (the hand-over): a bot in the air on a ladder holds on with sneak, so that it does not slide
+ * between the order that stopped its climb and the next one (the physics stops a sneaking bot on a ladder; the
+ * next pass or walk clears the controls as it starts). The same as holdOnLadder of the mining pack, for agent.js,
+ * whose stop of the path search clears every control. True when it holds. Never throws.
+ * @param {object} bot
+ * @returns {boolean}
+ */
+export function holdOnLadder(bot) {
+    try {
+        const c = feetOf(bot);
+        if (!c || bot.entity?.onGround === true || bot.blockAt(new Vec3(c.x, c.y, c.z))?.name !== 'ladder') {
+            return false;
+        }
+        bot.setControlState('sneak', true);
+        return true;
+    } catch {
+        return false;
+    }
+}
+
 function eyeDistance(bot, cell) {
     const p = botPos(bot);
     return p ? Math.hypot(cell.x + 0.5 - p.x, cell.y + 0.5 - (p.y + 1.62), cell.z + 0.5 - p.z) : Infinity;

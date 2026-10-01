@@ -346,6 +346,27 @@ describe('the fixes of W75', () => {
         }
     });
 
+    test('F36: requestInterrupt of the agent holds on the ladder after it ends the path search (source text)', async () => {
+        const { readFileSync } = await import('node:fs');
+        const source = readFileSync(new URL('../../src/agent/agent.js', import.meta.url), 'utf8');
+        assert.match(source, /import \{ holdOnLadder \} from '\.\/library\/ladder_pass\.js';/);
+        const i = source.indexOf('this.bot.pathfinder.setGoal(null);');
+        const j = source.indexOf('holdOnLadder(this.bot);');
+        assert.ok(i > 0 && j > i && j - i < 200, 'holdOnLadder right after setGoal(null) of requestInterrupt');
+        const P = await loadSrc('src/agent/library/ladder_pass.js');
+        const s = scene({ pos: [2.5, 56, -1.5] });
+        try {
+            s.bot.entity.onGround = false;
+            assert.equal(P.holdOnLadder(s.bot), true);
+            assert.equal(s.bot.controls.sneak, true);
+            s.bot.entity.position = v(5.5, 61, -0.5);
+            s.bot.entity.onGround = true;
+            assert.equal(P.holdOnLadder(s.bot), false, 'not on a ladder');
+        } finally {
+            s.stop();
+        }
+    });
+
     test('F36: an order that interrupts the climb: the bot holds on the ladder with sneak instead of sliding', { timeout: 30000 }, async () => {
         agentSettings.setSettings({ routes_pack: true });
         const s = scene({ pos: [2.5, 53, -1.5], player: [2.5, 61, 2.5] }); // the bot at the foot, the player up in the house
