@@ -131,6 +131,7 @@ the same torch check and on the last "come here".
 | F32c | **"make 32 torches" made 12**: every call of `bot.craft` with a count over 1 crafted once and threw `missing ingredient` on its second craft (the slots of the inventory are stale right after a craft). | W83, run 4 | One craft per call, the inventory settled between them. | lead |
 | F36 | **"come here" said while the bot climbs after the player made it slide 0.3 blocks** (the hand-over): the interrupted pass released the controls and the next order took the ladder a moment later. | W80 A4, runs 2 to 4 | A pass or a route leg that is interrupted while the bot hangs on a ladder holds on with sneak (the physics stops a sneaking bot on a ladder); the next pass or walk clears the controls as it starts. | lead |
 | F37 | **The way out of the mine failed at the second ladder** (W84 B3, runs 2 and 4; W81 passed): the door service closed the door of the room while the bot climbed the ladder beside it; the click turned its look away from the wall, the bot stepped out of the column and fell, and the climb gave up after 3 s. | W84 B3 | The door service does not click while the feet of the bot are in a ladder, a vine or an open trapdoor cell. | lead |
+| F38 | **"come here" answered `Could not find w_player.` at once** when the player had just moved to another floor and their entity was not loaded for a moment. | W82, run 5 | `goToPlayer` waits up to 2 s for the entity of the player before it gives up. | lead |
 
 ## Not corrected in this release
 

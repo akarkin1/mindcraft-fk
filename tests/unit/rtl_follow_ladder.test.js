@@ -322,6 +322,30 @@ describe('the fixes of W75', () => {
         }
     });
 
+    test('F38: the entity of the player appears 500 ms after the order: goToPlayer waits for it; none within 2 s: "Could not find"', { timeout: 30000 }, async () => {
+        agentSettings.setSettings({ routes_pack: false });
+        const s = scene({ pos: [2.5, 61, -0.5], player: [4.5, 61, -0.5] });
+        stubFollowGoto(s.bot);
+        const entity = s.bot.players[PLAYER].entity;
+        s.bot.players[PLAYER].entity = null;
+        setTimeout(() => { s.bot.players[PLAYER].entity = entity; }, 500);
+        try {
+            const t = Date.now();
+            await skills.goToPlayer(s.bot, PLAYER, 3);
+            assert.ok(Date.now() - t >= 450, 'waited for the entity');
+            assert.ok(s.bot.output.includes(`You have reached ${PLAYER}.`), s.bot.output);
+            assert.ok(!s.bot.output.includes('Could not find'), s.bot.output);
+            s.bot.players[PLAYER].entity = null;
+            s.bot.output = '';
+            const t2 = Date.now();
+            assert.equal(await skills.goToPlayer(s.bot, PLAYER, 3), false);
+            assert.ok(Date.now() - t2 >= 1900 && Date.now() - t2 < 4000, `gave up after ${Date.now() - t2} ms`);
+            assert.ok(s.bot.output.includes(`Could not find ${PLAYER}.`), s.bot.output);
+        } finally {
+            s.stop();
+        }
+    });
+
     test('F36: an order that interrupts the climb: the bot holds on the ladder with sneak instead of sliding', { timeout: 30000 }, async () => {
         agentSettings.setSettings({ routes_pack: true });
         const s = scene({ pos: [2.5, 53, -1.5], player: [2.5, 61, 2.5] }); // the bot at the foot, the player up in the house

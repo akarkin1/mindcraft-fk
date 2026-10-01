@@ -2149,6 +2149,18 @@ async function walkWatchingLadders(bot, makeGoal, target, passes, after = null) 
 }
 
 
+const PLAYER_WAIT_MS = 2000; // F38: how long goToPlayer waits for the entity of the player
+
+async function playerEntity(bot, username, waitMs) {
+    const end = Date.now() + waitMs;
+    for (;;) {
+        const entity = bot.players?.[username]?.entity ?? null;
+        if (entity || bot.interrupt_code || Date.now() >= end)
+            return entity;
+        await new Promise(resolve => setTimeout(resolve, 100));
+    }
+}
+
 export async function goToPlayer(bot, username, distance=3) {
     /**
      * Navigate to the given player.
@@ -2171,7 +2183,9 @@ export async function goToPlayer(bot, username, distance=3) {
 
     bot.modes.pause('self_defense');
     bot.modes.pause('cowardice');
-    let player = bot.players[username].entity
+    // F38 of the journeys (W82): right after the player moved between floors their entity was not loaded for a
+    // moment and "come here" answered "Could not find" at once. The entity is awaited for up to 2 s.
+    let player = await playerEntity(bot, username, PLAYER_WAIT_MS);
     if (!player) {
         log(bot, `Could not find ${username}.`);
         return false;
