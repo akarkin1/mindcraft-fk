@@ -80,6 +80,25 @@ describe('ladderColumnAt', () => {
     });
 });
 
+describe('ladderColumnAt: the fixes of W75', () => {
+    test('L3: in the column half way down, or beside it at the height of the feet: that column, whatever its ends', () => {
+        assert.deepEqual(L.ladderColumnAt(shaft(), { x: 2.5, y: 48, z: -1.5 }), COLUMN, 'the feet cell is a ladder');
+        assert.deepEqual(L.ladderColumnAt(shaft(), { x: 2.5, y: 46.4, z: -1.5 }), COLUMN);
+        const open = (x, y, z) => (x === 2 && z === -1 && y >= 41 && y <= 59 ? 'air' : shaft()(x, y, z));
+        assert.deepEqual(L.ladderColumnAt(open, { x: 2.5, y: 50, z: -0.5 }), COLUMN, 'a neighbour of the feet cell is a ladder');
+        assert.equal(L.ladderColumnAt(shaft(), { x: 3.5, y: 50, z: -0.5 }), null, 'diagonal at mid height: no');
+    });
+
+    test('L1: a reach of 6 blocks horizontally with a height of 2 (followPlayer, goToPlayer)', () => {
+        const house = { x: 5.5, y: 61, z: -0.5 }; // 3 blocks beside the column, in the house
+        assert.equal(L.ladderColumnAt(shaft(), house), null, 'the default reach of 2');
+        assert.deepEqual(L.ladderColumnAt(shaft(), house, { reach: L.LADDER_RULES.followReach, height: L.LADDER_RULES.reach }), COLUMN);
+        assert.equal(L.ladderColumnAt(shaft(), { x: 9.5, y: 61, z: -1.5 }, { reach: 6, height: 2 }), null, '7 blocks beside');
+        assert.equal(L.ladderColumnAt(shaft(), { x: 5.5, y: 64, z: -0.5 }, { reach: 6, height: 2 }), null, '5 above the top');
+        assert.equal(L.LADDER_RULES.followReach, 6);
+    });
+});
+
 describe('ladderWay', () => {
     const feetTop = { x: 2.5, y: 61, z: -0.5 };
     test('down: the player 2 or more below and within 3 blocks of the column', () => {

@@ -5,8 +5,7 @@ import Vec3 from 'vec3';
 import settings from "../../../settings.js";
 import agentSettings from "../settings.js";
 import { isOreName, oreInSight, oreKind, outOfSightText, sightRange, SIGHT_TEXT_DISTANCE } from "./ore_sight_logic.js";
-import { heightWay, ladderPlace, ladderWay } from "./ladder_logic.js";
-import { columnNear, passLadder } from "./ladder_pass.js";
+import { ladderStepTowards } from "./ladder_pass.js";
 import { findOpenables, openDoor, passThrough } from "../packs/home/doors.js";
 import { sideOf } from "../packs/home/door_logic.js";
 import { acquireEatLock } from "../packs/home/eat_lock.js";
@@ -1958,9 +1957,34 @@ export async function goToPosition(bot, x, y, z, min_distance=2) {
     };
     
     const progressInterval = setInterval(checkDigProgress, 1000);
-    
+
     try {
-        await goToGoal(bot, new pf.goals.GoalNear(x, y, z, min_distance));
+        if (!ladderStepOn()) {
+            await goToGoal(bot, new pf.goals.GoalNear(x, y, z, min_distance));
+        }
+        else {
+            // v0.1.4.9 (L4 of the play test, "no idea about up and down"): the ladder step before the path search,
+            // and again when the path search ends with the goal still 2 or more blocks above or below; then the
+            // path search once more. The texts stay those of v0.1.4.8.
+            const passes = [];
+            if (bot.entity.position.distanceTo(target) > min_distance + 1)
+                await ladderTowards(bot, target, passes);
+            let failure = null;
+            if (!bot.interrupt_code) {
+                try {
+                    await goToGoal(bot, new pf.goals.GoalNear(x, y, z, min_distance));
+                } catch (err) {
+                    failure = err;
+                }
+            }
+            if (!bot.interrupt_code && ladderGap(bot, target) >= LADDER_GAP && bot.entity.position.distanceTo(target) > min_distance + 1
+                && (await ladderTowards(bot, target, passes)).tried && !bot.interrupt_code) {
+                failure = null;
+                await goToGoal(bot, new pf.goals.GoalNear(x, y, z, min_distance));
+            }
+            if (failure)
+                throw failure;
+        }
         clearInterval(progressInterval);
         // v0.1.4.8 (B3, P5): the text names where the bot is, not the goal again
         const distance = bot.entity.position.distanceTo(target);
@@ -2044,28 +2068,37 @@ export async function goToNearestEntity(bot, entityType, min_distance=2, range=6
     return true;
 }
 
-// v0.1.4.9 (section 13, part L, F14 of the play test): the path search climbs a ladder but never descends
-// one, and it stops in the cell of an open trapdoor above a ladder. With routes_pack, followPlayer and
-// goToPlayer go down or up a column of ladders near the bot with passLadder (ladder_pass.js, the ladder
-// walking of the mining pack), then the path search goes on. With the switch off nothing changes.
-const LADDER_PASSES_PER_MINUTE = 3;
-const LADDER_PASS_WINDOW_MS = 60000;
+// v0.1.4.9 (section 13, part L, F14 of the play test; fixes of W75 and L4): the path search climbs a ladder
+// but never descends one, and it stops in the cell of an open trapdoor above a ladder. With routes_pack,
+// goToPosition, goToPlayer and followPlayer go down or up a column of ladders within 6 blocks with
+// ladderStepTowards (ladder_pass.js, the ladder walking of the mining pack): before the path search and when it
+// ends with the target still 2 or more blocks above or below; followPlayer when it stands still. At most 3 passes
+// a minute per call. With the switch off nothing changes.
+const LADDER_GAP = 2; // blocks of height between the feet of the bot and the target
 
 function ladderStepOn() {
     return currentSetting('routes_pack') === true;
 }
 
-// One pass, with the log line before it; the progress for the mode unstuck after it. Never throws.
-async function ladderStep(bot, column, way, username) {
-    const place = ladderPlace(column);
-    log(bot, way === 'down' ? `I go down the ladder at ${place} after ${username}.` : `I climb up the ladder at ${place} after ${username}.`);
-    const pass = await passLadder(bot, column, way);
+function ladderGap(bot, target) {
     try {
-        bot.modes?.noteProgress?.('ladder');
+        return Math.abs(target.y - bot.entity.position.y);
     } catch (err) {
-        // modes are optional
+        return 0;
     }
-    return pass;
+}
+
+function feetCellOf(bot) {
+    const p = bot.entity.position;
+    return { x: Math.floor(p.x), y: Math.floor(p.y), z: Math.floor(p.z) };
+}
+
+// The ladder step of goToPosition and goToPlayer: the text of a pass that failed goes to the log. Never throws.
+async function ladderTowards(bot, target, passes, after = null) {
+    const step = await ladderStepTowards(bot, target, { after, passes, log: (text) => log(bot, text) });
+    if (step.tried && !step.ok && step.reason !== 'interrupted')
+        log(bot, step.text);
+    return step;
 }
 
 export async function goToPlayer(bot, username, distance=3) {
@@ -2096,28 +2129,45 @@ export async function goToPlayer(bot, username, distance=3) {
         return false;
     }
 
-    // v0.1.4.9 (section 13, F14): with routes_pack, a player 2 or more blocks below or above and a column of
-    // ladders within reach: down or up the ladder first, then the path search as before
-    if (ladderStepOn()) {
-        const column = columnNear(bot);
-        const way = heightWay(column, bot.entity.position, player.position);
-        if (way) {
-            const pass = await ladderStep(bot, column, way, username);
-            if (!pass.ok && pass.reason !== 'interrupted')
-                log(bot, pass.text);
-            if (bot.interrupt_code)
-                return;
-        }
-    }
-
     distance = Math.max(distance, 0.5);
     const goal = new pf.goals.GoalFollow(player, distance);
 
-    await goToGoal(bot, goal, true);
+    if (!ladderStepOn()) {
+        await goToGoal(bot, goal, true);
+    }
+    else {
+        // v0.1.4.9 (section 13, F14; W75, L1): the ladder step before the path search, and again when the path
+        // search ends with the player still 2 or more blocks above or below, then the path search once more
+        const passes = [];
+        await ladderTowards(bot, player.position, passes, username);
+        if (bot.interrupt_code)
+            return;
+        let failure = null;
+        try {
+            await goToGoal(bot, goal, true);
+        } catch (err) {
+            failure = err;
+        }
+        if (!bot.interrupt_code && ladderGap(bot, player.position) >= LADDER_GAP
+            && (await ladderTowards(bot, player.position, passes, username)).tried) {
+            if (bot.interrupt_code)
+                return;
+            failure = null;
+            await goToGoal(bot, goal, true);
+        }
+        if (failure)
+            throw failure;
+        if (bot.interrupt_code)
+            return;
+    }
 
-    log(bot, `You have reached ${username}.`);
+    // W75, L1: "reached" only within the asked distance, measured as the goal of the path search measures it
+    const near = bot.entity.position.floored().distanceTo(player.position.floored());
+    if (near <= distance)
+        log(bot, `You have reached ${username}.`);
+    else
+        log(bot, `I stopped at ${positionText(bot)}, ${Math.round(bot.entity.position.distanceTo(player.position))} blocks from ${username}.`);
 }
-
 
 export async function followPlayer(bot, username, distance=4) {
     /**
@@ -2145,9 +2195,12 @@ export async function followPlayer(bot, username, distance=4) {
     let stuck_since = Date.now();
     let door_helps = 0;
     // v0.1.4.9 (section 13, F14): the ladder step, with routes_pack. Its own clock of standing still: the one
-    // of the doors restarts near the player, and a player 5 blocks down the ladder is near
+    // of the doors restarts near the player. W75, L2: the clock looks at the cell of the feet (x and z) and at the
+    // progress towards the height of the player, so that bobbing under a closed trapdoor counts as standing still;
+    // a player 2 or more blocks above or below with a column within 6 blocks is the trigger, at any distance.
     const ladders = ladderStepOn();
-    let still_pos = bot.entity.position.clone();
+    let still_cell = feetCellOf(bot);
+    let still_gap = ladderGap(bot, player.position);
     let still_since = Date.now();
     const ladder_passes = []; // the times of the passes of the last minute
     const ladder_failures = new Set(); // the texts of failed passes, each written once
@@ -2158,31 +2211,32 @@ export async function followPlayer(bot, username, distance=4) {
         const distance_from_player = bot.entity.position.distanceTo(player.position);
 
         if (ladders) {
-            if (bot.entity.position.distanceTo(still_pos) >= 0.1) {
-                still_pos = bot.entity.position.clone();
+            const cell = feetCellOf(bot);
+            const gap = ladderGap(bot, player.position);
+            // still_gap is the smallest height difference since the clock started: bobbing does not beat it
+            if (cell.x !== still_cell.x || cell.z !== still_cell.z || gap < still_gap - 0.5) {
+                still_cell = cell;
+                still_gap = gap;
                 still_since = Date.now();
             }
-            while (ladder_passes.length > 0 && Date.now() - ladder_passes[0] >= LADDER_PASS_WINDOW_MS)
-                ladder_passes.shift();
             const idle = Date.now() - still_since >= 3000 || !bot.pathfinder.goal;
-            if (idle && distance_from_player > distance && ladder_passes.length < LADDER_PASSES_PER_MINUTE) {
-                const column = columnNear(bot);
-                const way = ladderWay(column, bot.entity.position, player.position);
-                if (way) {
-                    ladder_passes.push(Date.now());
-                    bot.pathfinder.setGoal(null);
-                    const pass = await ladderStep(bot, column, way, username);
-                    if (bot.interrupt_code)
-                        break;
-                    if (!pass.ok && !ladder_failures.has(pass.text)) {
-                        ladder_failures.add(pass.text);
-                        log(bot, pass.text);
+            if (idle && gap >= LADDER_GAP) {
+                // the path search is stopped only when a pass begins
+                const step = await ladderStepTowards(bot, player.position, { after: username, passes: ladder_passes,
+                    log: (text) => log(bot, text), onPass: () => bot.pathfinder.setGoal(null) });
+                if (bot.interrupt_code)
+                    break;
+                if (step.tried) {
+                    if (!step.ok && !ladder_failures.has(step.text)) {
+                        ladder_failures.add(step.text);
+                        log(bot, step.text);
                     }
                     bot.pathfinder.setMovements(move);
                     bot.pathfinder.setGoal(new pf.goals.GoalFollow(player, distance), true);
-                    still_pos = bot.entity.position.clone();
+                    still_cell = feetCellOf(bot);
+                    still_gap = ladderGap(bot, player.position);
                     still_since = Date.now();
-                    stuck_pos = still_pos.clone();
+                    stuck_pos = bot.entity.position.clone();
                     stuck_since = still_since;
                     continue;
                 }

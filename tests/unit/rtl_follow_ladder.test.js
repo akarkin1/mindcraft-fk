@@ -21,11 +21,11 @@ const fileSettings = (await loadSrc('settings.js')).default;
 const PLAYER = 'MartyByrde2';
 const DOWN_TEXT = `I go down the ladder at (2, 60, -2) after ${PLAYER}.`;
 
-function scene({ pos = [2.5, 61, -0.5], player = [2.5, 53, -0.5] } = {}) {
+function scene({ pos = [2.5, 61, -0.5], player = [2.5, 53, -0.5], low = 53 } = {}) {
     const world = makeWorld({ groundY: 60 });
-    world.fill(0, 53, -2, 4, 55, 2, 'air');
-    world.fill(2, 56, -2, 2, 59, -2, 'air');
-    world.fill(2, 53, -2, 2, 59, -2, 'ladder', { facing: 'south' });
+    world.fill(0, low, -2, 4, low + 2, 2, 'air');
+    world.fill(2, low + 3, -2, 2, 59, -2, 'air');
+    world.fill(2, low, -2, 2, 59, -2, 'ladder', { facing: 'south' });
     world.set(2, 60, -2, 'oak_trapdoor', { facing: 'south', half: 'top', open: false });
     const solid = world.solid;
     world.solid = (x, y, z) => (world.nameAt(x, y, z).endsWith('_trapdoor') && world.propsAt(x, y, z).open === true ? false : solid(x, y, z));
@@ -52,6 +52,13 @@ function scene({ pos = [2.5, 61, -0.5], player = [2.5, 53, -0.5] } = {}) {
     const timer = setInterval(() => tick(bot), 50);
     const feet = () => ({ x: Math.floor(bot.entity.position.x), y: Math.floor(bot.entity.position.y + 0.01), z: Math.floor(bot.entity.position.z) });
     return { world, bot, feet, stop: () => clearInterval(timer) };
+}
+
+// The path search of the fake for the goal of the follow (GoalFollow): `fn`; other goals (the walks of the
+// ladder pass to a cell) as the fake does them.
+function stubFollowGoto(bot, fn = async () => {}) {
+    const goto = bot.pathfinder.goto.bind(bot.pathfinder);
+    bot.pathfinder.goto = async (goal, ...rest) => (goal?.constructor?.name === 'GoalFollow' ? fn(goal) : goto(goal, ...rest));
 }
 
 async function until(check, ms) {
@@ -158,7 +165,7 @@ describe('goToPlayer with routes_pack on', () => {
         agentSettings.setSettings({ routes_pack: true });
         const s = scene();
         let pathSearch = 0;
-        s.bot.pathfinder.goto = async () => { pathSearch++; };
+        stubFollowGoto(s.bot, async () => { pathSearch++; });
         try {
             await skills.goToPlayer(s.bot, PLAYER, 3);
             assert.deepEqual(s.feet(), { x: 2, y: 53, z: -2 });
@@ -174,11 +181,116 @@ describe('goToPlayer with routes_pack on', () => {
     test('the switch off: no pass', { timeout: 30000 }, async () => {
         agentSettings.setSettings({ routes_pack: false });
         const s = scene();
-        s.bot.pathfinder.goto = async () => {};
+        stubFollowGoto(s.bot);
         try {
             await skills.goToPlayer(s.bot, PLAYER, 3);
             assert.deepEqual(s.bot.clicks, []);
             assert.equal(s.feet().y, 61);
+            assert.ok(!s.bot.output.includes('ladder'), s.bot.output);
+        } finally {
+            s.stop();
+        }
+    });
+});
+
+describe('the fixes of W75', () => {
+    test('L2: up under the closed trapdoor with the player waiting beside it (nearer than the follow distance), bobbing between two cells', { timeout: 30000 }, async () => {
+        agentSettings.setSettings({ routes_pack: true });
+        const s = scene({ pos: [2.5, 58, -1.5], player: [2.5, 61, -0.5] }); // 3.2 blocks apart, follow distance 4
+        let up = true;
+        const bob = setInterval(() => { // the bot under the trapdoor goes up and down between y 58 and 59
+            if (s.bot.goals.includes(null)) return;
+            s.bot.entity.position.y = up ? 59.1 : 58.3;
+            s.bot.entity.velocity.y = 0;
+            up = !up;
+        }, 120);
+        try {
+            const run = skills.followPlayer(s.bot, PLAYER, 4);
+            const out = await until(() => s.feet().y >= 61 && s.bot.goals.length >= 3, 20000);
+            s.bot.interrupt_code = true;
+            await run;
+            assert.ok(out, `feet ${JSON.stringify(s.feet())}, goals ${JSON.stringify(s.bot.goals)}, output ${s.bot.output}`);
+            // one pass: the goal dropped (and dropped again by climbUp of the mining pack at its end), then set again
+            const g = s.bot.goals;
+            assert.ok(g[0] === 'GoalFollow' && g.at(-1) === 'GoalFollow' && g.slice(1, -1).length >= 1 && g.slice(1, -1).every((x) => x === null),
+                `${JSON.stringify(g)} ${s.bot.output}`);
+            assert.deepEqual(s.bot.clicks, [{ x: 2, y: 60, z: -2, sneak: false }]);
+            assert.ok(s.bot.output.includes(`I climb up the ladder at (2, 60, -2) after ${PLAYER}.`), s.bot.output);
+        } finally {
+            clearInterval(bob);
+            s.bot.interrupt_code = true;
+            s.stop();
+        }
+    });
+
+    test('L1: goToPlayer from inside the house, 3 blocks beside the column: down the ladder first, then "You have reached"', { timeout: 30000 }, async () => {
+        agentSettings.setSettings({ routes_pack: true });
+        const s = scene({ pos: [5.5, 61, -0.5] });
+        stubFollowGoto(s.bot);
+        try {
+            await skills.goToPlayer(s.bot, PLAYER, 2);
+            assert.deepEqual(s.feet(), { x: 2, y: 53, z: -2 });
+            assert.deepEqual(s.bot.output.trim().split('\n').filter((l) => !l.startsWith('Found ')), [DOWN_TEXT, `You have reached ${PLAYER}.`]);
+        } finally {
+            s.stop();
+        }
+    });
+
+    test('L1: the path search ends with the player still 8 below: the pass then, and the path search once more', { timeout: 30000 }, async () => {
+        agentSettings.setSettings({ routes_pack: true });
+        const s = scene({ pos: [12.5, 61, -0.5] }); // 10 blocks from the column: no pass before the path search
+        let searches = 0;
+        stubFollowGoto(s.bot, async () => {
+            searches++;
+            if (searches === 1) s.bot.entity.position = v(3.5, 61, -0.5); // it stops on the floor beside the trapdoor
+        });
+        try {
+            await skills.goToPlayer(s.bot, PLAYER, 2);
+            assert.equal(searches, 2);
+            assert.deepEqual(s.feet(), { x: 2, y: 53, z: -2 });
+            assert.deepEqual(s.bot.output.trim().split('\n').filter((l) => !l.startsWith('Found ')), [DOWN_TEXT, `You have reached ${PLAYER}.`]);
+        } finally {
+            s.stop();
+        }
+    });
+
+    test('L1: not arrived: "I stopped at (x, y, z), N blocks from <name>." instead of "You have reached" (also with the switch off)', { timeout: 30000 }, async () => {
+        agentSettings.setSettings({ routes_pack: false });
+        const s = scene({ pos: [2.5, 61, -0.5] });
+        stubFollowGoto(s.bot);
+        try {
+            await skills.goToPlayer(s.bot, PLAYER, 2);
+            assert.equal(s.bot.output.trim().split('\n').at(-1), `I stopped at (2, 61, -1), 8 blocks from ${PLAYER}.`);
+            assert.ok(!s.bot.output.includes('You have reached'), s.bot.output);
+        } finally {
+            s.stop();
+        }
+    });
+});
+
+describe('goToPosition (L4 of the play test: "no idea about up and down")', () => {
+    test('to a point 18 blocks below, from the house through the closed trapdoor: one pass, then the path search arrives', { timeout: 40000 }, async () => {
+        agentSettings.setSettings({ routes_pack: true });
+        const s = scene({ pos: [5.5, 61, -0.5], low: 41 });
+        try {
+            assert.equal(await skills.goToPosition(s.bot, 2, 41, 0, 1), true);
+            const lines = s.bot.output.trim().split('\n');
+            assert.equal(lines.filter((l) => l.startsWith('I go down the ladder')).length, 1, lines.join(' | '));
+            assert.equal(lines[0], 'I go down the ladder at (2, 60, -2) to (2, 41, 0).');
+            assert.equal(lines.at(-1), `You have reached ${`(${Math.floor(s.bot.entity.position.x)}, 41, ${Math.floor(s.bot.entity.position.z)})`}.`);
+            assert.deepEqual(s.bot.clicks, [{ x: 2, y: 60, z: -2, sneak: false }]);
+            assert.equal(s.feet().y, 41);
+        } finally {
+            s.stop();
+        }
+    });
+
+    test('the switch off: no pass, the texts of v0.1.4.8', { timeout: 30000 }, async () => {
+        agentSettings.setSettings({ routes_pack: false });
+        const s = scene({ pos: [5.5, 61, -0.5], low: 41 });
+        try {
+            await skills.goToPosition(s.bot, 2, 41, 0, 1);
+            assert.deepEqual(s.bot.clicks, []);
             assert.ok(!s.bot.output.includes('ladder'), s.bot.output);
         } finally {
             s.stop();

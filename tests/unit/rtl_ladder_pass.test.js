@@ -88,6 +88,27 @@ describe('passLadder: down', () => {
     });
 });
 
+describe('passLadder from inside the column (W75, L3)', () => {
+    test('half way down under a closed trapdoor: the slide starts where the bot is, no click', async () => {
+        const s = scene([2.5, 48, -1.5]);
+        s.bot.controls.sneak = true; // what held the bot on the ladder is released first
+        const r = await P.passLadder(s.bot, P.columnNear(s.bot), 'down', { clock: s.clock });
+        assert.deepEqual(r, { ok: true, reason: null, text: 'I went down the ladder at (2, 60, -2).' });
+        assert.deepEqual(s.bot.clicks, []);
+        assert.deepEqual(s.feet(), { x: 2, y: 41, z: -2 });
+        assert.equal(s.bot.calls.filter((c) => c[0] === 'goto').length, 0, 'no walk out of the column');
+    });
+
+    test('half way up under a closed trapdoor: the climb starts where the bot is, the trapdoor opened from below', async () => {
+        const s = scene([2.5, 50, -1.5]);
+        s.bot.controls.sneak = true;
+        const r = await P.passLadder(s.bot, P.columnNear(s.bot), 'up', { clock: s.clock });
+        assert.equal(r.ok, true, JSON.stringify(r));
+        assert.deepEqual(s.bot.clicks, [{ x: 2, y: 60, z: -2, sneak: false }]);
+        assert.ok(s.feet().y >= 61, JSON.stringify(s.feet()));
+    });
+});
+
 describe('passLadder: up', () => {
     test('from the foot through the closed trapdoor: into the column, one click without sneak from below, out at the top', async () => {
         const s = scene([2.5, 41, -0.5]);
@@ -103,6 +124,38 @@ describe('passLadder: up', () => {
         const r = await P.passLadder(s.bot, COLUMN, 'up', { clock: s.clock });
         assert.equal(r.ok, false);
         assert.match(r.text, /^I could not climb up the ladder at \(2, 60, -2\): /);
+    });
+});
+
+describe('ladderStepTowards (L4)', () => {
+    test('a point 20 below, the column 3 blocks away: the log line with "to", one pass, the progress for unstuck', async () => {
+        const s = scene([5.5, 61, -0.5]);
+        const lines = [];
+        const progress = [];
+        s.bot.modes = { noteProgress: (why) => progress.push(why) };
+        const passes = [];
+        const r = await P.ladderStepTowards(s.bot, { x: 2, y: 41, z: 0 }, { passes, log: (t) => lines.push(t), clock: s.clock, now: s.clock.now });
+        assert.deepEqual(r, { tried: true, ok: true, reason: null, text: 'I went down the ladder at (2, 60, -2).', way: 'down' });
+        assert.deepEqual(lines, ['I go down the ladder at (2, 60, -2) to (2, 41, 0).']);
+        assert.deepEqual(progress, ['ladder']);
+        assert.equal(passes.length, 1);
+    });
+
+    test('"after <player>", at most 3 passes a minute, no pass towards a pit 2 below beside the ladder', async () => {
+        const s = scene([5.5, 61, -0.5], { open: true });
+        const lines = [];
+        const now = () => 1000;
+        const limited = await P.ladderStepTowards(s.bot, { x: 2, y: 41, z: 0 }, { passes: [10, 20, 30], now, log: (t) => lines.push(t), clock: s.clock });
+        assert.equal(limited.tried, false);
+        assert.equal(limited.reason, 'limit');
+        assert.deepEqual(lines, []);
+        const pit = await P.ladderStepTowards(s.bot, { x: 6, y: 59, z: 0 }, { clock: s.clock });
+        assert.deepEqual([pit.tried, pit.reason], [false, 'no_way'], 'the pit at y 59 is not below the top ladder');
+        const far = await P.ladderStepTowards(s.bot, { x: 2, y: 41, z: 0 }, { reach: 2, clock: s.clock });
+        assert.equal(far.reason, 'no_column', 'reach 2: the column 3 blocks away is not seen');
+        const r = await P.ladderStepTowards(s.bot, { x: 2, y: 41, z: 0 }, { after: 'MartyByrde2', log: (t) => lines.push(t), clock: s.clock });
+        assert.equal(r.ok, true);
+        assert.deepEqual(lines, ['I go down the ladder at (2, 60, -2) after MartyByrde2.']);
     });
 });
 

@@ -16,6 +16,7 @@ const AIR = new Set(['air', 'cave_air', 'void_air']);
 /** The numbers of the ladder step of the follow. */
 export const LADDER_RULES = Object.freeze({
     reach: 2,       // a column whose top or bottom is this near to the feet, horizontally and vertically
+    followReach: 6, // followPlayer and goToPlayer: horizontally (fix of W75, L1); vertically `reach`
     maxHeight: 64,  // the longest column that is read
     below: 2,       // the player is this many blocks below the feet or more: down
     above: 2,       // this many above or more: up
@@ -55,26 +56,35 @@ const isLadder = (cell) => cell?.name === 'ladder';
 
 /**
  * The column of ladders near the feet: one whose top or bottom lies within `reach` blocks of the feet
- * (horizontally 2, vertically 2), the nearest first. null when there is none.
+ * horizontally and within `height` blocks vertically (both 2 by default), the nearest first. Also a column the
+ * bot is in or beside at any height (fix of W75, L3): when the feet cell or one of its 4 neighbours holds a
+ * ladder, that column, whatever the distance to its ends. null when there is none.
  * @param {Function} getName (x, y, z) => name | {name, facing} | null
  * @param {{x: number, y: number, z: number}} feet
- * @param {{reach?: number, maxHeight?: number}} [options]
+ * @param {{reach?: number, height?: number, maxHeight?: number}} [options] height: by default the reach
  * @returns {{x: number, z: number, top: number, bottom: number, facing: string|null, trapdoor: {x: number, y: number, z: number, name: string}|null}|null}
  */
-export function ladderColumnAt(getName, feet, { reach = LADDER_RULES.reach, maxHeight = LADDER_RULES.maxHeight } = {}) {
+export function ladderColumnAt(getName, feet, { reach = LADDER_RULES.reach, height = reach, maxHeight = LADDER_RULES.maxHeight } = {}) {
     try {
         if (typeof getName !== 'function' || !isPoint(feet)) {
             return null;
         }
         const r = isFiniteNumber(reach) && reach >= 0 ? Math.floor(reach) : LADDER_RULES.reach;
+        const hv = isFiniteNumber(height) && height >= 0 ? Math.floor(height) : r;
         const h = isFiniteNumber(maxHeight) && maxHeight >= 1 ? Math.floor(maxHeight) : LADDER_RULES.maxHeight;
         const fx = Math.floor(feet.x), fy = Math.floor(feet.y), fz = Math.floor(feet.z);
+        // in the column, or beside it at the height of the feet: that column (L3, the bot hung half way down)
+        for (const [dx, dz] of [[0, 0], [1, 0], [-1, 0], [0, 1], [0, -1]]) {
+            if (isLadder(readCell(getName, fx + dx, fy, fz + dz))) {
+                return columnFrom(getName, fx + dx, fy, fz + dz, h);
+            }
+        }
         const found = [];
         for (let dx = -r; dx <= r; dx++) {
             for (let dz = -r; dz <= r; dz++) {
                 const x = fx + dx, z = fz + dz;
                 let seed = null;
-                for (let dy = -r; dy <= r && seed === null; dy++) {
+                for (let dy = -hv; dy <= hv && seed === null; dy++) {
                     if (isLadder(readCell(getName, x, fy + dy, z))) {
                         seed = fy + dy;
                     }
@@ -83,7 +93,7 @@ export function ladderColumnAt(getName, feet, { reach = LADDER_RULES.reach, maxH
                     continue;
                 }
                 const column = columnFrom(getName, x, seed, z, h);
-                if (Math.abs(column.top - fy) <= r || Math.abs(column.bottom - fy) <= r) {
+                if (Math.abs(column.top - fy) <= hv || Math.abs(column.bottom - fy) <= hv) {
                     found.push({ column, d: Math.hypot(dx, dz), v: Math.min(Math.abs(column.top - fy), Math.abs(column.bottom - fy)) });
                 }
             }

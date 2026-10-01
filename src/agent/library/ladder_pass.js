@@ -12,7 +12,7 @@
 import { Vec3 } from 'vec3';
 import { botPos, clockOf } from '../packs/home/context.js';
 import { doorState, openDoor } from '../packs/home/doors.js';
-import { entryOf, ladderColumnAt, ladderPlace, wallYaw } from './ladder_logic.js';
+import { entryOf, heightWay, LADDER_RULES, ladderColumnAt, ladderPlace, wallYaw } from './ladder_logic.js';
 
 /** The numbers of a pass. */
 export const PASS_RULES = Object.freeze({
@@ -77,14 +77,21 @@ export function ladderReader(bot) {
 /**
  * The column of ladders near the feet of the bot (ladderColumnAt on the world of the bot), or null.
  * @param {object} bot
+ * @param {{reach?: number, height?: number, maxHeight?: number}} [options] as ladderColumnAt
  * @returns {object|null}
  */
-export function columnNear(bot) {
+export function columnNear(bot, options = {}) {
     const p = botPos(bot);
     if (!p) {
         return null;
     }
-    return ladderColumnAt(ladderReader(bot), { x: Math.floor(p.x), y: Math.floor(p.y + 0.01), z: Math.floor(p.z) });
+    return ladderColumnAt(ladderReader(bot), { x: Math.floor(p.x), y: Math.floor(p.y + 0.01), z: Math.floor(p.z) }, options ?? {});
+}
+
+// The feet in the column, at or below the cell of the trapdoor over it (fix of W75, L3: the bot hung half way).
+function inColumn(bot, column) {
+    const c = feetOf(bot);
+    return Boolean(c) && c.x === column.x && c.z === column.z && c.y <= column.top + 1 && c.y >= column.bottom - 1;
 }
 
 /**
@@ -194,7 +201,8 @@ async function passDown(bot, lad, column, clock, walkMs) {
     if (!under || AIR.has(under.name)) {
         return 'no_floor'; // the bot would fall past the foot of the column
     }
-    const trap = column.trapdoor ? doorState(bot, column.trapdoor) : null;
+    // a bot in the column already slides from where it is (slideDown); the trapdoor above it is no matter
+    const trap = column.trapdoor && !inColumn(bot, column) ? doorState(bot, column.trapdoor) : null;
     if (trap && trap.open === false) {
         if (eyeDistance(bot, trap) > PASS_RULES.reach) {
             const w = await lad.walkTo(bot, leg.entry, { clock, timeoutMs: walkMs });
@@ -260,11 +268,95 @@ export async function passLadder(bot, column, way, { clock = null, timeoutMs = P
         if (bot.interrupt_code) {
             return done('interrupted');
         }
+        release(bot); // the controls of the path search, which may hold the bot on a ladder
         const reason = way === 'down' ? await passDown(bot, lad, column, c, walkMs) : await passUp(bot, lad, column, c, walkMs);
         release(bot);
         return done(reason);
     } catch {
         release(bot);
         return done(bot?.interrupt_code ? 'interrupted' : 'error');
+    }
+}
+
+/** The numbers of the ladder step of goToPosition, goToPlayer and followPlayer (fixes of W75 and L4). */
+export const STEP_RULES = Object.freeze({
+    reach: LADDER_RULES.followReach, // a column within this many blocks horizontally
+    height: LADDER_RULES.reach,      // and with its top or bottom this near vertically (or the bot in or beside it)
+    gap: 2,                          // the target is this many blocks above or below the feet or more
+    perMinute: 3,                    // passes of one call in a minute
+    windowMs: 60000,
+});
+
+function pointText(p) {
+    return `(${Math.floor(p.x)}, ${Math.floor(p.y)}, ${Math.floor(p.z)})`;
+}
+
+/**
+ * The ladder step towards a target (fixes of W75 and L4): the column within 6 blocks, when the target is 2 or
+ * more blocks below the feet and below the top ladder, or 2 or more above the feet and 2 or more above the bottom: the log line
+ * `I go down the ladder at (2, 60, -2) to (12, 41, 46).` (or `after MartyByrde2.` with `after`), the pass with
+ * the trapdoor opened, and the progress for the mode unstuck. At most 3 passes a minute per `passes` (the
+ * times, kept by the caller for one call of a skill). The text of a failed pass is not logged here. Never throws.
+ * @param {object} bot
+ * @param {{x: number, y: number, z: number}} target
+ * @param {{after?: string|null, log?: Function|null, passes?: number[]|null, reach?: number, height?: number,
+ *   clock?: object, timeoutMs?: number, now?: Function, onPass?: Function}} [options] onPass: called when a pass
+ *   begins (followPlayer stops its path search there)
+ * @returns {Promise<{tried: boolean, ok: boolean, reason: string|null, text: string, way: string|null}>}
+ *   tried false: no pass was made (reason no_column, no_way or limit)
+ */
+export async function ladderStepTowards(bot, target, options = {}) {
+    const none = (reason) => ({ tried: false, ok: false, reason, text: '', way: null });
+    try {
+        const now = typeof options.now === 'function' ? options.now : Date.now;
+        const passes = Array.isArray(options.passes) ? options.passes : null;
+        if (passes) {
+            while (passes.length > 0 && now() - passes[0] >= STEP_RULES.windowMs) {
+                passes.shift();
+            }
+            if (passes.length >= STEP_RULES.perMinute) {
+                return none('limit');
+            }
+        }
+        const p = botPos(bot);
+        if (!p || !target || ![target.x, target.y, target.z].every(Number.isFinite)) {
+            return none('no_column');
+        }
+        const column = columnNear(bot, { reach: options.reach ?? STEP_RULES.reach, height: options.height ?? STEP_RULES.height });
+        if (!column) {
+            return none('no_column');
+        }
+        let way = heightWay(column, p, target);
+        // the ladder leads towards the height of the target: down only to a point below its top ladder, up only to
+        // a point 2 or more above its bottom (a pit 2 blocks deep beside the ladder is no reason to slide 20 blocks)
+        if ((way === 'down' && target.y >= column.top) || (way === 'up' && target.y < column.bottom + STEP_RULES.gap)) {
+            way = null;
+        }
+        if (!way) {
+            return none('no_way');
+        }
+        passes?.push(now());
+        try {
+            options.onPass?.(column, way);
+        } catch {
+            // the hook is best effort
+        }
+        const place = ladderPlace(column);
+        const whom = typeof options.after === 'string' && options.after !== '' ? `after ${options.after}` : `to ${pointText(target)}`;
+        const line = way === 'down' ? `I go down the ladder at ${place} ${whom}.` : `I climb up the ladder at ${place} ${whom}.`;
+        try {
+            options.log?.(line);
+        } catch {
+            // the log is best effort
+        }
+        const pass = await passLadder(bot, column, way, { clock: options.clock ?? null, timeoutMs: options.timeoutMs ?? PASS_RULES.timeoutMs });
+        try {
+            bot.modes?.noteProgress?.('ladder');
+        } catch {
+            // modes are optional
+        }
+        return { tried: true, ok: pass.ok, reason: pass.reason, text: pass.text, way };
+    } catch {
+        return none('no_column');
     }
 }
