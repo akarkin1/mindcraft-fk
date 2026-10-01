@@ -12,6 +12,7 @@ fake with canned replies; nothing leaves 127.0.0.1.
 npm run test:world                       all scenarios (about 90 minutes since v0.1.4.9: the long run alone takes 30)
 node tests/world/run.js doors shelter    only scenarios whose name contains one of the words
 node tests/world/run.js all_modes_on     a group: the work scenarios w15 to w28 (W30 of v0.1.4.8)
+node tests/world/run.js journeys         a group: the journey scenarios W59 and W80 to W84 (below)
 node tests/world/run.js --verbose        the whole output of every scenario while it runs
 node tests/world/run.js --server-log     also the server lines of every scenario
 ```
@@ -264,6 +265,20 @@ grass:
 `penFence(plan)`, `farmFence(plan)` and `penAnimalsWhere(plan)` read the fences and the animals back.
 `w58_base_world.js` proves the build (every part read back) and that the agent can stand in every part.
 
+The owner variant (`basePlan(r, { owner: true })`, or `buildBase(plan, { owner: true })`), for the journey scenarios: the
+way into the mine as in the owner's world (his `mines.json` of 2026-09-30). Everything else is as above.
+
+| Part | Where (offsets from the origin) |
+|---|---|
+| shaft 1 | closed oak trapdoor (-2, g, -3) in the floor of the house, facing south; ladders facing south at (-2, 53..59, -3), down to the basement |
+| basement | air x -3..3, y 53..55, z -2..3 (stone floor at y 52), torches (-3, 53, 3) and (3, 53, 3); `plan.owner.homeBox` spans both floors, y 52 to g+5 (the owner's area "home" spans y 55 to 71) |
+| shaft 2 | a hole in the basement floor at (3, 52, -2), ladders facing south at (3, 43..52, -2): the last ladder is 2 blocks above the floor of the room, (3, 41, -2) and (3, 42, -2) are air. A bot drops down; up, a jump does not reach the ladder (W59 proves it) |
+| double door | the room is closed at x 4 by stone, with two oak doors (4, 41, -1) and (4, 41, 0), facing west, hinges at the outer edges, closed; the crafting table (4, 41, 2) stays in that wall, the torch of the room is at (1, 41, -2); the first step of the descent is 2 wide (z -1 and 0) |
+| not built | the default shaft at (2, -2); the mine box ends at y 51, under the basement |
+
+`w59_owner_base.js` proves the owner variant (every part read back, the bot stands in the house, the basement and under
+the last ladder, and cannot jump to it).
+
 ### Helpers of v0.1.4.9
 
 The routes and the mine of the player are learned from the trail of the bot, so the scenarios W61 to W73 walk the
@@ -395,6 +410,35 @@ comment at the top of each file says how it would have failed against v0.1.4.8.
 | W74 | `w74_flags_off_0149.js` | every setting of v0.1.4.9 at its default: no `trail.json` or `routes.json`, the six commands hidden and "not a command", `!mineOre` asks as in v0.1.4.8, `!collectBlocks` for ore by `ore_sense_range` 0 (decision of the owner), the model's `!newAction` runs |
 | W75 | `w75_follow_ladder.js` | section 13 (F14 of the play test): typed `!followPlayer`, the player goes down the ladder through the closed trapdoor to the room at y 41: within 60 s the bot is within 4 blocks of it there, it opened the trapdoor with a click without sneak, `trail.json` holds the ladder run; the player climbs back and the bot follows into the house; a typed `!goToPlayer` from the house reaches the player in the room; the process lives |
 | W60 | `w60_long_run.js` | v0.1.4.9: as before with the switches of v0.1.4.9 on (`ore_sense_range` 3, `skills_over_code` on) and 8 orders of the new commands (`!rememberRoute`, `!routes`, `!rememberMine`, `!rememberTunnel`, `!mineOre` in the known mine, `!collectPassedOre`, `!forgetRoute`) in the places of 8 repeated queries: still 60 orders; the process never ends, every order has a result text |
+
+## Journey scenarios
+
+The group `journeys` (`node tests/world/run.js journeys`, about 15 minutes) plays the owner's first minutes with a bot
+that knows nothing, from the player's side, in the owner variant of the base. The player is a second bot that types
+the commands the owner's model chose in his play logs of 2026-10-01, at the moments he said them, and walks the way.
+A journey passes only on facts of the world: where the bot stands (server), the blocks, the state of a trapdoor, the
+inventory; a text is checked only where the owner reads it.
+
+**The rule: the bot is never moved by the control.** The control builds the world, puts the bot and the player at their
+places at the start, gives the bot its kit at the start (what the owner's chest would give), moves the player, and reads
+the world. No `/tp` of the bot, no `stepCells` of the bot, no trapdoor opened for it. What the bot cannot do by itself
+is a failure of the bot, never a reason to help it. A failing journey is a finding, left failing.
+
+Every journey runs with the owner's switches of PLAYTEST.md section 2 (`journey.js`, `JOURNEY_SETTINGS`: every pack,
+protected areas, rules, `routes_pack`, `mine_routes`, `skills_over_code`, `knowledge_in_prompt`, `stuck_restart_after`
+3), the modes of his profile (`MODES_PROFILE`), and an empty memory: the fresh working directory of the scenario has an
+empty `bots/`, and a journey saves no place, area or route itself (the first check says so). `journey.js` holds the
+player's legs through the owner variant (`playerDownToBasement`, `playerDownToRoom`, `playerToTunnelEnd`, ...), the
+waits for the bot (`waitBot`), and the parts A (W80) and B (W81) that W84 chains.
+
+| Id | File | The owner's words, typed | What must happen in the world |
+|---|---|---|---|
+| W59 | `w59_owner_base.js` | - | the owner variant is built as planned; the bot cannot reach the last ladder of shaft 2 by a jump |
+| W80 | `w80_first_minutes.js` | "this is home" `!rememberArea("home", "home")`; "follow me" `!followPlayer("w_player", 3)`; "remember the path here" `!rememberRoute("basement")`; "come here" `!goToPlayer`; "go to the basement" `!goToRememberedPlace("basement")` | the bot is in the basement within 60 s of "follow me"; the trapdoor is closed within 10 s after the bot passed it; the route names 1 ladder and 1 trapdoor; the bot comes up into the house within 60 s; it goes to the basement within 60 s; nothing in the house, the shafts and the basement dug or placed |
+| W81 | `w81_first_mine.js` | "follow me" `!followPlayer("w_player", 4)` from outside; "this is the mine" `!rememberMine("mine")`; "find some iron" `!mineOre("iron", 4)` | the bot follows down both ladders (the second ends 2 blocks above the floor), through the double door, into the tunnel (60 s per leg); the mine names 2 ladders and the room; within 5 minutes 4 raw_iron in the bot's inventory, the bot on the surface, the trapdoor closed, a torch in the dug part of the tunnel |
+| W82 | `w82_come_here_across_floors.js` | "come here" `!goToPlayer("w_player", 3)` | from the house to the player in the basement within 60 s; back up within 60 s; from the house to the player in the mine room (two ladders) within 120 s |
+| W83 | `w83_chest_and_torches.js` | "check the chest" `!viewChest`; "make 32 torches" `!craftSupplies("torch", 32)` | the chest of the house holds 20 oak_log and 9 coal: the answer names them; within 60 s the bot has 32 torches and does not say it lacks logs; nothing of the house taken |
+| W84 | `w84_ten_minutes.js` | W80, then W81 from the basement (led out under the open sky first), "let's sleep" `!goToBed` at night, "come here" from the mine room | every check of the parts; the bot sleeps and says "I slept. It is morning."; it reaches the player in the mine room within 120 s; the process never ends and the bot never dies |
 
 ## Hygiene
 
