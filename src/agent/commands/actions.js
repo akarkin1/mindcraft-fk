@@ -455,25 +455,6 @@ function collectWork(agent, type) {
 
 // M5: !goToMine goes down into the mine of the ore, without an ore into the nearest mine of the store,
 // with descendToLevel of the mining pack.
-async function goToMine(pack, bot, ctx, ore) {
-    const mines = ctx.mines;
-    let mine = null;
-    if (ore !== '') {
-        const row = pack.oreOf(ore);
-        if (!row)
-            return { ok: false, reason: 'unknown_ore', text: UNKNOWN_ORE(ore) };
-        mine = mines?.get(row.ore ?? ore) ?? null;
-        if (!mine)
-            return { ok: false, reason: 'no_mine', text: `I know no mine for ${row.ore ?? ore}.` };
-    } else {
-        const pos = bot.entity.position;
-        const distance = (m) => Math.hypot(m.entrance.x - pos.x, m.entrance.y - pos.y, m.entrance.z - pos.z);
-        mine = (mines?.list() ?? []).filter((m) => m?.entrance).sort((a, b) => distance(a) - distance(b))[0] ?? null;
-        if (!mine)
-            return { ok: false, reason: 'no_mine', text: 'I know no mine in this world.' };
-    }
-    return await pack.descendToLevel(bot, ctx, mine.level, { mine });
-}
 
 // v0.1.4.9 (B3, I10): the yaw of the player who gave the order that runs (agent.last_order), in radians as
 // mineflayer gives it, when that player is in bot.players and has an entity; else undefined. Never throws.
@@ -1382,7 +1363,7 @@ export const actionsList = [
         perform: async function (agent, ore) {
             if (!settings.mining_pack)
                 return MINING_OFF;
-            return await runPack(agent, 'goToMine', agent.work_packs?.mining, 'mining', (pack, bot, ctx) => goToMine(pack, bot, ctx, ore));
+            return await runPack(agent, 'goToMine', agent.work_packs?.mining, 'mining', (pack, bot, ctx) => pack.goToMine(bot, ctx, ore));
         }
     },
     {
