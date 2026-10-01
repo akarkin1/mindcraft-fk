@@ -187,3 +187,71 @@ describe('fix round F32: craftSupplies crafts what it can, fetches the rest, the
         assert.deepEqual(calls.map(c => c[0]).sort(), ['cobblestone', 'oak_log']);
     });
 });
+
+describe('fix round F32 on the real server (W83): no craft while a window is open; the grid is emptied', () => {
+    // The fake of mineflayer: the fetch leaves the chest window open (bot.currentWindow); bot.craft then
+    // clicks in that window: the ingredients of one craft go into the crafting grid (slots 1 to 4, not in
+    // inventory.items()) and it throws "missing ingredient". closeWindow and putAway as mineflayer has them.
+    function realWindows(s) {
+        s.bot.inventory.slots = [];
+        s.bot.closeWindow = () => {
+            s.bot.currentWindow = null;
+        };
+        s.bot.putAway = async slot => {
+            const item = s.bot.inventory.slots[slot];
+            s.bot.inventory.slots[slot] = null;
+            if (item) give(s.bot, item.name, item.count);
+        };
+        const real = s.ctx.skills.craftRecipe;
+        s.ctx.skills.craftRecipe = async (b, item, n) => {
+            if (b.currentWindow) {
+                for (const [slot, name] of [[1, 'coal'], [2, 'stick']]) {
+                    const have = b.inventory.list.find(i => i.name === name && i.count > 0);
+                    if (have) {
+                        have.count -= 1;
+                        b.inventory.slots[slot] = { name, count: 1 };
+                    }
+                }
+                b.inventory.list = b.inventory.list.filter(i => i.count > 0);
+                throw new Error('missing ingredient');
+            }
+            return real(b, item, n);
+        };
+    }
+
+    test('the chest of W83 (20 logs, 9 coal), nothing carried, the chest window left open by the fetch: 32 torches', async () => {
+        const s = scene();
+        realWindows(s);
+        const holds = { oak_log: 20, coal: 9, bread: 12, leaf_litter: 64 };
+        withChest(s, holds);
+        const fetch = s.ctx.storage.fetchItem;
+        s.ctx.storage.fetchItem = async (...a) => {
+            const r = await fetch(...a);
+            s.bot.currentWindow = { id: 3, type: 'minecraft:generic_9x3' };
+            return r;
+        };
+        const r = await K.craftSupplies(s.bot, s.ctx, 'torch', 32, s.opts);
+        assert.deepEqual([r.ok, r.text], [true, 'I made 32 torches.']);
+        assert.equal(s.bot.currentWindow, null);
+        assert.deepEqual([holds.coal, holds.oak_log], [1, 19]);
+    });
+
+    test('a craft that failed half way: the grid is emptied, and the next round makes what the inventory gives (24 of 6 coal, 6 sticks)', async () => {
+        const s = scene();
+        realWindows(s);
+        give(s.bot, 'coal', 6);
+        give(s.bot, 'stick', 6);
+        withChest(s, {});
+        s.bot.currentWindow = { id: 3 };
+        const close = s.bot.closeWindow;
+        let closes = 0;
+        s.bot.closeWindow = w => {
+            if (++closes === 1) return; // the first close is lost: the window stays for one try
+            close(w);
+        };
+        const r = await K.craftSupplies(s.bot, s.ctx, 'torch', 32, s.opts);
+        assert.equal(r.count, 24, r.text);
+        assert.equal(r.text, 'I made 24 torches of 32. I need 2 coal and 1 oak_log more and know no chest with coal or oak_log.');
+        assert.deepEqual(s.bot.inventory.slots.filter(Boolean), [], 'nothing left in the grid');
+    });
+});
