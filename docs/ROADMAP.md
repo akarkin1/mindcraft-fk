@@ -102,7 +102,7 @@ Ordered by recommendation. Nothing here is decided.
 | 1 | Journal and scorecard | Each session leaves a record that a script can read. The analysis of a play test takes minutes, not hours. |
 | 2 | Stronger chat model, paid by prompt caching | To be measured. |
 | 3 | Saved lessons | A recorded round is replayed on order. The bot checks the world before each step. |
-| 4 | Long goals as a plan on disk | Steps that code verifies. Milestones: iron tools alone, diamonds, the Nether. |
+| 4 | Guides of big goals | A short file per big goal, ten lines: the milestones in order, each with the state that code checks (an iron pickaxe in the inventory, 5 diamonds, the portal lit). The model plans only the next milestone; the skills do the work; the player edits the file. The guide is also the list of skills to build: smelting, trading, the Nether. "Beat the game" first. Stashed on 2026-10-01 until the job of v0.1.4.10 and smelting exist. |
 | 5 | Review after the session | A strong model reads the journal after play and proposes rules and corrections. The player approves. |
 | 6 | Smelting | The bot makes iron tools by itself. |
 | 7 | New skills from a record | The strong model writes a skill from what it watched. The player approves each one. Experimental. |
