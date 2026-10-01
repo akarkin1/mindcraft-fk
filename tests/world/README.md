@@ -440,6 +440,12 @@ waits for the bot (`waitBot`), and the parts A (W80) and B (W81) that W84 chains
 | W83 | `w83_chest_and_torches.js` | "check the chest" `!viewChest`; "make 32 torches" `!craftSupplies("torch", 32)` | the chest of the house holds 20 oak_log and 9 coal: the answer names them; within 60 s the bot has 32 torches and does not say it lacks logs; nothing of the house taken |
 | W84 | `w84_ten_minutes.js` | W80, then W81 from the basement (led out under the open sky first), "let's sleep" `!goToBed` at night, "come here" from the mine room | every check of the parts; the bot sleeps and says "I slept. It is morning."; it reaches the player in the mine room within 120 s; the process never ends and the bot never dies |
 
+| `job_comes_back` | w85 | `!mineOre("iron", 8)`, then "follow me" 20 blocks and silence: `I go back to the mining, N of 8 iron.`, 8 raw_iron, on the surface (`job_memory`) |
+| `blocker_steps` | w86 | `!mineOre("iron", 4)` without torches and pickaxe, logs and coal in the house chest: the plan text, the steps, the iron |
+| `idle_list` | w87 | `idle_jobs` with the farm cycle and 8 torches: after 60 s of silence both run, no order given |
+| `ladders_native` | w88 | W80, W82 and the follow of W75 with the fallback counted: no `I go down the ladder` line, the climbs smooth |
+| `pen_gate_safe` | w89 | fences dropped in the pen: the gate stays closed, `I leave the oak_fence in the pen "pen". I do not open its gate.`; the same with a rule |
+| `two_floors` | w90 | `area_floors`: home is the house floor, the basement a second area, `!goToBed` sleeps below, `That is the area "home" already.` |
 ## Tools of v0.1.4.10
 
 ### The scorecard of a play log

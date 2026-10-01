@@ -238,3 +238,23 @@ by E5 on the untouched commit); the lead looks at them on the fix branch.
   a pen adds `I also saved the fenced pen around it as a protected area: 9 x 5 x 9 blocks, 1 gate.`
 - Tests: `tests/unit/gjr_fix_shelter_hatch.test.js` (7), `gjr_fix_gate_close.test.js` (12),
   `gjr_fix_untyped_scan.test.js` (12).
+
+## From the fix round of part J (E1): T3-1, T3-8
+
+- `job/plan_logic.js`: the prompt keeps its first line (`You plan the steps of a Minecraft bot. Its job stopped
+  because something is missing.`) and adds: `What is missing: no_pickaxe (stone_pickaxe), no_torches (torch), the
+  skill said: "..."` (every missing supply on one line, the blocker first; a mining job adds the pickaxe and the
+  torches when the bot carries none); `Where the bot is: underground in the mine "mine". Before a step that needs
+  a tree, a chest or a crafting table it leaves the mine by itself.` or `on the surface, in "home"` (left out
+  without `whereAmI`); `The chests the bot knows and what they hold:` then one line per chest, nearest first, at
+  most 8 chests with 12 kinds each, or `The chests the bot knows: none with items.` (left out without a chest
+  index). Helpers `missingSupplies`, `needsSurface`, `SURFACE_COMMANDS`.
+- `job/index.js`: readers for where the bot is, its position and the chests (through the agent's `_workStores()`);
+  a wood, chest or crafting step (`!chopTrees`, `!fetchItem`, `!craftSupplies`, `!craftRecipe`, `!getTool`,
+  `!collectBlocks`) with the bot underground runs `!leaveMine` as a system order first (with `mining_pack`),
+  waits for it, and runs the step unless the way out was stopped, an order came, or the job or step changed; a
+  failed step is tried once more at the next tick (`step.fails`, saved), the 3 plans per job stay.
+- `job/job_texts.js`: `idleStartText(command)`: `I take the next of my list: !farmCycle("farm").`
+- Risk: when `!leaveMine` cannot climb out, the step still runs and fails twice, using one of the 3 plans.
+- Tests: 6 new in `gja_job_index`, new ones in `gja_plan_logic`, `gja_job_texts`, `gja_job_store`; 162 of the
+  job tests pass, `npm test` 6654 of 6655 (1 skipped).
