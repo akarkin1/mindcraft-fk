@@ -216,3 +216,25 @@ purpose `'plan'` is not in the cost meter's `PURPOSES` list but the meter counts
 
 The end-to-end scenarios `skill_capture` and `skill_flags_off` fail on the base of this branch too (checked
 by E5 on the untouched commit); the lead looks at them on the fix branch.
+
+## From the fix round of part R and the home pack (E3): T3-4, T3-5, T3-6
+
+- `packs/home/shelter.js`: a trapdoor entrance of the shelter goes through `throughHatch`: the walk to the
+  standing place (the path search opens doors and trapdoors), then the ladder step of `library/ladder_pass.js`
+  (loaded with a dynamic `import()`) when the room is still 2 or more blocks above or below, then the walk
+  again, at most 3 passes; a failure is `no_path`, so the route hook of `goToShelter` gets its turn. Texts:
+  `I went down the ladder at (x, y, z). I am in the shelter "basement". The door is closed.`; `I cannot get into
+  the shelter "basement". I could not go down the ladder at (...): the trapdoor did not open.`; `... I found no
+  way through the trapdoor at (x, y, z).`; `I stopped on my way to the shelter.` From the floor of the basement
+  the trapdoor may be out of reach to close: `but a door is still open.`, and the door service closes it.
+- `packs/home/door_logic.js`, `doors.js`: a gate the bot passed is closed as soon as its feet are out of the
+  gate cell, at any distance; doors and trapdoors keep the 2-block rule; a gate only come near still needs 2
+  blocks; another player within 2 blocks holds the gate; `somebodyNear` and `somebodyInDoor` skip the bot
+  itself (object, id or name).
+- `areas/area_scan.js`: `scanWithoutType(getBlockName, origin, options)`: a pen around the position
+  (`scanPen`) wins over a building. `commands/actions.js`: the type "building" counts as no type (the parser
+  fills it in), so `!rememberArea("x")` and `!rememberArea("x", "building")` inside a fence save the pen
+  (`I stand inside a fence, so I saved the pen. Area "chicken_pen" (pen) saved: ...`); `!rememberHere` inside
+  a pen adds `I also saved the fenced pen around it as a protected area: 9 x 5 x 9 blocks, 1 gate.`
+- Tests: `tests/unit/gjr_fix_shelter_hatch.test.js` (7), `gjr_fix_gate_close.test.js` (12),
+  `gjr_fix_untyped_scan.test.js` (12).
