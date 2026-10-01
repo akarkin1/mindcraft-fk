@@ -577,6 +577,16 @@ describe('F24: the way out along the tunnel, its corners and branches', () => {
         const roomMine = { ...mine, route: LEGS.slice(0, 4), room: { center: { x: 1, y: 50, z: 0 }, chest: { x: -2, y: 50, z: 2 }, table: null, furnace: null } };
         assert.deepEqual(P.wayBack(roomMine, { x: -1, y: 50, z: 2 }), { hops: [{ x: 0, y: 50, z: 0 }], leg: 2 }, 'from the room: the end of the nearest leg');
         assert.deepEqual(P.wayBack(roomMine, { x: 0, y: 55, z: 0 }), { hops: [], leg: 2 }, 'on the ladder: from there');
+        // the fresh-checkout run of the fix of v0.1.4.9 (mine_known): the nearest leg from the room is the walk down to the
+        // tunnel; its end lies below the room, so the hop is the cell of that leg nearest to the feet, at the room
+        const descentMine = { ...roomMine, route: [...LEGS.slice(0, 4), { kind: 'walk', from: { x: 2, y: 50, z: 0 }, to: { x: 21, y: 34, z: 0 } }] };
+        const fromRoom = P.wayBack(descentMine, { x: 1, y: 50, z: 2 });
+        assert.equal(fromRoom.leg, 3, 'the nearest leg: the walk through the room');
+        assert.equal(fromRoom.hops.length, 1);
+        assert.ok(fromRoom.hops[0].y === 50 && fromRoom.hops[0].z === 0 && fromRoom.hops[0].x >= 0 && fromRoom.hops[0].x <= 2,
+            `a cell of the walk through the room, never the foot of the descent: ${JSON.stringify(fromRoom.hops)}`);
+        const fromChest = P.wayBack(descentMine, { x: -2, y: 50, z: 2 });
+        assert.ok(fromChest.hops.every(h => h.y === 50), `from the chest the hops stay at the room level: ${JSON.stringify(fromChest.hops)}`);
     });
 
     test('a trip that ends in a branch: back along the branch and the corners to the route, then up', async () => {

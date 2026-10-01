@@ -1755,10 +1755,16 @@ export function wayBack(mine, feet, step = WAY_BACK_HOP) {
     }
     const at = mineAt([mine], f);
     if (at && at.tunnel === null && !at.onRoute && legs.length > 0) {
-        // the room: the way in passes by it
+        // the room: the way in passes by it. Fix of the fresh-checkout run of the v0.1.4.9 fix (mine_known,
+        // passed_ore, ore_sense, branches): the end of the nearest leg lay at the foot of the descent below the
+        // room, so the walk back went down and was blocked; the hop is the cell of that leg nearest to the feet
         const leg = nearestLeg(legs, f);
-        const end = legEnd(legs[leg]);
-        return { hops: end && !samePos(end, f) ? [end] : [], leg };
+        const cells = [cellOf(legs[leg]?.from), ...legCells(legs[leg])].filter(Boolean);
+        const near = cells.reduce((best, c) => {
+            const d = Math.hypot(c.x - f.x, c.y - f.y, c.z - f.z);
+            return !best || d < best.d ? { c, d } : best;
+        }, null)?.c ?? legEnd(legs[leg]);
+        return { hops: near && !samePos(near, f) ? [near] : [], leg };
     }
     const all = wayBackHops(mine, f, step);
     for (let i = 0; i < all.length; i++) {

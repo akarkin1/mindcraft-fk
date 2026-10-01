@@ -11,8 +11,9 @@
 //   B1 !followPlayer("w_player", 4): the player walks into the house, down ladder 1, down ladder 2, through the double
 //   door and down to the end of the tunnel, waiting for the bot after every leg (60 s each);
 //   B2 !rememberMine("mine") names 2 ladders and the room;
-//   B3 4 iron ore beyond the end of the tunnel, !mineOre("iron", 4): within 5 minutes the bot has 4 raw_iron in its
-//   inventory, is back on the surface, the trapdoor is closed, a torch stands in the dug part of the tunnel.
+//   B3 12 iron ore in a line ahead of the end of the tunnel, !mineOre("iron", 12): within 5 minutes the bot has 12
+//   raw_iron in its inventory, is back on the surface, the trapdoor is closed; it still carries torches and put none
+//   into the chest of the room; the tunnel grew by 8 blocks or more and a torch stands in the new part.
 // And: the process lives; no request reached a real model.
 import { scenarioMain, check, note, exitSoon, stopRealAgent, env } from './helpers.js';
 import { region, prepareRegion, releaseRegion } from './world.js';

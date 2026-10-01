@@ -709,6 +709,32 @@ function where3(door) {
  * @param {{now?: Function, wait?: Function, scanMs?: number, checkMs?: number}} [options] for tests
  * @returns {{tick: () => void, stop: () => void, closeNear: (range?: number) => Promise<object>}}
  */
+// F37 of the journeys (W84, the way out of the mine): the service closed a door while the bot climbed a ladder; the
+// click turned its look away from the wall, the bot stepped out of the column and fell, and the climb failed.
+// The service waits while the bot is on a ladder, a vine or an open trapdoor off the ground (a click during a
+// slide stalled the slide, W80 run 13). The ladder passes close the trapdoor they came through themselves, on
+// the way down 2 blocks below it (closeWhenBelow of ladder_pass.js and of the route replay) and on the way up
+// from beside it (F35).
+const CLIMBABLE = new Set(['ladder', 'vine']);
+
+function botOnLadder(bot) {
+    try {
+        const me = botPos(bot);
+        if (!me || bot.entity?.onGround === true) {
+            return false; // standing at the foot of a ladder (its lowest rung is at the floor) is no climb
+        }
+        const b = bot.blockAt(new Vec3(Math.floor(me.x), Math.floor(me.y + 0.01), Math.floor(me.z)));
+        const name = b?.name ?? '';
+        if (CLIMBABLE.has(name)) {
+            return true;
+        }
+        const props = (typeof b?.getProperties === 'function' ? b.getProperties() : b?._properties) ?? {};
+        return name.endsWith('_trapdoor') && (props.open === true || props.open === 'true');
+    } catch {
+        return false;
+    }
+}
+
 export function createDoorService(bot, ctx = {}, options = {}) {
     const clock = clockOf(ctx, options);
     const watch = new DoorWatch();
@@ -787,8 +813,8 @@ export function createDoorService(bot, ctx = {}, options = {}) {
                     console.log(doorClosedLog(door));
                 }
                 if (busy || toClose.length === 0 || isPassingThrough(bot) || bot.usingHeldItem === true || bot.currentWindow
-                    || bot.isSleeping === true) {
-                    return;
+                    || bot.isSleeping === true || botOnLadder(bot)) {
+                    return; // F37: a click turns the look; a bot on a ladder would step out of the column and fall
                 }
                 busy = true;
                 closeOne(toClose[0]).finally(() => {

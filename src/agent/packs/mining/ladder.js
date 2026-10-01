@@ -34,6 +34,32 @@ function release(bot) {
     }
 }
 
+/**
+ * F36 of the journeys (the hand-over): an order that interrupts a climb released the controls, and the bot slid
+ * 0.3 blocks before the next order took the ladder. A bot in the air on a ladder holds on with sneak (the physics
+ * stops a sneaking bot on a ladder); the next pass or walk clears the controls as it starts. True when it holds.
+ * @param {object} bot
+ * @returns {boolean}
+ */
+export function holdOnLadder(bot) {
+    try {
+        const c = feetCell(bot);
+        if (!c || bot.entity?.onGround === true || blockAt(bot, c)?.name !== 'ladder') {
+            return false;
+        }
+        bot.setControlState('sneak', true);
+        // a climb that was let go keeps its upward speed for a few ticks, rises above the top rung where nothing
+        // holds it and falls back 0.3 blocks: the upward speed is dropped, as the path search drops the sideways
+        // speed at a full stop
+        if (bot.entity?.velocity && bot.entity.velocity.y > 0) {
+            bot.entity.velocity.y = 0;
+        }
+        return true;
+    } catch {
+        return false;
+    }
+}
+
 // releases the controls and stops the bot on the spot
 function stopFlat(bot) {
     release(bot);
@@ -483,6 +509,7 @@ export async function climbUp(bot, leg, options = {}) {
     const limit = options.timeoutMs ?? depth * 700 + 6000;
     await look(bot, backOf(leg.face));
     bot.setControlState('forward', true);
+    bot.setControlState('sneak', false); // F36: a hold on the ladder ends in the tick that presses forward
     const start = clock.now();
     let best = botPos(bot)?.y ?? 0;
     let still = clock.now();

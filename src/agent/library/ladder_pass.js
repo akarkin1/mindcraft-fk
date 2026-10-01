@@ -14,7 +14,7 @@
 // then climbUp. Nothing is closed: the door service closes the trapdoor behind the bot as it closes doors.
 import { Vec3 } from 'vec3';
 import { botPos, clockOf } from '../packs/home/context.js';
-import { doorState, openDoor } from '../packs/home/doors.js';
+import { closeDoor, doorState, openDoor } from '../packs/home/doors.js';
 import { entryOf, heightWay, LADDER_RULES, ladderColumnAt, ladderPlace, wallYaw } from './ladder_logic.js';
 
 /** The numbers of a pass. */
@@ -22,6 +22,7 @@ export const PASS_RULES = Object.freeze({
     timeoutMs: 30000, // the walk to the column, and the climb to a closed trapdoor
     reach: 4.5,       // a hand reaches a trapdoor this far from the eyes
     holdReach: 2.5,   // on the way up, the bot stops this near below a closed trapdoor to open it
+    settleMs: 400,    // the wait under the trapdoor before the click, for the state of a click just before
 });
 
 /** The reasons of a failed pass in words, for the texts. */
@@ -123,9 +124,37 @@ function release(bot) {
     }
 }
 
+
 function feetOf(bot) {
     const p = botPos(bot);
     return p ? { x: Math.floor(p.x), y: Math.floor(p.y + 0.01), z: Math.floor(p.z) } : null;
+}
+
+/**
+ * F36 of the journeys (the hand-over): a bot in the air on a ladder holds on with sneak, so that it does not slide
+ * between the order that stopped its climb and the next one (the physics stops a sneaking bot on a ladder; the
+ * next pass or walk clears the controls as it starts). The same as holdOnLadder of the mining pack, for agent.js,
+ * whose stop of the path search clears every control. True when it holds. Never throws.
+ * @param {object} bot
+ * @returns {boolean}
+ */
+export function holdOnLadder(bot) {
+    try {
+        const c = feetOf(bot);
+        if (!c || bot.entity?.onGround === true || bot.blockAt(new Vec3(c.x, c.y, c.z))?.name !== 'ladder') {
+            return false;
+        }
+        bot.setControlState('sneak', true);
+        // a climb that was let go keeps its upward speed for a few ticks, rises above the top rung where nothing
+        // holds it and falls back 0.3 blocks: the upward speed is dropped, as the path search drops the sideways
+        // speed at a full stop
+        if (bot.entity?.velocity && bot.entity.velocity.y > 0) {
+            bot.entity.velocity.y = 0;
+        }
+        return true;
+    } catch {
+        return false;
+    }
 }
 
 function eyeDistance(bot, cell) {
@@ -156,6 +185,7 @@ async function climbToOpen(bot, column, trap, clock, limitMs) {
         // looking is best effort
     }
     bot.setControlState('forward', true);
+    bot.setControlState('sneak', false); // F36: the hold ends in the tick that presses forward
     const start = clock.now();
     let lastY = botPos(bot)?.y ?? 0;
     let still = clock.now();
@@ -179,16 +209,35 @@ async function climbToOpen(bot, column, trap, clock, limitMs) {
         }
         await clock.wait(50);
     }
-    bot.setControlState('jump', false);
+    // F34 of the journeys (the flinch of the owner): the click turns the look to the trapdoor, so the bot no
+    // longer presses against the wall; with forward pressed it walked out of the column and fell 0.3 blocks.
+    // Only jump is held during the click (a jump climbs a ladder in 1.21 without a step aside, so the bot stays
+    // pressed up under the trapdoor), the look goes back to the wall at once, then forward for the climb.
     bot.setControlState('sneak', false);
+    bot.setControlState('forward', false); // forward with the look turned walks the bot out of the column: it fell
+    bot.setControlState('jump', true);
+    // F39 of the journeys (W80 run 14): a pass that took over from an interrupted one clicked the trapdoor the first
+    // one had just opened (its state reached the bot a moment later) and closed it again; the bot then bobbed under
+    // it. The state is read again after a short wait, and an open trapdoor gets no click.
+    await clock.wait(PASS_RULES.settleMs);
+    const now = doorState(bot, trap);
+    const opened = now?.open === true || (eyeDistance(bot, trap) <= PASS_RULES.reach && (await openDoor(bot, trap, doorOptions(clock))));
+    try {
+        await bot.look(wallYaw(column.facing), 0, true);
+    } catch {
+        // looking is best effort
+    }
     bot.setControlState('forward', true);
-    await clock.wait(100);
-    const opened = eyeDistance(bot, trap) <= PASS_RULES.reach && (await openDoor(bot, trap, doorOptions(clock)));
-    release(bot);
+    bot.setControlState('jump', false);
     if (bot.interrupt_code) {
+        release(bot);
         return 'interrupted';
     }
-    return opened ? null : 'blocked_door';
+    if (!opened) {
+        release(bot);
+        return 'blocked_door';
+    }
+    return null;
 }
 
 function stopReason(reason, bot) {
@@ -217,8 +266,35 @@ async function passDown(bot, lad, column, clock, walkMs) {
             return bot.interrupt_code ? 'interrupted' : 'blocked_door';
         }
     }
+    // F37 and W80 A2: the trapdoor the bot came through is closed by the pass itself, 2 blocks below it while it is
+    // within reach and the slide presses nothing (the door service never clicks at a bot on a ladder)
+    const closing = column.trapdoor ? closeWhenBelow(bot, column, clock) : Promise.resolve();
     const r = await lad.slideDown(bot, leg, { clock, walkMs });
+    await closing;
     return r.ok ? null : stopReason(r.reason, bot);
+}
+
+// Waits up to 4 s for the feet of the bot to be 2 or more blocks below the trapdoor of the column, then closes
+// it once, unless the bot is in the trapdoor cell or the command was stopped. Never throws.
+async function closeWhenBelow(bot, column, clock) {
+    try {
+        const trap = column.trapdoor;
+        const start = clock.now();
+        while (clock.now() - start < 4000) {
+            if (bot.interrupt_code) {
+                return false;
+            }
+            const c = feetOf(bot);
+            if (c && c.x === column.x && c.z === column.z && c.y <= trap.y - 2) {
+                const state = doorState(bot, trap);
+                return Boolean(state && state.open === true) ? await closeDoor(bot, state, doorOptions(clock)) : false;
+            }
+            await clock.wait(50);
+        }
+        return false;
+    } catch {
+        return false;
+    }
 }
 
 async function passUp(bot, lad, column, clock, walkMs) {
@@ -235,7 +311,25 @@ async function passUp(bot, lad, column, clock, walkMs) {
         }
     }
     const r = await lad.climbUp(bot, leg, { clock, walkMs });
+    if (r.ok && column.trapdoor) {
+        await closeBehind(bot, column, clock);
+    }
     return r.ok ? null : stopReason(r.reason, bot);
+}
+
+// F35 of the journeys (W82, step 2): the trapdoor stayed open behind the bot until the door service closed it
+// 2 blocks past; the path search walked the bot over the open trapdoor on its way to the player and it hung in
+// the hole. A trapdoor the bot climbed out of is closed at once, while the bot stands beside it.
+async function closeBehind(bot, column, clock) {
+    try {
+        const trap = doorState(bot, column.trapdoor);
+        if (!trap || trap.open !== true || inColumn(bot, column) || bot.interrupt_code) {
+            return;
+        }
+        await closeDoor(bot, trap, doorOptions(clock));
+    } catch {
+        // the door service closes it later
+    }
 }
 
 /**
@@ -271,9 +365,18 @@ export async function passLadder(bot, column, way, { clock = null, timeoutMs = P
         if (bot.interrupt_code) {
             return done('interrupted');
         }
-        release(bot); // the controls of the path search, which may hold the bot on a ladder
+        // the controls of the path search, which may hold the bot on a ladder; F36: a bot that hangs on the ladder
+        // with sneak (an interrupted climb) keeps the hold until the climb presses forward
+        const hanging = way === 'up' && inColumn(bot, column) && bot.entity?.onGround !== true;
+        release(bot);
+        if (hanging) {
+            lad.holdOnLadder?.(bot); // a slide down starts with the controls released
+        }
         const reason = way === 'down' ? await passDown(bot, lad, column, c, walkMs) : await passUp(bot, lad, column, c, walkMs);
         release(bot);
+        if (reason === 'interrupted') {
+            lad.holdOnLadder?.(bot); // F36: no slide between this order and the next
+        }
         return done(reason);
     } catch {
         release(bot);

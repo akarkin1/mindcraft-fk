@@ -44,21 +44,21 @@ function scene(pos, { open = false, opens = true, ladders = [41, 59], floor = tr
 }
 
 describe('passLadder: down', () => {
-    test('through a closed trapdoor: one click without sneak, then the slide to the foot', async () => {
+    test('through a closed trapdoor: one click without sneak to open, the slide, one click to close it 2 blocks below', async () => {
         const s = scene([2.5, 61, -0.5]);
         s.bot.controls.sneak = true; // a sneaking click would use the item in the hand (F11)
         const r = await P.passLadder(s.bot, COLUMN, 'down', { clock: s.clock });
         assert.deepEqual(r, { ok: true, reason: null, text: 'I went down the ladder at (2, 60, -2).' });
-        assert.deepEqual(s.bot.clicks, [{ x: 2, y: 60, z: -2, sneak: false }]);
+        assert.deepEqual(s.bot.clicks, [{ x: 2, y: 60, z: -2, sneak: false }, { x: 2, y: 60, z: -2, sneak: false }]);
         assert.deepEqual(s.feet(), { x: 2, y: 41, z: -2 });
-        assert.equal(s.world.propsAt(2, 60, -2).open, true, 'nothing is closed: the door service does that');
+        assert.equal(s.world.propsAt(2, 60, -2).open, false, 'closed by the pass 2 blocks below it');
     });
 
-    test('an open trapdoor: no click', async () => {
+    test('an open trapdoor: no click to open, one click to close it 2 blocks below', async () => {
         const s = scene([2.5, 61, -0.5], { open: true });
         const r = await P.passLadder(s.bot, COLUMN, 'down', { clock: s.clock });
         assert.equal(r.ok, true, JSON.stringify(r));
-        assert.deepEqual(s.bot.clicks, []);
+        assert.deepEqual(s.bot.clicks, [{ x: 2, y: 60, z: -2, sneak: false }], 'closed on the way down');
         assert.deepEqual(s.feet(), { x: 2, y: 41, z: -2 });
     });
 
@@ -77,14 +77,17 @@ describe('passLadder: down', () => {
         assert.deepEqual(s.bot.clicks, []);
     });
 
-    test('stopped half way: reason interrupted, the text says so, the controls are released', async () => {
+    test('stopped half way: reason interrupted, the text says so, the controls are released and the bot holds on with sneak (F36)', async () => {
         const s = scene([2.5, 61, -0.5]);
         s.clock.onTick = () => {
             if (s.bot.entity.position.y < 52) s.bot.interrupt_code = true;
         };
         const r = await P.passLadder(s.bot, COLUMN, 'down', { clock: s.clock });
         assert.deepEqual(r, { ok: false, reason: 'interrupted', text: 'I could not go down the ladder at (2, 60, -2): I was stopped.' });
-        assert.ok(Object.values(s.bot.controls).every((on) => on === false), JSON.stringify(s.bot.controls));
+        const { sneak, ...rest } = s.bot.controls;
+        assert.ok(Object.values(rest).every((on) => on === false), JSON.stringify(s.bot.controls));
+        const onLadder = s.world.nameAt(s.feet().x, s.feet().y, s.feet().z) === 'ladder' && !s.bot.entity.onGround;
+        assert.equal(sneak, onLadder, `sneak only while hanging on a ladder: ${JSON.stringify(s.feet())} ${JSON.stringify(s.bot.controls)}`);
     });
 });
 
@@ -104,7 +107,7 @@ describe('passLadder from inside the column (W75, L3)', () => {
         s.bot.controls.sneak = true;
         const r = await P.passLadder(s.bot, P.columnNear(s.bot), 'up', { clock: s.clock });
         assert.equal(r.ok, true, JSON.stringify(r));
-        assert.deepEqual(s.bot.clicks, [{ x: 2, y: 60, z: -2, sneak: false }]);
+        assert.deepEqual(s.bot.clicks, [{ x: 2, y: 60, z: -2, sneak: false }, { x: 2, y: 60, z: -2, sneak: false }], 'F35: opened from below, closed from beside');
         assert.ok(s.feet().y >= 61, JSON.stringify(s.feet()));
     });
 });
@@ -114,7 +117,8 @@ describe('passLadder: up', () => {
         const s = scene([2.5, 41, -0.5]);
         const r = await P.passLadder(s.bot, COLUMN, 'up', { clock: s.clock });
         assert.deepEqual(r, { ok: true, reason: null, text: 'I climbed up the ladder at (2, 60, -2).' });
-        assert.deepEqual(s.bot.clicks, [{ x: 2, y: 60, z: -2, sneak: false }]);
+        assert.deepEqual(s.bot.clicks, [{ x: 2, y: 60, z: -2, sneak: false }, { x: 2, y: 60, z: -2, sneak: false }], 'F35: opened from below, closed again from beside it');
+        assert.equal(s.world.propsAt(2, 60, -2).open, false, 'F35: the trapdoor is closed behind the bot');
         assert.ok(s.feet().y >= 61, JSON.stringify(s.feet()));
     });
 

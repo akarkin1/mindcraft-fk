@@ -9,9 +9,9 @@
 // A column with a missing ladder is never entered: the bot would fall.
 import { botPos, clockOf, logTo, noteProgress } from '../home/context.js';
 import { sideOf } from '../home/door_logic.js';
-import { doorState, openDoor } from '../home/doors.js';
+import { closeDoor, doorState, openDoor } from '../home/doors.js';
 import { goals, gotoGoal, isNear, makeMovements, walkNear } from '../home/motion.js';
-import { climbUp, enterColumn, footOf, slideDown, waitStanding, walkStairs, yawOf } from '../mining/ladder.js';
+import { climbUp, enterColumn, footOf, slideDown, waitStanding, walkStairs, yawOf, holdOnLadder } from '../mining/ladder.js';
 import { backOf, nearCell, nearestRoute, reverseRoute, routeEnds, trapdoorOverLadder } from './route_logic.js';
 import { TEXTS, emptyRouteText, needLaddersText, noWayToStartText, routeDoneText, routeErrorText, routeFailedText, routeLabel, routeStoppedText,
     routeTimeText, stoppedBeforeRouteText } from './texts.js';
@@ -181,16 +181,31 @@ async function climbToOpen(bot, ctx, leg, trap, clock) {
     // F11 of the real server: a sneaking click with an item in the hand uses the item, not the block, so the
     // trapdoor never opened while the bot held a pickaxe. The bot holds itself on the ladder by pressing
     // forward against the closed trapdoor instead of sneaking, and clicks without sneak.
-    bot.setControlState('jump', false);
+    // F34 of the journeys: the click turns the look to the trapdoor; with forward pressed the bot walked out of
+    // the column and fell 0.3 blocks. Only jump is held during the click (a jump climbs a ladder in 1.21 without
+    // a step aside), the look goes back to the wall at once, then forward for the climb that follows.
     bot.setControlState('sneak', false);
+    bot.setControlState('forward', false); // forward with the look turned walks the bot out of the column: it fell
+    bot.setControlState('jump', true);
+    await clock.wait(400); // F39: the state of a click just before this leg reaches the bot a moment later
+    const now = doorState(bot, trap);
+    const opened = now?.open === true || (eyeDistance(bot, trap) <= REPLAY_RULES.reach && (await openDoor(bot, trap, doorOptions(ctx, clock))));
+    try {
+        await bot.look(yawOf(backOf(leg.face)), 0, true);
+    } catch {
+        // looking is best effort
+    }
     bot.setControlState('forward', true);
-    await clock.wait(100);
-    const opened = eyeDistance(bot, trap) <= REPLAY_RULES.reach && (await openDoor(bot, trap, doorOptions(ctx, clock)));
-    release(bot);
+    bot.setControlState('jump', false);
     if (bot.interrupt_code) {
+        release(bot);
         return INTERRUPTED;
     }
-    return opened ? OK : { ok: false, reason: 'blocked_door' };
+    if (!opened) {
+        release(bot);
+        return { ok: false, reason: 'blocked_door' };
+    }
+    return OK;
 }
 
 async function ladderLeg(bot, ctx, leg, clock, ms) {
@@ -213,7 +228,10 @@ async function ladderLeg(bot, ctx, leg, clock, ms) {
                 return bot.interrupt_code ? INTERRUPTED : { ok: false, reason: 'blocked_door' };
             }
         }
+        // the trapdoor the bot came through is closed by the leg itself, 2 blocks below it (as the ladder pass does)
+        const closing = trap ? closeWhenBelow(bot, leg, trap, clock) : Promise.resolve();
         const r = await slideDown(bot, leg, { clock });
+        await closing;
         if (!r.ok) {
             return r.reason === 'interrupted' || bot.interrupt_code ? INTERRUPTED : { ok: false, reason: 'no_path' };
         }
@@ -254,9 +272,39 @@ async function ladderLeg(bot, ctx, leg, clock, ms) {
             }
             return { ok: false, reason: 'no_path', note: r.missing?.length > 0 ? needLaddersText(r.missing) : null };
         }
+        // F35: the trapdoor the bot climbed out of is closed at once (the next leg would walk over the hole)
+        if (trap) {
+            const now = doorState(bot, trap);
+            const f = feetOf(bot);
+            if (now?.open === true && !(f && f.x === leg.x && f.z === leg.z) && !bot.interrupt_code) {
+                await closeDoor(bot, now, doorOptions(ctx, clock));
+            }
+        }
     }
     await waitStanding(bot, clock, 2000);
     return bot.interrupt_code ? INTERRUPTED : OK;
+}
+
+// Waits up to 4 s for the feet of the bot to be 2 or more blocks below the trapdoor over the column, then closes it
+// once, unless the command was stopped. Never throws.
+async function closeWhenBelow(bot, leg, trap, clock) {
+    try {
+        const start = clock.now();
+        while (clock.now() - start < 4000) {
+            if (bot.interrupt_code) {
+                return false;
+            }
+            const c = feetOf(bot);
+            if (c && c.x === leg.x && c.z === leg.z && c.y <= trap.y - 2) {
+                const state = doorState(bot, trap);
+                return Boolean(state && state.open === true) ? await closeDoor(bot, state, { now: clock.now, wait: clock.wait }) : false;
+            }
+            await clock.wait(50);
+        }
+        return false;
+    } catch {
+        return false;
+    }
 }
 
 async function stairsLeg(bot, leg, clock) {
@@ -392,6 +440,7 @@ export async function walkRoute(bot, ctx, route, options = {}) {
                 changed.push({ leg: index, bottom: leg.bottom });
             }
             if (r.reason === 'interrupted' || bot.interrupt_code) {
+                holdOnLadder(bot); // F36: a bot stopped on a ladder holds on
                 return stopped(i);
             }
             if (!r.ok) {

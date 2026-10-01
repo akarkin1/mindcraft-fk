@@ -40,7 +40,8 @@ import { basePlan, buildBase, BASE_RADIUS } from './base_world.js';
 
 const NAME = 'w_rbed';
 const PLAYER = 'w_player';
-const REMEMBERED = /^I remember the way "bed": from the place "storage" to here, (\d+) steps?, 1 ladder, 1 trapdoor\. I walk it in both directions\.$/;
+// since the fix of v0.1.4.9 (F19) the answer adds `I saved the place "bed" there too.`
+const REMEMBERED = /^I remember the way "bed": from the place "storage" to here, (\d+) steps?, 1 ladder, 1 trapdoor\. I walk it in both directions\.( I saved the place "bed" there too\.)?$/;
 
 await scenarioMain({
     async main() {

@@ -313,6 +313,39 @@ export const CRAFT_TRIES = 4;
 /** The wait before another try of a craft step that made nothing, in ms. */
 export const CRAFT_RETRY_MS = 700;
 
+/** The crafting grid of the inventory window of mineflayer (slot 0 is the result). */
+const GRID_SLOTS = Object.freeze([1, 2, 3, 4]);
+
+// Fix round F32 (from W83 on the real server): bot.craft clicks in bot.currentWindow when one is open,
+// not in the inventory, and a craft that failed half way leaves its ingredients in the crafting grid
+// or on the cursor, where inventory.items() does not see them. Before a craft: an open window is
+// closed, the grid and the cursor are emptied into the inventory, and the inventory may settle. Never throws.
+async function freeCraftingGrid(bot, clock) {
+    try {
+        if (bot.currentWindow) {
+            if (typeof bot.closeWindow === 'function') {
+                bot.closeWindow(bot.currentWindow);
+            } else {
+                bot.currentWindow.close?.();
+            }
+            const start = clock.now();
+            while (bot.currentWindow && clock.now() - start < 2000) {
+                await clock.wait(50);
+            }
+        }
+        for (const slot of GRID_SLOTS) {
+            if (bot.inventory?.slots?.[slot] && typeof bot.putAway === 'function') {
+                await bot.putAway(slot);
+            }
+        }
+        if (bot.inventory?.selectedItem && typeof bot.putSelectedItemRange === 'function') {
+            await bot.putSelectedItemRange(bot.inventory.inventoryStart ?? 9, bot.inventory.inventoryEnd ?? 45, bot.inventory, null);
+        }
+    } catch (err) {
+        console.warn('Wood pack: could not empty the crafting grid:', err?.message ?? err);
+    }
+}
+
 // The item of a planks step for the inventory now: a step whose kind the planner chose (`anyWood`)
 // takes the logs the bot carries, oak first (logKindFor); a kind the player named stays.
 function planksItemNow(step, inventory, times) {
@@ -351,6 +384,7 @@ async function runSteps(bot, ctx, steps, clock) {
             if (attempt > 0) {
                 await clock.wait(CRAFT_RETRY_MS);
             }
+            await freeCraftingGrid(bot, clock);
             const inventory = await settledInventory(bot, clock);
             const times = Math.ceil((step.makes - made) / per);
             item = planksItemNow(step, inventory, times);
@@ -358,13 +392,23 @@ async function runSteps(bot, ctx, steps, clock) {
             if (short) {
                 continue;
             }
-            const before = await settledCount(bot, clock, item);
-            try {
-                await craft(bot, item, times);
-            } catch (err) {
-                console.warn(`Wood pack: crafting ${item} failed: ${err?.message ?? err}`);
+            // F32c of the journeys (the real server): bot.craft with a count over 1 crafts once and throws
+            // "missing ingredient" on its second craft, because the slots of the inventory are stale right
+            // after a craft. One craft per call, the inventory settled between them.
+            for (let k = 0; k < times && !bot.interrupt_code; k++) {
+                const before = await settledCount(bot, clock, item);
+                try {
+                    await craft(bot, item, 1);
+                } catch (err) {
+                    console.warn(`Wood pack: crafting ${item} failed: ${err?.message ?? err}`);
+                    break;
+                }
+                const got = Math.max(0, (await settledCount(bot, clock, item)) - before);
+                made += got;
+                if (got === 0) {
+                    break;
+                }
             }
-            made += Math.max(0, (await settledCount(bot, clock, item)) - before);
         }
         if (made === 0) {
             if (short) {
@@ -499,6 +543,7 @@ export async function craftSupplies(bot, ctx = {}, item = '', count = 1, options
         const start = await settledCount(bot, clock, product);
         const gained = () => Math.max(0, countItems(bot, product) - start);
         let failure = null;
+        let failures = 0;
         let chop = '';
         for (let round = 0; round < 6 && gained() < wanted; round++) {
             if (bot.interrupt_code) {
@@ -511,8 +556,12 @@ export async function craftSupplies(bot, ctx = {}, item = '', count = 1, options
                 const plan = supplySteps(name, k, inventoryOf(bot), { table: tableNear(bot) });
                 const r = await runSteps(bot, ctx, plan.steps, clock);
                 if (!r.ok) {
+                    // a step that failed: the next round crafts what the inventory gives then (6 coal and
+                    // 6 sticks left over are 24 torches); a stop or a third failure ends it
                     failure = { reason: r.reason, text: r.text };
-                    break;
+                    if (r.reason === 'interrupted' || ++failures >= 3) {
+                        break;
+                    }
                 }
                 continue;
             }

@@ -9,8 +9,8 @@
 //      bot, "remember the path here", "come here" from the house, "go to the basement".
 //   B  the player goes down into the basement to the bot; part B of journey.js (W81) from the basement: "follow me" up,
 //      out of the house under the open sky, back in and down both ladders, through the double door to the end of the
-//      tunnel; "this is the mine"; "find some iron" (4 iron ore beyond the end): 4 raw_iron and back on the surface
-//      within 5 minutes, the trapdoor closed, a torch in the dug part.
+//      tunnel; "this is the mine"; "find some iron" (12 iron ore ahead of the end): 12 raw_iron and back on the
+//      surface within 5 minutes, the trapdoor closed, torches kept, a torch in the new part of the tunnel.
 //   C  night (time 13000), the player in the house: !goToBed ("let's sleep"): the bot sleeps within 120 s (its own view
 //      and the server), and the answer after the morning is "I slept. It is morning."
 //   D  the player stands in the mine room (y 41): !goToPlayer("w_player", 3) ("come here") brings the bot to y 41

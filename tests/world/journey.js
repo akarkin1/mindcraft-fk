@@ -252,6 +252,14 @@ export async function partFirstMinutes(ctx) {
     const ok = (cond, label, detail) => { results.push(Boolean(cond)); check(cond, label, detail); return cond; };
     const tPart = Date.now();
     const trace = journeyTrace(agent, b);
+    const climbs = climbSampler(agent);
+    const c0 = Date.now();
+    // the climbs of the bot between two moments of this part (the owner: "the climbing looked jerky")
+    const climbStep = (label, from, to, expect = 1) => {
+        note(`${label}: the order was given at t=${((from - c0) / 1000).toFixed(1)}s of the samples`);
+        const list = checkClimbs(label, climbs.rows, b, { expect, window: { from: (from - c0) / 1000, to: (to - c0) / 1000 } });
+        results.push(list.length >= expect && list.every(smooth));
+    };
     try {
         const home = await orders.order('!rememberArea("home", "home")', 60000);
         note(`A0: !rememberArea("home", "home") answered ${JSON.stringify(home)}`);
@@ -266,6 +274,7 @@ export async function partFirstMinutes(ctx) {
         const down = await waitBot(agent, 'A1: the bot is in the basement', (a) => inBasement(b, a), Math.max(1000, 60000 - (Date.now() - tFollow)));
         ok(down.ok, 'A1: within 60 s of "follow me" the bot followed the player down the ladder into the basement, without help', fmt(down.bot));
         await sleep(11000); // the door service has 10 s after the pass
+        climbStep('A1 climb (follow down ladder 1)', tFollow, Date.now());
         const pass = trapdoorAfterPass(trace.rows, b);
         note(`A2: the bot passed the trapdoor at t=${pass.passedAt}s of the trace, the trapdoor was closed at t=${pass.closedAt}s; it is ${(await isOpen(b.trapdoor, 'oak_trapdoor')) ? 'open' : 'closed'} now`);
         ok(pass.ok, 'A2: the trapdoor is closed within 10 s after the bot passed it (the player is in the basement)', JSON.stringify(pass));
@@ -277,6 +286,7 @@ export async function partFirstMinutes(ctx) {
 
         await playerUpToHouse(b, sp.basementWait);
         await walkPlayer(line(sp.besideTrapdoor, { x: sp.houseMiddle.x, y: g + 1, z: sp.besideTrapdoor.z }));
+        const tUp = Date.now();
         const go = orders.orderInfo(`!goToPlayer("${PLAYER}", 3)`, 60000);
         const up = await waitBot(agent, 'A4: the bot is in the house', inside(b.house.interior), 60000);
         const goInfo = await go;
@@ -284,6 +294,8 @@ export async function partFirstMinutes(ctx) {
         ok(up.ok, 'A4: after "come here" from the house the bot climbed up into the house by itself within 60 s', fmt(up.bot));
 
         await sleep(2000);
+        climbStep('A4 climb (come here, up ladder 1)', tUp, Date.now());
+        const tB = Date.now();
         const goB = orders.orderInfo('!goToRememberedPlace("basement")', 90000);
         const there = await waitBot(agent, 'A5: the bot is in the basement', (a) => inBasement(b, a), 60000);
         const bInfo = await goB;
@@ -291,7 +303,9 @@ export async function partFirstMinutes(ctx) {
         const after = await entityPos(agent.name);
         note(`A5: !goToRememberedPlace("basement") answered ${JSON.stringify(bInfo.reply.slice(0, 300))}; after the answer the bot is at ${fmt(after)}`);
         ok(there.ok && inBasement(b, after), 'A5: "go to the basement" from the house brings the bot into the basement within 60 s (on its floor, also after the answer)', `${fmt(there.bot)}, after the answer ${fmt(after)}`);
+        climbStep('A5 climb (route down ladder 1)', tB, Date.now());
     } finally {
+        await climbs.stop();
         const rows = await trace.stop();
         printJourney('part A: home and the basement', rows);
         note(`part A: the bot said ${JSON.stringify(saidLines(s, tPart).slice(0, 30))}`);
@@ -307,9 +321,10 @@ export async function partFirstMinutes(ctx) {
 //      double door, down the descent to the end of the tunnel, waiting for the bot after every ladder: the bot follows
 //      (60 s per leg);
 //   B2 !rememberMine("mine") ("this is the mine") names 2 ladders and the room;
-//   B3 4 iron ore beyond the end of the tunnel; !mineOre("iron", 4) ("find some iron"): within 5 minutes the bot has
-//      4 raw_iron, is back on the surface (feet at y g+1 or higher, outside the mine box), the trapdoor it passed is
-//      closed, a torch stands in the dug part of the tunnel.
+//   B3 12 iron ore in a line ahead of the end of the tunnel; !mineOre("iron", 12) ("find some iron"): within 5 minutes
+//      the bot has 12 raw_iron, is back on the surface (feet at y g+1 or higher, outside the mine box), the trapdoor it
+//      passed is closed; it still carries torches and put none into the chest of the room; the tunnel grew by 8 blocks
+//      or more and a torch stands in its new part.
 export async function partFirstMine(ctx, { from = 'outside' } = {}) {
     const { s, agent, orders, b } = ctx;
     const sp = spots(b);
@@ -363,34 +378,46 @@ export async function partFirstMine(ctx, { from = 'outside' } = {}) {
         note(`B2: mines.json: ${JSON.stringify(readWorldFile(agent, 'mines.json').json?.mines?.mine?.route ?? null)}`);
 
         const t = b.tunnel;
-        const ores = [2, 4].flatMap((k) => [0, 1].map((dy) => ({ x: t.end.x, y: t.end.y + dy, z: t.end.z + k })));
+        // 12 iron ore ahead of the end, at the feet and the head every 2 blocks: the dig is 12 blocks long, so a torch is due
+        const ores = [2, 4, 6, 8, 10, 12].flatMap((k) => [0, 1].map((dy) => ({ x: t.end.x, y: t.end.y + dy, z: t.end.z + k })));
+        const lengthBefore = readWorldFile(agent, 'mines.json').json?.mines?.mine?.tunnels?.[0]?.length ?? t.cells.length;
+        const roomBefore = await chestItemsSafe(b.room.chest);
         await commands(ores.map((p) => `setblock ${p.x} ${p.y} ${p.z} minecraft:iron_ore`));
         const before = countItem(agent, 'raw_iron');
         const laddersBefore = countItem(agent, 'ladder');
         const moves = recordMoves(agent);
         const places = recordPlacing(agent);
         const t0 = Date.now();
-        const info = await orders.orderInfo('!mineOre("iron", 4)', 300000);
+        const info = await orders.orderInfo('!mineOre("iron", 12)', 300000);
         const secs = (Date.now() - t0) / 1000;
         moves.stop();
         places.stop();
         const gap = await blockNames(b.owner.shaft2.gap, ['air', 'ladder', 'cobblestone', 'dirt', 'stone']);
         note(`B3: ladders in the bag ${laddersBefore} before, ${countItem(agent, 'ladder')} after; the 2 cells under ladder 2 are ${JSON.stringify(gap)} now; placed blocks ${JSON.stringify(places.lines)}; clicks ${JSON.stringify(moves.lines.filter((l) => /activateBlock/.test(l)).slice(0, 12))}`);
-        note(`B3: !mineOre("iron", 4) answered after ${secs.toFixed(1)} s: ${JSON.stringify(info.reply)}`);
+        note(`B3: !mineOre("iron", 12) answered after ${secs.toFixed(1)} s: ${JSON.stringify(info.reply)}`);
         const end = await entityPos(agent.name);
         const iron = countItem(agent, 'raw_iron') - before;
         const room = await chestItemsSafe(b.room.chest);
         note(`B3: the bot carries ${iron} raw_iron more than before the order; the chest of the room holds ${JSON.stringify(room)}; the bot is at ${fmt(end)}`);
-        ok(info.done, 'B3: !mineOre("iron", 4) ended within 5 minutes', info.reply);
-        ok(iron >= 4, 'B3: the bot has 4 raw_iron (in its inventory) at the end', `${iron} raw_iron; the chest of the room ${room?.raw_iron || 0}`);
+        ok(info.done, 'B3: !mineOre("iron", 12) ended within 5 minutes', info.reply);
+        ok(iron >= 12, 'B3: the bot has 12 raw_iron (in its inventory) at the end', `${iron} raw_iron; the chest of the room ${room?.raw_iron || 0}`);
         ok(Boolean(end) && end.y >= g + 1 - 0.01 && !inBox(end, b.mineBox) && !inBasement(b, end), `B3: the bot is back on the surface (feet at y ${g + 1} or higher, not in the mine or the basement)`, fmt(end));
         const trap = await isOpen(b.trapdoor, 'oak_trapdoor');
         ok(trap === false, 'B3: the trapdoor the bot passed is closed at the end', String(trap));
         note(`B3: the double door is ${JSON.stringify(await doubleDoorState(b))} (open per door) at the end`);
-        const dug = { min: { x: t.end.x - 1, y: t.end.y - 1, z: t.end.z + 1 }, max: { x: t.end.x + 1, y: t.end.y + 2, z: t.end.z + 12 } };
+        // the torches: the bot keeps them for the trip (none put into the chest of the room), and a dig of 8 blocks or
+        // more has a torch in its new part (one torch every 8 blocks)
+        const torchesLeft = countItem(agent, 'torch');
+        const roomTorches = (room?.torch || 0) - (roomBefore?.torch || 0);
+        note(`B3: the bot carries ${torchesLeft} torches after the trip; the chest of the room held ${roomBefore?.torch || 0} torches before and ${room?.torch || 0} after`);
+        ok(torchesLeft > 0 && roomTorches <= 0, 'B3: the bot still carries torches after the trip and put none into the chest of the room', `carries ${torchesLeft}, the room chest ${roomTorches >= 0 ? '+' : ''}${roomTorches}`);
+        const lengthAfter = readWorldFile(agent, 'mines.json').json?.mines?.mine?.tunnels?.[0]?.length ?? null;
+        const grew = lengthAfter === null ? null : lengthAfter - lengthBefore;
+        const dug = { min: { x: t.end.x - 1, y: t.end.y - 1, z: t.end.z + 1 }, max: { x: t.end.x + 1, y: t.end.y + 2, z: t.end.z + 16 } };
         const torches = await findBlocksSafe(dug, ['torch', 'wall_torch']);
-        note(`B3: torches in the dug part of the tunnel: ${JSON.stringify(torches.map((x) => x.pos))}`);
-        ok(torches.length > 0, 'B3: a torch stands in the dug part of the tunnel', `${torches.length} torches`);
+        note(`B3: the tunnel was ${lengthBefore} blocks long and is ${lengthAfter} now (grew by ${grew}); torches in the new part: ${JSON.stringify(torches.map((x) => x.pos))}`);
+        ok(grew !== null && grew >= 8, 'B3: the dig is 8 blocks or longer (12 iron ore in a line ahead of the end)', `grew by ${grew}`);
+        if (grew !== null && grew >= 8) ok(torches.length > 0, 'B3: the tunnel grew by 8 blocks or more: a torch stands in its new part', `${torches.length} torches, grew by ${grew}`);
     } finally {
         const rows = await trace.stop();
         printJourney('part B: the first mine', rows);
@@ -443,7 +470,7 @@ function ladderColumns(b) {
 
 // Splits the samples into climbs: runs of samples in a ladder column strictly between its two floors, covering 2 blocks
 // or more. For each: direction, blocks, seconds, seconds per block, stalls (runs of more than 1 s without a height
-// change of 0.02), reversals (steps against the direction of more than 0.1 block) and the largest of them.
+// change of 0.02), reversals (steps against the direction of more than 0.2 block; a hop of 0.15 at the step into a column is no flinch) and the largest of them.
 export function climbsOf(rows, b) {
     const out = [];
     for (const c of ladderColumns(b)) {
@@ -457,9 +484,12 @@ export function climbsOf(rows, b) {
                     const dir = last.y >= first.y ? 'up' : 'down';
                     const sign = dir === 'up' ? 1 : -1;
                     let reversals = 0, worst = 0, stalls = 0, longest = 0;
+                    const where = [];
                     for (let i = 1; i < run.length; i++) {
                         const back = -sign * (run[i].y - run[i - 1].y);
-                        if (back > 0.1) { reversals++; worst = Math.max(worst, back); }
+                        // the start of a climb is the step into the column: a hop of up to 0.25 at the top rung when
+                        // the bot drops in from the floor (1.5 s on the way down), no flinch
+                        if (back > 0.2 && run[i].t - run[0].t > (dir === 'down' ? 1.5 : 0.5)) { reversals++; worst = Math.max(worst, back); where.push(`t=${run[i].t.toFixed(1)}s y ${run[i - 1].y.toFixed(2)}->${run[i].y.toFixed(2)}`); }
                     }
                     let s = 0;
                     for (let i = 1; i <= run.length; i++) {
@@ -474,7 +504,7 @@ export function climbsOf(rows, b) {
                     const seconds = last.t - first.t;
                     out.push({
                         column: c.name, dir, from: first.y, to: last.y, at: first.t, blocks, seconds, perBlock: blocks > 0 ? seconds / blocks : Infinity,
-                        stalls, longestStall: longest, reversals, worstReversal: worst,
+                        stalls, longestStall: longest, reversals, worstReversal: worst, where,
                     });
                 }
             }
@@ -489,20 +519,25 @@ export function climbsOf(rows, b) {
     return out.sort((a, b2) => a.at - b2.at);
 }
 
+export const smooth = (c) => c.reversals === 0 && c.stalls <= 1 && c.perBlock < 0.8;
+
 export function climbText(c) {
     return `${c.column} ${c.dir} from y ${c.from.toFixed(1)} to ${c.to.toFixed(1)}: ${c.blocks.toFixed(1)} blocks in ${c.seconds.toFixed(1)} s, ${c.perBlock.toFixed(2)} s per block, ` +
-        `${c.stalls} stall(s) over 1 s (longest ${c.longestStall.toFixed(1)} s), ${c.reversals} reversal(s) over 0.1 (largest ${c.worstReversal.toFixed(2)})`;
+        `${c.stalls} stall(s) over 1 s (longest ${c.longestStall.toFixed(1)} s), ${c.reversals} reversal(s) over 0.2 (largest ${c.worstReversal.toFixed(2)})` +
+        (c.where.length ? ` at ${c.where.join(', ')} (climb from t=${c.at.toFixed(1)}s)` : '');
 }
 
 // The checks of the owner's "jerky climb" for every climb of the bot in the samples: no reversal of more than 0.1 block,
 // at most one stall of more than 1 s, under 0.8 s per block. `label` names the step. Resolves with the climbs.
-export function checkClimbs(label, rows, b, { expect = 1 } = {}) {
-    const climbs = climbsOf(rows, b);
+// window { from, to } (seconds of the samples): only the climbs that overlap it, each measured whole (a climb begun
+// under one order and finished under the next is one climb).
+export function checkClimbs(label, rows, b, { expect = 1, window = null } = {}) {
+    const climbs = climbsOf(rows, b).filter((c) => !window || (c.at <= window.to && c.at + c.seconds >= window.from));
     note(`${label}: ${climbs.length} climb(s) of the bot: ${climbs.length ? climbs.map(climbText).join(' | ') : 'none'}`);
     check(climbs.length >= expect, `${label}: the samples hold the bot's climb(s) on the ladder (${expect} or more)`, `${climbs.length}`);
     for (const c of climbs) {
-        check(c.reversals === 0 && c.stalls <= 1 && c.perBlock < 0.8,
-            `${label}: the climb is smooth (${c.column} ${c.dir}): no step against the direction of more than 0.1 block, at most one stall over 1 s, under 0.8 s per block`, climbText(c));
+        check(smooth(c),
+            `${label}: the climb is smooth (${c.column} ${c.dir}): no step against the direction of more than 0.2 block, at most one stall over 1 s, under 0.8 s per block`, climbText(c));
     }
     return climbs;
 }

@@ -20,7 +20,8 @@ function scene({ pos = [0.5, 64, 0.5], areas = [], storage = null, chests = null
     return { world, bot, ctx, clock, lines, opts: { now: clock.now, wait: clock.wait } };
 }
 
-const crafts = (bot) => bot.calls.filter(c => c[0] === 'craft').map(c => c[1]);
+// F32c: one craft per call, so the same item repeats; the steps are what the tests compare
+const crafts = (bot) => bot.calls.filter(c => c[0] === 'craft').map(c => c[1]).filter((x, i, a) => i === 0 || a[i - 1] !== x);
 
 /** A little rock of stone on the grass: 6 blocks with faces in the air. */
 function rock(world, x, z) {

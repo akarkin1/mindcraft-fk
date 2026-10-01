@@ -91,7 +91,7 @@ describe('followPlayer with routes_pack on: the player below the ladder', () => 
             assert.equal(await run, true, 'the return value as before');
             assert.ok(arrived, `feet ${JSON.stringify(s.feet())}, goals ${JSON.stringify(s.bot.goals)}`);
             assert.deepEqual(s.bot.goals, ['GoalFollow', null, 'GoalFollow']);
-            assert.deepEqual(s.bot.clicks, [{ x: 2, y: 60, z: -2, sneak: false }], 'the trapdoor opened with one click without sneak');
+            assert.deepEqual(s.bot.clicks, [{ x: 2, y: 60, z: -2, sneak: false }, { x: 2, y: 60, z: -2, sneak: false }], 'opened with one click without sneak, closed 2 blocks below');
             assert.deepEqual(s.feet(), { x: 2, y: 53, z: -2 });
             assert.deepEqual(s.bot.output.trim().split('\n'), [`You are now actively following player ${PLAYER}.`, DOWN_TEXT]);
             assert.deepEqual(s.bot.progress, ['ladder']);
@@ -132,7 +132,7 @@ describe('no switch: the ladder step runs with routes_pack off and absent', () =
             s.bot.interrupt_code = true;
             assert.equal(await run, true);
             assert.ok(s.bot.goals.includes(null), s.bot.goals.join(','));
-            assert.deepEqual(s.bot.clicks, [{ x: 2, y: 60, z: -2, sneak: false }]);
+            assert.deepEqual(s.bot.clicks, [{ x: 2, y: 60, z: -2, sneak: false }, { x: 2, y: 60, z: -2, sneak: false }]);
             assert.ok(s.bot.output.includes(DOWN_TEXT), s.bot.output);
         } finally {
             s.bot.interrupt_code = true;
@@ -172,7 +172,7 @@ describe('goToPlayer with routes_pack on', () => {
         try {
             await skills.goToPlayer(s.bot, PLAYER, 3);
             assert.deepEqual(s.feet(), { x: 2, y: 53, z: -2 });
-            assert.deepEqual(s.bot.clicks, [{ x: 2, y: 60, z: -2, sneak: false }]);
+            assert.deepEqual(s.bot.clicks, [{ x: 2, y: 60, z: -2, sneak: false }, { x: 2, y: 60, z: -2, sneak: false }], 'opened from above, closed 2 blocks below');
             const lines = s.bot.output.trim().split('\n');
             assert.ok(lines[0].startsWith('Found '), `the path search ran first: ${s.bot.output}`);
             assert.ok(lines.includes(DOWN_TEXT), s.bot.output);
@@ -189,7 +189,7 @@ describe('goToPlayer with routes_pack on', () => {
         stubFollowGoto(s.bot);
         try {
             await skills.goToPlayer(s.bot, PLAYER, 3);
-            assert.deepEqual(s.bot.clicks, [{ x: 2, y: 60, z: -2, sneak: false }]);
+            assert.deepEqual(s.bot.clicks, [{ x: 2, y: 60, z: -2, sneak: false }, { x: 2, y: 60, z: -2, sneak: false }], 'opened from above, closed 2 blocks below');
             assert.ok(s.bot.output.includes(`${DOWN_TEXT}\n`), s.bot.output);
         } finally {
             s.stop();
@@ -198,7 +198,8 @@ describe('goToPlayer with routes_pack on', () => {
 });
 
 describe('the fixes of W75', () => {
-    test('L2: up under the closed trapdoor with the player waiting beside it (nearer than the follow distance), bobbing between two cells', { timeout: 30000 }, async () => {
+    test('L2: up under the closed trapdoor with the player waiting beside it (nearer than the follow distance), bobbing between two cells', { timeout: 45000 }, async () => {
+        // the fake does not climb an open trapdoor: climbUp gets out with its third way (the path search), about 12 s
         agentSettings.setSettings({ routes_pack: true });
         const s = scene({ pos: [2.5, 58, -1.5], player: [2.5, 61, -0.5] }); // 3.2 blocks apart, follow distance 4
         let up = true;
@@ -210,7 +211,7 @@ describe('the fixes of W75', () => {
         }, 120);
         try {
             const run = skills.followPlayer(s.bot, PLAYER, 4);
-            const out = await until(() => s.feet().y >= 61 && s.bot.goals.length >= 3, 20000);
+            const out = await until(() => s.feet().y >= 61 && s.bot.goals.length >= 3 && s.bot.goals.at(-1) === 'GoalFollow', 35000);
             s.bot.interrupt_code = true;
             await run;
             assert.ok(out, `feet ${JSON.stringify(s.feet())}, goals ${JSON.stringify(s.bot.goals)}, output ${s.bot.output}`);
@@ -218,7 +219,7 @@ describe('the fixes of W75', () => {
             const g = s.bot.goals;
             assert.ok(g[0] === 'GoalFollow' && g.at(-1) === 'GoalFollow' && g.slice(1, -1).length >= 1 && g.slice(1, -1).every((x) => x === null),
                 `${JSON.stringify(g)} ${s.bot.output}`);
-            assert.deepEqual(s.bot.clicks, [{ x: 2, y: 60, z: -2, sneak: false }]);
+            assert.deepEqual(s.bot.clicks, [{ x: 2, y: 60, z: -2, sneak: false }, { x: 2, y: 60, z: -2, sneak: false }], 'F35: opened, then closed behind the bot');
             assert.ok(s.bot.output.includes(`I climb up the ladder at (2, 60, -2) after ${PLAYER}.`), s.bot.output);
         } finally {
             clearInterval(bob);
@@ -322,6 +323,69 @@ describe('the fixes of W75', () => {
             assert.ok(!far.bot.goals.includes(null), JSON.stringify(far.bot.goals));
         } finally {
             far.stop();
+        }
+    });
+
+    test('F38: the entity of the player appears 500 ms after the order: goToPlayer waits for it; none within 2 s: "Could not find"', { timeout: 30000 }, async () => {
+        agentSettings.setSettings({ routes_pack: false });
+        const s = scene({ pos: [2.5, 61, -0.5], player: [4.5, 61, -0.5] });
+        stubFollowGoto(s.bot);
+        const entity = s.bot.players[PLAYER].entity;
+        s.bot.players[PLAYER].entity = null;
+        setTimeout(() => { s.bot.players[PLAYER].entity = entity; }, 500);
+        try {
+            const t = Date.now();
+            await skills.goToPlayer(s.bot, PLAYER, 3);
+            assert.ok(Date.now() - t >= 450, 'waited for the entity');
+            assert.ok(s.bot.output.includes(`You have reached ${PLAYER}.`), s.bot.output);
+            assert.ok(!s.bot.output.includes('Could not find'), s.bot.output);
+            s.bot.players[PLAYER].entity = null;
+            s.bot.output = '';
+            const t2 = Date.now();
+            assert.equal(await skills.goToPlayer(s.bot, PLAYER, 3), false);
+            assert.ok(Date.now() - t2 >= 1900 && Date.now() - t2 < 4000, `gave up after ${Date.now() - t2} ms`);
+            assert.ok(s.bot.output.includes(`Could not find ${PLAYER}.`), s.bot.output);
+        } finally {
+            s.stop();
+        }
+    });
+
+    test('F36: requestInterrupt of the agent holds on the ladder after it ends the path search (source text)', async () => {
+        const { readFileSync } = await import('node:fs');
+        const source = readFileSync(new URL('../../src/agent/agent.js', import.meta.url), 'utf8');
+        assert.match(source, /import \{ holdOnLadder \} from '\.\/library\/ladder_pass\.js';/);
+        const i = source.indexOf('this.bot.pathfinder.setGoal(null);');
+        const j = source.indexOf('holdOnLadder(this.bot);');
+        assert.ok(i > 0 && j > i && j - i < 200, 'holdOnLadder right after setGoal(null) of requestInterrupt');
+        const P = await loadSrc('src/agent/library/ladder_pass.js');
+        const s = scene({ pos: [2.5, 56, -1.5] });
+        try {
+            s.bot.entity.onGround = false;
+            assert.equal(P.holdOnLadder(s.bot), true);
+            assert.equal(s.bot.controls.sneak, true);
+            s.bot.entity.position = v(5.5, 61, -0.5);
+            s.bot.entity.onGround = true;
+            assert.equal(P.holdOnLadder(s.bot), false, 'not on a ladder');
+        } finally {
+            s.stop();
+        }
+    });
+
+    test('F36: an order that interrupts the climb: the bot holds on the ladder with sneak instead of sliding', { timeout: 30000 }, async () => {
+        agentSettings.setSettings({ routes_pack: true });
+        const s = scene({ pos: [2.5, 53, -1.5], player: [2.5, 61, 2.5] }); // the bot at the foot, the player up in the house
+        try {
+            const run = skills.followPlayer(s.bot, PLAYER, 4);
+            const climbing = await until(() => s.feet().x === 2 && s.feet().z === -2 && s.feet().y >= 55 && s.feet().y <= 58, 20000);
+            s.bot.interrupt_code = true; // "come here" interrupts the follow mid-column
+            await run;
+            assert.ok(climbing, `the bot never climbed: ${JSON.stringify(s.feet())} ${s.bot.output}`);
+            assert.equal(s.bot.controls.sneak, true, 'holds on with sneak');
+            assert.equal(s.bot.controls.forward, false);
+            assert.equal(s.bot.controls.jump, false);
+        } finally {
+            s.bot.interrupt_code = true;
+            s.stop();
         }
     });
 
