@@ -121,25 +121,6 @@ function release(bot) {
     }
 }
 
-/**
- * F36 of the journeys (the hand-over): an order that interrupts a climb released the controls, and the bot slid
- * 0.3 blocks before the next order took the ladder. A bot in the air on a ladder holds on with sneak (the physics
- * stops a sneaking bot on a ladder); the next pass or walk clears the controls as it starts. True when it holds.
- * @param {object} bot
- * @returns {boolean}
- */
-export function holdOnLadder(bot) {
-    try {
-        const c = feetOf(bot);
-        if (!c || bot.entity?.onGround === true || bot.blockAt(new Vec3(c.x, c.y, c.z))?.name !== 'ladder') {
-            return false;
-        }
-        bot.setControlState('sneak', true);
-        return true;
-    } catch {
-        return false;
-    }
-}
 
 function feetOf(bot) {
     const p = botPos(bot);
@@ -326,14 +307,11 @@ export async function passLadder(bot, column, way, { clock = null, timeoutMs = P
         const reason = way === 'down' ? await passDown(bot, lad, column, c, walkMs) : await passUp(bot, lad, column, c, walkMs);
         release(bot);
         if (reason === 'interrupted') {
-            holdOnLadder(bot); // F36: no slide between this order and the next
+            lad.holdOnLadder?.(bot); // F36: no slide between this order and the next
         }
         return done(reason);
     } catch {
         release(bot);
-        if (bot?.interrupt_code) {
-            holdOnLadder(bot);
-        }
         return done(bot?.interrupt_code ? 'interrupted' : 'error');
     }
 }

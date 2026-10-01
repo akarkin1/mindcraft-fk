@@ -34,6 +34,26 @@ function release(bot) {
     }
 }
 
+/**
+ * F36 of the journeys (the hand-over): an order that interrupts a climb released the controls, and the bot slid
+ * 0.3 blocks before the next order took the ladder. A bot in the air on a ladder holds on with sneak (the physics
+ * stops a sneaking bot on a ladder); the next pass or walk clears the controls as it starts. True when it holds.
+ * @param {object} bot
+ * @returns {boolean}
+ */
+export function holdOnLadder(bot) {
+    try {
+        const c = feetCell(bot);
+        if (!c || bot.entity?.onGround === true || blockAt(bot, c)?.name !== 'ladder') {
+            return false;
+        }
+        bot.setControlState('sneak', true);
+        return true;
+    } catch {
+        return false;
+    }
+}
+
 // releases the controls and stops the bot on the spot
 function stopFlat(bot) {
     release(bot);
