@@ -143,12 +143,27 @@ export async function startServer({ seedHigh = 0, seedLow = 0, motd = 'e2e fake 
 
 // ---------------------------------------------------------------- settings, sandbox
 
-// Loads the fork's settings.js, points it at the fake server and applies the overrides.
+// The switches of the fork at their defaults of settings_spec.json (every boolean with a default): a scenario
+// never reads a switch from the owner's settings.js (the rule of CLAUDE.md; the owner's file has every pack on).
+async function switchDefaults() {
+    const spec = JSON.parse(fs.readFileSync(new URL('../../src/mindcraft/public/settings_spec.json', import.meta.url), 'utf8'));
+    const out = {};
+    for (const [key, rule] of Object.entries(spec)) {
+        if (rule && rule.type === 'boolean' && typeof rule.default === 'boolean') {
+            out[key] = rule.default;
+        }
+    }
+    return out;
+}
+
+// Loads the fork's settings.js, points it at the fake server, puts every switch at its default and applies the
+// overrides.
 export async function setupSettings(name, port, overrides = {}) {
     const fileSettings = (await importProject('settings.js')).default;
     const mod = await importProject('src/agent/settings.js');
     mod.setSettings({
         ...JSON.parse(JSON.stringify(fileSettings)),
+        ...(await switchDefaults()),
         profile: { name, model: MODEL },
         host: '127.0.0.1',
         port,
