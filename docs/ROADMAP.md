@@ -45,7 +45,7 @@ The same release takes the path search in hand. mindcraft-ce was checked on 2026
 | Part | Content |
 |---|---|
 | Trapdoors | A closed trapdoor counts as a block to stand on only over solid ground, never over a ladder or air; an openable block is passable only when the move goes through it. Today the bot stands on the closed trapdoor. |
-| Down a ladder | A move of one rung down when the block below is a ladder or a vine; the bot slides when the next point is lower. The path search then descends a shaft by itself, and the ladder code of the packs becomes the fallback. |
+| Ladders inside the search | A move of one rung down when the block below is a ladder or a vine; on a ladder the search looks at the wall and holds forward, as a player does, without steering or planning again. Every walk the search starts, by a command, a reflex, a pack or the model's code, then climbs and descends smoothly by default; the ladder code of the packs becomes the fallback. No switch: a correction of the path search. |
 | Doors | Every door point of a path is centred, not only the first; the arrival tolerance at doors and ladders stays at 0.35. The doorway swinging goes. |
 | Holes and hollow blocks | Slabs, stairs, cauldrons, composters and hoppers get a no-stand rule in the search itself (the list of `stand_logic.js`), and a one-wide pit with a high exit a cost. |
 | Stuck | A cell where the bot got stuck gets a temporary high cost before the path is planned again, so the next plan takes another way. Part of the unstuck escape becomes unnecessary. |
