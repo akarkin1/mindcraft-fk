@@ -327,6 +327,34 @@ Where this text and the spec disagree, this text wins.
   for 3 s with the target 2 or more blocks above or below and a column near, `setGoal(null)`, the ladder
   step, the path search again; at most 3 passes a minute per call.
 
+## From the journey runs on the real server (the fix round F33 to F38, the lead)
+
+- `library/skills.js`: `walkWatchingLadders(bot, makeGoal, target, passes, after)` wraps the path search of
+  `goToPlayer` and `goToPosition` (F33); `goToPlayer` waits up to `PLAYER_WAIT_MS` (2000) for the entity of the
+  player (F38).
+- `library/ladder_pass.js`: `ladderWayTowards(bot, target, { reach, height })`; `holdOnLadder(bot)` (a bot in
+  the air on a ladder holds on with sneak and drops its upward speed; used by `agent.js` after it ends the path
+  search in `requestInterrupt`, and by the mode `self_preservation`, which no longer clears the controls of a
+  bot that hangs on a ladder); `climbToOpen` holds only jump during the click on the trapdoor and looks back at
+  the wall at once (F34); after a pass up the trapdoor is closed from beside it, `closeBehind` (F35); a pass up
+  of a bot that hangs keeps the hold until the climb presses forward (F36). The same hold and click rules in
+  `packs/mining/ladder.js` (`holdOnLadder` exported there for the packs; `climbUp` clears sneak as it presses
+  forward) and in the route replay (`packs/routes/replay.js`).
+- `packs/home/doors.js`: the door service does not click while the bot climbs (feet in a ladder, a vine or an
+  open trapdoor cell, not on the ground, forward or jump pressed): a click turns the look and knocks the bot off
+  the ladder (F37). A slide down presses nothing, so the trapdoor above is closed during the slide, while it is
+  within reach.
+- `packs/wood/tools.js`: `freeCraftingGrid` before every craft (an open window closed, the grid and the cursor
+  put back), one craft per call of `bot.craft` (a count over 1 crafts once and throws on the real server), and
+  after a failed step the next round crafts what the inventory gives (F32b, F32c).
+- `action_manager.js`: the end of a stopped action is polled every 50 ms (the interrupt asked every 300 ms as
+  before), so the next order starts at once.
+- `tests/e2e/helpers.js`: every boolean switch of `settings_spec.json` is put at its default before the
+  overrides of a scenario; a scenario never reads a switch from the owner's `settings.js`.
+- `tests/world/journey.js`: the climb checks (`climbSampler`, `climbsOf`, `smooth`, `checkClimbs`): a reversal
+  is a step of more than 0.2 blocks against the direction, outside the first 0.5 s of a climb up and the first
+  1.5 s of a climb down (the step into the column).
+
 ## State of the unit tests
 
 After parts A, B and C: E2 reports `npm test` with 5476 tests, 1 failure (the pack list, corrected by
