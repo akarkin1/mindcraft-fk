@@ -187,8 +187,9 @@ async function climbToOpen(bot, ctx, leg, trap, clock) {
     bot.setControlState('sneak', false);
     bot.setControlState('forward', false); // forward with the look turned walks the bot out of the column: it fell
     bot.setControlState('jump', true);
-    await clock.wait(100);
-    const opened = eyeDistance(bot, trap) <= REPLAY_RULES.reach && (await openDoor(bot, trap, doorOptions(ctx, clock)));
+    await clock.wait(400); // F39: the state of a click just before this leg reaches the bot a moment later
+    const now = doorState(bot, trap);
+    const opened = now?.open === true || (eyeDistance(bot, trap) <= REPLAY_RULES.reach && (await openDoor(bot, trap, doorOptions(ctx, clock))));
     try {
         await bot.look(yawOf(backOf(leg.face)), 0, true);
     } catch {

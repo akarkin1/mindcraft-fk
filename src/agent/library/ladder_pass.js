@@ -20,6 +20,7 @@ export const PASS_RULES = Object.freeze({
     timeoutMs: 30000, // the walk to the column, and the climb to a closed trapdoor
     reach: 4.5,       // a hand reaches a trapdoor this far from the eyes
     holdReach: 2.5,   // on the way up, the bot stops this near below a closed trapdoor to open it
+    settleMs: 400,    // the wait under the trapdoor before the click, for the state of a click just before
 });
 
 /** The reasons of a failed pass in words, for the texts. */
@@ -213,8 +214,12 @@ async function climbToOpen(bot, column, trap, clock, limitMs) {
     bot.setControlState('sneak', false);
     bot.setControlState('forward', false); // forward with the look turned walks the bot out of the column: it fell
     bot.setControlState('jump', true);
-    await clock.wait(100);
-    const opened = eyeDistance(bot, trap) <= PASS_RULES.reach && (await openDoor(bot, trap, doorOptions(clock)));
+    // F39 of the journeys (W80 run 14): a pass that took over from an interrupted one clicked the trapdoor the first
+    // one had just opened (its state reached the bot a moment later) and closed it again; the bot then bobbed under
+    // it. The state is read again after a short wait, and an open trapdoor gets no click.
+    await clock.wait(PASS_RULES.settleMs);
+    const now = doorState(bot, trap);
+    const opened = now?.open === true || (eyeDistance(bot, trap) <= PASS_RULES.reach && (await openDoor(bot, trap, doorOptions(clock))));
     try {
         await bot.look(wallYaw(column.facing), 0, true);
     } catch {
