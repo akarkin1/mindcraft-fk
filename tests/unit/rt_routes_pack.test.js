@@ -128,7 +128,8 @@ describe('A2: rememberRoute', () => {
         const s = remembering({ steps, places: {}, areas: [home], world });
         const r = P.rememberRoute(s.bot, s.ctx, 'bed');
         assert.equal(r.ok, true, r.text);
-        assert.equal(r.text, `I remember the way "bed": from the area "home" to here, ${r.route.legs.length} steps. I walk it in both directions.`);
+        // v0.1.4.9, decision F18 (E1): an area start names its level (was `from the area "home" to here`)
+        assert.equal(r.text, `I remember the way "bed": from the area "home", level 41 to here, ${r.route.legs.length} steps. I walk it in both directions.`);
     });
 
     test('from a mine (its room): `from the mine "mine"`', () => {

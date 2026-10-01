@@ -34,7 +34,9 @@ export function posText(pos) {
 export function startText(from) {
     const kinds = { place: 'the place', area: 'the area', mine: 'the mine' };
     if (typeof from?.name === 'string' && from.name.length > 0 && kinds[from.kind]) {
-        return `${kinds[from.kind]} "${from.name}"`;
+        // v0.1.4.9, F18: the start in an area names its level: `the area "home", level 67`
+        const level = from.kind === 'area' ? from.name.match(/^(.*), level (-?\d+)$/) : null;
+        return level ? `${kinds.area} "${level[1]}", level ${level[2]}` : `${kinds[from.kind]} "${from.name}"`;
     }
     return posText(from);
 }
@@ -74,6 +76,15 @@ export function rememberedText(route, replaced = false) {
  */
 export function replacedText(name) {
     return `I know a way "${name}" already. I replace it.`;
+}
+
+/**
+ * `I saved the place "basement" there too.` (v0.1.4.9, F19)
+ * @param {string} name
+ * @returns {string}
+ */
+export function placeSavedText(name) {
+    return `I saved the place "${name}" there too.`;
 }
 
 /**

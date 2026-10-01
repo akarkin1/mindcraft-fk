@@ -647,6 +647,33 @@ export function somebodyInDoor(bot, door) {
     }
 }
 
+/**
+ * True when an entity other than the bot (a player climbing below a trapdoor) is within 1 block of the
+ * openable: its feet cell at most 1 block sideways of the cell of the openable, and the openable at most 1
+ * block below its feet or above its head (v0.1.4.9, F21). Items, orbs and projectiles do not count. Never throws.
+ * @param {object} bot
+ * @param {{x,y,z}} door
+ * @returns {boolean}
+ */
+export function somebodyNear(bot, door) {
+    try {
+        for (const entity of Object.values(bot?.entities ?? {})) {
+            if (!entity || entity === bot.entity || !entity.position || NOT_STANDING.has(entity.name) || entity.type === 'projectile') {
+                continue;
+            }
+            const p = entity.position;
+            const height = isFiniteNumber(entity.height) ? entity.height : 1.8;
+            if (Math.max(Math.abs(Math.floor(p.x) - door.x), Math.abs(Math.floor(p.z) - door.z)) <= 1
+                && door.y >= Math.floor(p.y) - 1 && door.y <= Math.floor(p.y + height) + 1) {
+                return true;
+            }
+        }
+        return false;
+    } catch {
+        return true; // when in doubt, leave it open
+    }
+}
+
 function botStandsIn(bot, door) {
     const me = botPos(bot);
     return Boolean(me) && Math.abs(me.x - (door.x + 0.5)) < 0.8 && Math.abs(me.z - (door.z + 0.5)) < 0.8
@@ -692,7 +719,7 @@ export function createDoorService(bot, ctx = {}, options = {}) {
             ...door,
             inArea: areas.some(({ box }) => containsPos(box, door)),
             gated: door.kind === 'gate' && areas.some(({ area, box }) => isGatedArea(area) && containsPos(box, door)),
-            occupied: somebodyInDoor(bot, door),
+            occupied: somebodyInDoor(bot, door) || somebodyNear(bot, door), // F21: nobody within 1 block
         }));
         const moving = now - movedAt <= DOOR_SERVICE_RULES.movedWithinMs || bot.pathfinder?.isMoving?.() === true;
         return watch.observe({ now, botPos: me, moving, doors, players: otherPlayerPositions(bot, 16) });
@@ -710,7 +737,7 @@ export function createDoorService(bot, ctx = {}, options = {}) {
                 watch.forget(door);
                 return;
             }
-            if (somebodyInDoor(bot, door) || botStandsIn(bot, door)) {
+            if (somebodyInDoor(bot, door) || somebodyNear(bot, door) || botStandsIn(bot, door)) {
                 return; // tried again on a later look
             }
             const closed = await closeDoor(bot, before, { tries: 1, checkMs, respectInterrupt: false, ctx, now: options?.now, wait: options?.wait });

@@ -20,6 +20,7 @@ export const ROUTE_RULES = Object.freeze({
     reach: 32,         // ... and the other end this near to the bot
     placeRange: 2,     // a step is at a saved place within this distance
     roomRange: 2,      // a step is in the room of a mine within this distance of its chest, table, furnace or middle
+    floorHeight: 3,    // v0.1.4.9, F18: two steps of one area this far apart in height are on two floors
     nameMax: 64,
 });
 
@@ -204,11 +205,15 @@ function ladderRun(s, a, b, faceAt) {
     let start = a;
     let end = b;
     let bottom = low;
-    // the floor under a column that ends above it
-    if (down && inColumn(next) && next.y < low) {
+    // v0.1.4.9, F22: the step after the run (down) or before it (up) more than 1 block below the lowest ladder:
+    // the bot dropped off the ladder or jumped to it; the bottom stays the lowest ladder, the foot is on the floor
+    const floorStep = down ? next : prev;
+    const drop = Boolean(floorStep) && floorStep.y < low - 1;
+    // the floor under a column that ends 1 block above it
+    if (!drop && down && inColumn(next) && next.y < low) {
         bottom = next.y;
         end = b + 1;
-    } else if (!down && inColumn(prev) && prev.y < low) {
+    } else if (!drop && !down && inColumn(prev) && prev.y < low) {
         bottom = prev.y;
         start = a - 1;
     }
@@ -228,8 +233,17 @@ function ladderRun(s, a, b, faceAt) {
     }
     const entryIndex = down ? topSideIndex(s, start, x, z, top, -1) : topSideIndex(s, end, x, z, top, 1);
     const entryStep = entryIndex === null ? null : s[entryIndex];
-    const footIndex = down ? bottomSideIndex(s, end, x, z, bottom, 1) : bottomSideIndex(s, start, x, z, bottom, -1);
-    const footStep = footIndex === null ? null : s[footIndex];
+    let footIndex = down ? bottomSideIndex(s, end, x, z, bottom, 1) : bottomSideIndex(s, start, x, z, bottom, -1);
+    let footStep = footIndex === null ? null : s[footIndex];
+    let dropFoot = null;
+    if (drop) {
+        // F22: the step on the floor itself when it is within 1 block sideways of the column, else the cell under
+        // the column at its height; the walk next to the ladder ends or starts at that step, never at a ladder cell
+        footIndex = down ? b + 1 : a - 1;
+        const near = Math.max(Math.abs(floorStep.x - x), Math.abs(floorStep.z - z)) <= 1;
+        footStep = near ? floorStep : null;
+        dropFoot = near ? cell(floorStep) : { x, y: floorStep.y, z };
+    }
     if (!face && entryStep) {
         // the step at the top beside the column stands on the wall: the ladders face away from it
         const d = directionTo(Math.sign(entryStep.x - x), Math.sign(entryStep.z - z));
@@ -243,7 +257,14 @@ function ladderRun(s, a, b, faceAt) {
     // fix round 2 (F3): the foot, the cell beside the column at the bottom where the bot stood before the climb
     // or after the slide; the walk legs end and start there, never in the column
     let foot;
-    if (footStep) {
+    if (dropFoot) {
+        foot = dropFoot;
+        if (down) {
+            end = footIndex;
+        } else {
+            start = footIndex;
+        }
+    } else if (footStep) {
         foot = cell(footStep);
         if (down) {
             end = footIndex;
@@ -270,7 +291,11 @@ function ladderRun(s, a, b, faceAt) {
     }
     // the order of the legs is the order of the trail: a run going down comes after what the trail passed
     // before its first ladder (a trapdoor over it), although the walk before it ends at the entry
-    return { key: down ? a : start, start, end, order: 1, leg: { kind: 'ladder', x, z, top, bottom, face, entry, foot } };
+    const leg = { kind: 'ladder', x, z, top, bottom, face, entry, foot };
+    // F22: a foot under the column that is no step of the trail: a walk between it and the step on the floor
+    const link = dropFoot && !footStep ? (down ? { after: { kind: 'walk', from: { ...foot }, to: cell(floorStep) } }
+        : { before: { kind: 'walk', from: cell(floorStep), to: { ...foot } } }) : {};
+    return { key: down ? a : start, start, end, order: 1, leg, ...link };
 }
 
 function ladderLegs(s, faceAt) {
@@ -402,7 +427,13 @@ export function routeFromSteps(steps, options = {}) {
         if (sp.start > cursor) {
             walkLegs(s, cursor, sp.start, maxHop, maxPath, legs);
         }
+        if (sp.before) {
+            legs.push(sp.before);
+        }
         legs.push(sp.leg);
+        if (sp.after) {
+            legs.push(sp.after);
+        }
         cursor = Math.max(cursor, sp.end);
     }
     if (cursor < s.length - 1) {
@@ -420,6 +451,9 @@ function thingKey(thing) {
 /**
  * Where the way of the trail starts (A2): walking back from the last step, the first step at a known
  * thing that is not a thing of the last step.
+ * v0.1.4.9, F18: a step of the area of the last step counts as another known thing when it is no ladder
+ * step (not on or in a ladder or a trapdoor) and lies 3 or more blocks higher or lower than the last step (the
+ * other floor of the building).
  * @param {object[]} steps
  * @param {{name: string, kind: 'place'|'area'|'mine', test: (step: object) => boolean}[]} known
  * @returns {{index: number, known: object}|null}
@@ -439,10 +473,19 @@ export function routeStart(steps, known) {
     };
     const last = list[list.length - 1];
     const ofLast = new Set(things.filter(k => hits(k, last)).map(thingKey));
+    // v0.1.4.9, F18: one area over two floors (a house with its basement): a step of the area of the last step
+    // that is no ladder step and lies 3 or more blocks higher or lower is on another floor, another known thing
+    const climbing = step => step.at === 'ladder' || step.on === 'ladder' || (typeof step.at === 'string' && step.at.endsWith('_trapdoor'));
+    const floorOf = step => isPoint(step) && isPoint(last) && !climbing(step)
+        && Math.abs(Math.floor(step.y) - Math.floor(last.y)) >= ROUTE_RULES.floorHeight;
     for (let i = list.length - 1; i >= 0; i--) {
         const found = things.find(k => !ofLast.has(thingKey(k)) && hits(k, list[i]));
         if (found) {
             return { index: i, known: found };
+        }
+        const floor = floorOf(list[i]) ? things.find(k => k.kind === 'area' && ofLast.has(thingKey(k)) && hits(k, list[i])) : null;
+        if (floor) {
+            return { index: i, known: floor };
         }
     }
     return null;

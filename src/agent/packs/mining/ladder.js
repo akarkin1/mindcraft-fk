@@ -269,8 +269,15 @@ export async function slideDown(bot, leg, options = {}) {
         await clock.wait(50);
     }
     release(bot);
-    const end = feetCell(bot);
-    const ok = Boolean(end) && end.x === leg.x && end.z === leg.z && end.y === leg.bottom;
+    // v0.1.4.9, F22: a column that ends above the floor ends with a drop: the feet on the ground at most 2 blocks
+    // below the bottom count as arrived
+    let end = feetCell(bot);
+    if (end && end.y < leg.bottom) {
+        await waitStanding(bot, clock, 2000);
+        end = feetCell(bot);
+    }
+    const ok = Boolean(end) && end.x === leg.x && end.z === leg.z && end.y <= leg.bottom && end.y >= leg.bottom - 2
+        && (end.y === leg.bottom || bot.entity?.onGround === true);
     return { ok, reason: ok ? null : 'stuck', ms: clock.now() - t0 };
 }
 
@@ -325,11 +332,51 @@ export async function enterColumn(bot, leg, options = {}) {
     if (!w.ok) {
         return { ok: false, reason: w.reason === 'interrupted' ? 'interrupted' : 'no_path' };
     }
+    if (foot.y < leg.bottom - 1) {
+        // v0.1.4.9, F22: the column ends more than 1 block above the floor: under it (a step in when the foot is
+        // beside it), then jump at the wall until the feet are in a ladder cell, at most 5 s
+        const under = { x: leg.x, y: foot.y, z: leg.z };
+        if (foot.x !== leg.x || foot.z !== leg.z) {
+            await stepInto(bot, under, clock);
+        }
+        return await jumpOnto(bot, leg, clock, inColumn);
+    }
     await stepInto(bot, { x: leg.x, y: leg.bottom, z: leg.z }, clock);
     if (bot.interrupt_code) {
         return { ok: false, reason: 'interrupted' };
     }
     return inColumn() ? { ok: true, reason: null } : { ok: false, reason: 'no_path' };
+}
+
+// F22: from the floor under a column that ends above it, jump at the wall (the physics of 1.21 climbs a ladder
+// while jump is held, patches/prismarine-physics) until the feet are in a ladder cell; at most 5 s.
+async function jumpOnto(bot, leg, clock, inColumn) {
+    const onLadder = () => {
+        const c = feetCell(bot);
+        return Boolean(c) && c.x === leg.x && c.z === leg.z && blockAt(bot, c)?.name === 'ladder';
+    };
+    const c = feetCell(bot);
+    if (!c || c.x !== leg.x || c.z !== leg.z) {
+        return { ok: false, reason: bot.interrupt_code ? 'interrupted' : 'no_path' };
+    }
+    await look(bot, backOf(leg.face));
+    bot.setControlState('forward', true);
+    bot.setControlState('jump', true);
+    const start = clock.now();
+    while (clock.now() - start < 5000 && !onLadder()) {
+        if (bot.interrupt_code) {
+            release(bot);
+            return { ok: false, reason: 'interrupted' };
+        }
+        await clock.wait(50);
+    }
+    const ok = onLadder();
+    if (!ok) {
+        release(bot);
+    } else {
+        bot.setControlState('jump', false); // forward stays: climbUp goes on climbing
+    }
+    return ok && inColumn() ? { ok: true, reason: null } : { ok: false, reason: 'no_path' };
 }
 
 // At the top of the column with a way out above it (fix round 2, F1): the feet at the top ladder or in the

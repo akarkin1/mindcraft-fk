@@ -9,7 +9,7 @@
 import { botPos, dimensionOf, listAreas } from '../home/context.js';
 import { knownThings, legCells, nearestRoute, normalizeRouteName, reverseRoute, routeEnds, routeFromSteps, routeStart,
     ROUTE_RULES, skyStart, startOffLadder } from './route_logic.js';
-import { TEXTS, forgotText, noRouteText, rememberedText, routeListText, tooShortText } from './texts.js';
+import { TEXTS, forgotText, noRouteText, placeSavedText, rememberedText, routeListText, tooShortText } from './texts.js';
 import { feetCell } from './trail_logic.js';
 import { ladderFacingReader } from './trail.js';
 import { walkByRoute, walkRoute } from './replay.js';
@@ -19,7 +19,7 @@ export { TRAIL_RULES, WATER_NAMES, cellBetween, cleanStep, columnIsOpen, feetCel
 export { DIRECTIONS, OPENABLE_KINDS, ROUTE_RULES, backOf, cleanLeg, dirVector, directionTo, isDirection, knownThings, legCells, legCounts,
     nearCell, nearestRoute, normalizeRouteName, reverseRoute, routeEnds, routeFromSteps, routeStart, skyStart, startOffLadder,
     trapdoorOverLadder } from './route_logic.js';
-export { TEXTS, emptyRouteText, forgotText, legsText, noRouteText, noWayToStartText, posText, rememberedText, replacedText, routeDoneText,
+export { TEXTS, emptyRouteText, forgotText, legsText, noRouteText, noWayToStartText, placeSavedText, posText, rememberedText, replacedText, routeDoneText,
     routeErrorText, routeFailedText, routeLabel, routeLineText, routeListText, routeStoppedText, routeTimeText, startText,
     stoppedBeforeRouteText, tooShortText } from './texts.js';
 export { ROUTE_FILE, ROUTE_SOURCES, RouteStore, START_KINDS } from './route_store.js';
@@ -67,6 +67,50 @@ function knownMines(ctx, dimension) {
         return Array.isArray(list) ? list : [];
     } catch {
         return [];
+    }
+}
+
+/**
+ * v0.1.4.9, F19: the place `name` at the end of a remembered way, so that !goToRememberedPlace(name) walks the
+ * way; only when no place of that name exists. ctx.places is the MemoryBank (recallPlaceInfo, rememberPlace) or
+ * a PlaceStore (recall, remember). Never throws.
+ * @param {object} ctx
+ * @param {string} name
+ * @param {{x: number, y: number, z: number}} cell
+ * @param {string} dimension
+ * @returns {boolean} true when the place was saved
+ */
+export function savePlace(ctx, name, cell, dimension) {
+    const places = ctx?.places;
+    try {
+        if (!places) {
+            return false;
+        }
+        for (const fn of ['recallPlaceInfo', 'recall', 'recallPlace']) {
+            if (typeof places[fn] === 'function' && places[fn](name) != null) {
+                return false; // a place of that name exists: it stays
+            }
+        }
+        let result;
+        if (typeof places.rememberPlace === 'function') {
+            result = places.rememberPlace(name, cell.x, cell.y, cell.z, dimension);
+        } else if (typeof places.remember === 'function') {
+            result = places.remember(name, cell.x, cell.y, cell.z, dimension);
+        } else {
+            return false;
+        }
+        if (result === false) {
+            return false;
+        }
+        for (const fn of ['recallPlaceInfo', 'recall', 'recallPlace']) {
+            if (typeof places[fn] === 'function') {
+                return places[fn](name) != null;
+            }
+        }
+        return true;
+    } catch (err) {
+        console.warn('Routes pack: could not save the place at the end of the way:', err?.message ?? err);
+        return false;
     }
 }
 
@@ -148,7 +192,8 @@ export function rememberRoute(bot, ctx, name, options = {}) {
         const route = {
             name: clean,
             dimension,
-            from: { name: start.known.name, kind: start.known.kind, ...first },
+            // v0.1.4.9, F18: an area holds several floors; its start names the level
+            from: { name: start.known.kind === 'area' ? `${start.known.name}, level ${first.y}` : start.known.name, kind: start.known.kind, ...first },
             to: { name: clean, ...here },
             legs,
             steps: used.length,
@@ -159,7 +204,8 @@ export function rememberRoute(bot, ctx, name, options = {}) {
         if (!saved) {
             return { ok: false, reason: 'error', text: `I could not save the way "${clean}".`, route: null };
         }
-        return { ok: true, reason: null, text: rememberedText(saved, existed), route: saved };
+        const place = savePlace(ctx, clean, here, dimension) ? ` ${placeSavedText(clean)}` : '';
+        return { ok: true, reason: null, text: `${rememberedText(saved, existed)}${place}`, route: saved };
     } catch (err) {
         console.warn('Routes pack: remembering the way failed:', err?.message ?? err);
         return { ok: false, reason: 'error', text: `I could not remember the way: ${err?.message ?? err}`, route: null };

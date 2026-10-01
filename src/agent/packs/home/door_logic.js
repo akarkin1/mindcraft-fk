@@ -263,7 +263,8 @@ export const DOOR_SERVICE_RULES = Object.freeze({
     movedWithinMs: 1500,  // the bot moves when it moved during this time
     nearDistance: 1.5,    // the bot passed an openable when it came this close to its centre
     pastDistance: 2,      // a passed openable is closed when the bot is this far from it
-    leftDistance: 4,      // one the bot opened and did not pass: when it is this far
+    leftDistance: 4,      // (v0.1.4.8: one the bot opened and did not pass; since v0.1.4.9 F21 never closed)
+    sideRange: 3,         // v0.1.4.9 F21: the bot is on a side of a door or gate within this distance of it
     reach: 5,             // farther away the bot cannot click it
     playerClearance: 2,   // no other player this close to it when it is closed
     tries: 3,             // attempts per openable
@@ -283,12 +284,52 @@ export const DOOR_SERVICE_RULES = Object.freeze({
  *   blocks), also when it was open before.
  * - Noted: during the first 5 s, an open openable of a saved area (`inArea`) with no player within 3
  *   blocks.
- * - A noted openable is returned to close when it is open, nobody stands in it (`occupied`), no other
- *   player is within 2 blocks, it is within 5 blocks of the bot, and the bot passed it (came within 1.5)
- *   and is now 2 blocks or more from it, or did not pass and is 4 blocks or more away. A noted one of
- *   the start is returned without passing, when the bot does not stand in it.
+ * - A noted openable is returned to close when it is open, nobody stands in it or is within 1 block of
+ *   it (`occupied`), no other player is within 2 blocks, it is within 5 blocks of the bot, and the bot
+ *   passed it and is now 2 blocks or more from it. A noted one of the start is returned without passing,
+ *   when the bot does not stand in it.
+ * - v0.1.4.9, F21: the bot passed an openable when its own feet were on one side of it and then on the
+ *   other (passSide; a trapdoor: above it, then below it, or the reverse). Every open openable the bot
+ *   passed is noted, whoever opened it; one the bot did not pass is never closed (the player who opened a
+ *   trapdoor and went down it keeps it open), except a gate of a pen or a farm (the bot came within 1.5)
+ *   and the openables of the start.
  * - Up to 3 attempts, 1 s apart; forgotten after 60 s, 16 blocks away, or when seen closed.
  */
+/**
+ * On which side of an openable the feet of the bot are (v0.1.4.9, F21): -1 or 1, 0 in the openable, null
+ * when the bot is not near enough to count. A door or gate: the side along its axis (sideOf), within 3
+ * blocks sideways and 1.5 up or down. A trapdoor: with the feet at most 1 block sideways of its cell, 1 above
+ * it (higher, or at its height beside its cell, at most 2 up) and -1 below it (at most 3 down); 0 in its cell.
+ * @param {{x,y,z,kind,facing}} door
+ * @param {{x,y,z}} pos the bot
+ * @returns {-1|0|1|null}
+ */
+export function passSide(door, pos) {
+    if (!isPoint(door) || !isPoint(pos)) {
+        return null;
+    }
+    if (door.kind === 'trapdoor') {
+        const fx = Math.floor(pos.x);
+        const fy = Math.floor(pos.y + 0.01);
+        const fz = Math.floor(pos.z);
+        if (Math.max(Math.abs(fx - door.x), Math.abs(fz - door.z)) > 1) {
+            return null;
+        }
+        if (fy < door.y) {
+            return fy >= door.y - 3 ? -1 : null;
+        }
+        if (fy > door.y) {
+            return fy <= door.y + 2 ? 1 : null;
+        }
+        return fx === door.x && fz === door.z ? 0 : 1;
+    }
+    const c = doorCenter(door);
+    if (Math.hypot(pos.x - c.x, pos.z - c.z) > DOOR_SERVICE_RULES.sideRange || Math.abs(pos.y - door.y) > 1.5) {
+        return null;
+    }
+    return sideOf(door, pos);
+}
+
 export class DoorWatch {
     constructor() {
         this.reset();
@@ -297,7 +338,8 @@ export class DoorWatch {
     /** Forgets everything; the next observe starts the look at the start again. */
     reset() {
         this._seen = new Map();   // key -> open, as read last
-        this._noted = new Map();  // key -> { door, why, notedAt, passed, tries, nextTryAt }
+        this._noted = new Map();  // key -> { door, why, notedAt, passed, near, tries, nextTryAt }
+        this._sides = new Map();  // key -> { side, passed }: the side of the bot, and whether it passed (F21)
         this._startUntil = null;
         this._startDone = new Set();
         this._late = [];
@@ -357,12 +399,24 @@ export class DoorWatch {
                 continue;
             }
             const d = dist3(botPos, doorCenter(door));
+            // F21: the side of the bot, also while it is closed (the bot stands above a trapdoor it opens); a
+            // change from one side to the other while it is open is a pass
+            const track = this._sides.get(key) ?? { side: 0, passed: false };
+            const side = passSide(door, botPos);
+            if (side === 1 || side === -1) {
+                if (door.open === true && track.side !== 0 && track.side !== side) {
+                    track.passed = true;
+                }
+                track.side = side;
+            }
+            this._sides.set(key, track);
             if (door.open !== true) {
                 const entry = this._noted.get(key);
                 if (entry && entry.tries > 0) {
                     this._late.push({ ...door }); // the block update of an attempt came late
                 }
                 this._noted.delete(key); // closed by anybody: nothing to do
+                track.passed = false;
                 continue;
             }
             if (!this._noted.has(key)) {
@@ -374,15 +428,23 @@ export class DoorWatch {
                 } else if (now <= this._startUntil && door.inArea === true && !this._startDone.has(key)
                     && !playerWithin(door, DOOR_SERVICE_RULES.startPlayerRange)) {
                     this._note(key, door, 'start', now);
+                } else if (track.passed) {
+                    this._note(key, door, 'passed', now);
                 }
                 this._startDone.add(key);
             }
             const entry = this._noted.get(key);
             if (entry) {
                 entry.door = { ...door };
+                entry.passed = entry.passed || track.passed;
                 if (d <= DOOR_SERVICE_RULES.nearDistance) {
-                    entry.passed = true;
+                    entry.near = true;
                 }
+            }
+        }
+        for (const key of [...this._sides.keys()]) {
+            if (!visible.has(key)) {
+                this._sides.delete(key); // out of sight: a pass starts again
             }
         }
         const out = [];
@@ -390,6 +452,7 @@ export class DoorWatch {
             const d = dist3(botPos, doorCenter(entry.door));
             if (now - entry.notedAt > DOOR_SERVICE_RULES.forgetMs || d > DOOR_SERVICE_RULES.forgetDistance) {
                 this._noted.delete(key);
+                this._sides.delete(key);
                 continue;
             }
             const door = visible.get(key);
@@ -399,9 +462,9 @@ export class DoorWatch {
             if (door.occupied === true || playerWithin(door, DOOR_SERVICE_RULES.playerClearance) || d > DOOR_SERVICE_RULES.reach) {
                 continue;
             }
-            const away = entry.why === 'start'
-                ? d > 0.8
-                : (entry.passed && d >= DOOR_SERVICE_RULES.pastDistance) || (!entry.passed && d >= DOOR_SERVICE_RULES.leftDistance);
+            // F21: only an openable the bot passed (a gate of a pen or farm: came near), 2 blocks past it
+            const passed = entry.why === 'gate' ? entry.near || entry.passed : entry.passed;
+            const away = entry.why === 'start' ? d > 0.8 : passed && d >= DOOR_SERVICE_RULES.pastDistance;
             if (away) {
                 out.push({ ...door, why: entry.why, distance: d });
             }
@@ -425,12 +488,14 @@ export class DoorWatch {
         }
         if (closed === true) {
             this._noted.delete(key);
+            this._sides.delete(key);
             return 'closed';
         }
         entry.tries += 1;
         entry.nextTryAt = (isFiniteNumber(now) ? now : Date.now()) + DOOR_SERVICE_RULES.retryMs;
         if (entry.tries >= DOOR_SERVICE_RULES.tries) {
             this._noted.delete(key);
+            this._sides.delete(key);
             return 'gave_up';
         }
         return 'retry';
@@ -443,10 +508,11 @@ export class DoorWatch {
     forget(door) {
         if (isPoint(door)) {
             this._noted.delete(doorKey(door));
+            this._sides.delete(doorKey(door));
         }
     }
 
     _note(key, door, why, now) {
-        this._noted.set(key, { door: { ...door }, why, notedAt: now, passed: false, tries: 0, nextTryAt: now });
+        this._noted.set(key, { door: { ...door }, why, notedAt: now, passed: false, near: false, tries: 0, nextTryAt: now });
     }
 }

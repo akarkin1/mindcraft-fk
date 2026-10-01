@@ -81,9 +81,9 @@ describe('rememberRoute (A2)', () => {
         const room = { name: 'room', type: 'mine', min: { x: 0, y: 40, z: -2 }, max: { x: 4, y: 43, z: 2 } };
         const s = scene({ places: {}, areas: [house, room] });
         const r = P.rememberRoute(s.bot, s.ctx, 'bed');
-        assert.equal(r.text, 'I remember the way "bed": from the area "room" to here, 3 steps, 1 ladder, 1 trapdoor. I walk it in both directions.');
+        assert.equal(r.text, 'I remember the way "bed": from the area "room", level 41 to here, 3 steps, 1 ladder, 1 trapdoor. I walk it in both directions.');
         // the last step inside the room is the ladder at y 43; the way starts at the foot of the ladder
-        assert.deepEqual(r.route.from, { name: 'room', kind: 'area', x: 2, y: 41, z: -2 });
+        assert.deepEqual(r.route.from, { name: 'room, level 41', kind: 'area', x: 2, y: 41, z: -2 });
         assert.equal(r.route.legs[0].bottom, 41);
     });
 

@@ -65,12 +65,15 @@ describe('C5: DoorWatch, what is noted', () => {
         assert.equal(w.noted(DOOR), null);
     });
 
-    test('opened and not passed: closed when the bot is 4 blocks away', () => {
+    // v0.1.4.9, decision F21 (E1): this test read "opened and not passed: closed when the bot is 4 blocks away";
+    // the service now closes only what the bot passed
+    test('opened and not passed: never closed (F21)', () => {
         const w = new L.DoorWatch();
         look(w, 0, at(4.5, 10), { ...DOOR, open: false });
         look(w, 300, at(4.5, 10), { ...DOOR, open: true });
         assert.deepEqual(look(w, 600, at(4.5, 11.4), { ...DOOR, open: true }), []);
-        assert.equal(look(w, 900, at(4.5, 11.5), { ...DOOR, open: true }).length, 1);
+        assert.deepEqual(look(w, 900, at(4.5, 11.5), { ...DOOR, open: true }), []);
+        assert.deepEqual(look(w, 1200, at(4.5, 14), { ...DOOR, open: true }), []);
     });
 
     test('iron doors are never noted', () => {
