@@ -123,6 +123,7 @@ const SCENARIOS = [
     ['dig_code_refused', 'w72_dig_code_refused.js', 300, false, 'base'],
     ['branches', 'w73_branches.js', 900, false, 'base'],
     ['flags_off_0149', 'w74_flags_off_0149.js', 480, false, 'base'],
+    ['follow_ladder', 'w75_follow_ladder.js', 480, false, 'base'], // v0.1.4.9 section 13: the follow down a ladder (F14)
     ['long_run', 'w60_long_run.js', 2700, false, 'base'],
 ];
 
@@ -133,7 +134,7 @@ const GROUPS = {
     all_modes_on: ['storage', 'harvest', 'plant', 'bone_meal', 'farm_cycle', 'farm_old_command', 'trees', 'tall_tree', 'tools',
         'mine_basics', 'shaft', 'tunnel', 'mining_trip', 'mine_house'],
     mine_routes_0149: ['trail_records', 'route_to_bed', 'route_reverse', 'route_broken', 'remember_mine', 'remember_tunnel', 'mine_known',
-        'passed_ore', 'ore_sense', 'ore_in_sight', 'dusk_on_route', 'dig_code_refused', 'branches', 'flags_off_0149'],
+        'passed_ore', 'ore_sense', 'ore_in_sight', 'dusk_on_route', 'dig_code_refused', 'branches', 'flags_off_0149', 'follow_ladder'],
 };
 
 const args = process.argv.slice(2);
