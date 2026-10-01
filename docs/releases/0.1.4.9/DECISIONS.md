@@ -79,6 +79,18 @@ Commit `ac3f2c7`, cloned fresh, `npm install` (547 packages, every patch applied
 | `npm run test:e2e` | 17 of 17, 146 s |
 | `npm run test:world` | 70 of 72, 5817 s. Every scenario of v0.1.4.9 passes, the long run too. Failing: `tall_tree` (one log left on the ground, the wood pack is unchanged, F10), `wake_for_order` (the bot got out of the bed as the scenario demands; the walk to the cow was then stopped by `unstuck` beside the pen, a behaviour of v0.1.4.8), and one repeat of `creeper_in_sight` timed out when the server dropped the connection (F9). All three passed in the second full run of the tester on the same tree. Not regressions. |
 
+### Verification of the fix in a fresh checkout, 2026-10-01
+
+Commit `01fa155` of `hotfix/follow-ladder`, cloned fresh, `npm install` (547 packages, every patch applied), Node 22:
+
+| Run | Result |
+|---|---|
+| `npm test` | 6210 tests, 0 failures, 1 skipped (Windows only) |
+| `npm run test:e2e` | 17 of 17, 144 s |
+| the journeys W59, W80 to W84 | 6 of 6, 508 s, every climb smooth |
+| `npm run test:world` (the commit before F40) | 72 of 79 runs, 6214 s: `chat_burst` and `first_minutes` (load flakes, pass alone), `route_to_bed` (the text of F19, the check updated), `mine_known`, `passed_ore`, `ore_sense`, `branches` (F40) |
+| the seven after F40 | 7 of 7 (`creeper_in_sight` 2 of 2 runs), 633 s |
+
 ## Found by the play test of the owner, 2026-10-01
 
 Log of 3.5 minutes, 3 processes, 2 ends by "Got stuck and couldn't get unstuck", 1 by the server
