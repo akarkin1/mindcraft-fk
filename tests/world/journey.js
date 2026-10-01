@@ -21,10 +21,14 @@ export const PLAYER = 'w_player';
 // mine_routes, skills_over_code on, ore_sense_range 0, and the modes of his profile with the reflexes (MODES_PROFILE).
 export const JOURNEY_SETTINGS = () => settings0149({ skills_over_code: true, ore_sense_range: 0, stuck_restart_after: 3 });
 
+// v0.1.4.10 "Goals" (W85 to W90): the owner's switches as above with job_memory on (the owner's switch of the
+// release), and what a journey needs on top (`extra`: idle_jobs, area_floors, ...).
+export const GOALS_SETTINGS = (extra = {}) => settings0149({ skills_over_code: true, ore_sense_range: 0, stuck_restart_after: 3, job_memory: true, ...extra });
+
 // Starts the agent with an empty memory and the player. botAt and playerAt are cells; kit is a list of [item, count]
 // (the owner's chest would hold it). Returns { s, agent, orders }.
-export async function startJourney(name, b, { botAt, botYaw = 180, playerAt, kit = [] } = {}) {
-    const s = await startAgent(name, JOURNEY_SETTINGS());
+export async function startJourney(name, b, { botAt, botYaw = 180, playerAt, kit = [], settings = null } = {}) {
+    const s = await startAgent(name, settings ?? JOURNEY_SETTINGS());
     const agent = s.agent;
     await resetBot(name);
     await commands(['gamerule doDaylightCycle false', 'time set 6000']);
@@ -501,4 +505,107 @@ export function checkClimbs(label, rows, b, { expect = 1 } = {}) {
             `${label}: the climb is smooth (${c.column} ${c.dir}): no step against the direction of more than 0.1 block, at most one stall over 1 s, under 0.8 s per block`, climbText(c));
     }
     return climbs;
+}
+
+// ------------------------------------------------------------------ v0.1.4.10 "Goals" (W85 to W90)
+
+// The lines of the ladder step of v0.1.4.9 (the fallback since v0.1.4.10) that the agent printed on its console:
+// "I go down the ladder at ..." and "I climb up the ladder at ..." (the ladder step logs each pass once; the lines of
+// the test itself, NOTE, CHECK, TRACE, MODEL, are left out). In the order printed.
+export const LADDER_FALLBACK = /^(I go down the ladder at|I climb up the ladder at)/;
+const TEST_LINE = /^(NOTE|CHECK|TRACE|MODEL|PLAN|order) /;
+export function ladderFallbackLines(s) {
+    return (s.logs ?? []).filter((entry) => !TEST_LINE.test(entry))
+        .flatMap((entry) => String(entry).split('\n').map((l) => l.trim()))
+        .filter((l) => LADDER_FALLBACK.test(l));
+}
+
+// The player teaches the bot the mine (the owner's way of W81): the bot and the player stand outside in front of the
+// house door, under the open sky (a mine of the player starts there: "I have not been under open sky since I
+// started" from the house, first run of W85). !followPlayer("w_player", 4); the player walks into the house, down
+// ladder 1, down ladder 2, through the double door to the end of the tunnel, waiting for the bot after every ladder
+// (60 s each, 90 s for the last); then !rememberMine("mine"). Resolves with { ok, said } (ok: the bot followed every
+// leg and the answer names 2 ladders).
+export async function partTeachMine(ctx) {
+    const { agent, orders, b } = ctx;
+    const sp = spots(b);
+    const trace = journeyTrace(agent, b);
+    let ok = true;
+    const leg = async (label, pred, ms = 60000) => {
+        if (!ok) return false;
+        const w = await waitBot(agent, label, pred, ms);
+        check(w.ok, `${label} within ${ms / 1000} s, by itself`, fmt(w.bot));
+        ok = w.ok;
+        return w.ok;
+    };
+    let said = '';
+    try {
+        const follow = await orders.orderInfo(`!followPlayer("${PLAYER}", 4)`, 5000);
+        note(`teach: !followPlayer answered ${JSON.stringify(follow.reply)}`);
+        await sleep(2000);
+        await playerIntoHouse(b, sp.outside);
+        await sleep(2000);
+        await playerDownToBasement(b);
+        await leg('teach: the bot followed down ladder 1 into the basement', (a) => inBasement(b, a));
+        if (ok) await playerDownToRoom(b, sp.basementWait);
+        await leg('teach: the bot followed down ladder 2 into the room', inside(b.room.box));
+        if (ok) await playerToTunnelEnd(b, sp.roomWait);
+        await leg('teach: the bot followed through the double door into the tunnel (within 5 blocks of the player)', (a, p) => dist(a, p) <= 5 && a.y < LANDING_TOP, 90000);
+        if (!ok) return { ok, said };
+        await sleep(1500);
+        said = await orders.order('!rememberMine("mine")', 30000);
+        note(`teach: !rememberMine("mine") answered ${JSON.stringify(said)}`);
+        ok = /\b2 ladders\b/.test(said);
+        check(ok, 'teach: !rememberMine("mine") remembers the mine with 2 ladders', JSON.stringify(said));
+    } finally {
+        printJourney('the player teaches the mine', await trace.stop());
+    }
+    return { ok, said };
+}
+
+// Iron ore beyond the end of the tunnel of the base, in its line (2 high): `pairs` cells at 2, 4, 6, ... blocks
+// after the end, or at the distances of `at`. Resolves with the positions.
+export async function oreBeyondTunnel(b, pairs, { at = null } = {}) {
+    const t = b.tunnel;
+    const ores = [];
+    const offsets = at ?? Array.from({ length: pairs }, (_, i) => 2 + 2 * i);
+    for (const k of offsets) for (const dy of [0, 1]) ores.push({ x: t.end.x, y: t.end.y + dy, z: t.end.z + k });
+    await commands(ores.map((p) => `setblock ${p.x} ${p.y} ${p.z} minecraft:iron_ore`));
+    return ores;
+}
+
+// The way out of the mine for the player: the cells of the tunnel back to its start, the landing, the steps of the
+// descent up to the double door. From the tunnel cell nearest to `from`.
+export function wayOutOfMine(b, from) {
+    const cells = [...b.tunnel.cells].reverse();
+    const last = b.steps[b.steps.length - 1].feet;
+    const landing = { x: b.tunnel.start.x, y: b.landing.middle.y, z: last.z };
+    const way = [...cells, ...line(cells[cells.length - 1], landing), ...line(landing, last).slice(0, -1), ...[...b.steps].reverse().map((s) => s.feet)];
+    let k = 0;
+    if (from) {
+        let best = Infinity;
+        way.forEach((c, i) => { const d = dist({ x: c.x + 0.5, y: c.y, z: c.z + 0.5 }, from); if (d < best) { best = d; k = i; } });
+    }
+    return way.slice(k);
+}
+
+// The surface: feet at y g+1 or higher, outside the mine box and the basement.
+export function onSurface(b, a) {
+    return Boolean(a) && a.y >= b.g + 1 - 0.01 && !inBox(a, b.mineBox) && !inBasement(b, a);
+}
+
+// Samples the action of the agent every `every` ms: resolves stop() with the runs of the same label
+// [{ label, from, to }] (times in ms since the epoch).
+export function actionRuns(agent, every = 500) {
+    const runs = [];
+    let cur = null;
+    const tick = () => {
+        const label = agent.actions?.currentActionLabel || '-';
+        const t = Date.now();
+        if (cur && cur.label === label) cur.to = t;
+        else { cur = { label, from: t, to: t }; runs.push(cur); }
+    };
+    tick();
+    const id = setInterval(tick, every);
+    return { runs, stop() { clearInterval(id); tick(); return runs; } };
 }
