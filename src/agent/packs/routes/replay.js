@@ -208,13 +208,22 @@ async function climbToOpen(bot, ctx, leg, trap, clock) {
     return OK;
 }
 
-async function ladderLeg(bot, ctx, leg, clock, ms) {
+/**
+ * The walk of a ladder leg (exported for the waypoint walk of v0.1.4.11, F1): down (slideDown, a closed trapdoor
+ * over the column opened from above and closed 2 blocks below it) or up (to the foot, enterColumn with the missing
+ * ladders placed under the column, a closed trapdoor opened from the ladder, climbUp, the trapdoor closed). The way
+ * is where the bot stands (above the bottom: down), unless `way` says it ('up' or 'down').
+ * @returns {Promise<{ok: boolean, reason: string|null, door?: object, missing?: object[]}>}
+ */
+export async function ladderLeg(bot, ctx, leg, clock, ms, way = null) {
     const c = feetOf(bot);
-    const down = Boolean(c) && c.y > leg.bottom;
+    const down = way === 'down' || way === 'up' ? way === 'down' && Boolean(c) : Boolean(c) && c.y > leg.bottom;
     if (!c || !ladderIntact(bot, leg, down ? REPLAY_RULES.fallGap : 0)) {
         return { ok: false, reason: 'no_path' };
     }
-    const trap = trapdoorAbove(bot, leg);
+    // v0.1.4.11 (F1): a waypoint walk that joins the column below its top on the way down leaves the trapdoor over it alone
+    const below = way === 'down' && c.x === leg.x && c.z === leg.z && c.y <= leg.top;
+    const trap = below ? null : trapdoorAbove(bot, leg);
     if (down) {
         // down: a closed trapdoor over the column is opened from above first
         if (trap && !trap.open) {
@@ -378,9 +387,15 @@ async function walkLeg(bot, ctx, legs, i, clock, limit) {
 
 // ---- the cause of a failed leg (v0.1.4.11, I1): from what the replay knows, the walk itself is unchanged ----
 
-// The largest run of missing ladders in the column of a ladder leg above its bottom, as { y, gap } with y the
-// lowest cell of the run (the lowest run of the largest); null when every ladder is there. Never throws.
-function ladderGap(bot, leg) {
+/**
+ * The largest run of missing ladders in the column of a ladder leg above its bottom, as { y, gap } with y the
+ * lowest cell of the run (the lowest run of the largest); null when every ladder is there. Never throws.
+ * Exported for the dry scan of v0.1.4.11 (F1).
+ * @param {object} bot
+ * @param {{x: number, z: number, top: number, bottom: number}} leg
+ * @returns {{y: number, gap: number}|null}
+ */
+export function ladderGap(bot, leg) {
     try {
         let best = null;
         let run = 0;

@@ -26,11 +26,11 @@ export { TEXTS, causeText, emptyRouteText, forgotText, legsText, needLaddersText
     stoppedBeforeRouteText, tooShortText } from './texts.js';
 export { ROUTE_FILE, ROUTE_SOURCES, RouteStore, START_KINDS } from './route_store.js';
 export { TRAIL_FILE, blockGetter, createTrail, ladderFacingReader, readBlock } from './trail.js';
-export { REPLAY_RULES, ladderIntact, legCause, walkByRoute, walkRoute } from './replay.js';
+export { REPLAY_RULES, ladderGap, ladderIntact, ladderLeg, legCause, walkByRoute, walkRoute } from './replay.js';
 // v0.1.4.11 (I7, routes_by_search): the waypoints of a route, walked by the path search, and the dry scan
-export { WAYPOINT_KINDS, WAYPOINT_RULES, isOpenableWaypoint, nearestWaypoint, pickRoute, planHops, walkByWaypoints, walkWaypoints,
+export { WAYPOINT_KINDS, WAYPOINT_RULES, isOpenableWaypoint, ladderCheck, ladderHop, ladderStand, nearestWaypoint, pickRoute, planHops, walkByWaypoints, walkWaypoints,
     waypointsOf } from './waypoints.js';
-export { DRY_SCAN_RULES, dryScan, noWayText, waypointLabel } from './dry_scan.js';
+export { DRY_SCAN_RULES, dryScan, noLaddersText, noWayText, waypointLabel } from './dry_scan.js';
 
 function sameDimension(a, b) {
     const plain = d => (typeof d === 'string' && d.length > 0 ? d.replace(/^minecraft:/, '') : null);

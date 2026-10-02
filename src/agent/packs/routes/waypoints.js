@@ -13,7 +13,9 @@ import { botPos, clockOf, logTo, noteProgress } from '../home/context.js';
 import { releaseDoor, reserveDoor } from '../home/doors.js';
 import { goals, gotoGoal, isNear, makeMovements, walkNear } from '../home/motion.js';
 import { OPENABLE_KINDS, nearCell, routeEnds, trapdoorOverLadder } from './route_logic.js';
-import { legCause } from './replay.js';
+import { footOf } from '../mining/ladder.js';
+import { REPLAY_RULES, ladderGap, ladderIntact, ladderLeg, legCause } from './replay.js';
+import { readBlock } from './trail.js';
 import { TEXTS, emptyRouteText, routeDoneText, routeFailedText, routeLabel, routeStoppedText, routeTimeText } from './texts.js';
 
 /** The numbers of the waypoint walk. */
@@ -143,8 +145,16 @@ export function waypointsOf(route) {
                 const last = out[out.length - 1];
                 const fromAbove = last ? last.y > (column.top + column.bottom) / 2 : true;
                 const pair = fromAbove ? [[top, 'ladder_top'], [foot, 'ladder_foot']] : [[foot, 'ladder_foot'], [top, 'ladder_top']];
+                // F1: the whole leg goes with its ends, for the climb (ladderLeg of replay.js)
+                const ladder = { kind: 'ladder', x: column.x, z: column.z, top: column.top, bottom: column.bottom, face: leg.face ?? 'north' };
+                if (isPoint(leg.entry)) {
+                    ladder.entry = cell(leg.entry);
+                }
+                if (isPoint(leg.foot)) {
+                    ladder.foot = cell(leg.foot);
+                }
                 for (const [p, kind] of pair) {
-                    push(p, kind, { leg: i, column });
+                    push(p, kind, { leg: i, column, ladder });
                 }
                 break;
             }
@@ -238,6 +248,117 @@ export function planHops(waypoints, from, to = null) {
     return { forward, start, hops };
 }
 
+// ---- F1 of the fix round: a ladder is climbed with the ladder leg of replay.js, not with the path search ----
+
+/**
+ * The climb of a hop (fix round F1): the hop goes from one end of a column of ladders to its other end (the goal of
+ * the hop before, or the bot itself standing in the column at the first hop, is of the same column). Then the hop is
+ * the ladder leg of replay.js (enterColumn, the missing ladders placed under the column, climbUp, slideDown, the
+ * trapdoor), never the path search. `way` is up when the goal is the upper end. null for any other hop. Pure.
+ * @param {object[]} list the waypoints
+ * @param {{goal: number}} hop
+ * @param {object|null} prev the goal of the hop before
+ * @param {{x,y,z}|null} feet the feet cell of the bot, for the first hop
+ * @returns {{leg: object, way: 'up'|'down', start: object|null}|null} start: the waypoint where the climb starts
+ */
+export function ladderHop(list, hop, prev, feet = null) {
+    const goal = list?.[hop?.goal];
+    if (!goal?.ladder || !goal.column) {
+        return null;
+    }
+    const col = goal.column;
+    const same = c => Boolean(c) && c.x === col.x && c.z === col.z;
+    let start = null;
+    if (prev) {
+        if (!same(prev.column)) {
+            return null;
+        }
+        start = prev;
+    } else if (!(isPoint(feet) && same(feet) && feet.y >= col.bottom - 3 && feet.y <= col.top + 1)) {
+        return null;
+    }
+    return { leg: { ...goal.ladder }, way: goal.y > (col.top + col.bottom) / 2 ? 'up' : 'down', start };
+}
+
+/**
+ * Where the bot stands to go onto a ladder of a waypoint (fix round F1): at the upper end its entry (the cell above
+ * the column without one); at the lower end the foot of the leg (footOf of the mining pack: `foot`, the cell beside
+ * the bottom, or the floor under a column that ends above it), never a cell in the air. Never throws.
+ * @param {object} bot
+ * @param {object} wp a ladder waypoint
+ * @returns {{x: number, y: number, z: number}}
+ */
+export function ladderStand(bot, wp) {
+    const leg = wp.ladder;
+    if (wp.y > (leg.top + leg.bottom) / 2) {
+        return isPoint(leg.entry) ? cell(leg.entry) : { x: leg.x, y: leg.top + 1, z: leg.z };
+    }
+    let foot = null;
+    try {
+        foot = footOf(bot, leg);
+    } catch {
+        foot = null;
+    }
+    return isPoint(foot) ? cell(foot) : { x: leg.x, y: leg.bottom, z: leg.z };
+}
+
+/**
+ * Whether a climb can be done (fix round F1, the dry scan): down, the column holds its ladders with at most
+ * REPLAY_RULES.fallGap missing in a row (ladderIntact); up, every ladder of the column and, under a column that ends
+ * 2 or more blocks above the floor, the cells between the floor and its lowest ladder, which enterColumn fills with
+ * ladders. A gap is open when the bot carries as many ladders. `gap` and `y` (the lowest missing cell) describe what
+ * is missing, `carried` the ladders in the inventory. Never throws.
+ * @param {object} bot
+ * @param {object} leg the ladder leg
+ * @param {'up'|'down'} way
+ * @returns {{ok: boolean, gap: number, y: number|null, carried: number}}
+ */
+export function ladderCheck(bot, leg, way) {
+    let carried = 0;
+    try {
+        carried = (bot.inventory?.items?.() ?? []).filter(i => i?.name === 'ladder').reduce((n, i) => n + (i.count ?? 0), 0);
+    } catch {
+        carried = 0;
+    }
+    try {
+        if (way === 'down') {
+            if (ladderIntact(bot, leg, REPLAY_RULES.fallGap)) {
+                return { ok: true, gap: 0, y: null, carried };
+            }
+            const g = ladderGap(bot, leg) ?? { y: leg.bottom + 1, gap: 1 };
+            return { ok: carried >= g.gap, gap: g.gap, y: g.y, carried };
+        }
+        let gap = 0;
+        let y = null;
+        const inside = ladderIntact(bot, leg, 0) ? null : ladderGap(bot, leg);
+        if (inside) {
+            gap += inside.gap;
+            y = inside.y;
+        }
+        const foot = footOf(bot, leg);
+        if (isPoint(foot) && foot.x === leg.x && foot.z === leg.z && foot.y < leg.bottom) {
+            let lowest = leg.bottom;
+            const isLadder = yy => {
+                try {
+                    return readBlock(bot, leg.x, yy, leg.z)?.name === 'ladder';
+                } catch {
+                    return false;
+                }
+            };
+            while (lowest - 1 > foot.y && isLadder(lowest - 1)) {
+                lowest--;
+            }
+            if (lowest - foot.y >= 2) {
+                gap += lowest - foot.y - 1;
+                y = foot.y + 1;
+            }
+        }
+        return { ok: gap === 0 || carried >= gap, gap, y, carried };
+    } catch {
+        return { ok: true, gap: 0, y: null, carried };
+    }
+}
+
 // I8: reserves an openable with ctx.doors.reserve, else with the running door service of the bot
 function reserve(bot, ctx, door, ms) {
     try {
@@ -264,9 +385,10 @@ function release(bot, ctx, door) {
 
 // The cause of I1 of a hop that failed: an openable it passes (closed or blocked), the ladder of a hop between
 // the two ends of one column (the missing ladders, else stuck), a time that ran out (stuck), else no_path.
-function hopCause(bot, list, hop, prev, r) {
+function hopCause(bot, list, hop, prev, r, target = null) {
     const at = feetOf(bot);
     const goal = list[hop.goal];
+    const to = target ?? goal;
     const door = hop.passes.length > 0 ? list[hop.passes[0]] : (isOpenableWaypoint(goal) ? goal : null);
     if (door) {
         return legCause(bot, { kind: 'door', kind2: door.kind, x: door.x, y: door.y, z: door.z }, {});
@@ -278,7 +400,7 @@ function hopCause(bot, list, hop, prev, r) {
     if (r?.reason === 'timeout') {
         return { kind: 'stuck', at };
     }
-    return at ? { kind: 'no_path', from: at, to: { x: goal.x, y: goal.y, z: goal.z } } : { kind: 'stuck', at: null };
+    return at ? { kind: 'no_path', from: at, to: { x: to.x, y: to.y, z: to.z } } : { kind: 'stuck', at: null };
 }
 
 /**
@@ -287,6 +409,9 @@ function hopCause(bot, list, hop, prev, r) {
  * 5 minutes, or to `deadline`). Before a hop the openables it passes are reserved with the door service (I8:
  * ctx.doors.reserve, else the service of the bot); every reservation ends with the walk. The bot is at a waypoint
  * when its feet are within 1 block of it. `bot.modes.noteProgress('route')` after every hop. Nothing is dug.
+ * Fix round F1: a hop onto a ladder goes to the cell where the bot stands to climb it (ladderStand: the entry, or the
+ * foot on the floor); a hop from one end of a column to the other is the ladder leg of replay.js (ladderLeg: the
+ * missing ladders under the column placed, the climb, the slide, the trapdoor), never the path search.
  * The texts are those of W1 with the hops as steps: `I followed the route "mine", 6 steps.`, `I could not follow
  * the route "mine" at step 2 of 6: the door at (9, 41, 43) is closed and I could not open it.`, stopped, time.
  * @param {object} bot
@@ -330,14 +455,40 @@ export async function walkWaypoints(bot, ctx, waypoints, options = {}) {
             const hop = plan.hops[k];
             const goal = list[hop.goal];
             const prev = k > 0 ? list[plan.hops[k - 1].goal] : null;
-            for (const i of [...hop.passes, ...(isOpenableWaypoint(goal) ? [hop.goal] : [])]) {
+            const climb = ladderHop(list, hop, prev, k === 0 ? feetOf(bot) : null);
+            // a climb also reserves the openables of the hop after it (the trapdoor over the column)
+            const next = climb && plan.hops[k + 1] ? plan.hops[k + 1].passes : [];
+            for (const i of [...hop.passes, ...(isOpenableWaypoint(goal) ? [hop.goal] : []), ...next]) {
                 const door = { x: list[i].x, y: list[i].y, z: list[i].z };
+                if (reserved.some(d => sameCell(d, door))) {
+                    continue; // reserved by the climb before
+                }
                 if (reserve(bot, ctx, door, WAYPOINT_RULES.reserveMs)) {
                     reserved.push(door);
                 }
             }
+            if (climb) {
+                // F1: from one end of a column of ladders to the other: the ladder leg of replay.js
+                const ms = Math.max(1000, Math.min(WAYPOINT_RULES.hopMs, limit - clock.now()));
+                const lr = await ladderLeg(bot, ctx, climb.leg, clock, ms, climb.way);
+                if (lr.reason === 'interrupted' || bot.interrupt_code) {
+                    return stopped(k);
+                }
+                if (!lr.ok) {
+                    if (clock.now() > limit && lr.reason !== 'blocked_door') {
+                        return late(k);
+                    }
+                    const cause = legCause(bot, climb.leg, lr);
+                    const reason = cause.kind === 'door' ? 'blocked_door' : 'no_path';
+                    return result(false, reason, routeFailedText(route, k + 1, total, feetOf(bot), cause), k + 1, cause);
+                }
+                noteProgress(bot, 'route');
+                continue;
+            }
+            // F1: onto a ladder from where the bot stands to climb it (its entry, or its foot on the floor)
+            const target = goal.ladder ? ladderStand(bot, goal) : goal;
             let r = { ok: true, reason: null };
-            if (!nearCell(botPos(bot), goal, WAYPOINT_RULES.near)) {
+            if (!nearCell(botPos(bot), target, WAYPOINT_RULES.near)) {
                 let movements;
                 try {
                     movements = makeMovements(bot, { dig: false, doors: true });
@@ -346,16 +497,16 @@ export async function walkWaypoints(bot, ctx, waypoints, options = {}) {
                         { kind: 'stuck', at: feetOf(bot) });
                 }
                 const ms = Math.max(1000, Math.min(WAYPOINT_RULES.hopMs, limit - clock.now()));
-                r = await gotoGoal(bot, new goals.GoalNear(goal.x, goal.y, goal.z, WAYPOINT_RULES.near), { movements, timeoutMs: ms, clock });
+                r = await gotoGoal(bot, new goals.GoalNear(target.x, target.y, target.z, WAYPOINT_RULES.near), { movements, timeoutMs: ms, clock });
                 if (r.reason === 'interrupted' || bot.interrupt_code) {
                     return stopped(k);
                 }
             }
-            if (!nearCell(botPos(bot), goal, WAYPOINT_RULES.near)) {
+            if (!nearCell(botPos(bot), target, WAYPOINT_RULES.near)) {
                 if (clock.now() > limit) {
                     return late(k);
                 }
-                const cause = hopCause(bot, list, hop, prev, r);
+                const cause = hopCause(bot, list, hop, prev, r, target);
                 const reason = cause.kind === 'door' ? 'blocked_door' : 'no_path';
                 return result(false, reason, routeFailedText(route, k + 1, total, feetOf(bot), cause), k + 1, cause);
             }

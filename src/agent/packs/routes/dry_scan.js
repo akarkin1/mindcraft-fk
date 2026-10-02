@@ -4,13 +4,16 @@
 // movements of the walk). It stops at the first hop without a path and names what blocks it:
 //   I find no way from (11, 67, 52) to the trapdoor at (13, 67, 51).
 //   I find no way from (9, 41, 42) to the door at (9, 41, 43): it is closed and I cannot open it.
-// A search that runs out of time proves nothing: that hop counts as open, the walk itself finds out.
+//   I find no way from (403, 41, -2) to the foot of the ladder at (403, 43, -2): the ladder has a gap of 2 at y 42 and I have no ladders.
+// A search that runs out of time proves nothing: that hop counts as open, the walk itself finds out. Fix round F1: a
+// hop onto a ladder is searched to the cell where the bot stands to climb it (never a cell in the air); a climb is no
+// search: it is open when the column holds its ladders for the way (ladderCheck) or the bot carries the missing ones.
 // Never throws.
 import { Vec3 } from 'vec3';
 import { botPos } from '../home/context.js';
 import { canOpen, doorState } from '../home/doors.js';
 import { goals, makeMovements } from '../home/motion.js';
-import { planHops, isOpenableWaypoint } from './waypoints.js';
+import { isOpenableWaypoint, ladderCheck, ladderHop, ladderStand, planHops } from './waypoints.js';
 import { posText, routeLabel } from './texts.js';
 
 /** The numbers of the dry scan. */
@@ -79,6 +82,21 @@ export function waypointLabel(wp) {
 export function noWayText(from, wp, locked = false) {
     const head = `I find no way from ${posText(from)} to ${waypointLabel(wp)}`;
     return locked ? `${head}: it is closed and I cannot open it.` : `${head}.`;
+}
+
+/**
+ * The text of N1 for a climb whose column misses ladders (fix round F1): `I find no way from (403, 41, -2) to the foot
+ * of the ladder at (403, 43, -2): the ladder has a gap of 2 at y 42 and I have no ladders.`; with some ladders, too
+ * few: `... and I have only 1 ladder.` Pure.
+ * @param {{x,y,z}} from
+ * @param {object} wp the ladder waypoint where the climb starts
+ * @param {{gap: number, y: number|null, carried: number}} check of ladderCheck
+ * @returns {string}
+ */
+export function noLaddersText(from, wp, check) {
+    const carried = Number.isFinite(check?.carried) && check.carried > 0 ? `only ${check.carried} ladder${check.carried === 1 ? '' : 's'}` : 'no ladders';
+    const at = Number.isFinite(check?.y) ? ` at y ${Math.floor(check.y)}` : '';
+    return `I find no way from ${posText(from)} to ${waypointLabel(wp)}: the ladder has a gap of ${check?.gap ?? 1}${at} and I have ${carried}.`;
 }
 
 // True when a door, gate or trapdoor stands at the cell and is closed, read from the world; an iron one too
@@ -178,9 +196,33 @@ export async function dryScan(bot, waypoints, options = {}) {
             }
             const hop = plan.hops[k];
             const goalWp = list[hop.goal];
-            const length = Math.hypot(goalWp.x - start.x, goalWp.y - start.y, goalWp.z - start.z);
+            const prevWp = k > 0 ? list[plan.hops[k - 1].goal] : null;
+            const climb = ladderHop(list, hop, prevWp, k === 0 && atBot ? cell(me) : null);
+            if (climb) {
+                // F1: a climb is no search: the column holds its ladders, or the bot carries the missing ones
+                const check = ladderCheck(bot, climb.leg, climb.way);
+                if (!check.ok) {
+                    const named = climb.start ?? goalWp;
+                    const to = { x: named.x, y: named.y, z: named.z };
+                    const cause = { kind: 'ladder', x: climb.leg.x, z: climb.leg.z, y: check.y, gap: check.gap };
+                    return { ok: false, step: k + 1, total, from: { ...start }, to, cause, text: noLaddersText(start, named, check) };
+                }
+                // up, the climb opens the trapdoor over the column (the openable of the hop after it) from the ladder
+                const over = climb.way === 'up' && plan.hops[k + 1] ? plan.hops[k + 1].passes.map(i => list[i]) : [];
+                const locked = over.find(d => isClosed(bot, d) && !canOpen(bot, d));
+                if (locked) {
+                    const to = { x: locked.x, y: locked.y, z: locked.z };
+                    return { ok: false, step: k + 1, total, from: { ...start }, to, cause: { kind: 'door', name: locked.kind, ...to, state: 'closed' },
+                        text: noWayText(start, locked, true) };
+                }
+                start = ladderStand(bot, goalWp);
+                continue;
+            }
+            // F1: onto a ladder: the cell where the bot stands to climb it, never a cell in the air
+            const target = goalWp.ladder ? ladderStand(bot, goalWp) : goalWp;
+            const length = Math.hypot(target.x - start.x, target.y - start.y, target.z - start.z);
             const radius = Math.ceil(DRY_SCAN_RULES.radius + DRY_SCAN_RULES.radiusPerBlock * length);
-            const goal = new goals.GoalNear(goalWp.x, goalWp.y, goalWp.z, 1);
+            const goal = new goals.GoalNear(target.x, target.y, target.z, 1);
             let status;
             try {
                 status = await searchHop(bot, movements, start, goal, k === 0 && atBot, timeout, radius);
@@ -199,7 +241,7 @@ export async function dryScan(bot, waypoints, options = {}) {
                     : { kind: 'no_path', from: { ...start }, to };
                 return { ok: false, step: k + 1, total, from: { ...start }, to, cause, text: noWayText(start, named, locked) };
             }
-            start = { x: goalWp.x, y: goalWp.y, z: goalWp.z };
+            start = { x: target.x, y: target.y, z: target.z };
             await nextTurn();
         }
         return open(total);
