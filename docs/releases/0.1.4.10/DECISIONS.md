@@ -30,6 +30,13 @@ when `main` is merged after the fix release.
 The journeys W80 to W84 pass on the fix branch of v0.1.4.9 (run 15 and 16 of the lead); on this branch they
 pass after the merge of `main`.
 
+## The gate, 2026-10-02
+
+After the merge of `main` and the fix round (T3-1 to T3-8, the rounds of part P on the server): the twelve
+journeys (W59, W80 to W84, W85 to W90) pass, 12 of 12 in 1339 s, every climb smooth and no fallback ladder line
+in a follow or a walk except the owner's second shaft (its lowest ladder is out of jump reach; the fallback
+places the ladders). `npm test`: 6665 tests, 6664 pass, 0 failures, 1 skipped (Windows only).
+
 ## The chat model, from the routing check of the owner (2026-10-01)
 
 The same 154 sentences, `profiles/claude.json`, every part on, on the owner's machine:
