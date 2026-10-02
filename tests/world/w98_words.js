@@ -20,13 +20,14 @@
 //   6. The player walks back into the room, "come here" !goToPlayer("w_player", 2); "dig a tunnel", the model's
 //      !newAction: `I do not write code for digging. From here: !mineOre("iron", 8, true).` (in a known mine with
 //      mine_from_inside).
-//   7. "get out" !leaveMine; the owner locks the room (iron doors); "go to the mine" !goToMine: the answer names the
-//      failure (`I could not follow ...` or `I find no way ...`) with a door of the room, and holds no `Show me the
-//      way again`.
+//   7. "get out" !leaveMine; the owner locks the way in (decision F10): the trapdoor of the house over ladder 1 becomes
+//      a closed iron trapdoor; "go to the mine" !goToMine: `I find no way from (x, y, z) to the trapdoor at <the
+//      trapdoor>: it is closed and I cannot open it.` (N1), the bot did not move (within 1 block), and the answer holds
+//      no `Show me the way again`. The oak trapdoor is put back at the end.
 // Throughout: no answer and no line of the bot holds `Show me the way again`; the process lives, no request reached a
 // real model.
 import { scenarioMain, check, note, exitSoon, stopRealAgent, env, entityPos, fmt, sleep, tp, commands, waitFor, waitIdle } from './helpers.js';
-import { region, prepareRegion, releaseRegion, inBox, inventoryOf, itemsOnGround } from './world.js';
+import { region, prepareRegion, releaseRegion, inBox, dist, inventoryOf, itemsOnGround } from './world.js';
 import { basePlan, buildBase, BASE_RADIUS } from './base_world.js';
 import { loadDump } from './owner_region.js';
 import { startJourney, JOURNEY_SETTINGS, spots, PLAYER, partTeachMine, wayOutOfMine, walkPlayer, line, onSurface, saidLines } from './journey.js';
@@ -51,15 +52,11 @@ async function modelDigs(s, orders, agent) {
     return { result: back.value?.content ?? '', code: s.code.requests.length - code0 };
 }
 
-// The double door of the room as iron doors (closed): the owner locked it.
-function ironDoors(b) {
-    const cmds = [];
-    for (const d of b.owner.doors) {
-        cmds.push(`setblock ${d.upper.x} ${d.upper.y} ${d.upper.z} minecraft:air`, `setblock ${d.lower.x} ${d.lower.y} ${d.lower.z} minecraft:air`);
-        cmds.push(`setblock ${d.lower.x} ${d.lower.y} ${d.lower.z} minecraft:iron_door[facing=west,half=lower,hinge=${d.hinge},open=false]`);
-        cmds.push(`setblock ${d.upper.x} ${d.upper.y} ${d.upper.z} minecraft:iron_door[facing=west,half=upper,hinge=${d.hinge},open=false]`);
-    }
-    return commands(cmds);
+// The trapdoor of the house over ladder 1 (b.trapdoor) as the oak one of base_world.js or an iron one (the owner locked
+// it), closed, in the same state. The cell is set to air first.
+function setTrapdoorKind(b, kind) {
+    const t = b.trapdoor;
+    return commands([`setblock ${t.x} ${t.y} ${t.z} minecraft:air`, `setblock ${t.x} ${t.y} ${t.z} minecraft:${kind}[facing=south,half=top,open=false]`]);
 }
 
 await scenarioMain({
@@ -158,14 +155,19 @@ await scenarioMain({
             const a7 = await entityPos(NAME);
             note(`7: !leaveMine answered ${JSON.stringify(leave.reply.slice(0, 300))}; the bot at ${fmt(a7)}`);
             check(onSurface(b, a7), '7: precondition: "get out" brings the bot to the surface', fmt(a7));
-            await ironDoors(b);
+            await setTrapdoorKind(b, 'iron_trapdoor');
             await sleep(500);
+            const before7 = await entityPos(NAME);
             const seven = await orders.order('!goToMine', 300000);
             replies.push(seven);
-            const doors = b.owner.doors.map((d) => P(d.lower));
-            note(`7: with the room locked !goToMine answered ${JSON.stringify(seven.slice(0, 400))}; the bot at ${fmt(await entityPos(NAME))}`);
-            check(/I could not follow|I find no way/.test(seven) && doors.some((d) => seven.includes(`door at ${d}`)), `7: the answer names the failure and the door of the room (${doors.join(' or ')})`, JSON.stringify(seven.slice(0, 300)));
+            await sleep(1000);
+            const after7 = await entityPos(NAME);
+            const trapText = `to the trapdoor at ${P(b.trapdoor)}: it is closed and I cannot open it.`;
+            note(`7: with the iron trapdoor !goToMine answered ${JSON.stringify(seven.slice(0, 400))}; the bot stood at ${fmt(before7)}, is at ${fmt(after7)}`);
+            check(/I find no way from \(-?\d+, -?\d+, -?\d+\) /.test(seven) && seven.includes(trapText), `7: the answer is the text of N1: \`I find no way from (x, y, z) ${trapText}\``, JSON.stringify(seven.slice(0, 300)));
+            check(dist(after7, before7) <= 1, '7: the bot did not move: within 1 block of where it stood, after the answer', `${dist(after7, before7).toFixed(2)} blocks`);
             check(!AGAIN.test(seven), '7: the answer holds no `Show me the way again`', JSON.stringify(seven.slice(0, 300)));
+            await setTrapdoorKind(b, 'oak_trapdoor');
 
             const said = saidLines(s);
             check(![...replies, ...said].some((l) => AGAIN.test(l)), 'no answer and no line of the bot holds `Show me the way again`', JSON.stringify([...replies, ...said].filter((l) => AGAIN.test(l)).slice(0, 3)));
