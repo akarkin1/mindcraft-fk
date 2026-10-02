@@ -4,7 +4,9 @@ import settings from '../settings.js';
 import convoManager from '../conversation.js';
 import { Vec3 } from 'vec3';
 import { normalizeBox, contains, boxSize } from '../areas/area_geometry.js';
-import { scanBuilding, scanWithoutType, findFencedGroundNear } from '../areas/area_scan.js';
+import { scanBuilding, scanWithoutType, findFencedGroundNear, scanEnclosure, scanText } from '../areas/area_scan.js';
+import { kindOf, typeOfKind, savedText, kindChangedText } from '../areas/area_kind.js';
+import { countContents } from '../areas/area_sense.js';
 import { AREA_TYPES, normalizeAreaName, replaceRefusal, sameBox, sameBoxText } from '../areas/area_store.js';
 import { goToShelter, sleepInBed, eatBestFood, enterBuilding, passThrough, closeNear } from '../packs/home/index.js';
 import { REMEMBER_RULE_DESCRIPTION, rememberRuleReply, forgetRuleReply } from '../rules/rule_commands.js';
@@ -721,6 +723,7 @@ async function fetchToGive(agent, item_name, num) {
 // v0.1.4.8 (D5, P5): !rememberArea for a farm or a pen: the fenced ground at or near the bot. From
 // outside the fence the ground behind the gate is saved, and with the home pack the bot walks in through
 // the gate with passThrough. Returns the reply.
+// v0.1.4.11 (P1): the type is the kind; the area gets the contents and the border, and the answer is that of P1.
 async function rememberFenced(agent, store, name, type) {
     if (!store)
         return AREAS_OFF;
@@ -728,8 +731,12 @@ async function rememberFenced(agent, store, name, type) {
     const scan = findFencedGroundNear(blockNameOf(bot), bot.entity.position, 6, { type });
     if (!scan?.found)
         return scan?.text || `I found no fenced ground here. Stand inside the fence and try again.`;
-    const area = store.set({ name, type, min: scan.min, max: scan.max, dimension: bot.game?.dimension, entrances: scan.entrances ?? [], source: 'scan' });
-    const saved = `${areaSavedText(area)} Tell me if that is wrong.`;
+    const facts = scanEnclosure(blockNameOf(bot), scan.inside ? bot.entity.position : (scan.start ?? bot.entity.position), { mode: 'ground', type });
+    const enclosure = facts.found ? facts : { border: 'fence', openings: scan.entrances ?? [], roof: false };
+    const contents = countContents(bot, scan);
+    const area = store.set({ name, type, kind: type, min: scan.min, max: scan.max, dimension: bot.game?.dimension, entrances: scan.entrances ?? [], source: 'scan',
+        contents, border: enclosure.border });
+    const saved = savedText(area.name, type, enclosure, contents, area);
     if (scan.inside)
         return saved;
     // outside, on the fence or in the gate: the ground behind it is saved; then in through the gate
@@ -990,26 +997,51 @@ export const actionsList = [
             if (!AREA_TYPES.includes(type))
                 return AREA_TYPE_TEXT;
             try {
+                // v0.1.4.11 (P1): the parser fills in "building" for a missing type, so "building" is no type: the kind
+                // is what the scan of the enclosure finds (kindOf). A type is the owner's word for the kind.
+                const untyped = type === 'building';
+                const clean = normalizeAreaName(name) ?? '';
+                if (clean.length < 1 || clean.length > 64)
+                    return areaErrorText(new TypeError('bad name'), name);
+                // P1: the same name again with another type changes the kind of the saved area; its box stays
+                const known = untyped || type === 'mine' ? null : store.get(name);
+                if (known && (known.kind ?? known.type) !== type) {
+                    const area = store.set({ ...known, type, kind: type });
+                    return kindChangedText(area.name, type);
+                }
                 // v0.1.4.8 (D5): a farm or a pen is the fenced ground at or near the bot, also from outside the gate
                 if (type === 'farm' || type === 'pen')
                     return await rememberFenced(agent, store, name, type);
                 const bot = agent.bot;
                 const origin = bot.entity.position;
                 const dimension = bot.game?.dimension;
-                // v0.1.4.10 (R3): with area_floors the scan stops at a floor. T3-6: without a type (the parser
-                // fills in "building", so the command cannot tell it from a typed "building") the scan starts with
-                // the pen around the bot: inside a fence the pen is saved, not a building beyond the fence
-                const untyped = type === 'building';
-                const scan = untyped ? scanWithoutType(blockNameOf(bot), origin, scanOptions()) : scanBuilding(blockNameOf(bot), origin, scanOptions());
+                if (type === 'home' || untyped) {
+                    // v0.1.4.10 (R3): with area_floors the scan stops at a floor. v0.1.4.11 (I5): without a type the one
+                    // scan of the enclosure (a fence, a wall, a hedge, water); "home" is the scan of a building
+                    const scan = scanEnclosure(blockNameOf(bot), origin, { ...(scanOptions() ?? {}), mode: untyped ? 'auto' : 'building' });
+                    if (scan.found) {
+                        const same = sameAreaAs(store, name, scan, dimension); // v0.1.4.10 (R3): no second area of one box
+                        if (same)
+                            return sameBoxText(same.name);
+                        const contents = countContents(bot, scan.box);
+                        const kind = untyped ? kindOf(scan, contents) : type;
+                        const area = store.set({ name, kind, type: typeOfKind(kind), min: scan.min, max: scan.max, dimension, entrances: scan.entrances,
+                            source: 'scan', contents, border: scan.border });
+                        return savedText(area.name, kind, scan, contents, area);
+                    }
+                    if (untyped)
+                        return scan.text || scanText('no_border'); // P1: nothing is saved
+                }
+                // the mine: as v0.1.4.10
+                const scan = type === 'mine' ? scanBuilding(blockNameOf(bot), origin, scanOptions()) : null;
                 if (scan?.found) {
-                    const same = sameAreaAs(store, name, scan, dimension); // v0.1.4.10 (R3): no second area of one box
+                    const same = sameAreaAs(store, name, scan, dimension);
                     if (same)
                         return sameBoxText(same.name);
-                    const pen = untyped && scan.kind === 'pen';
-                    const area = store.set({ name, type: pen ? 'pen' : type, min: scan.min, max: scan.max, dimension, entrances: scan.entrances ?? [], source: 'scan' });
-                    const saved = `${areaSavedText(area)} Tell me if that is wrong.`;
-                    return pen ? `I stand inside a fence, so I saved the pen. ${saved}` : saved;
+                    const area = store.set({ name, type, min: scan.min, max: scan.max, dimension, entrances: scan.entrances ?? [], source: 'scan' });
+                    return `${areaSavedText(area)} Tell me if that is wrong.`;
                 }
+                // a mine or a home where no building is found: a box as v0.1.4.10
                 // no building found: a box around the bot, 12 blocks in x and z, 4 below and 8 above
                 const x = Math.floor(origin.x), y = Math.floor(origin.y), z = Math.floor(origin.z);
                 const box = normalizeBox({ x: x - 12, y: y - 4, z: z - 12 }, { x: x + 12, y: y + 8, z: z + 12 });

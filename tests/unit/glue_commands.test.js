@@ -91,27 +91,32 @@ describe('!rememberArea(name, type)', () => {
         const { world, house } = makeWorld();
         const agent = makeAgent({ at: { x: house.inside.x + 0.5, y: house.inside.y, z: house.inside.z + 0.5 }, world });
         const reply = await command('!rememberArea').perform(agent, 'home', 'building');
-        assert.match(reply, /^Area "home" \(building\) saved: \d+ x \d+ x \d+ blocks, from \(-?\d+, -?\d+, -?\d+\) to \(-?\d+, -?\d+, -?\d+\), 1 door\. Tell me if that is wrong\.$/);
+        // v0.1.4.11 (P1): without a type the kind is concluded: the house has a roof, a door and a bed, so it is a home
+        assert.match(reply, /^I saved "home": a home, walled, \d+ x \d+ with a roof, 1 door, 1 bed, 1 chest\. I shelter there at night\.$/);
         const area = agent.area_store.get('home');
-        assert.equal(area.type, 'building');
+        assert.equal(area.type, 'home');
+        assert.equal(area.kind, 'home');
         assert.equal(area.source, 'scan');
         assert.deepEqual(area.entrances.map((e) => e.kind), ['door']);
-        assert.ok(reply.includes(`from (${area.min.x}, ${area.min.y}, ${area.min.z}) to (${area.max.x}, ${area.max.y}, ${area.max.z})`));
-        const size = { x: area.max.x - area.min.x + 1, y: area.max.y - area.min.y + 1, z: area.max.z - area.min.z + 1 };
-        assert.ok(reply.includes(`${size.x} x ${size.y} x ${size.z} blocks`));
+        const size = { x: area.max.x - area.min.x + 1, z: area.max.z - area.min.z + 1 };
+        assert.ok(reply.includes(`${size.x} x ${size.z} with a roof`));
     });
 
     test('a farm: the gate is counted', async () => {
         const { world, field } = makeWorld();
         const agent = makeAgent({ at: { x: field.inside.x + 0.5, y: field.inside.y, z: field.inside.z + 0.5 }, world });
         const reply = await command('!rememberArea').perform(agent, 'wheat_farm', 'farm');
-        assert.match(reply, /^Area "wheat_farm" \(farm\) saved: \d+ x \d+ x \d+ blocks, from \(.+\) to \(.+\), 1 gate\. Tell me if that is wrong\.$/);
+        assert.match(reply, /^I saved "wheat_farm": a farm, fenced, \d+ x \d+, 1 gate, 25 wheat\. I only plant and harvest there\.$/); // v0.1.4.11 (P1)
         assert.equal(agent.area_store.get('wheat_farm').type, 'farm');
     });
 
     test('no building found: a box of 25 x 13 x 25 blocks around the bot, source radius', async () => {
         const agent = makeAgent({ at: { x: 100.5, y: 64, z: 100.5 } });
-        const reply = await command('!rememberArea').perform(agent, 'home', 'building');
+        // v0.1.4.11 (P1): without a type nothing is saved where no border is found; with the type home the box as before
+        assert.equal(await command('!rememberArea').perform(agent, 'home', 'building'),
+            'I find no border around me: no fence, wall, hedge or water within 24 blocks. Stand inside the place and say it again.');
+        assert.equal(agent.area_store.size, 0);
+        const reply = await command('!rememberArea').perform(agent, 'home', 'home');
         assert.equal(reply, 'I found no building here. I saved a box of 25 x 13 x 25 blocks around this place as "home". Use !setArea to correct it.');
         const area = agent.area_store.get('home');
         assert.deepEqual([area.min, area.max], [{ x: 88, y: 60, z: 88 }, { x: 112, y: 72, z: 112 }]);
@@ -130,7 +135,7 @@ describe('!rememberArea(name, type)', () => {
         const agent = makeAgent({ at: { x: house.inside.x + 0.5, y: house.inside.y, z: house.inside.z + 0.5 }, world });
         agent.blocked_actions = [];
         const reply = await index.executeCommand(agent, '!rememberArea("home")');
-        assert.match(reply, /^Area "home" \(building\) saved:/);
+        assert.match(reply, /^I saved "home": a home, /); // v0.1.4.11 (P1): the default "building" is no type, the kind is concluded
     });
 
     test('an unknown type, a bad name, no store', async () => {

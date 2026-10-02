@@ -117,6 +117,75 @@ function mineParts(mine) {
     return [`in ${name}`, 'on its way in'];
 }
 
+// v0.1.4.11 (I6, P3): the words of the enclosure line, as areas/area_kind.js writes them for the area sense (this
+// module stays without imports).
+const ENCLOSURE_BORDERS = { fence: 'fenced', wall: 'walled', glass: 'glass-walled', hedge: 'hedged', water: 'water-bound', mixed: 'enclosed' };
+const ENCLOSURE_COUNTS = [['beds', 'bed', 'beds'], ['chests', 'chest', 'chests'], ['furnaces', 'furnace', 'furnaces'],
+    ['tables', 'crafting table', 'crafting tables'], ['ladders', 'ladder', 'ladders'], ['water', 'water block', 'water blocks']];
+const ENCLOSURE_CROPS = { wheat: ['wheat', 'wheat'], carrots: ['carrot', 'carrots'], potatoes: ['potato', 'potatoes'],
+    beetroots: ['beetroot', 'beetroots'], melon_stem: ['melon stem', 'melon stems'], pumpkin_stem: ['pumpkin stem', 'pumpkin stems'],
+    sweet_berry_bush: ['sweet berry bush', 'sweet berry bushes'], nether_wart: ['nether wart', 'nether wart'],
+    torchflower_crop: ['torchflower', 'torchflowers'], pitcher_crop: ['pitcher plant', 'pitcher plants'] };
+const ENCLOSURE_OPENINGS = [['door', 'door', 'doors'], ['gate', 'gate', 'gates'], ['trapdoor', 'trapdoor', 'trapdoors'], ['gap', 'gap', 'gaps']];
+
+function namedCounts(map) {
+    if (!map || typeof map !== 'object' || Array.isArray(map)) {
+        return [];
+    }
+    return Object.entries(map).filter(([name, n]) => typeof name === 'string' && name !== '' && isFiniteNumber(n) && Math.floor(n) > 0)
+        .map(([name, n]) => [name, Math.floor(n)]).sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
+}
+
+function pluralWord(word) {
+    if (word === 'sheep') {
+        return word;
+    }
+    return /(s|x|ch|sh)$/.test(word) ? `${word}es` : `${word}s`;
+}
+
+/**
+ * The sentence of an enclosure that is not saved (v0.1.4.11, I6, P3):
+ * `You stand in a fenced enclosure 9 x 7 with 6 chickens and 1 gate that is not saved.` After the size: a roof when
+ * it has one, the contents (animals and crops, the most first, then beds, chests, furnaces, crafting tables, ladders,
+ * water blocks), the openings (doors, gates, trapdoors, gaps). '' without an enclosure, or for a saved one.
+ * @param {{saved?: boolean, border?: string|null, size?: {x: number, z: number}, contents?: object,
+ *   openings?: {kind: string}[], roof?: boolean}|null} enclosure
+ * @returns {string}
+ */
+export function enclosureLine(enclosure) {
+    if (!enclosure || typeof enclosure !== 'object' || enclosure.saved !== false) {
+        return '';
+    }
+    const word = Object.hasOwn(ENCLOSURE_BORDERS, enclosure.border) ? ENCLOSURE_BORDERS[enclosure.border] : 'enclosed';
+    const size = isFiniteNumber(enclosure.size?.x) && isFiniteNumber(enclosure.size?.z) ? ` ${enclosure.size.x} x ${enclosure.size.z}` : '';
+    const c = enclosure.contents && typeof enclosure.contents === 'object' ? enclosure.contents : {};
+    const parts = enclosure.roof === true ? ['a roof'] : [];
+    for (const [name, n] of namedCounts(c.animals)) {
+        const animal = name.replace(/^minecraft:/, '').replace(/_/g, ' ');
+        parts.push(`${n} ${n === 1 ? animal : pluralWord(animal)}`);
+    }
+    for (const [name, n] of namedCounts(c.crops)) {
+        const words = ENCLOSURE_CROPS[name] ?? [name.replace(/_/g, ' '), pluralWord(name.replace(/_/g, ' '))];
+        parts.push(`${n} ${n === 1 ? words[0] : words[1]}`);
+    }
+    for (const [key, one, more] of ENCLOSURE_COUNTS) {
+        const n = isFiniteNumber(c[key]) ? Math.floor(c[key]) : 0;
+        if (n > 0) {
+            parts.push(`${n} ${n === 1 ? one : more}`);
+        }
+    }
+    const openings = Array.isArray(enclosure.openings) ? enclosure.openings : [];
+    for (const [kind, one, more] of ENCLOSURE_OPENINGS) {
+        const n = openings.filter(o => o?.kind === kind).length;
+        if (n > 0) {
+            parts.push(`${n} ${n === 1 ? one : more}`);
+        }
+    }
+    const list = parts.length > 1 ? `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}` : parts.join('');
+    const article = /^[aeiou]/.test(word) ? 'an' : 'a';
+    return `You stand in ${article} ${word} enclosure${size}${list ? ` with ${list}` : ''} that is not saved.`;
+}
+
 /**
  * The line of where the bot is: `You are in the area "farm" (farm), on the surface.`, under the
  * ground `You are in the area "mine" (mine), 26 blocks under the ground.`; without an area
@@ -124,8 +193,10 @@ function mineParts(mine) {
  * With `where.mine` (v0.1.4.9, I7) the bot is under the ground, and the mine is named:
  * `You are in the area "mine" (mine), in the mine "mine", tunnel 1 at level 25, 35 blocks under the ground.`
  * or `You are in the mine "mine", on its way in, 12 blocks under the ground.`
+ * v0.1.4.11 (I6): with `where.enclosure` (an enclosure that no saved area holds) the line goes on with enclosureLine:
+ * `You are on the surface. You stand in a fenced enclosure 9 x 7 with 6 chickens and 1 gate that is not saved.`
  * @param {{area?: {name: string, type?: string|null}|null, depth?: number, underground?: boolean,
- *   mine?: {name: string|null, tunnel: number|null, level?: number}|null}|null} where
+ *   mine?: {name: string|null, tunnel: number|null, level?: number}|null, enclosure?: object|null}|null} where
  * @returns {string}
  */
 export function whereLine(where) {
@@ -146,7 +217,8 @@ export function whereLine(where) {
         parts.push(...mineParts(mine));
     }
     parts.push(level);
-    return `You are ${parts.join(', ')}.`;
+    const enclosure = enclosureLine(where.enclosure);
+    return `You are ${parts.join(', ')}.${enclosure ? ` ${enclosure}` : ''}`;
 }
 
 /**

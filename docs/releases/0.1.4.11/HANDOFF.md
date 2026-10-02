@@ -88,6 +88,37 @@ candidate for the fix round if the journeys or the play test show a fall.
   (the walks); the kind and the contents go into the area record of `area_store.js` (`kind`,
   `contents`, `border`; `type` stays and is derived from the kind).
 
+## From part P (the places, E3), done in round 2
+
+### Exports and record
+
+| File | What |
+|---|---|
+| `src/agent/areas/area_scan.js` | `scanEnclosure(getBlockName, origin, options)` with the I5 result plus `min`, `max`, `entrances`, `source`, `scan` (the v0.1.4.10 result underneath); `scanBuilding`, `scanPen`, `scanFarm` call it and return their v0.1.4.10 results; `scanWithoutType` unchanged; `ENCLOSURE_BORDERS`, `OPENING_KINDS`, `FLOOR_KINDS`; the `no_border` text in `scanText` |
+| `src/agent/areas/area_kind.js` (new, pure) | `PLACE_KINDS`, `KIND_TYPES`, `KIND_SENTENCES`, `CONTENT_KEYS`, `kindOf`, `typeOfKind`, `animalCount`, `contentsParts`, `openingsParts`, `borderWord`, `sizeWords`, `withWords`, `savedText` (P1), `kindChangedText`, `senseText` (P2) |
+| `src/agent/areas/area_sense.js` (new) | `countContents(bot, box)`, `emptyContents`, `blockNamesOf`, `heldBySaved`, `unsavedEnclosure`, `enclosureKnowledge`, `boxKey`, `newSenseState`, `senseStep` (the timing rules, pure), `senseTick`, `SENSE_RULES`, `ENCLOSURE_KNOWLEDGE_MS` |
+| `src/agent/areas/area_store.js` | the record gets `kind`, `contents`, `border`; `type` derived from the kind (storage and yard become building); a v0.1.4.10 record loads unchanged and is not rewritten; `AREA_BORDERS` |
+| `src/agent/areas/keep_out_logic.js` | `isKeepOutArea` also true for kind pen and for animals with a gate; `leaveText` names the kind |
+| `src/agent/modes.js` | the reflex `area_sense`, added only when `area_sense` and `protected_areas` are on; idle only, never an action |
+| `src/agent/commands/actions.js` | `!rememberArea` without a type: the enclosure scan, the kind, the P1 answer; with a type the owner's word; the same name with another type changes the kind; no border: the P1 text, nothing saved; mine as before |
+| `src/agent/knowledge/knowledge_text.js`, `src/agent/agent.js` | `whereLine` reads `where.enclosure`; `enclosureLine`; `_enclosureHere(areas)` at most once per 10 s, only with protected areas on and no saved area holding the enclosure |
+| `profiles/defaults/_default.json`, `tests/routing/sentences.json` | three examples and three sentences; the system lines of the home and pen examples carry the new answers |
+
+### Decisions beyond the spec, accepted
+
+| Decision | Why |
+|---|---|
+| A typed "building" counts as no type (the parser's default) | the tests pin the default; a barn with a bed is a home |
+| An empty fenced enclosure with a gate is a yard, which the reflex enters | `kindOf` needs animals for a pen; the play test says: name the pen with its animals inside, or say "it's a pen" |
+| Without a type and without a border nothing is saved | P1; a typed home or mine still gets the box of v0.1.4.10 |
+| The scan floods the ground as `scanPen`, then with water as a border; ground with a roof over half, or a bot under a roof, is a building (`scanBuilding`, floors with `area_floors`); rock and hill dirt are no border | caves and hollows are no places |
+| Thresholds: one border kind holds 2 of 3 of the border else "mixed"; tilled floor a third or more farmland; a roof half of the cells with a block 1 to 8 above; side-by-side open cells of a wall line are one gap | |
+| Words beyond the spec: glass-walled, hedged, water-bound, enclosed (mixed); "crafting table", "water block"; openings listed as doors, gates, trapdoors, gaps; a double chest and a bed count once; barrels count as chests | |
+| The P2 and P3 list: the roof first, then the contents, then the openings | fits both examples |
+| A type changes the kind only when it differs; the same type scans again | |
+| The knowledge line is gated by `knowledge_in_prompt` and protected areas, not by `area_sense` | the line is a correction |
+| `!setArea` on an existing name does not change the kind (P1 said it would) | dropped by the lead: `!rememberArea(name, type)` does it |
+
 ## For part N (round 3)
 
 - `routes/index.js` does not re-export `causeText` or `legCause`: add them with the waypoint exports.

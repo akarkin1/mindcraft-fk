@@ -40,6 +40,7 @@ import { whereAmI as whereAmIOf } from './reflex/where_am_i.js';
 import { installChatLimit } from './reflex/chat_limit.js';
 import { WAKE_RULES, shouldWakeFor } from './reflex/wake_logic.js';
 import { knowledgeText, whereLine, KNOWLEDGE_HEADER } from './knowledge/knowledge_text.js';
+import { unsavedEnclosure, enclosureKnowledge, ENCLOSURE_KNOWLEDGE_MS } from './areas/area_sense.js';
 import { writeExit, readExit, restartNote } from './restart_context.js';
 import { RepeatGuard } from './repeat_guard.js';
 import { withTimeLimit } from '../utils/kill_timer.js';
@@ -731,6 +732,9 @@ export class Agent {
             const areas = (this.area_store?.list?.() ?? []).filter((area) => plain(area?.dimension) === plain(dimension));
             const mines = stores.mines?.list?.(dimension) ?? [];
             const where = { ...this.whereAmI(), pos: { x: pos.x, y: pos.y, z: pos.z } };
+            const enclosure = this._enclosureHere(areas); // v0.1.4.11 (I6): an enclosure that no saved area holds
+            if (enclosure)
+                where.enclosure = enclosure;
             const max = numberSetting(settings.knowledge_max_chars, 600);
             // v0.1.4.10 (I4): the line of the job after the where line, within knowledge_max_chars
             const job = this._jobStatus();
@@ -746,6 +750,25 @@ export class Agent {
             console.warn('Could not tell what the bot knows:', error);
             return '';
         }
+    }
+
+    _enclosureHere(areas) {
+        // v0.1.4.11 (I6): the enclosure the bot stands in when no saved area holds it, for the line of where the bot is,
+        // as { saved: false, border, size, contents, openings, roof }; null without one or without protected areas. The
+        // scan runs at most once per 10 s; in between the last answer stands. Never throws.
+        if (!this.area_store || !this.bot?.entity?.position)
+            return null;
+        const now = Date.now();
+        if (this._enclosure && now - this._enclosure.at < ENCLOSURE_KNOWLEDGE_MS)
+            return this._enclosure.value;
+        let value = null;
+        try {
+            value = enclosureKnowledge(unsavedEnclosure(this.bot, areas, { floors: settings.area_floors === true }));
+        } catch (error) {
+            console.warn('Could not scan the enclosure around the bot:', error);
+        }
+        this._enclosure = { at: now, value };
+        return value;
     }
 
     _jobStatus() {
