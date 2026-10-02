@@ -14,6 +14,8 @@ path search.
 
 ### Added
 
+- **A place from one sentence**: `!rememberArea("aviary")` without a type scans the enclosure around the bot, whatever its border (fence, wall, glass, hedge, water), counts what is inside (animals by kind, crops, beds, chests, furnaces, crafting tables, ladders, water) and concludes the kind itself: animals behind a border with a gate or door make a pen, crops on tilled soil a farm, a roof with a door and a bed a home, a roof with chests or furnaces a storage, a roof and a door a building, nothing a yard. `I saved "aviary": a pen, fenced, 9 x 7, 1 gate, 6 chickens. I keep its gate closed and pick nothing up inside it.` A type keeps your word; the same name with another type changes the kind (`"aviary" is a farm now. I only plant and harvest there.`); without a border nothing is saved (`I find no border around me: ...`). The reflexes read the kind and the facts: animals behind a gate keep the reflex out, whatever the name. The area record gets `kind`, `contents` and `border`; old records load unchanged.
+- **The area sense** (`area_sense`): the bot that enters an unsaved enclosure scans it once and says what it thinks it is: `I am in a fenced pen 9 x 7 with 6 chickens and 1 gate that I have not saved. Tell me its name and I keep it.` The knowledge block names an unsaved enclosure the bot stands in.
 - **A shaft from inside** (`mine_from_inside`): in the room or at a tunnel end of a known mine, `!mineOre("diamond", 8, true)` digs a shaft down from where the bot stands, with ladders, to the level of the ore: `I dig a shaft down from here to level -58 for diamond.` The new level is a mine of the bot under its parent (`!mines` lists it as `bot:-58 (from the mine "mine")`); the way in and out goes through the parent; `!forgetMine` of the parent forgets it too.
 
 ### Changed
@@ -33,8 +35,9 @@ path search.
 | Key | Default |
 |---|---|
 | `mine_from_inside` | `false` |
+| `area_sense` | `false` |
 
-The texts, the tunnel measurement and the surface are corrections without a switch.
+The texts, the tunnel measurement, the surface and the kinds of places are corrections without a switch.
 
 ## [0.1.4.10] - 2026-10-02
 
