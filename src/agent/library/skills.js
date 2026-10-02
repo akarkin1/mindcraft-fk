@@ -1340,6 +1340,18 @@ export async function discard(bot, itemName, num=-1, walkAway=0) {
     // v0.1.4.8 (B6, S14): the walk away has a limit of 3 s; when it fails the items are tossed where the bot stands
     if (walkAway > 0 && world.getInventoryItem(bot, itemName))
         await walkAwayWithin(bot, walkAway, DISCARD_WALK_MS);
+    const discarded = await tossItems(bot, itemName, num);
+    if (discarded === 0) {
+        log(bot, `You do not have any ${itemName} to discard.`);
+        return false;
+    }
+    log(bot, `Discarded ${discarded} ${itemName}.`);
+    return true;
+}
+
+// v0.1.4.11 (W5, the lead's fix round F3): the toss without a text, shared by discard (which says "Discarded")
+// and giveToPlayer (which says what the player took). Returns the number of items tossed.
+async function tossItems(bot, itemName, num = -1) {
     let discarded = 0;
     let fromOffhand = false;
     while (true) {
@@ -1360,12 +1372,7 @@ export async function discard(bot, itemName, num=-1, walkAway=0) {
             break;
         }
     }
-    if (discarded === 0) {
-        log(bot, `You do not have any ${itemName} to discard.`);
-        return false;
-    }
-    log(bot, `Discarded ${discarded} ${itemName}.`);
-    return true;
+    return discarded;
 }
 
 export async function putInChest(bot, itemName, num=-1) {
@@ -1578,7 +1585,8 @@ export async function giveToPlayer(bot, itemType, username, num=1) {
     };
     bot.on('playerCollect', onCollect);
     try {
-        if (await discard(bot, itemType, num)) {
+        // F3: the toss says nothing itself; the texts of W5 below say what the player took
+        if ((await tossItems(bot, itemType, num)) > 0) {
             dropped = Math.max(0, before - (world.getInventoryCounts(bot)[itemType] ?? 0)) || num;
             let start = Date.now();
             while (taken < dropped && !bot.interrupt_code) {

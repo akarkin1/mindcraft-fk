@@ -32,3 +32,14 @@ the rock face); W92 checks the trip down and back through the room, then `!goToM
 optional trapdoor in the home answer; W95 uses the middle of the first ladder; W96 uses iron doors (a block in a
 doorway removes the door); W97 uses closeness 1; W98 routes the fake model for `!newAction`. `GOALS_SETTINGS`
 of W85 to W90 does not get the new switches.
+
+## Found by the journeys with the new code (the lead, round 3)
+
+W91 passes at the first run. The others, worst first:
+
+| Id | Finding | Where | Decision | Owner |
+|---|---|---|---|---|
+| F1 | The way out of the mine room fails in the dry scan: `I find no way from (403, 41, -2) to the foot of the ladder at (403, 43, -2).` The second ladder of the base ends 2 blocks above the floor; the scan asked the path search for a cell in the air. `!leaveMine`, `!goToSurface` from the room and `!leaveMine` from the bottom of the inner shaft stop before the first step. | W92 step 4, W93 step 2, W98 step 7 | A ladder hop is walked to the standing cell under the column and climbed by the ladder leg logic of the replay (enterColumn, the placing of missing ladders, climbUp, slideDown), never by the path search alone; the dry scan counts a ladder hop open when the column is intact for the direction or the bot carries the ladders for the gap, else names the gap and the ladders needed. | N (E4) |
+| F2 | The pen gate stood open behind the bot after "come here" out of the pen and on to the farm. The service's own click had succeeded (the note and the side tracking dropped, `_seen` left at open), the path search opened the gate again, and the next look saw it open with `before` true: nothing noted. A chicken beside the gate also held every closing (`somebodyNear`). | W94 step 4 | A click sets the gate seen closed, so the opening again is noted as "opened"; a gate of a pen or a farm the bot opened while walking is closed 2 blocks past it, pass seen or not; a gate is held only by an entity in its cell (a door or a trapdoor keeps the 1 block of F21). | lead, done |
+| F3 | `!givePlayer` still wrote `Discarded 4 wheat.` before the W5 text, and the control player of W98 never stepped on the items, so the answer was `w_player took 0 of 4 wheat`. | W98 step 4 | The toss of a give says nothing (the W5 texts say what the player took); W98's control player steps onto the items, as the owner does. | lead and T3, done |
+| F4 | "Come here" from the tunnel to the room ended in the tunnel: T3-1 (the bounded search of N2 read a long way as no way). | W98 step 6 | T3-1, fixed (2cd7863): the walk in rounds along the partial path. | N (E4), done |

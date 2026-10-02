@@ -12,8 +12,9 @@
 //   2. On the surface the owner says "dig a tunnel"; the fake model answers !newAction("dig a tunnel"): the result is
 //      `I do not write code for digging. From here: !mineOre("iron", 8, true).` (W7); the code model gets no request.
 //   3. !rememberRoute("a", "b"): `!rememberRoute takes 1 argument (name): !rememberRoute("name").` (W5).
-//   4. "give me 4 wheat" !givePlayer("w_player", "wheat", 4): `Gave 4 wheat to w_player.`; the player has 4 wheat more
-//      (server) and the bot 4 less.
+//   4. "give me 4 wheat" !givePlayer("w_player", "wheat", 4); the player steps onto the wheat the bot tosses (within 2
+//      blocks of him), as the owner picks it up: `Gave 4 wheat to w_player.`; the player has 4 wheat more (server) and
+//      the bot 4 less.
 //   5. The player teaches the mine (journey.js partTeachMine); at the end of the tunnel "dig a tunnel", the model's
 //      !newAction("dig a tunnel"): `I do not write code for digging. From here: !mineOre("iron", 8).`
 //   6. The player walks back into the room, "come here" !goToPlayer("w_player", 2); "dig a tunnel", the model's
@@ -25,7 +26,7 @@
 // Throughout: no answer and no line of the bot holds `Show me the way again`; the process lives, no request reached a
 // real model.
 import { scenarioMain, check, note, exitSoon, stopRealAgent, env, entityPos, fmt, sleep, tp, commands, waitFor, waitIdle } from './helpers.js';
-import { region, prepareRegion, releaseRegion, inBox, inventoryOf } from './world.js';
+import { region, prepareRegion, releaseRegion, inBox, inventoryOf, itemsOnGround } from './world.js';
 import { basePlan, buildBase, BASE_RADIUS } from './base_world.js';
 import { loadDump } from './owner_region.js';
 import { startJourney, JOURNEY_SETTINGS, spots, PLAYER, partTeachMine, wayOutOfMine, walkPlayer, line, onSurface, saidLines } from './journey.js';
@@ -102,7 +103,23 @@ await scenarioMain({
             // ---------------------------------------------------------- 4. give
             const pw0 = (await inventoryOf(PLAYER)).wheat || 0;
             const bw0 = (await inventoryOf(NAME)).wheat || 0;
-            const four = await orders.order(`!givePlayer("${PLAYER}", "wheat", 4)`, 60000);
+            const giving = orders.orderInfo(`!givePlayer("${PLAYER}", "wheat", 4)`, 60000);
+            // the owner picks up what the bot tosses: once wheat lies within 2 blocks of the player (as an item entity),
+            // the player steps onto each item, then waits up to 3 s for the server to give them to him
+            const giver = await entityPos(PLAYER);
+            const near = { min: { x: Math.floor(giver.x) - 2, y: Math.floor(giver.y) - 1, z: Math.floor(giver.z) - 2 }, max: { x: Math.floor(giver.x) + 2, y: Math.floor(giver.y) + 2, z: Math.floor(giver.z) + 2 } };
+            const wheatNear = async () => (await itemsOnGround(near)).filter((x) => x.name === 'wheat' && x.pos);
+            const tossed = await waitFor(async () => { const l = await wheatNear(); return l.length ? l : null; }, { ms: 30000, every: 200 });
+            note(`4: wheat on the ground within 2 blocks of the player: ${tossed.ok ? tossed.value.map((x) => `${x.count} at ${fmt(x.pos)}`).join(', ') : 'none within 30 s'}`);
+            if (tossed.ok) {
+                for (const it of tossed.value) {
+                    await tp(PLAYER, { x: Math.floor(it.pos.x), y: Math.floor(it.pos.y + 0.01), z: Math.floor(it.pos.z) });
+                    await sleep(250);
+                }
+                const gone = await waitFor(async () => (await wheatNear()).length === 0, { ms: 3000, every: 200 });
+                note(`4: after the player stepped onto the items ${gone.ok ? 'none lie there' : `${(await wheatNear()).reduce((n, x) => n + (x.count || 0), 0)} wheat still lie there`}`);
+            }
+            const four = (await giving).reply;
             replies.push(four);
             await sleep(1500);
             const pw = ((await inventoryOf(PLAYER)).wheat || 0) - pw0;

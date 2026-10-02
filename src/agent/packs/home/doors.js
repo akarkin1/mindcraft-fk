@@ -711,6 +711,25 @@ export function somebodyInDoor(bot, door) {
  * @param {{x,y,z}} door
  * @returns {boolean}
  */
+/**
+ * True when an entity holds the closing of an openable: somebody in it, or (F21) within 1 block of a door or a
+ * trapdoor. v0.1.4.11 (the lead's fix round F2, W94): a gate is held only by somebody in its cell; a chicken
+ * beside the gate of its pen held the closing for ever and the pen stood open. Never throws.
+ * @param {object} bot
+ * @param {{x,y,z,kind}} door
+ * @returns {boolean}
+ */
+export function occupiedBy(bot, door) {
+    try {
+        if (somebodyInDoor(bot, door)) {
+            return true;
+        }
+        return door?.kind === 'gate' ? false : somebodyNear(bot, door);
+    } catch {
+        return false;
+    }
+}
+
 export function somebodyNear(bot, door) {
     try {
         for (const entity of Object.values(bot?.entities ?? {})) {
@@ -839,7 +858,7 @@ export function createDoorService(bot, ctx = {}, options = {}) {
             ...door,
             inArea: areas.some(({ box }) => containsPos(box, door)),
             gated: door.kind === 'gate' && areas.some(({ area, box }) => isGatedArea(area) && containsPos(box, door)),
-            occupied: somebodyInDoor(bot, door) || somebodyNear(bot, door), // F21: nobody within 1 block
+            occupied: occupiedBy(bot, door),
         }));
         const moving = now - movedAt <= DOOR_SERVICE_RULES.movedWithinMs || bot.pathfinder?.isMoving?.() === true;
         return watch.observe({ now, botPos: me, moving, doors, players: otherPlayerPositions(bot, 16) });

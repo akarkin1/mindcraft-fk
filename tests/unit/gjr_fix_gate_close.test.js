@@ -116,7 +116,7 @@ describe('T3-9: DoorWatch, a gate seen closed in the middle of the pass', () => 
     test('the bot stops 1.4 past the gate opened again: not closed while it still walks, closed once it stands', () => {
         const w = missedPass();
         assert.deepEqual(look(w, 6900, at(611.5, 3.5), { ...GATE, gated: true, open: true }, { moving: true }), [], 'walking, no pass seen');
-        assert.equal(w.noted(GATE)?.why, 'gate', 'noted again by coming near');
+        assert.equal(w.noted(GATE)?.why, 'opened', 'noted again: the click set the gate seen closed (F2), the opening is "opened"');
         const out = look(w, 8500, at(611.5, 3.5), { ...GATE, gated: true, open: true }, { moving: false });
         assert.equal(out.length, 1);
         assert.deepEqual({ x: out[0].x, z: out[0].z }, { x: 612, z: 4 });
@@ -146,6 +146,25 @@ describe('T3-9: DoorWatch, a gate seen closed in the middle of the pass', () => 
         const w = walkOut(DOOR);
         look(w, 6600, at(612.5, 4.5), { ...DOOR, open: true });
         assert.deepEqual(look(w, 8500, at(611.5, 3.5), { ...DOOR, open: true }, { moving: false }), []);
+    });
+
+    // F2 of v0.1.4.11 (W94): after the service's own click the bot's path search opened the gate again and the bot
+    // walked on to the farm; the next look saw the gate open with `before` true (the click did not update `_seen`),
+    // so nothing was noted and the gate stood open behind the bot. Now a click sets `_seen` to closed, the opening
+    // is noted as "opened", and a gate of a pen the bot opened while walking is closed 2 blocks past it, pass or not.
+    test('F2: after the click the opening again is noted; the bot walks on, 2 blocks past the gate it is closed', () => {
+        const w = missedPass();
+        look(w, 6900, at(612.5, 4.8), { ...GATE, gated: true, open: true }); // open again, the bot in the cell, walking
+        assert.equal(w.noted(GATE)?.why, 'opened');
+        assert.deepEqual(look(w, 7100, at(612.5, 3.6), { ...GATE, gated: true, open: true }), [], '0.9 past it, walking');
+        assert.equal(look(w, 7300, at(612.5, 2.4), { ...GATE, gated: true, open: true }).length, 1, '2.1 past it');
+    });
+
+    test('F2: a gate of no pen the bot opened and did not pass keeps the rule of F21 (never closed while walking)', () => {
+        const w = new L.DoorWatch();
+        look(w, 6000, at(612.5, 2.5), { ...GATE, open: false });
+        look(w, 6300, at(612.5, 2.5), { ...GATE, open: true });
+        assert.deepEqual(look(w, 6600, at(612.5, 0.4), { ...GATE, open: true }), [], 'not gated: 4 blocks away, nothing');
     });
 
     test('another player within 2 blocks still holds the gate the bot stands beside', () => {
@@ -178,6 +197,16 @@ describe('T3-5: the bot itself never holds a gate open', () => {
         const s = scene([611.5, 61, 3.5]);
         addMob(s.bot, 'chicken', [613.5, 61, 5.5], { type: 'animal' });
         assert.equal(D.somebodyNear(s.bot, s.gate), true);
+    });
+
+    // F2 of v0.1.4.11 (W94): six chickens in the pen, one beside the gate: the closing was held for ever
+    test('F2: a chicken beside the gate does not hold its closing; one in the gate cell does; a door keeps the 1 block', () => {
+        const s = scene([611.5, 61, 3.5]);
+        addMob(s.bot, 'chicken', [613.5, 61, 5.5], { type: 'animal' });
+        assert.equal(D.occupiedBy(s.bot, s.gate), false, 'beside the gate');
+        assert.equal(D.occupiedBy(s.bot, { ...s.gate, kind: 'door' }), true, 'a door: within 1 block holds');
+        addMob(s.bot, 'chicken', [612.5, 61, 4.5], { type: 'animal' });
+        assert.equal(D.occupiedBy(s.bot, s.gate), true, 'in the gate cell');
     });
 
     test('another player with the name of no bot is somebody', () => {

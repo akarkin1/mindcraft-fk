@@ -555,7 +555,11 @@ export class DoorWatch {
             // then stands 1.4 blocks past an open gate that nobody closes. A noted gate the bot has stopped
             // beside, its feet out of the gate cell, is closed too; while it walks the pass still decides.
             const gateBehind = door.kind === 'gate' && !feetInCell(botPos, door) && (entry.passed || input.moving !== true);
-            const away = entry.why === 'start' ? d > 0.8 : gateBehind || (passed && d >= DOOR_SERVICE_RULES.pastDistance);
+            // F2 (v0.1.4.11, W94): a gate of a pen or a farm that the bot opened while walking is closed 2 blocks
+            // past it, pass seen or not (the service's own click had dropped the side tracking; the path search
+            // opened the gate again and the bot walked on to the farm with the gate open behind it)
+            const gateOpened = door.kind === 'gate' && door.gated === true && entry.why === 'opened' && d >= DOOR_SERVICE_RULES.pastDistance;
+            const away = entry.why === 'start' ? d > 0.8 : gateBehind || gateOpened || (passed && d >= DOOR_SERVICE_RULES.pastDistance);
             if (away) {
                 out.push({ ...door, why: entry.why, distance: d });
             }
@@ -580,6 +584,7 @@ export class DoorWatch {
         if (closed === true) {
             this._noted.delete(key);
             this._sides.delete(key);
+            this._seen.set(key, false); // F2 (v0.1.4.11): the next look sees an opening again as "opened"
             return 'closed';
         }
         entry.tries += 1;
