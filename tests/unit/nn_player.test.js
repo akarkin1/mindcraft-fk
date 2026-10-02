@@ -53,17 +53,26 @@ describe('goToPlayer without a way (N2)', () => {
         const r = await skills.goToPlayer(bot, PLAYER, 3);
         assert.equal(r, false);
         assert.equal(bot.output, `${NO_WAY}\n`);
-        assert.ok(!bot.output.includes('destructive'));
+        assert.ok(!bot.output.includes('using destructive movements'));
         assert.deepEqual(bot.gotos, [], 'the bot does not move');
         assert.equal(bot.searches.length, 1);
         assert.equal(bot.searches[0].canDig, false, 'the search without digging');
         assert.equal(bot.searches[0].goal, 'GoalFollow');
-        assert.ok(Number.isFinite(bot.searches[0].radius) && bot.searches[0].radius > 0, 'within a search range');
+        assert.equal(bot.searches[0].radius, -1, 'no limit on the length of the way (T3-1)');
         assert.equal(bot.calls.filter(c => c[0] === 'dig').length, 0);
     });
 
-    test('a walk that finds no way on the way (the search ran out of time first): the text, never the fallback', async () => {
+    test('a search that runs out of time with no node nearer to the player: the text, never the fallback', async () => {
         const bot = scene({ status: 'timeout' });
+        bot.pathfinder.goto = async (goal) => { bot.gotos.push(goal); };
+        const r = await skills.goToPlayer(bot, PLAYER, 3);
+        assert.equal(r, false);
+        assert.equal(bot.output, `${NO_WAY}\n`);
+        assert.deepEqual(bot.gotos, []);
+    });
+
+    test('the walk itself finds no way: the text, never the fallback', async () => {
+        const bot = scene({ status: 'success' });
         bot.pathfinder.goto = async () => {
             const err = new Error('No path to the goal!');
             err.name = 'NoPath';
@@ -72,7 +81,7 @@ describe('goToPlayer without a way (N2)', () => {
         const r = await skills.goToPlayer(bot, PLAYER, 3);
         assert.equal(r, false);
         assert.ok(bot.output.endsWith(`${NO_WAY}\n`), bot.output);
-        assert.ok(!bot.output.includes('destructive'), bot.output);
+        assert.ok(!bot.output.includes('using destructive movements'), bot.output);
         assert.ok(bot.movementsSet.length > 0 && bot.movementsSet.every(d => d === false), 'every walk without digging');
     });
 
@@ -82,6 +91,60 @@ describe('goToPlayer without a way (N2)', () => {
         await skills.goToPlayer(bot, PLAYER, 3);
         assert.deepEqual(bot.output.trim().split('\n'), ['Found non-destructive path.', `You have reached ${PLAYER}.`]);
         assert.deepEqual(bot.movementsSet, [false]);
+    });
+});
+
+describe('a long way (T3-1): partial paths while they bring the bot nearer', () => {
+    // the search runs out of time twice with a partial path to its best node, the third time it finds the whole way;
+    // the player 60 blocks away along the x axis
+    function longWay(statuses) {
+        const bot = scene({ pos: [0.5, 64, 0.5], player: [60.5, 64, 0.5] });
+        const rounds = [];
+        bot.pathfinder.getPathFromTo = function* (movements, start, goal, options) {
+            rounds.push({ from: Math.floor(start.x), timeout: options?.timeout, radius: options?.searchRadius, canDig: movements.canDig });
+            const status = statuses[rounds.length - 1] ?? 'success';
+            const x = Math.floor(start.x) + 20;
+            yield { result: { status: 'partial', path: [] } };
+            yield { result: { status, path: status === 'timeout' ? [{ x: x - 10, y: 64, z: 0 }, { x, y: 64, z: 0 }] : [] } };
+        };
+        bot.pathfinder.goto = async (goal) => {
+            bot.gotos.push([goal.x, goal.y, goal.z]);
+            const x = goal.x ?? 59;
+            bot.entity.position = v(x + 0.5, 64, 0.5);
+        };
+        return { bot, rounds };
+    }
+
+    test('two partial paths, then the whole way: the bot walks them and reaches the player', async () => {
+        const { bot, rounds } = longWay(['timeout', 'timeout', 'success']);
+        await skills.goToPlayer(bot, PLAYER, 3);
+        assert.equal(rounds.length, 3);
+        assert.deepEqual(rounds.map(r => r.from), [0, 20, 40], 'each search from where the partial walk ended');
+        assert.ok(rounds.every(r => r.timeout >= 10000), 'at least 10 s of think time');
+        assert.ok(rounds.every(r => r.radius === -1), 'no limit on the length of the way');
+        assert.ok(rounds.every(r => r.canDig === false));
+        assert.deepEqual(bot.gotos.slice(0, 2), [[20, 64, 0], [40, 64, 0]], 'the ends of the partial paths');
+        assert.ok(!bot.output.includes(NO_WAY), bot.output);
+        assert.ok(bot.output.trim().endsWith(`You have reached ${PLAYER}.`), bot.output);
+        assert.ok(!bot.output.includes('using destructive movements'));
+    });
+
+    test('a partial walk that brings the bot no nearer: the text and stop', async () => {
+        const { bot } = longWay(['timeout', 'timeout']);
+        bot.pathfinder.goto = async (goal) => { bot.gotos.push([goal.x, goal.y, goal.z]); }; // the bot stays
+        const r = await skills.goToPlayer(bot, PLAYER, 3);
+        assert.equal(r, false);
+        assert.equal(bot.output, `${NO_WAY}\n`);
+        assert.equal(bot.gotos.length, 1);
+    });
+
+    test('followPlayer: the partial paths first, then the follow', async () => {
+        const { bot, rounds } = longWay(['timeout', 'success']);
+        setTimeout(() => { bot.interrupt_code = true; }, 700);
+        const r = await skills.followPlayer(bot, PLAYER, 4);
+        assert.equal(r, true);
+        assert.equal(rounds.length, 2);
+        assert.ok(bot.output.startsWith(`You are now actively following player ${PLAYER}.`), bot.output);
     });
 });
 

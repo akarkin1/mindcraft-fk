@@ -2200,12 +2200,17 @@ async function walkWatchingLadders(bot, makeGoal, target, passes, after = null, 
 const PLAYER_WAIT_MS = 2000; // F38: how long goToPlayer waits for the entity of the player
 
 // v0.1.4.11 (N2, a correction, no switch): goToPlayer and followPlayer never dig toward the player. Their path search
-// has no digging and no destructive fallback; when the search proves within its range that no walk reaches the
-// player, they say so and stop. A walk of these two that enters a cave (open air 3 wide and 3 high around the bot
-// under a natural ceiling, in no saved area, no block the bot placed within 8 blocks), while the player is not under
-// such a ceiling himself, stops once and says so. Other walks keep the fallback of goToGoal.
+// has no digging and no destructive fallback. Fix round T3-1: a search that runs out of time is no proof: the bot
+// walks the partial path of the search (its best node) toward the player and searches again from there, as long as
+// each round brings it 1 block or more nearer; it says that it finds no way and stops only when a round brings it no
+// nearer, or when the search has looked at every cell it can reach (noPath, no limit on the length of the way). A
+// walk of these two that enters a cave (open air 3 wide and 3 high around the bot under a natural ceiling, in no
+// saved area, no block the bot placed within 8 blocks), while the player is not under such a ceiling himself, stops
+// once and says so. Other walks keep the fallback of goToGoal.
 const NO_WAY_TO_PLAYER = 'I find no way to you from here without digging. Come closer or tell me to dig.';
-const PLAYER_SEARCH = { radius: 48, timeoutMs: 3000, everyMs: 5000 }; // the search for a way without digging
+// the search for a way without digging: think time of one round, rounds at most, the progress a round must make,
+// how often a follow that stands still asks again
+const PLAYER_SEARCH = { timeoutMs: 10000, rounds: 30, progress: 1, everyMs: 5000 };
 const CAVE_RULES = { placedRange: 8, ceiling: 24, againRange: 16, againMs: 600000, everyMs: 500 };
 const caveStops = new WeakMap(); // bot -> { x, y, z, at }: the last stop at a cave; "go on" walks past it
 
@@ -2226,35 +2231,72 @@ async function walkWithoutDigging(bot, goal) {
     return (await walkWith(bot, goal, noDigMovements(bot))) === 'arrived';
 }
 
-// 'none' when the path search proves that no walk without digging reaches the goal within its range (48 blocks of
-// cost beyond the straight way), 'way' when it finds one, 'unknown' when it ran out of time, was stopped or cannot be
-// asked. Never throws.
-async function wayWithoutDigging(bot, goal, movements = noDigMovements(bot)) {
+// One search without digging from where the bot stands, with no limit on the length of the way and at most 10 s:
+// { status, path } (status success, noPath, timeout or interrupted; path the complete path, or the partial one to the
+// best node), null when the bot has no search to ask. Never throws.
+async function searchWithoutDigging(bot, goal) {
     try {
         const finder = bot.pathfinder;
-        let status = null;
+        const movements = noDigMovements(bot);
         if (typeof finder?.getPathFromTo === 'function') {
-            const search = finder.getPathFromTo(movements, bot.entity.position, goal,
-                { timeout: PLAYER_SEARCH.timeoutMs, searchRadius: PLAYER_SEARCH.radius, optimizePath: false });
+            const search = finder.getPathFromTo(movements, bot.entity.position, goal, { timeout: PLAYER_SEARCH.timeoutMs, searchRadius: -1 });
+            let result = null;
             for (;;) {
                 const step = search.next();
                 if (step.done)
                     break;
-                status = step.value?.result?.status ?? null;
-                if (status !== 'partial')
+                result = step.value?.result ?? null;
+                if (result?.status !== 'partial')
                     break;
                 await new Promise(resolve => setImmediate(resolve));
                 if (bot.interrupt_code)
-                    return 'unknown';
+                    return { status: 'interrupted', path: [] };
             }
+            return result ? { status: result.status, path: Array.isArray(result.path) ? result.path : [] } : null;
         }
-        else if (typeof finder?.getPathTo === 'function') {
-            status = (await finder.getPathTo(movements, goal, PLAYER_SEARCH.timeoutMs))?.status ?? null;
+        if (typeof finder?.getPathTo === 'function') {
+            const result = await finder.getPathTo(movements, goal, PLAYER_SEARCH.timeoutMs);
+            return result ? { status: result.status, path: Array.isArray(result.path) ? result.path : [] } : null;
         }
-        return status === 'noPath' ? 'none' : (status === 'success' ? 'way' : 'unknown');
+        return null;
     } catch (err) {
-        return 'unknown';
+        return null;
     }
+}
+
+// T3-1: toward the player round by round, without digging. 'way': the search found a complete path from where the
+// bot now stands; 'none': it found no path at all, or a round brought the bot less than 1 block nearer; 'unknown': the
+// bot has no search to ask, or 30 rounds went by; 'stopped': interrupted, or the cave watch stopped a walk.
+// `first`: the result of a search the caller made already from where the bot stands.
+async function approachWithoutDigging(bot, player, distance, cave = null, first = null) {
+    for (let round = 0; round < PLAYER_SEARCH.rounds; round++) {
+        if (bot.interrupt_code || cave?.at)
+            return 'stopped';
+        const r = round === 0 && first ? first : await searchWithoutDigging(bot, new pf.goals.GoalFollow(player, distance));
+        if (!r)
+            return 'unknown';
+        if (r.status === 'success')
+            return 'way';
+        if (r.status === 'interrupted' || bot.interrupt_code)
+            return 'stopped';
+        if (r.status === 'noPath')
+            return 'none';
+        // timeout (or a partial result left over): the partial path to the best node
+        const before = bot.entity.position.distanceTo(player.position);
+        const end = r.path[r.path.length - 1];
+        if (!end || player.position.distanceTo(new Vec3(end.x + 0.5, end.y, end.z + 0.5)) > before - PLAYER_SEARCH.progress)
+            return 'none';
+        try {
+            await walkWith(bot, new pf.goals.GoalNear(end.x, end.y, end.z, 1), noDigMovements(bot));
+        } catch (err) {
+            // a walk that ends short is measured below
+        }
+        if (bot.interrupt_code || cave?.at)
+            return 'stopped';
+        if (bot.entity.position.distanceTo(player.position) > before - PLAYER_SEARCH.progress)
+            return 'none';
+    }
+    return 'unknown';
 }
 
 const BUILT_PREFIXES = ['smooth_', 'polished_', 'cut_', 'chiseled_', 'cobble', 'mossy_cobble', 'infested_'];
@@ -2406,18 +2448,31 @@ export async function goToPlayer(bot, username, distance=3) {
     distance = Math.max(distance, 0.5);
     const goal = new pf.goals.GoalFollow(player, distance);
 
-    // v0.1.4.11 (N2): no digging toward the player; without a walk within the search range the bot says so and stops
-    const way = await wayWithoutDigging(bot, goal);
+    // v0.1.4.11 (N2, T3-1): no digging toward the player; along partial paths while they bring the bot nearer; without
+    // a way the bot says so and stops
+    const cave = caveWatch(bot, () => player.position).start();
+    let way;
+    try {
+        way = await approachWithoutDigging(bot, player, distance, cave);
+    } catch (err) {
+        way = 'unknown';
+    }
+    if (way === 'stopped' || bot.interrupt_code || cave.at) {
+        cave.stop();
+        if (cave.at && !bot.interrupt_code) {
+            log(bot, caveText(cave.at));
+            return false;
+        }
+        return;
+    }
     if (way === 'none') {
+        cave.stop();
         log(bot, NO_WAY_TO_PLAYER);
         return false;
     }
     if (way === 'way')
         log(bot, `Found non-destructive path.`); // the line of goToGoal, which goToPlayer no longer calls
-    if (bot.interrupt_code)
-        return;
     const walk = (g) => walkWithoutDigging(bot, g);
-    const cave = caveWatch(bot, () => player.position).start();
 
     // v0.1.4.9 (section 13, F14; W75, L1): the ladder step when the path search ends with the player still 2 or
     // more blocks above or below, then the path search once more. v0.1.4.10 (P6): no step before the path search,
@@ -2478,13 +2533,26 @@ export async function followPlayer(bot, username, distance=4) {
     if (!player)
         return false;
 
-    // v0.1.4.11 (N2): the follow never digs toward the player; without a walk within the search range it says so and stops
+    // v0.1.4.11 (N2, T3-1): the follow never digs toward the player; along partial paths while they bring the bot
+    // nearer; without a way it says so and stops
     const move = noDigMovements(bot);
-    if (await wayWithoutDigging(bot, new pf.goals.GoalFollow(player, distance), move) === 'none') {
+    const cave = caveWatch(bot, () => player.position).start();
+    let way;
+    try {
+        way = await approachWithoutDigging(bot, player, distance, cave);
+    } catch (err) {
+        way = 'unknown';
+    } finally {
+        cave.stop();
+    }
+    if (cave.at && !bot.interrupt_code) {
+        log(bot, caveText(cave.at));
+        return false;
+    }
+    if (way === 'none' && !bot.interrupt_code) {
         log(bot, NO_WAY_TO_PLAYER);
         return false;
     }
-    const cave = caveWatch(bot, () => player.position);
     let way_checked = Date.now();
     bot.pathfinder.setMovements(move);
     let doorCheckInterval = startDoorInterval(bot);
@@ -2566,16 +2634,34 @@ export async function followPlayer(bot, username, distance=4) {
         if (distance_from_player > nearby_distance && bot.entity.position.distanceTo(stuck_pos) < 0.1
             && Date.now() - stuck_since >= 3000 && Date.now() - way_checked >= PLAYER_SEARCH.everyMs) {
             way_checked = Date.now();
-            if (await wayWithoutDigging(bot, new pf.goals.GoalFollow(player, distance), noDigMovements(bot)) === 'none') {
-                if (bot.interrupt_code)
-                    break;
-                bot.pathfinder.setGoal(null);
-                log(bot, NO_WAY_TO_PLAYER);
-                clearInterval(doorCheckInterval);
-                return false;
-            }
+            // a complete way: the follow goes on as it is; none at all: stop; a partial one: the follow is stopped for
+            // the rounds of the partial paths (T3-1), then set again
+            const first = await searchWithoutDigging(bot, new pf.goals.GoalFollow(player, distance));
             if (bot.interrupt_code)
                 break;
+            if (first && first.status !== 'success') {
+                bot.pathfinder.setGoal(null);
+                cave.start();
+                let again;
+                try {
+                    again = await approachWithoutDigging(bot, player, distance, cave, first);
+                } catch (err) {
+                    again = 'unknown';
+                } finally {
+                    cave.stop();
+                }
+                if (bot.interrupt_code)
+                    break;
+                if (cave.at || again === 'none') {
+                    log(bot, cave.at ? caveText(cave.at) : NO_WAY_TO_PLAYER);
+                    clearInterval(doorCheckInterval);
+                    return false;
+                }
+                bot.pathfinder.setMovements(move);
+                bot.pathfinder.setGoal(new pf.goals.GoalFollow(player, distance), true);
+                stuck_pos = bot.entity.position.clone();
+                stuck_since = Date.now();
+            }
         }
 
         if (bot.entity.position.distanceTo(stuck_pos) >= 0.1 || distance_from_player <= nearby_distance) {
