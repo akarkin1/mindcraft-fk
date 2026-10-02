@@ -5,6 +5,10 @@
 // v0.1.4.11 (I4, mine_from_inside): a mine of a second level (`parent`) is entered through its parent
 // and left through it: wayIn goes into the parent, then down the shaft; wayOut climbs the shaft, then
 // takes the parent's way out. chooseMine prefers, in a family of mines, the level that fits the ore.
+// v0.1.4.11 (I7, routes_by_search): with the setting on, wayIn, wayOut and walkBack walk waypoints with the
+// path search of the routes pack (ctx.routes.walkWaypoints, after ctx.routes.dryScan before the first step):
+// the waypoints of the route of the mine and its room; a mine of a second level adds them to its parent's.
+// Off, the legs as before.
 import { containsPos } from '../home/box_math.js';
 import { botPos, clockOf, dimensionOf, listAreas, logTo } from '../home/context.js';
 import { walkNear } from '../home/motion.js';
@@ -72,6 +76,155 @@ export function parentMine(ctx, mine) {
     } catch {
         return null;
     }
+}
+
+/**
+ * True with the setting routes_by_search (v0.1.4.11, I7) and the waypoint walk of the routes pack on the context
+ * (ctx.routes.waypointsOf and ctx.routes.walkWaypoints). Never throws.
+ * @param {object} ctx
+ * @returns {boolean}
+ */
+export function bySearchOn(ctx) {
+    try {
+        return ctx?.settings?.routes_by_search === true && typeof ctx.routes?.waypointsOf === 'function'
+            && typeof ctx.routes?.walkWaypoints === 'function';
+    } catch {
+        return false;
+    }
+}
+
+/**
+ * The waypoints of the way into a mine (v0.1.4.11, I7), from the surface to its deepest point: the waypoints of
+ * its route (ctx.routes.waypointsOf) and the middle of its room (kind room) when it has one; a mine of a second
+ * level: those of its parent (and of the parent's parent), then those of its shaft. Every waypoint carries the
+ * name of the mine. [] without the routes pack on the context. Never throws.
+ * @param {object} ctx
+ * @param {object} mine
+ * @returns {object[]}
+ */
+export function mineWaypoints(ctx, mine, depth = 0) {
+    try {
+        const name = routeName(mine);
+        const own = ctx.routes.waypointsOf({ name, legs: Array.isArray(mine?.route) ? mine.route : [] }) ?? [];
+        const parent = typeof mine?.parent === 'string' && mine.parent.length > 0 && depth < 4 ? parentMine(ctx, mine) : null;
+        const out = parent ? [...mineWaypoints(ctx, parent, depth + 1), ...own] : [...own];
+        if (!parent) {
+            const c = mine?.room?.center;
+            if (c && [c.x, c.y, c.z].every(Number.isFinite)) {
+                const room = { x: Math.floor(c.x), y: Math.floor(c.y), z: Math.floor(c.z) };
+                const last = out[out.length - 1];
+                if (!last || last.x !== room.x || last.y !== room.y || last.z !== room.z) {
+                    out.push({ ...room, kind: 'room', name });
+                }
+            }
+        }
+        return out.map(w => ({ ...w, name }));
+    } catch (err) {
+        console.warn('Mining pack: no waypoints for the mine:', errText(err));
+        return [];
+    }
+}
+
+// v0.1.4.11 (I7): the dry scan of ctx.routes (when it has one), then the walk of the waypoints toward `to`. A hop
+// without a way ends before the first step with the text of N1, reason no_path; a failed walk gives the text of
+// its step (W1). Returns { ok, reason, text } plus `scanned` (false when the scan stopped it).
+async function searchWalk(bot, ctx, mine, waypoints, to, options) {
+    const from = botPos(bot);
+    if (typeof ctx.routes.dryScan === 'function') {
+        let scan = null;
+        try {
+            scan = await ctx.routes.dryScan(bot, waypoints, { from, to });
+        } catch (err) {
+            console.warn('Mining pack: the dry scan failed:', errText(err));
+        }
+        if (bot.interrupt_code || scan?.cause?.kind === 'interrupted') {
+            return { ok: false, reason: 'interrupted', text: `I was stopped before I walked to ${mineLabel(mine)}.`, scanned: false };
+        }
+        if (scan && scan.ok === false) {
+            return { ok: false, reason: 'no_path', text: typeof scan.text === 'string' && scan.text ? scan.text : 'I find no way along the mine.', scanned: false };
+        }
+    }
+    let r;
+    try {
+        r = await ctx.routes.walkWaypoints(bot, waypoints, { from, to, clock: options.clock, deadline: options.deadline, name: routeName(mine), ctx });
+    } catch (err) {
+        console.warn('Mining pack: walking the waypoints failed:', errText(err));
+        r = { ok: false, reason: 'error', text: `I could not walk the way of the mine: ${errText(err)}` };
+    }
+    if (!r || typeof r !== 'object') {
+        return { ok: false, reason: 'error', text: TEXTS.noRouteWalk, scanned: true };
+    }
+    return r.ok ? { ok: true, reason: null, text: '', scanned: true } : { ...routeFailed(r), scanned: true };
+}
+
+// v0.1.4.11 (I7): wayIn by waypoints. A bot in the room or a tunnel of the mine stays; else the waypoints from the
+// nearest one to the deepest (a mine of a second level through its parent).
+async function wayInBySearch(bot, ctx, mine, options) {
+    const feet = feetOf(bot);
+    if (insideOf(mine, feet)) {
+        return { ok: true, reason: null, text: '', walked: false };
+    }
+    const waypoints = mineWaypoints(ctx, mine);
+    if (waypoints.length === 0) {
+        return null; // the legs as before
+    }
+    if (!mineAt([mine], feet) && !(parentMine(ctx, mine) && mineAt([parentMine(ctx, mine)], feet))) {
+        logTo(ctx, `I go to ${mine.name ? `the mine "${mine.name}"` : 'the mine'} at ${posText(mine.entrance)}.`);
+    }
+    const last = waypoints[waypoints.length - 1];
+    const r = await searchWalk(bot, ctx, mine, waypoints, { x: last.x, y: last.y, z: last.z }, options);
+    return { ok: r.ok, reason: r.reason, text: r.text, walked: r.ok };
+}
+
+// v0.1.4.11 (I7): wayOut by waypoints. From a tunnel back to the way in first (walkBack); then the waypoints from
+// the nearest one to the start of the way. A mine of a second level with `toParent`: up its shaft only.
+async function wayOutBySearch(bot, ctx, mine, options) {
+    const feet = feetOf(bot);
+    const child = typeof mine.parent === 'string' && mine.parent.length > 0;
+    const family = [mine, ...(child && parentMine(ctx, mine) ? [parentMine(ctx, mine)] : [])];
+    if (!child && !mineAt([mine], feet) && feet.y >= (mine.entrance?.y ?? -Infinity) - 1) {
+        return { ok: true, reason: null, text: TEXTS.onSurface };
+    }
+    const own = child && options.toParent === true ? ctx.routes.waypointsOf({ name: routeName(mine), legs: mine.route ?? [] }) ?? [] : null;
+    const waypoints = own ? own.map(w => ({ ...w, name: routeName(mine) })) : mineWaypoints(ctx, mine);
+    if (waypoints.length === 0) {
+        return null; // the legs as before
+    }
+    const at = family.map(m => mineAt([m], feet)).find(Boolean) ?? null;
+    if (at && at.tunnel !== null) {
+        const back = await walkBack(bot, ctx, at.mine, { clock: options.clock });
+        if (!back.ok) {
+            return { ok: false, reason: back.reason, text: back.text };
+        }
+    }
+    const first = waypoints[0];
+    const r = await searchWalk(bot, ctx, mine, waypoints, { x: first.x, y: first.y, z: first.z }, options);
+    if (!r.ok) {
+        return { ok: false, reason: r.reason, text: r.text };
+    }
+    if (own) {
+        const parent = parentMine(ctx, mine);
+        const text = `I am back in ${parent ? mineLabel(parent) : 'the mine above'} at ${posText(feetOf(bot) ?? mine.entrance)}.`;
+        logTo(ctx, text);
+        return { ok: true, reason: null, text };
+    }
+    const top = child ? (topMine(ctx, mine) ?? mine) : mine;
+    const text = `I am on the surface at ${posText(feetOf(bot) ?? top.entrance)}.`;
+    logTo(ctx, text);
+    return { ok: true, reason: null, text };
+}
+
+// The mine at the top of a family (the parent of the parent ...), or null.
+function topMine(ctx, mine) {
+    let m = mine;
+    for (let depth = 0; depth < 4; depth++) {
+        const parent = parentMine(ctx, m);
+        if (!parent) {
+            return m;
+        }
+        m = parent;
+    }
+    return m;
 }
 
 /**
@@ -217,6 +370,8 @@ function routeFailed(r) {
  * rest of the legs from the nearest one; in the room or a tunnel nothing. The bot ends at the end
  * of the way in. A failed route: the text of walkRoute and reason no_path; nothing is dug.
  * v0.1.4.11 (I4): a mine of a second level: wayIn to its parent, then down its shaft (childIn).
+ * v0.1.4.11 (I7): with routes_by_search the waypoints of mineWaypoints from the nearest one, by the path search of
+ * the routes pack, after its dry scan (a hop without a way: the text of N1 before the first step, reason no_path).
  * @param {object} bot
  * @param {object} ctx
  * @param {object} mine
@@ -229,6 +384,13 @@ export async function wayIn(bot, ctx, mine, options = {}) {
         const feet = feetOf(bot);
         if (!feet || !mine) {
             return { ok: false, reason: 'error', text: 'I do not know where I am.', walked: false };
+        }
+        if (bySearchOn(ctx)) {
+            // v0.1.4.11 (I7): the waypoints with the path search, a dry scan first
+            const r = await wayInBySearch(bot, ctx, mine, { ...options, clock });
+            if (r) {
+                return r;
+            }
         }
         if (typeof mine.parent === 'string' && mine.parent.length > 0) {
             return await childIn(bot, ctx, mine, { ...options, clock });
@@ -452,6 +614,8 @@ async function digToward(bot, ctx, ours, mineAreas, hop, clock) {
  * water); a block the bot may not dig is named:
  * `I could not get to the way out at (10, 30, 16): I was blocked at (12, 30, 9).`
  * The bot then stays where it is. `at` is the cell that blocked.
+ * v0.1.4.11 (I7): with routes_by_search the hops are walked as waypoints by the path search first; when that fails,
+ * the hops from where the bot stands as before.
  * @param {object} bot
  * @param {object} ctx
  * @param {object} mine
@@ -466,7 +630,26 @@ export async function walkBack(bot, ctx, mine, options = {}) {
         if (!feet) {
             return { ok: false, reason: 'error', text: 'I do not know where I am.', at: null, leg: -1 };
         }
-        const { hops, leg } = wayBack(mine, feet);
+        let { hops, leg } = wayBack(mine, feet);
+        if (bySearchOn(ctx) && hops.length > 0) {
+            // v0.1.4.11 (I7): the hops as waypoints with the path search; where that fails, the hops of the bot's
+            // cell as before (with the digging of F24)
+            const waypoints = hops.map(h => ({ x: h.x, y: h.y, z: h.z, kind: 'tunnel', name: routeName(mine) }));
+            const last = hops[hops.length - 1];
+            let r = null;
+            try {
+                r = await ctx.routes.walkWaypoints(bot, waypoints, { from: botPos(bot), to: last, clock, name: routeName(mine), ctx });
+            } catch (err) {
+                console.warn('Mining pack: walking back by waypoints failed:', errText(err));
+            }
+            if (r?.ok) {
+                return { ok: true, reason: null, text: '', at: null, leg };
+            }
+            if (r?.reason === 'interrupted' || bot.interrupt_code) {
+                return { ok: false, reason: 'interrupted', text: `I was stopped on my way out of the mine at ${posText(feetOf(bot) ?? feet)}.`, at: null };
+            }
+            ({ hops, leg } = wayBack(mine, feetOf(bot) ?? feet));
+        }
         const ours = knownCells(mine);
         const mineAreas = listAreas(ctx, dimensionOf(bot)).filter(a => a.type === 'mine');
         const blocked = at => ({ ok: false, reason: 'blocked', text: wayBlockedText(end ?? at, at), at });
@@ -506,6 +689,8 @@ export async function walkBack(bot, ctx, mine, options = {}) {
  * route it walks back from the nearest leg. Ends at the entrance.
  * v0.1.4.11 (I4): a mine of a second level: up its shaft, then the parent's way out (childOut); with
  * `options.toParent` the bot stays in the parent at the top of the shaft.
+ * v0.1.4.11 (I7): with routes_by_search from a tunnel walkBack first, then the waypoints of mineWaypoints from the
+ * nearest one to the start of the way, by the path search after its dry scan (with `toParent` the shaft's only).
  * @param {object} bot
  * @param {object} ctx
  * @param {object} mine
@@ -518,6 +703,13 @@ export async function wayOut(bot, ctx, mine, options = {}) {
         const feet = feetOf(bot);
         if (!feet || !mine) {
             return { ok: false, reason: 'error', text: 'I do not know where I am.' };
+        }
+        if (bySearchOn(ctx)) {
+            // v0.1.4.11 (I7): the waypoints with the path search, a dry scan first
+            const r = await wayOutBySearch(bot, ctx, mine, { ...options, clock });
+            if (r) {
+                return r;
+            }
         }
         if (typeof mine.parent === 'string' && mine.parent.length > 0) {
             return await childOut(bot, ctx, mine, { ...options, clock });

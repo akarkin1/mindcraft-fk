@@ -119,6 +119,32 @@ candidate for the fix round if the journeys or the play test show a fall.
 | The knowledge line is gated by `knowledge_in_prompt` and protected areas, not by `area_sense` | the line is a correction |
 | `!setArea` on an existing name does not change the kind (P1 said it would) | dropped by the lead: `!rememberArea(name, type)` does it |
 
+## From part N (the navigation, E4), done in round 3
+
+### Exports and context
+
+| File | What |
+|---|---|
+| `src/agent/packs/routes/waypoints.js` (new) | `waypointsOf`, `nearestWaypoint`, `planHops`, `walkWaypoints`, `pickRoute`, `walkByWaypoints`, `isOpenableWaypoint`, `WAYPOINT_RULES`, `WAYPOINT_KINDS` (with `walk` for a walk end in the middle of a route; `name` the route, `block` the openable's block). A hop: `GoalNear` 1, the walk's own movements (no digging, doors allowed), at most 60 s; the whole walk at most 5 minutes; the openables of a hop are reserved before it and released when the walk ends; a failed hop gives `cause` as I1. Openables are not hop goals: they are reserved and passed; under a trapdoor the top of a ladder is its highest rung. A bot already past the nearest waypoint starts at the next one. |
+| `src/agent/packs/routes/dry_scan.js` (new) | `dryScan`, `noWayText`, `waypointLabel`, `DRY_SCAN_RULES`; the N1 texts; `getPathFromTo` hop by hop (`getPathTo` for the first), each hop bounded at 24 blocks plus 2 per block and 2 s; a search that times out counts as open; labels `the top of the ladder at`, `the foot of the ladder at`, `the room at`, `the tunnel at`, `the start of / the end of the route "x" at`, a bare position for a walk point; returns also `total` and `text` |
+| `src/agent/packs/routes/index.js` | re-exports the above plus `causeText`, `legCause`, `bySearch`; `bindRoutes` gives `bySearch()`, `waypointsOf`, `nearestWaypoint`, `walkWaypoints(bot, waypoints, options)`, `dryScan(bot, waypoints, options)`; with the setting on `walkTo` scans then walks the waypoints and `routeFor` picks by waypoints; off, as before |
+| `src/agent/packs/mining/mine_way.js` | `bySearchOn`, `mineWaypoints`; with the setting on `wayIn` and `wayOut` scan then walk the waypoints, a child mine uses the parent's waypoints plus its shaft (`toParent`: only its shaft), `walkBack` walks by the path search first and falls back to the old hops with digging |
+| `src/agent/packs/home/door_logic.js` | `DoorWatch.reserve`, `release`, `isReserved`, `reservedCount`; `reserveMaxMs` 20000, `reserveNear` 1.5; `observe` never returns a reserved openable (not before the time runs out, and afterwards not while the bot is within 1.5 blocks, until released) |
+| `src/agent/packs/home/doors.js` | `canOpen(bot, pos)` (no for iron, a closed powered door, a block filling the cell before or behind a door or gate, a block on a trapdoor); the service has `reserve(door, ms)` and `release(door)`; `reserveDoor`, `releaseDoor` reach the running service of a bot |
+| `src/agent/library/skills.js` | `goToPlayer`, `followPlayer`: no digging, never the destructive line; a bounded search (48 blocks, 3 s) with no way gives the N2 text; `followPlayer` asks again at most every 5 s after standing still 3 s away from the player; the cave rule; `walkWatchingLadders` got an optional `walk` parameter |
+| `src/agent/agent.js` (the lead) | `homeContext().doors = { reserve, release }` on the door service (I8) |
+| `src/agent/packs/home/shelter.js`, `sleep.js` (the lead) | with `routes_by_search` a learned route into the building, to the place "home" or to the bed goes first, after its dry scan; its failure text ends the walk |
+
+### Decisions beyond the spec, accepted
+
+| Decision | Why |
+|---|---|
+| The reservation rule of 1.5 blocks covers reserved openables only | the pen gate rule of v0.1.4.10 (closed as soon as the feet leave the cell) stays |
+| A path that needs more than 48 blocks of detour to the player is "no way" | the player is near |
+| The cave rule needs a natural ceiling within 24 blocks and no saved area; the goal inside the cave means the player stands under rock too; no stop when the walk starts in a cave; after a stop a new walk within 16 blocks and 10 minutes passes the cave | an open meadow is no cave; "go on" works |
+| Mines the bot dug itself go down through `descendToLevel` as before, without waypoints | the spec names `wayIn`, `wayOut`, `walkBack` |
+| From a tunnel `!leaveMine` runs `walkBack` before the dry scan of the route | the walk back is inside the tunnel |
+
 ## For part N (round 3)
 
 - `routes/index.js` does not re-export `causeText` or `legCause`: add them with the waypoint exports.

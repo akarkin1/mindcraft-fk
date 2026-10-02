@@ -1,0 +1,313 @@
+// Spec v0.1.4.11, part N (engineer E4), I7, I8 and N1: walkWaypoints and dryScan on the fake bot of the mining pack
+// with a fake path search. The fake goto puts the bot on the cell of the goal (or fails for the goals in `blocked`);
+// the fake getPathFromTo answers a status per hop and never moves the bot. The shaft of rta_replay: the room at y 41,
+// ladders facing south from y 41 to 59 at (2, -2), an oak trapdoor at (2, 60, -2) in the grass, the bed at (-3, 61, 2).
+import { describe, test, before, after } from 'node:test';
+import assert from 'node:assert/strict';
+import { loadSrc } from '../helpers/load.js';
+import { makeWorld, makeMiningBot, makeClock, v } from './mining_fake_bot.test.js';
+
+const P = await loadSrc('src/agent/packs/routes/index.js');
+const H = await loadSrc('src/agent/packs/home/doors.js');
+
+let warn;
+before(() => {
+    warn = console.warn;
+    console.warn = () => {};
+});
+after(() => {
+    console.warn = warn;
+});
+
+const SHAFT = {
+    name: 'bed', from: { name: 'storage', kind: 'place', x: 2, y: 41, z: 1 }, to: { name: 'bed', x: -3, y: 61, z: 2 },
+    legs: [
+        { kind: 'walk', from: { x: 2, y: 41, z: 1 }, to: { x: 2, y: 41, z: -1 } },
+        { kind: 'ladder', x: 2, z: -2, top: 59, bottom: 41, face: 'south', entry: { x: 2, y: 61, z: -3 }, foot: { x: 2, y: 41, z: -1 } },
+        { kind: 'door', kind2: 'trapdoor', name: 'oak_trapdoor', x: 2, y: 60, z: -2, from: { x: 2, y: 59, z: -2 }, to: { x: 2, y: 61, z: -3 } },
+        { kind: 'walk', from: { x: 2, y: 61, z: -3 }, to: { x: -3, y: 61, z: 2 } },
+    ],
+};
+
+const key = (x, y, z) => `${x},${y},${z}`;
+
+function scene({ pos = [2.5, 41, 1.5], ladders = true } = {}) {
+    const world = makeWorld({ groundY: 60 });
+    world.fill(0, 41, -2, 4, 43, 2, 'air');
+    world.fill(2, 44, -2, 2, 59, -2, 'air');
+    if (ladders) world.fill(2, 41, -2, 2, 59, -2, 'ladder', { facing: 'south' });
+    world.set(2, 60, -2, 'oak_trapdoor', { facing: 'south', half: 'top', open: false });
+    const bot = makeMiningBot({ world, pos });
+    const clock = makeClock(bot);
+    const progress = [];
+    bot.modes = { noteProgress: reason => progress.push(reason) };
+    const gotos = [];
+    const blocked = new Set();
+    bot.pathfinder.goto = async (goal) => {
+        gotos.push([goal.x, goal.y, goal.z]);
+        if (bot.stopOnGoto) bot.interrupt_code = true;
+        if (blocked.has(key(goal.x, goal.y, goal.z))) {
+            const err = new Error('No path to the goal!');
+            err.name = 'NoPath';
+            throw err;
+        }
+        bot.entity.position = v(goal.x + 0.5, goal.y, goal.z + 0.5);
+    };
+    const searches = [];
+    const noPath = new Set();
+    bot.pathfinder.getPathFromTo = function* (movements, start, goal, options) {
+        searches.push({ from: [Math.floor(start.x), Math.floor(start.y), Math.floor(start.z)], to: [goal.x, goal.y, goal.z], radius: options?.searchRadius });
+        yield { result: { status: 'partial', path: [] } };
+        yield { result: { status: noPath.has(key(goal.x, goal.y, goal.z)) ? 'noPath' : (bot.searchStatus ?? 'success'), path: [] } };
+    };
+    const reserved = [];
+    const released = [];
+    const ctx = { now: clock.now, log: () => {}, doors: { reserve: (door, ms) => { reserved.push([door.x, door.y, door.z, ms]); return true; },
+        release: door => released.push([door.x, door.y, door.z]) } };
+    const feet = () => [Math.floor(bot.entity.position.x), Math.floor(bot.entity.position.y + 0.01), Math.floor(bot.entity.position.z)];
+    return { world, bot, clock, ctx, gotos, blocked, searches, noPath, reserved, released, progress, feet, waypoints: P.waypointsOf(SHAFT) };
+}
+
+const TO_BED = { x: -3, y: 61, z: 2 };
+const TO_ROOM = { x: 2, y: 41, z: 1 };
+
+describe('walkWaypoints (I7)', () => {
+    test('from the room to the bed: hop by hop with GoalNear 1, the trapdoor reserved before its hop and released after', async () => {
+        const s = scene();
+        const r = await P.walkWaypoints(s.bot, s.ctx, s.waypoints, { to: TO_BED, clock: s.clock });
+        assert.deepEqual({ ok: r.ok, reason: r.reason, text: r.text, step: r.step, total: r.total, cause: r.cause },
+            { ok: true, reason: null, text: 'I followed the route "bed", 5 steps.', step: null, total: 5, cause: null });
+        assert.deepEqual(s.gotos, [[2, 41, -1], [2, 59, -2], [2, 61, -3], [-3, 61, 2]], 'the foot is within 1 block of the hop before: no walk');
+        assert.deepEqual(s.feet(), [-3, 61, 2]);
+        assert.deepEqual(s.reserved, [[2, 60, -2, 20000]], 'I8: the trapdoor, before the hop that passes it');
+        assert.deepEqual(s.released, [[2, 60, -2]], 'the reservation ends with the walk');
+        assert.deepEqual(s.progress, ['route', 'route', 'route', 'route', 'route']);
+        assert.equal(s.bot.calls.filter(c => c[0] === 'dig').length, 0);
+    });
+
+    test('the reserve happens before the walk of its hop', async () => {
+        const s = scene({ pos: [2.5, 59, -1.5] });
+        const order = [];
+        s.ctx.doors.reserve = () => { order.push('reserve'); return true; };
+        const goto = s.bot.pathfinder.goto;
+        s.bot.pathfinder.goto = async (goal) => { order.push(`goto ${goal.x},${goal.y},${goal.z}`); return goto(goal); };
+        await P.walkWaypoints(s.bot, s.ctx, s.waypoints, { to: TO_BED, clock: s.clock });
+        assert.deepEqual(order, ['reserve', 'goto 2,61,-3', 'goto -3,61,2']);
+    });
+
+    test('the other way, from the bed: toward the end nearer to the goal', async () => {
+        const s = scene({ pos: [-2.5, 61, 2.5] });
+        const r = await P.walkWaypoints(s.bot, s.ctx, s.waypoints, { to: TO_ROOM, clock: s.clock });
+        assert.equal(r.ok, true, r.text);
+        assert.deepEqual(s.gotos, [[2, 61, -3], [2, 59, -2], [2, 41, -2], [2, 41, 1]], 'the cell beside the foot is within 1 block: no walk');
+        assert.deepEqual(s.feet(), [2, 41, 1]);
+    });
+
+    test('joined half way up the ladder: no walk back to the foot (W95)', async () => {
+        const s = scene({ pos: [2.5, 50, -1.5] });
+        const r = await P.walkWaypoints(s.bot, s.ctx, s.waypoints, { to: TO_BED, clock: s.clock });
+        assert.equal(r.ok, true, r.text);
+        assert.deepEqual(s.gotos[0], [2, 59, -2]);
+        assert.equal(r.total, 3);
+    });
+
+    test('a hop through a closed trapdoor that fails: the cause door and the text of W1', async () => {
+        const s = scene();
+        s.blocked.add(key(2, 61, -3));
+        const r = await P.walkWaypoints(s.bot, s.ctx, s.waypoints, { to: TO_BED, clock: s.clock });
+        assert.deepEqual({ ok: r.ok, reason: r.reason, step: r.step, total: r.total }, { ok: false, reason: 'blocked_door', step: 4, total: 5 });
+        assert.deepEqual(r.cause, { kind: 'door', name: 'trapdoor', x: 2, y: 60, z: -2, state: 'closed' });
+        assert.equal(r.text, 'I could not follow the route "bed" at step 4 of 5: the trapdoor at (2, 60, -2) is closed and I could not open it.');
+        assert.deepEqual(s.released, [[2, 60, -2]], 'released also after a failure');
+    });
+
+    test('a hop up a column with missing ladders: the cause ladder', async () => {
+        const s = scene();
+        s.world.fill(2, 45, -2, 2, 50, -2, 'air');
+        s.blocked.add(key(2, 59, -2));
+        const r = await P.walkWaypoints(s.bot, s.ctx, s.waypoints, { to: TO_BED, clock: s.clock });
+        assert.equal(r.step, 3);
+        assert.deepEqual(r.cause, { kind: 'ladder', x: 2, z: -2, y: 45, gap: 6 });
+        assert.equal(r.text, 'I could not follow the route "bed" at step 3 of 5: the ladder at (2, -2) has a gap of 6 at y 45. I need 6 ladders to go on.');
+    });
+
+    test('a walk hop without a way: no_path from the feet to the waypoint', async () => {
+        const s = scene();
+        s.blocked.add(key(-3, 61, 2));
+        const r = await P.walkWaypoints(s.bot, s.ctx, s.waypoints, { to: TO_BED, clock: s.clock });
+        assert.deepEqual(r.cause, { kind: 'no_path', from: { x: 2, y: 61, z: -3 }, to: { x: -3, y: 61, z: 2 } });
+        assert.equal(r.text, 'I could not follow the route "bed" at step 5 of 5: I found no way from (2, 61, -3) to (-3, 61, 2).');
+        assert.equal(r.reason, 'no_path');
+    });
+
+    test('stopped: interrupted with the text of the step', async () => {
+        const s = scene();
+        s.bot.stopOnGoto = true;
+        const r = await P.walkWaypoints(s.bot, s.ctx, s.waypoints, { to: TO_BED, clock: s.clock });
+        assert.deepEqual({ ok: r.ok, reason: r.reason, text: r.text, cause: r.cause },
+            { ok: false, reason: 'interrupted', text: 'I was stopped on the route "bed" at step 1 of 5.', cause: { kind: 'interrupted' } });
+    });
+
+    test('the name of the texts comes from the options before the waypoints', async () => {
+        const s = scene({ pos: [-2.5, 61, 2.5] });
+        const r = await P.walkWaypoints(s.bot, s.ctx, s.waypoints, { to: TO_BED, clock: s.clock, name: 'mine' });
+        assert.equal(r.text, 'I followed the route "mine", 1 step.');
+    });
+
+    test('without ctx.doors the running door service of the bot takes the reservation (I8)', async () => {
+        const s = scene({ pos: [2.5, 59, -1.5] });
+        delete s.ctx.doors;
+        const service = H.createDoorService(s.bot, { settings: {} });
+        const calls = [];
+        service.reserve = (door, ms) => { calls.push(['reserve', door.x, door.y, door.z, ms]); return true; };
+        service.release = door => calls.push(['release', door.x, door.y, door.z]);
+        try {
+            const r = await P.walkWaypoints(s.bot, s.ctx, s.waypoints, { to: TO_BED, clock: s.clock });
+            assert.equal(r.ok, true, r.text);
+            assert.deepEqual(calls, [['reserve', 2, 60, -2, 20000], ['release', 2, 60, -2]]);
+        } finally {
+            service.stop();
+        }
+    });
+
+    test('no waypoints, no bot: a failure, never a throw', async () => {
+        const s = scene();
+        const r = await P.walkWaypoints(s.bot, s.ctx, [], { clock: s.clock });
+        assert.equal(r.ok, false);
+        assert.equal(r.text, 'The route has no steps.');
+        const none = await P.walkWaypoints(null, s.ctx, s.waypoints, {});
+        assert.equal(none.ok, false);
+        assert.equal(none.reason, 'error');
+    });
+});
+
+describe('dryScan (I7, N1)', () => {
+    test('every hop has a path: ok, nothing moved, each hop from the goal of the one before', async () => {
+        const s = scene();
+        const r = await P.dryScan(s.bot, s.waypoints, { to: TO_BED });
+        assert.deepEqual(r, { ok: true, step: null, total: 5, from: null, to: null, cause: null, text: '' });
+        assert.deepEqual(s.gotos, [], 'the bot does not move');
+        assert.deepEqual(s.searches.map(x => [x.from, x.to]), [
+            [[2, 41, 1], [2, 41, -1]], [[2, 41, -1], [2, 41, -2]], [[2, 41, -2], [2, 59, -2]], [[2, 59, -2], [2, 61, -3]], [[2, 61, -3], [-3, 61, 2]]]);
+        assert.ok(s.searches.every(x => Number.isFinite(x.radius) && x.radius >= 24), 'a bounded search');
+    });
+
+    test('the hop through the trapdoor has none: the first form of N1 names the trapdoor', async () => {
+        const s = scene();
+        s.noPath.add(key(2, 61, -3));
+        const r = await P.dryScan(s.bot, s.waypoints, { to: TO_BED });
+        assert.equal(r.ok, false);
+        assert.equal(r.step, 4);
+        assert.equal(r.text, 'I find no way from (2, 59, -2) to the trapdoor at (2, 60, -2).');
+        assert.deepEqual(r.cause, { kind: 'no_path', from: { x: 2, y: 59, z: -2 }, to: { x: 2, y: 60, z: -2 } });
+        assert.deepEqual(r.from, { x: 2, y: 59, z: -2 });
+        assert.deepEqual(r.to, { x: 2, y: 60, z: -2 });
+        assert.equal(s.searches.length, 4, 'the scan stops at the first hop without a path');
+        assert.deepEqual(s.gotos, []);
+    });
+
+    test('a closed trapdoor with a block on it (canOpen says no): the second form of N1, the cause door', async () => {
+        const s = scene();
+        s.world.set(2, 61, -2, 'stone');
+        s.noPath.add(key(2, 61, -3));
+        const r = await P.dryScan(s.bot, s.waypoints, { to: TO_BED });
+        assert.equal(r.text, 'I find no way from (2, 59, -2) to the trapdoor at (2, 60, -2): it is closed and I cannot open it.');
+        assert.deepEqual(r.cause, { kind: 'door', name: 'trapdoor', x: 2, y: 60, z: -2, state: 'closed' });
+    });
+
+    test('the door of the spec: closed, a block behind it', async () => {
+        const world = makeWorld();
+        world.set(9, 64, 43, 'oak_door', { facing: 'south', half: 'lower', open: false, powered: false });
+        world.set(9, 65, 43, 'oak_door', { facing: 'south', half: 'upper', open: false, powered: false });
+        world.set(9, 64, 44, 'stone');
+        const bot = makeMiningBot({ world, pos: [9.5, 64, 40.5] });
+        const noPath = new Set([key(9, 64, 44)]);
+        bot.pathfinder.getPathFromTo = function* (m, start, goal) {
+            yield { result: { status: noPath.has(key(goal.x, goal.y, goal.z)) ? 'noPath' : 'success' } };
+        };
+        const route = { name: 'mine', legs: [
+            { kind: 'walk', from: { x: 9, y: 64, z: 40 }, to: { x: 9, y: 64, z: 42 } },
+            { kind: 'door', kind2: 'door', name: 'oak_door', x: 9, y: 64, z: 43, from: { x: 9, y: 64, z: 42 }, to: { x: 9, y: 64, z: 44 } },
+            { kind: 'walk', from: { x: 9, y: 64, z: 44 }, to: { x: 9, y: 64, z: 48 } },
+        ] };
+        const r = await P.dryScan(bot, P.waypointsOf(route), { to: { x: 9, y: 64, z: 48 } });
+        assert.equal(r.text, 'I find no way from (9, 64, 42) to the door at (9, 64, 43): it is closed and I cannot open it.');
+        world.set(9, 64, 44, 'air');
+        assert.equal(H.canOpen(bot, { x: 9, y: 64, z: 43 }), true, 'without the block the door can be opened');
+        const open = await P.dryScan(bot, P.waypointsOf(route), { to: { x: 9, y: 64, z: 48 } });
+        assert.equal(open.text, 'I find no way from (9, 64, 42) to the door at (9, 64, 43).');
+    });
+
+    test('a hop without an openable names its waypoint', async () => {
+        const s = scene();
+        s.noPath.add(key(2, 59, -2));
+        const r = await P.dryScan(s.bot, s.waypoints, { to: TO_BED });
+        assert.equal(r.text, 'I find no way from (2, 41, -2) to the top of the ladder at (2, 59, -2).');
+        const first = scene();
+        first.noPath.add(key(2, 41, -1));
+        assert.equal((await P.dryScan(first.bot, first.waypoints, { to: TO_BED })).text, 'I find no way from (2, 41, 1) to (2, 41, -1).');
+    });
+
+    test('a search that runs out of time proves nothing: the hop counts as open', async () => {
+        const s = scene();
+        s.bot.searchStatus = 'timeout';
+        assert.equal((await P.dryScan(s.bot, s.waypoints, { to: TO_BED })).ok, true);
+    });
+
+    test('without getPathFromTo the first hop is asked with getPathTo, the others count as open', async () => {
+        const s = scene();
+        delete s.bot.pathfinder.getPathFromTo;
+        s.bot.pathfinder.getPathTo = () => ({ status: 'noPath' });
+        const r = await P.dryScan(s.bot, s.waypoints, { to: TO_BED });
+        assert.equal(r.text, 'I find no way from (2, 41, 1) to (2, 41, -1).');
+    });
+
+    test('the labels of the waypoints', () => {
+        assert.equal(P.waypointLabel({ kind: 'gate', x: -6, y: 63, z: 28 }), 'the gate at (-6, 63, 28)');
+        assert.equal(P.waypointLabel({ kind: 'ladder_foot', x: 1, y: 2, z: 3 }), 'the foot of the ladder at (1, 2, 3)');
+        assert.equal(P.waypointLabel({ kind: 'room', x: 1, y: 2, z: 3 }), 'the room at (1, 2, 3)');
+        assert.equal(P.waypointLabel({ kind: 'end', name: 'mine', x: 1, y: 2, z: 3 }), 'the end of the route "mine" at (1, 2, 3)');
+        assert.equal(P.noWayText({ x: 11, y: 67, z: 52 }, { kind: 'trapdoor', x: 13, y: 67, z: 51 }), 'I find no way from (11, 67, 52) to the trapdoor at (13, 67, 51).');
+    });
+});
+
+describe('ctx.routes.walkTo with routes_by_search (the walks of !goToBed, !goToShelter, !goToPlace)', () => {
+    function bound(s, on) {
+        const store = { list: () => [SHAFT] };
+        return P.bindRoutes(s.bot, { ...s.ctx, settings: { routes_by_search: on } }, store, null);
+    }
+
+    test('on: the dry scan before the first step; a hop without a way: the text of N1 and the bot does not move', async () => {
+        const s = scene();
+        s.noPath.add(key(2, 61, -3));
+        const r = await bound(s, true).walkTo(s.bot, TO_BED, { clock: s.clock });
+        assert.equal(r.ok, false);
+        assert.equal(r.reason, 'no_path');
+        assert.equal(r.text, 'I find no way from (2, 59, -2) to the trapdoor at (2, 60, -2).');
+        assert.equal(r.route, 'bed');
+        assert.deepEqual(s.gotos, []);
+        assert.deepEqual(s.feet(), [2, 41, 1]);
+    });
+
+    test('on: the scan finds every hop, then the waypoints are walked', async () => {
+        const s = scene({ pos: [2.5, 50, -1.5] });
+        const r = await bound(s, true).walkTo(s.bot, TO_BED, { clock: s.clock });
+        assert.equal(r.ok, true, r.text);
+        assert.equal(r.text, 'I followed the route "bed", 3 steps.');
+        assert.deepEqual(s.feet(), [-3, 61, 2]);
+    });
+
+    test('routeFor: by the waypoints with the switch on, by the ends of the legs with it off', () => {
+        const s = scene({ pos: [2.5, 50, -1.5] });
+        assert.ok(Array.isArray(bound(s, true).routeFor(TO_BED).waypoints));
+        assert.equal(bound(s, false).routeFor(TO_BED).waypoints, undefined);
+    });
+
+    test('off: no dry scan, the legs of v0.1.4.10', async () => {
+        const s = scene({ pos: [-2.5, 61, 2.5] });
+        s.bot.interrupt_code = true; // the legs stop at once; only who walks matters here
+        const r = await bound(s, false).walkTo(s.bot, TO_ROOM, { clock: s.clock });
+        assert.equal(s.searches.length, 0);
+        assert.match(r.text, /^I was stopped on the route "bed" at step 1 of 4\.$/, 'the 4 legs, not the hops');
+    });
+});

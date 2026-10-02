@@ -9,7 +9,7 @@ import { isGatedArea } from './area_kinds.js';
 import { containsPos, expandBox, interiorBox, isBox } from './box_math.js';
 import { isInsideArea } from './shelter_logic.js';
 import { botPos, clockOf, dimensionOf, entitiesWhere, listAreas, logTo, otherPlayerPositions } from './context.js';
-import { DOOR_SERVICE_RULES, DoorWatch, doorAxis, doorCenter, doorSides, openableKind, sideOf } from './door_logic.js';
+import { DOOR_SERVICE_RULES, DoorWatch, doorAxis, doorCenter, doorSides, isIronOpenable, openableKind, sideOf } from './door_logic.js';
 import { reflexOn } from './home_settings.js';
 import { isHostileForShelter } from './night_logic.js';
 import { blockReader, goals, gotoGoal, isNear, makeMovements, walkNear } from './motion.js';
@@ -318,6 +318,55 @@ function isEmptyBlock(b) {
 function isStandGround(b) {
     const props = typeof b?.getProperties === 'function' ? b.getProperties() : (b?._properties ?? null);
     return Boolean(b) && b.boundingBox === 'block' && !LIQUID_NAMES.has(b.name) && !isNoStandBlock(b.name, props);
+}
+
+// v0.1.4.11 (N1): a block that fills a cell before or behind an openable, so that nobody passes it
+function fillsCell(b) {
+    return Boolean(b) && b.boundingBox === 'block' && openableKind(b.name) === null;
+}
+
+/**
+ * v0.1.4.11 (N1, the dry scan): whether the bot can open the openable at a position and pass it. No: no openable
+ * there (or not loaded), an iron door or trapdoor (no hand opens it), a closed one that is powered (locked by
+ * redstone), a door or gate with a block filling the cell before or behind it (feet or head), a trapdoor with a
+ * block filling the cell above it. Reads the world only; never throws.
+ * @param {object} bot
+ * @param {{x,y,z}} pos
+ * @returns {boolean}
+ */
+export function canOpen(bot, pos) {
+    try {
+        if (!isPoint(pos)) {
+            return false;
+        }
+        const block = blockAtXYZ(bot, Math.floor(pos.x), Math.floor(pos.y), Math.floor(pos.z));
+        if (!block || isIronOpenable(block.name)) {
+            return false;
+        }
+        const state = readOpenable(bot, pos);
+        if (!state) {
+            return false;
+        }
+        const lower = blockAtXYZ(bot, state.x, state.y, state.z);
+        const props = (typeof lower?.getProperties === 'function' ? lower.getProperties() : lower?._properties) ?? {};
+        if (state.open !== true && (props.powered === true || props.powered === 'true')) {
+            return false;
+        }
+        if (state.kind === 'trapdoor') {
+            return !fillsCell(blockAtXYZ(bot, state.x, state.y + 1, state.z));
+        }
+        const height = state.kind === 'door' ? 2 : 1;
+        for (const side of doorSides(state) ?? []) {
+            for (let dy = 0; dy < height; dy++) {
+                if (fillsCell(blockAtXYZ(bot, side.x, side.y + dy, side.z))) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    } catch {
+        return false;
+    }
 }
 
 /**
@@ -703,11 +752,14 @@ function where3(door) {
  *   reads its state back. Text: `I closed oak_door at (x, y, z) and oak_fence_gate at (x, y, z).` or
  *   `All doors near me are closed.`
  * - `stop()`: the service does nothing more.
+ * - v0.1.4.11 (I8) `reserve(door, ms)`: a walk is about to pass the openable; it is not closed for ms (at most
+ *   20 s), nor while the bot is within 1.5 blocks of it; `release(door)` ends that (every one without a door).
+ *   The service made last for a bot is also reached with reserveDoor and releaseDoor.
  * Each closing prints `Door service: closed <name> at (x, y, z).` to the console.
  * @param {object} bot
  * @param {object} ctx { areas, settings, now, log }
  * @param {{now?: Function, wait?: Function, scanMs?: number, checkMs?: number}} [options] for tests
- * @returns {{tick: () => void, stop: () => void, closeNear: (range?: number) => Promise<object>}}
+ * @returns {{tick: () => void, stop: () => void, closeNear: (range?: number) => Promise<object>, reserve: Function, release: Function}}
  */
 // F37 of the journeys (W84, the way out of the mine): the service closed a door while the bot climbed a ladder; the
 // click turned its look away from the wall, the bot stepped out of the column and fell, and the climb failed.
@@ -732,6 +784,41 @@ function botOnLadder(bot) {
         return name.endsWith('_trapdoor') && (props.open === true || props.open === 'true');
     } catch {
         return false;
+    }
+}
+
+// v0.1.4.11 (I8): the running door service of each bot, for reserveDoor and releaseDoor
+const services = new WeakMap();
+
+/**
+ * v0.1.4.11 (I8): reserves an openable that a walk is about to pass with the running door service of the bot
+ * (the one createDoorService made last): the service does not close it for `ms` (at most 20 s), nor while the
+ * bot is within 1.5 blocks of it. The routes pack uses it when ctx.doors.reserve is missing. Never throws.
+ * @param {object} bot
+ * @param {{x,y,z}} door
+ * @param {number} ms
+ * @returns {boolean} true when a service took it
+ */
+export function reserveDoor(bot, door, ms) {
+    try {
+        const service = bot && typeof bot === 'object' ? services.get(bot) : null;
+        return Boolean(service) && service.reserve(door, ms) === true;
+    } catch {
+        return false;
+    }
+}
+
+/**
+ * v0.1.4.11 (I8): ends the reservation of an openable (of every one without `door`). Never throws.
+ * @param {object} bot
+ * @param {{x,y,z}} [door]
+ */
+export function releaseDoor(bot, door) {
+    try {
+        const service = bot && typeof bot === 'object' ? services.get(bot) : null;
+        service?.release(door);
+    } catch {
+        // nothing reserved
     }
 }
 
@@ -786,7 +873,7 @@ export function createDoorService(bot, ctx = {}, options = {}) {
         }
     };
 
-    return {
+    const service = {
         tick() {
             if (stopped) {
                 return;
@@ -828,12 +915,37 @@ export function createDoorService(bot, ctx = {}, options = {}) {
         stop() {
             stopped = true;
             watch.reset();
+            if (bot && typeof bot === 'object' && services.get(bot) === service) {
+                services.delete(bot);
+            }
         },
 
         async closeNear(range = DOOR_SERVICE_RULES.scanRange) {
             return await closeNear(bot, ctx, range, { ...options, checkMs });
         },
+
+        // v0.1.4.11 (I8): an openable a walk is about to pass is not closed for ms (at most 20 s), nor while the
+        // bot is within 1.5 blocks of it; release ends that (every reservation without a door). Never throw.
+        reserve(door, ms) {
+            try {
+                return !stopped && watch.reserve(door, clock.now(), ms);
+            } catch {
+                return false;
+            }
+        },
+
+        release(door) {
+            try {
+                watch.release(door);
+            } catch {
+                // nothing reserved
+            }
+        },
     };
+    if (bot && typeof bot === 'object') {
+        services.set(bot, service);
+    }
+    return service;
 }
 
 /**

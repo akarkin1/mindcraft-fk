@@ -1,0 +1,470 @@
+// A route as waypoints, walked by the path search (spec v0.1.4.11, I7 and N; behind the setting
+// routes_by_search). The route is a memory of where; the path search finds how: from waypoint to waypoint
+// with GoalNear 1 and the movements of the walks of v0.1.4.10 (the patched mineflayer-pathfinder climbs and
+// descends ladders and opens doors, gates and trapdoors itself; no digging). The walk joins the route at the
+// nearest waypoint and goes toward the end that is nearer to the goal. A door, gate or trapdoor is no goal of
+// its own (the end beyond a trapdoor over a ladder is no cell to stand on while it is open): the hop that
+// passes it reserves it with the door service first (I8), so the service does not close it in the bot's face.
+//
+// Pure helpers: waypointsOf, nearestWaypoint, planHops. Executing: walkWaypoints, walkByWaypoints, pickRoute.
+// Every executing function never throws.
+import { distanceToBox, isBox } from '../home/box_math.js';
+import { botPos, clockOf, logTo, noteProgress } from '../home/context.js';
+import { releaseDoor, reserveDoor } from '../home/doors.js';
+import { goals, gotoGoal, isNear, makeMovements, walkNear } from '../home/motion.js';
+import { OPENABLE_KINDS, nearCell, routeEnds, trapdoorOverLadder } from './route_logic.js';
+import { legCause } from './replay.js';
+import { TEXTS, emptyRouteText, routeDoneText, routeFailedText, routeLabel, routeStoppedText, routeTimeText } from './texts.js';
+
+/** The numbers of the waypoint walk. */
+export const WAYPOINT_RULES = Object.freeze({
+    hopMs: 60000,       // one hop of the path search at most
+    timeoutMs: 300000,  // the whole walk
+    near: 1,            // GoalNear of a hop; the bot is at a waypoint when its feet are within 1 block of it (per axis)
+    reserveMs: 20000,   // an openable a hop passes is reserved this long (I8, at most 20 s)
+    range: 4,           // a route serves a target when one of its ends is this near to it ...
+    reach: 32,          // ... and one of its waypoints this near to the bot
+});
+
+/** The kinds of waypoints (I7); `walk` is the end of a walk or stairs leg between the others. */
+export const WAYPOINT_KINDS = Object.freeze(['start', 'door', 'gate', 'trapdoor', 'ladder_top', 'ladder_foot', 'room', 'tunnel', 'walk', 'end']);
+
+function isFiniteNumber(value) {
+    return typeof value === 'number' && Number.isFinite(value);
+}
+
+function isPoint(p) {
+    return p !== null && typeof p === 'object' && isFiniteNumber(p.x) && isFiniteNumber(p.y) && isFiniteNumber(p.z);
+}
+
+function cell(p) {
+    return { x: Math.floor(p.x), y: Math.floor(p.y), z: Math.floor(p.z) };
+}
+
+function sameCell(a, b) {
+    return isPoint(a) && isPoint(b) && Math.floor(a.x) === Math.floor(b.x) && Math.floor(a.y) === Math.floor(b.y) && Math.floor(a.z) === Math.floor(b.z);
+}
+
+function feetOf(bot) {
+    const p = botPos(bot);
+    return p ? { x: Math.floor(p.x), y: Math.floor(p.y + 0.01), z: Math.floor(p.z) } : null;
+}
+
+// the distance from a position to the middle of the floor of a waypoint cell
+function distTo(wp, p) {
+    return Math.hypot(wp.x + 0.5 - p.x, wp.y - p.y, wp.z + 0.5 - p.z);
+}
+
+function distToTarget(target, wp) {
+    if (isBox(target)) {
+        return distanceToBox(target, { x: wp.x + 0.5, y: wp.y, z: wp.z + 0.5 });
+    }
+    return isPoint(target) ? Math.hypot(wp.x - Math.floor(target.x), wp.y - Math.floor(target.y), wp.z - Math.floor(target.z)) : Infinity;
+}
+
+/**
+ * True for a waypoint of a door, gate or trapdoor: the walk reserves it and passes it, it is no goal.
+ * @param {object} wp
+ * @returns {boolean}
+ */
+export function isOpenableWaypoint(wp) {
+    return Boolean(wp) && OPENABLE_KINDS.includes(wp.kind);
+}
+
+const GENERIC = new Set(['walk']);
+
+/**
+ * The waypoints of a route of legs (I7): its start, the ends of every leg, the openable of a door leg (kind door,
+ * gate or trapdoor by its kind2), the top and the foot of a ladder leg (the top is its `entry` beside the column
+ * when it has one, else the cell above the column; under a trapdoor of the route the highest ladder; the foot is
+ * the lowest cell of the column), its end. In the
+ * order of the legs; a cell given twice in a row is one waypoint (an openable, a ladder end, the start or the end
+ * wins over the end of a walk). A ladder leg gives its top first when the way so far comes from above, else its foot.
+ * Every waypoint: { x, y, z, kind, name } (name: the name of the route, null without one), and `leg` (the index of
+ * its leg), `block` (the name of the openable) and `column` ({ x, z, top, bottom } of a ladder) where they apply.
+ * Pure; [] for a route without legs.
+ * @param {{name?: string, from?: object, to?: object, legs: object[]}} route
+ * @returns {{x: number, y: number, z: number, kind: string, name: string|null}[]}
+ */
+export function waypointsOf(route) {
+    const legs = Array.isArray(route?.legs) ? route.legs : [];
+    if (legs.length === 0) {
+        return [];
+    }
+    const name = typeof route?.name === 'string' && route.name.length > 0 ? route.name : null;
+    const out = [];
+    const push = (p, kind, extra = {}) => {
+        if (!isPoint(p)) {
+            return;
+        }
+        const c = cell(p);
+        const same = out[out.length - 1];
+        if (same && sameCell(same, c)) {
+            // the same cell again: the more telling kind stays (an openable before everything)
+            if (!isOpenableWaypoint(same) && (isOpenableWaypoint({ kind }) || GENERIC.has(same.kind))) {
+                same.kind = kind;
+            }
+            for (const [k, value] of Object.entries(extra)) {
+                if (same[k] === undefined) {
+                    same[k] = value; // a ladder end that is the start keeps its column
+                }
+            }
+            return;
+        }
+        out.push({ ...c, kind, name, ...extra });
+    };
+    const ends = routeEnds(route);
+    push(ends.from, 'start');
+    legs.forEach((leg, i) => {
+        switch (leg?.kind) {
+            case 'walk':
+            case 'stairs':
+                push(leg.from, 'walk', { leg: i });
+                push(leg.to, 'walk', { leg: i });
+                break;
+            case 'door':
+                if (OPENABLE_KINDS.includes(leg.kind2) && isPoint(leg)) {
+                    push(leg.from, 'walk', { leg: i });
+                    push(leg, leg.kind2, { leg: i, block: typeof leg.name === 'string' ? leg.name : null });
+                    push(leg.to, 'walk', { leg: i });
+                }
+                break;
+            case 'ladder': {
+                if (![leg.x, leg.z, leg.top, leg.bottom].every(isFiniteNumber)) {
+                    break;
+                }
+                const column = { x: Math.floor(leg.x), z: Math.floor(leg.z), top: Math.floor(leg.top), bottom: Math.floor(leg.bottom) };
+                // under a trapdoor (the door leg before or after it) the top is the highest ladder: the door leg
+                // leads through the trapdoor to the entry
+                const trap = trapdoorOverLadder(legs[i - 1], leg) || trapdoorOverLadder(legs[i + 1], leg);
+                const top = trap ? { x: column.x, y: column.top, z: column.z }
+                    : (isPoint(leg.entry) ? cell(leg.entry) : { x: column.x, y: column.top + 1, z: column.z });
+                const foot = { x: column.x, y: column.bottom, z: column.z };
+                const last = out[out.length - 1];
+                const fromAbove = last ? last.y > (column.top + column.bottom) / 2 : true;
+                const pair = fromAbove ? [[top, 'ladder_top'], [foot, 'ladder_foot']] : [[foot, 'ladder_foot'], [top, 'ladder_top']];
+                for (const [p, kind] of pair) {
+                    push(p, kind, { leg: i, column });
+                }
+                break;
+            }
+            default:
+                break;
+        }
+    });
+    if (isPoint(ends.to)) {
+        const last = out[out.length - 1];
+        if (last && sameCell(last, ends.to)) {
+            if (GENERIC.has(last.kind)) {
+                last.kind = 'end';
+            }
+        } else {
+            push(ends.to, 'end');
+        }
+    }
+    return out;
+}
+
+/**
+ * The index of the waypoint nearest to a position (the middle of the floor of its cell), -1 without waypoints.
+ * Of equals the first. Pure.
+ * @param {object[]} waypoints
+ * @param {{x,y,z}} pos
+ * @returns {number}
+ */
+export function nearestWaypoint(waypoints, pos) {
+    const list = Array.isArray(waypoints) ? waypoints : [];
+    if (!isPoint(pos)) {
+        return list.length > 0 ? 0 : -1;
+    }
+    let best = -1;
+    let bestD = Infinity;
+    list.forEach((wp, i) => {
+        if (!isPoint(wp)) {
+            return;
+        }
+        const d = distTo(wp, pos);
+        if (d < bestD) {
+            best = i;
+            bestD = d;
+        }
+    });
+    return best;
+}
+
+/**
+ * The hops of a walk over waypoints (I7), pure: from the nearest waypoint to the bot toward the end whose
+ * waypoint is nearer to the goal `to` (a point or a box; of equals, and without a goal, the last waypoint). A bot
+ * that is already past the nearest waypoint toward the next one (nearer to the next than the nearest is) starts at
+ * the next one: a bot half way down a ladder does not climb back to its top first. Each hop is { index, goal,
+ * passes }: goal the index of the waypoint walked to, passes the openable waypoints between it and the hop before
+ * (none of them is a goal). `forward` is true when the walk follows the order of the waypoints.
+ * @param {object[]} waypoints
+ * @param {{x,y,z}|null} from where the bot stands
+ * @param {{x,y,z}|{min, max}|null} [to] the goal
+ * @returns {{forward: boolean, start: number, hops: {goal: number, passes: number[]}[]}}
+ */
+export function planHops(waypoints, from, to = null) {
+    const list = (Array.isArray(waypoints) ? waypoints : []).filter(isPoint);
+    const n = list.length;
+    if (n === 0) {
+        return { forward: true, start: -1, hops: [] };
+    }
+    let forward = true;
+    if (isPoint(to) || isBox(to)) {
+        forward = distToTarget(to, list[n - 1]) <= distToTarget(to, list[0]);
+    }
+    const step = forward ? 1 : -1;
+    const last = forward ? n - 1 : 0;
+    let start = nearestWaypoint(list, from);
+    const next = start + step;
+    if (isPoint(from) && next >= 0 && next < n && distTo(list[next], from) <= Math.hypot(list[next].x - list[start].x, list[next].y - list[start].y, list[next].z - list[start].z)) {
+        start = next;
+    }
+    const hops = [];
+    let passes = [];
+    for (let i = start; forward ? i <= last : i >= last; i += step) {
+        if (isOpenableWaypoint(list[i])) {
+            passes.push(i);
+            continue;
+        }
+        hops.push({ goal: i, passes });
+        passes = [];
+    }
+    if (passes.length > 0) {
+        // the route ends at an openable: its cell is the goal of the last hop
+        hops.push({ goal: passes[passes.length - 1], passes: passes.slice(0, -1) });
+    }
+    return { forward, start, hops };
+}
+
+// I8: reserves an openable with ctx.doors.reserve, else with the running door service of the bot
+function reserve(bot, ctx, door, ms) {
+    try {
+        if (typeof ctx?.doors?.reserve === 'function') {
+            return ctx.doors.reserve(door, ms) !== false;
+        }
+    } catch {
+        // the service of the bot below
+    }
+    return reserveDoor(bot, door, ms);
+}
+
+function release(bot, ctx, door) {
+    try {
+        if (typeof ctx?.doors?.release === 'function') {
+            ctx.doors.release(door);
+            return;
+        }
+    } catch {
+        // the service of the bot below
+    }
+    releaseDoor(bot, door);
+}
+
+// The cause of I1 of a hop that failed: an openable it passes (closed or blocked), the ladder of a hop between
+// the two ends of one column (the missing ladders, else stuck), a time that ran out (stuck), else no_path.
+function hopCause(bot, list, hop, prev, r) {
+    const at = feetOf(bot);
+    const goal = list[hop.goal];
+    const door = hop.passes.length > 0 ? list[hop.passes[0]] : (isOpenableWaypoint(goal) ? goal : null);
+    if (door) {
+        return legCause(bot, { kind: 'door', kind2: door.kind, x: door.x, y: door.y, z: door.z }, {});
+    }
+    const inColumn = c => Boolean(c) && goal.column.x === c.x && goal.column.z === c.z;
+    if (goal.column && (inColumn(prev?.column) || (!prev && inColumn(at)))) {
+        return legCause(bot, { kind: 'ladder', ...goal.column }, {});
+    }
+    if (r?.reason === 'timeout') {
+        return { kind: 'stuck', at };
+    }
+    return at ? { kind: 'no_path', from: at, to: { x: goal.x, y: goal.y, z: goal.z } } : { kind: 'stuck', at: null };
+}
+
+/**
+ * Walks waypoints with the path search (I7): the hops of planHops from where the bot stands, each with GoalNear
+ * 1 and the movements of the walks (doors allowed, no digging), at most 60 s each (and the whole walk at most
+ * 5 minutes, or to `deadline`). Before a hop the openables it passes are reserved with the door service (I8:
+ * ctx.doors.reserve, else the service of the bot); every reservation ends with the walk. The bot is at a waypoint
+ * when its feet are within 1 block of it. `bot.modes.noteProgress('route')` after every hop. Nothing is dug.
+ * The texts are those of W1 with the hops as steps: `I followed the route "mine", 6 steps.`, `I could not follow
+ * the route "mine" at step 2 of 6: the door at (9, 41, 43) is closed and I could not open it.`, stopped, time.
+ * @param {object} bot
+ * @param {object} ctx { now, log, doors? }
+ * @param {object[]} waypoints of waypointsOf
+ * @param {{from?: {x,y,z}, to?: {x,y,z}|{min,max}, clock?: object, deadline?: number, timeoutMs?: number, name?: string,
+ *   now?: Function, wait?: Function}} [options] from: where the bot stands (default its position); name: the route
+ *   for the texts (default the name of the waypoints)
+ * @returns {Promise<{ok: boolean, reason: string|null, text: string, step: number|null, total: number, at: {x,y,z}|null,
+ *   cause: object|null}>} reasons: no_path, blocked_door, interrupted, time, error
+ */
+export async function walkWaypoints(bot, ctx, waypoints, options = {}) {
+    const clock = options?.clock ?? clockOf(ctx, options);
+    const list = (Array.isArray(waypoints) ? waypoints : []).filter(isPoint);
+    const name = typeof options?.name === 'string' ? options.name : (list.find(w => typeof w.name === 'string')?.name ?? null);
+    const route = { name };
+    const reserved = [];
+    let total = 0;
+    let k = 0;
+    const result = (ok, reason, text, step, cause) => ({ ok, reason, text, step, total, at: feetOf(bot), cause: ok ? null : cause, route: name });
+    try {
+        if (!bot || !botPos(bot)) {
+            return { ok: false, reason: 'error', text: TEXTS.noBody, step: null, total: 0, at: null, cause: { kind: 'stuck', at: null }, route: name };
+        }
+        const plan = planHops(list, isPoint(options?.from) ? options.from : botPos(bot), options?.to ?? null);
+        total = plan.hops.length;
+        if (total === 0) {
+            return result(false, 'no_path', emptyRouteText(route), null, { kind: 'stuck', at: feetOf(bot) });
+        }
+        const timeoutMs = isFiniteNumber(options?.timeoutMs) ? options.timeoutMs : WAYPOINT_RULES.timeoutMs;
+        const limit = Math.min(clock.now() + timeoutMs, isFiniteNumber(options?.deadline) ? options.deadline : Infinity);
+        const stopped = i => result(false, 'interrupted', routeStoppedText(route, i + 1, total), i + 1, { kind: 'interrupted' });
+        const late = i => result(false, 'time', routeTimeText(route, i + 1, total, feetOf(bot)), i + 1, { kind: 'stuck', at: feetOf(bot) });
+        for (k = 0; k < total; k++) {
+            if (bot.interrupt_code) {
+                return stopped(k);
+            }
+            if (clock.now() > limit) {
+                return late(k);
+            }
+            const hop = plan.hops[k];
+            const goal = list[hop.goal];
+            const prev = k > 0 ? list[plan.hops[k - 1].goal] : null;
+            for (const i of [...hop.passes, ...(isOpenableWaypoint(goal) ? [hop.goal] : [])]) {
+                const door = { x: list[i].x, y: list[i].y, z: list[i].z };
+                if (reserve(bot, ctx, door, WAYPOINT_RULES.reserveMs)) {
+                    reserved.push(door);
+                }
+            }
+            let r = { ok: true, reason: null };
+            if (!nearCell(botPos(bot), goal, WAYPOINT_RULES.near)) {
+                let movements;
+                try {
+                    movements = makeMovements(bot, { dig: false, doors: true });
+                } catch (err) {
+                    return result(false, 'error', routeFailedText(route, k + 1, total, feetOf(bot), { kind: 'stuck', at: feetOf(bot) }), k + 1,
+                        { kind: 'stuck', at: feetOf(bot) });
+                }
+                const ms = Math.max(1000, Math.min(WAYPOINT_RULES.hopMs, limit - clock.now()));
+                r = await gotoGoal(bot, new goals.GoalNear(goal.x, goal.y, goal.z, WAYPOINT_RULES.near), { movements, timeoutMs: ms, clock });
+                if (r.reason === 'interrupted' || bot.interrupt_code) {
+                    return stopped(k);
+                }
+            }
+            if (!nearCell(botPos(bot), goal, WAYPOINT_RULES.near)) {
+                if (clock.now() > limit) {
+                    return late(k);
+                }
+                const cause = hopCause(bot, list, hop, prev, r);
+                const reason = cause.kind === 'door' ? 'blocked_door' : 'no_path';
+                return result(false, reason, routeFailedText(route, k + 1, total, feetOf(bot), cause), k + 1, cause);
+            }
+            noteProgress(bot, 'route');
+        }
+        return result(true, null, routeDoneText(route, total), null, null);
+    } catch (err) {
+        console.warn('Routes pack: walking the waypoints failed:', err?.message ?? err);
+        return result(false, 'error', `I could not follow ${routeLabel(route)} at step ${k + 1} of ${total}: ${err?.message ?? err}`, k + 1,
+            { kind: 'stuck', at: feetOf(bot) });
+    } finally {
+        for (const door of reserved) {
+            release(bot, ctx, door);
+        }
+    }
+}
+
+/**
+ * The route to a target by its waypoints (routes_by_search): one end within `range` (4) of the target (a point, or
+ * a box such as an area), and one of its waypoints within `reach` (32) of the bot; the one whose nearest waypoint is
+ * nearest to the bot wins. `reverse` is true when the end near the target is the start of the route. Pure.
+ * @param {object[]} routes
+ * @param {{x,y,z}|{min, max}} target
+ * @param {{x,y,z}} pos where the bot stands
+ * @param {{range?: number, reach?: number}} [options]
+ * @returns {{route: object, reverse: boolean, distance: number, waypoints: object[], end: {x,y,z}}|null}
+ */
+export function pickRoute(routes, target, pos, options = {}) {
+    if (!isPoint(pos) || !(isPoint(target) || isBox(target))) {
+        return null;
+    }
+    const range = isFiniteNumber(options?.range) ? options.range : WAYPOINT_RULES.range;
+    const reach = isFiniteNumber(options?.reach) ? options.reach : WAYPOINT_RULES.reach;
+    let best = null;
+    for (const route of Array.isArray(routes) ? routes : []) {
+        if (!route || typeof route !== 'object' || !Array.isArray(route.legs) || route.legs.length === 0) {
+            continue;
+        }
+        const waypoints = waypointsOf(route);
+        if (waypoints.length === 0) {
+            continue;
+        }
+        const i = nearestWaypoint(waypoints, pos);
+        const distance = i >= 0 ? distTo(waypoints[i], pos) : Infinity;
+        if (distance > reach) {
+            continue;
+        }
+        const first = waypoints[0];
+        const last = waypoints[waypoints.length - 1];
+        for (const [end, reverse] of [[last, false], [first, true]]) {
+            if (distToTarget(target, end) <= range && (!best || distance < best.distance)) {
+                best = { route, reverse, distance, waypoints, end: { x: end.x, y: end.y, z: end.z } };
+            }
+        }
+    }
+    return best;
+}
+
+/**
+ * Walks to a target by a learned route, by its waypoints (routes_by_search; the walkTo of ctx.routes then): the
+ * route of pickRoute, a dry scan of its hops first (scan(bot, waypoints, { from, to }) of dry_scan.js, given by the
+ * caller; a hop without a way ends the walk before the first step with the text of N1), then walkWaypoints toward
+ * the end near the target; at a point the last blocks to within `near` of it. Without such a route
+ * `{ ok: false, reason: 'no_route', text: '' }`. Never throws.
+ * @param {object} bot
+ * @param {object} ctx
+ * @param {object[]} routes the routes of the dimension of the bot
+ * @param {{x,y,z}|{min, max}} target
+ * @param {{range?: number, reach?: number, near?: number, clock?: object, deadline?: number, timeoutMs?: number,
+ *   scan?: Function}} [options]
+ * @returns {Promise<{ok: boolean, reason: string|null, text: string, route: string|null, step?: number|null, total?: number,
+ *   at?: object|null, cause?: object|null}>}
+ */
+export async function walkByWaypoints(bot, ctx, routes, target, options = {}) {
+    let route = null;
+    try {
+        const clock = options?.clock ?? clockOf(ctx, options);
+        const pos = botPos(bot);
+        const pick = pos ? pickRoute(routes, target, pos, { range: options?.range, reach: options?.reach }) : null;
+        if (!pick) {
+            return { ok: false, reason: 'no_route', text: '', route: null };
+        }
+        route = pick.route;
+        const name = typeof route.name === 'string' ? route.name : null;
+        logTo(ctx, `I take ${routeLabel(route)}.`);
+        if (typeof options?.scan === 'function') {
+            const scan = await options.scan(bot, pick.waypoints, { from: pos, to: pick.end });
+            if (bot.interrupt_code) {
+                return { ok: false, reason: 'interrupted', text: routeStoppedText(route, 1, 1), route: name, step: null, total: 0, at: feetOf(bot),
+                    cause: { kind: 'interrupted' } };
+            }
+            if (scan && scan.ok === false) {
+                return { ok: false, reason: 'no_path', text: scan.text, route: name, step: scan.step ?? null, total: scan.total ?? 0, at: feetOf(bot),
+                    cause: scan.cause ?? null };
+            }
+        }
+        const r = await walkWaypoints(bot, ctx, pick.waypoints, { from: pos, to: pick.end, clock, deadline: options?.deadline,
+            timeoutMs: options?.timeoutMs, name: name ?? undefined });
+        if (r.ok && isPoint(target) && !bot.interrupt_code) {
+            const near = isFiniteNumber(options?.near) ? options.near : 1;
+            const c = cell(target);
+            if (!isNear(bot, { x: c.x + 0.5, y: c.y, z: c.z + 0.5 }, near + 1)) {
+                await walkNear(bot, c, near, { clock, timeoutMs: 10000, allowDoors: true, allowDig: false });
+            }
+        }
+        return { ...r, route: name };
+    } catch (err) {
+        console.warn('Routes pack: the walk by waypoints failed:', err?.message ?? err);
+        return { ok: false, reason: 'error', text: `I could not walk ${route ? routeLabel(route) : 'a route'}: ${err?.message ?? err}`, route: route?.name ?? null,
+            step: null, total: 0, at: null, cause: { kind: 'stuck', at: null } };
+    }
+}

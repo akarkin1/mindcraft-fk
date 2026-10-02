@@ -149,7 +149,8 @@ saved.
 ### I7. Waypoints (N)
 
 ```
-waypointsOf(route) -> [{ x, y, z, kind: 'start' | 'door' | 'gate' | 'trapdoor' | 'ladder_top' | 'ladder_foot' | 'room' | 'tunnel' | 'end', name }]
+waypointsOf(route) -> [{ x, y, z, kind: 'start' | 'walk' | 'door' | 'gate' | 'trapdoor' | 'ladder_top' | 'ladder_foot' | 'room' | 'tunnel' | 'end', name }]
+                       (walk: the end of a walk or stairs leg in the middle of a route; T1-1)
 nearestWaypoint(waypoints, pos) -> index
 walkWaypoints(bot, ctx, waypoints, { from, to, clock, deadline }) -> { ok, reason, text, step, total, at, cause }
 dryScan(bot, waypoints, { from, to }) -> { ok: boolean, step, from: {x,y,z}, to: {x,y,z}, cause }

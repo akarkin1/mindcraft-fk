@@ -16,6 +16,7 @@ path search.
 
 - **A place from one sentence**: `!rememberArea("aviary")` without a type scans the enclosure around the bot, whatever its border (fence, wall, glass, hedge, water), counts what is inside (animals by kind, crops, beds, chests, furnaces, crafting tables, ladders, water) and concludes the kind itself: animals behind a border with a gate or door make a pen, crops on tilled soil a farm, a roof with a door and a bed a home, a roof with chests or furnaces a storage, a roof and a door a building, nothing a yard. `I saved "aviary": a pen, fenced, 9 x 7, 1 gate, 6 chickens. I keep its gate closed and pick nothing up inside it.` A type keeps your word; the same name with another type changes the kind (`"aviary" is a farm now. I only plant and harvest there.`); without a border nothing is saved (`I find no border around me: ...`). The reflexes read the kind and the facts: animals behind a gate keep the reflex out, whatever the name. The area record gets `kind`, `contents` and `border`; old records load unchanged.
 - **The area sense** (`area_sense`): the bot that enters an unsaved enclosure scans it once and says what it thinks it is: `I am in a fenced pen 9 x 7 with 6 chickens and 1 gate that I have not saved. Tell me its name and I keep it.` The knowledge block names an unsaved enclosure the bot stands in.
+- **Routes walked by the path search** (`routes_by_search`): a remembered route is a list of waypoints (its ends, every door, gate, trapdoor and ladder end, the room, the tunnel); the path search of v0.1.4.10 walks from the nearest waypoint onwards, in the direction whose end is nearer, with its native ladders, doors and trapdoors. A bot on the ladder or in the room joins there. Before the first step a dry scan computes the way and names the hop that has none: `I find no way from (11, 67, 52) to the trapdoor at (13, 67, 51).` or `... to the door at (9, 41, 43): it is closed and I cannot open it.`; the bot does not move. `!goToMine`, `!leaveMine`, `!goToBed`, `!goToShelter` and `!goToPlace` use it. The door service leaves alone an openable a walk is about to pass.
 - **A shaft from inside** (`mine_from_inside`): in the room or at a tunnel end of a known mine, `!mineOre("diamond", 8, true)` digs a shaft down from where the bot stands, with ladders, to the level of the ore: `I dig a shaft down from here to level -58 for diamond.` The new level is a mine of the bot under its parent (`!mines` lists it as `bot:-58 (from the mine "mine")`); the way in and out goes through the parent; `!forgetMine` of the parent forgets it too.
 
 ### Changed
@@ -28,6 +29,7 @@ path search.
 - **`!givePlayer`** says `Gave 44 wheat to MartyByrde2.` or `MartyByrde2 took 40 of 44 wheat; 4 lie on the ground at (x, y, z).`, never "Discarded".
 - **A wrong number of arguments** answers with the form: `!rememberRoute takes 1 argument (name): !rememberRoute("name").`
 - **Two lines in both profiles**: `Answer a question with words, not with a command, and never stop a running command for a question.` and `A rule about a place names a place you saved; say "this is the aviary" first when it is not saved.` The descriptions of `!newAction`, `!goToMine`, `!leaveMine` and `!rememberTunnel` are shorter; the prompt with every switch on is 16,994 characters.
+- **"Come here" and "follow me" never dig toward you.** When no way exists: `I find no way to you from here without digging. Come closer or tell me to dig.` A walk of these two that enters a cave stops once: `I stopped at (13, 40, -10): ahead is a cave. Tell me to go on if you want.`
 - **The scorecard** counts the failure texts of a session: `Failure texts, <log>: <text> N, ...`.
 
 ### Settings
@@ -36,8 +38,9 @@ path search.
 |---|---|
 | `mine_from_inside` | `false` |
 | `area_sense` | `false` |
+| `routes_by_search` | `false` |
 
-The texts, the tunnel measurement, the surface and the kinds of places are corrections without a switch.
+The texts, the tunnel measurement, the surface, the kinds of places, the door service and the walk toward the player are corrections without a switch.
 
 ## [0.1.4.10] - 2026-10-02
 

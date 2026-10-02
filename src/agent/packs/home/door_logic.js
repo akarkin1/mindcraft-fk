@@ -278,6 +278,8 @@ export const DOOR_SERVICE_RULES = Object.freeze({
     forgetDistance: 16,   // ... or when the bot is this far from it
     startMs: 5000,        // the look at the start lasts this long (chunks arrive late) ...
     startPlayerRange: 3,  // ... and closes open openables of saved areas with no player this close
+    reserveMaxMs: 20000,  // v0.1.4.11 (I8): a walk reserves an openable it is about to pass for at most this long ...
+    reserveNear: 1.5,     // ... and while the bot is this close to it, the reservation holds on
 });
 
 /**
@@ -303,6 +305,8 @@ export const DOOR_SERVICE_RULES = Object.freeze({
  *   bot passed it or when the bot has stopped beside it (the pass is missed when the gate was seen closed
  *   in between). Doors and trapdoors keep the 2 blocks.
  * - Up to 3 attempts, 1 s apart; forgotten after 60 s, 16 blocks away, or when seen closed.
+ * - v0.1.4.11 (I8): an openable a walk reserved (reserve) is not closed before the end of the reservation (at
+ *   most 20 s), nor after it while the bot is within 1.5 blocks of it, until the walk releases it.
  */
 /**
  * On which side of an openable the feet of the bot are (v0.1.4.9, F21): -1 or 1, 0 in the openable, null
@@ -352,6 +356,74 @@ export class DoorWatch {
         this._startUntil = null;
         this._startDone = new Set();
         this._late = [];
+        this._reserved = new Map(); // v0.1.4.11 (I8): key -> { door, until }
+    }
+
+    /**
+     * v0.1.4.11 (I8): a walk is about to pass this openable. It is not closed until `now + ms` (ms at most
+     * 20 s), and after that not while the bot is within 1.5 blocks of it, until the walk releases it. A second
+     * reservation of the same openable moves its end.
+     * @param {{x,y,z}} door
+     * @param {number} now
+     * @param {number} ms
+     * @returns {boolean} false for an invalid openable
+     */
+    reserve(door, now, ms) {
+        if (!isPoint(door)) {
+            return false;
+        }
+        const t = isFiniteNumber(now) ? now : Date.now();
+        const span = Math.max(0, Math.min(DOOR_SERVICE_RULES.reserveMaxMs, isFiniteNumber(ms) ? ms : DOOR_SERVICE_RULES.reserveMaxMs));
+        const cell = { x: Math.floor(door.x), y: Math.floor(door.y), z: Math.floor(door.z) };
+        this._reserved.set(doorKey(cell), { door: cell, until: t + span });
+        return true;
+    }
+
+    /**
+     * v0.1.4.11 (I8): the walk passed the openable or ended; the service treats it as before.
+     * @param {{x,y,z}} [door] every reservation without one
+     */
+    release(door) {
+        if (door === undefined || door === null) {
+            this._reserved.clear();
+        } else if (isPoint(door)) {
+            this._reserved.delete(doorKey({ x: Math.floor(door.x), y: Math.floor(door.y), z: Math.floor(door.z) }));
+        }
+    }
+
+    /**
+     * v0.1.4.11 (I8): true while the openable is reserved: before the end of its reservation, and after it while
+     * the bot is within 1.5 blocks of it. A reservation that ran out with the bot farther away is dropped. A
+     * reservation of the upper half of a door counts for the door.
+     * @param {{x,y,z}} door
+     * @param {number} now
+     * @param {{x,y,z}|null} [botPos]
+     * @returns {boolean}
+     */
+    isReserved(door, now, botPos = null) {
+        if (!isPoint(door) || this._reserved.size === 0) {
+            return false;
+        }
+        const t = isFiniteNumber(now) ? now : Date.now();
+        for (const key of [doorKey(door), doorKey({ x: door.x, y: door.y + 1, z: door.z })]) {
+            const entry = this._reserved.get(key);
+            if (!entry) {
+                continue;
+            }
+            if (t < entry.until) {
+                return true;
+            }
+            if (isPoint(botPos) && dist3(botPos, doorCenter(door)) <= DOOR_SERVICE_RULES.reserveNear) {
+                return true;
+            }
+            this._reserved.delete(key);
+        }
+        return false;
+    }
+
+    /** Number of reservations (I8). */
+    get reservedCount() {
+        return this._reserved.size;
     }
 
     /**
@@ -470,6 +542,9 @@ export class DoorWatch {
             }
             if (door.occupied === true || playerWithin(door, DOOR_SERVICE_RULES.playerClearance) || d > DOOR_SERVICE_RULES.reach) {
                 continue;
+            }
+            if (this.isReserved(door, now, botPos)) {
+                continue; // v0.1.4.11 (I8): a walk is about to pass it
             }
             // F21: only an openable the bot passed (a gate of a pen or farm: came near), 2 blocks past it.
             // v0.1.4.10 (T3-5): a gate the bot went through is closed as soon as its feet are out of the gate

@@ -28,8 +28,8 @@ export { HOME_REFLEX_DEFAULTS, readHomeSettings, reflexOn } from './home_setting
 export { areaType, hasWalls, isDefendedArea, isGatedArea } from './area_kinds.js';
 export { boxCenter, containsPos, distanceToBox, expandBox, horizontalDistanceToBox, interiorBox, isBox } from './box_math.js';
 
-export { DOOR_SAFETY, closeDoor, closeDoorsBehind, closeNear, createDoorService, doorDanger, doorIsSafe, doorState, findOpenables,
-    isPassingThrough, openDoor, passThrough, somebodyInDoor } from './doors.js';
+export { DOOR_SAFETY, canOpen, closeDoor, closeDoorsBehind, closeNear, createDoorService, doorDanger, doorIsSafe, doorState, findOpenables,
+    isPassingThrough, openDoor, passThrough, releaseDoor, reserveDoor, somebodyInDoor } from './doors.js';
 export { bedInShelter, emergencyShelter, enterBuilding, findShelter, goToShelter, isInShelter, standingTest } from './shelter.js';
 export { MAX_SLEEP_MS, findBeds, sleepInBed } from './sleep.js';
 export { OFFHAND_SLOT, eatBestFood, foodItems, hungerStep, knownFood, moveOffhandBack } from './food.js';

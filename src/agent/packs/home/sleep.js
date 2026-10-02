@@ -116,7 +116,24 @@ export async function sleepInBed(bot, ctx = {}, options = {}) {
                     return { ok: false, reason: entered.reason ?? 'shelter', text: entered.text };
                 }
             }
-            const walk = await walkNear(bot, bed, 1, { clock, timeoutMs: 20000, allowDoors: !area });
+            // v0.1.4.11 (I7, the lead for part N): with routes_by_search a learned route to the bed goes first
+            let walk = null;
+            if (ctx?.routes?.bySearch?.() && ctx.routes.routeFor?.(bed)) {
+                const first = await ctx.routes.walkTo(bot, bed, { clock });
+                if (first?.reason === 'interrupted') {
+                    return { ok: false, reason: 'interrupted', text: first.text };
+                }
+                if (first?.ok) {
+                    walk = { ok: true };
+                } else if (first && first.reason !== 'no_route') {
+                    routeFailure = first.text;
+                    lastFailure = 'I found no way to the bed.';
+                    continue;
+                }
+            }
+            if (!walk) {
+                walk = await walkNear(bot, bed, 1, { clock, timeoutMs: 20000, allowDoors: !area });
+            }
             if (!walk.ok) {
                 if (walk.reason === 'interrupted') {
                     return { ok: false, reason: 'interrupted', text: 'I stopped going to bed.' };

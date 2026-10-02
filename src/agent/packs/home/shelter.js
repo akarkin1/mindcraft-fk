@@ -415,6 +415,18 @@ export async function goToShelter(bot, ctx = {}, options = {}) {
             if (creeper && !creeper.ok) {
                 return { ok: false, where: name, reason: 'creeper', text: creeper.text };
             }
+            // v0.1.4.11 (I7, the lead for part N): with routes_by_search a learned route into the building goes
+            // first, after its dry scan; its failure text names the block and nothing else is tried
+            if (ctx?.routes?.bySearch?.() && ctx.routes.routeFor?.(choice.area) && !bot.interrupt_code) {
+                const first = await ctx.routes.walkTo(bot, choice.area, { clock });
+                if (first?.ok) {
+                    return isInsideArea(choice.area, botPos(bot)) ? await walkToRoom(bot, choice.area, ctx, options, clock)
+                        : await enterBuilding(bot, choice.area, ctx, options);
+                }
+                if (first && first.reason !== 'no_route') {
+                    return { ok: false, where: name, reason: first.reason === 'interrupted' ? 'interrupted' : 'no_path', text: first.text };
+                }
+            }
             const entered = await enterBuilding(bot, choice.area, ctx, options);
             if (entered.reason === 'creeper_standing' && isNight(bot.time?.timeOfDay) && !bot.interrupt_code) {
                 return await digInAwayFrom(bot, entered.creeper, ctx, options, clock); // F3
@@ -464,6 +476,16 @@ export const PLACE_DOOR_RANGE = 12;
 async function walkToHomePlace(bot, place, ctx, options, clock) {
     const areas = listAreas(ctx, dimensionOf(bot));
     const timeoutMs = options.timeoutMs ?? 120000;
+    // v0.1.4.11 (I7, the lead for part N): with routes_by_search a learned route to the place goes first
+    if (ctx?.routes?.bySearch?.() && ctx.routes.routeFor?.(place) && !bot.interrupt_code) {
+        const first = await ctx.routes.walkTo(bot, place, { clock });
+        if (first?.ok) {
+            return { ok: true, reason: null };
+        }
+        if (first && first.reason !== 'no_route') {
+            return { ok: false, reason: first.reason === 'interrupted' ? 'interrupted' : 'no_path', text: first.text };
+        }
+    }
     const direct = await walkNear(bot, place, 1, { clock, timeoutMs, allowDig: false });
     if (direct.ok || direct.reason === 'interrupted') {
         return direct;

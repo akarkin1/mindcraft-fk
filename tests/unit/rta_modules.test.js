@@ -9,7 +9,7 @@ import { importsOf } from '../helpers/hygiene.js';
 import { assertCleanImport } from '../helpers/module_rules.js';
 
 const DIR = 'src/agent/packs/routes/';
-const ALL = ['trail_logic', 'route_logic', 'texts', 'route_store', 'trail', 'replay', 'index'];
+const ALL = ['trail_logic', 'route_logic', 'texts', 'route_store', 'trail', 'replay', 'index', 'waypoints', 'dry_scan']; // v0.1.4.11 (I7)
 const ALLOWED_OTHER = ['../home/context.js', '../home/door_logic.js', '../home/doors.js', '../home/motion.js', '../home/box_math.js',
     '../mining/ladder.js', '../../../utils/safe_json.js'];
 
@@ -21,7 +21,7 @@ describe('import rules', () => {
         assert.deepEqual(importsOf(`${DIR}route_store.js`).static.sort(), ['../../../utils/safe_json.js', './route_logic.js']);
     });
 
-    for (const name of ['trail', 'replay', 'index']) {
+    for (const name of ['trail', 'replay', 'index', 'waypoints', 'dry_scan']) {
         test(`${name}.js imports no library, no model, no mineflayer, and of other packs only the allowed helpers`, () => {
             const { static: specs, require, dynamic } = importsOf(`${DIR}${name}.js`);
             assert.equal(require, 0);

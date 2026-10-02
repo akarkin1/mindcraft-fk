@@ -601,6 +601,11 @@ export class Agent {
             say: (text) => this.sayText(text),
             whereAmI: () => this.whereAmI(),
             routes: null,
+            // v0.1.4.11 (I8): a walk reserves the openable it is about to pass; the door service leaves it alone
+            doors: {
+                reserve: (door, ms) => this.door_service?.reserve?.(door, ms) ?? false,
+                release: (door) => this.door_service?.release?.(door),
+            },
         };
         ctx.routes = this._routes(ctx);
         return ctx;

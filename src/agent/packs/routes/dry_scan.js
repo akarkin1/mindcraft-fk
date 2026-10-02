@@ -1,0 +1,210 @@
+// The dry scan of a walk over waypoints (spec v0.1.4.11, I7 and N1; behind routes_by_search): before the first
+// step the path search computes the path of every hop, from where the bot stands to the first waypoint and from
+// waypoint to waypoint, without moving (bot.pathfinder.getPathFromTo, else getPathTo for the first hop, with the
+// movements of the walk). It stops at the first hop without a path and names what blocks it:
+//   I find no way from (11, 67, 52) to the trapdoor at (13, 67, 51).
+//   I find no way from (9, 41, 42) to the door at (9, 41, 43): it is closed and I cannot open it.
+// A search that runs out of time proves nothing: that hop counts as open, the walk itself finds out.
+// Never throws.
+import { Vec3 } from 'vec3';
+import { botPos } from '../home/context.js';
+import { canOpen, doorState } from '../home/doors.js';
+import { goals, makeMovements } from '../home/motion.js';
+import { planHops, isOpenableWaypoint } from './waypoints.js';
+import { posText, routeLabel } from './texts.js';
+
+/** The numbers of the dry scan. */
+export const DRY_SCAN_RULES = Object.freeze({
+    hopMs: 2000,     // the search of one hop at most
+    radius: 24,      // the search reaches this far beyond the straight way of a hop ...
+    radiusPerBlock: 2, // ... plus this much per block of that way
+});
+
+function isFiniteNumber(value) {
+    return typeof value === 'number' && Number.isFinite(value);
+}
+
+function isPoint(p) {
+    return p !== null && typeof p === 'object' && isFiniteNumber(p.x) && isFiniteNumber(p.y) && isFiniteNumber(p.z);
+}
+
+function cell(p) {
+    return { x: Math.floor(p.x), y: Math.floor(p.y + 0.01), z: Math.floor(p.z) };
+}
+
+function nextTurn() {
+    return new Promise(resolve => setImmediate(resolve));
+}
+
+/**
+ * What a waypoint is called in the text of N1: `the door at (9, 41, 43)` (door, gate, trapdoor), `the top of the
+ * ladder at ...`, `the foot of the ladder at ...`, `the room at ...`, `the tunnel at ...`, `the start of the route
+ * "mine" at ...`, `the end of the route "mine" at ...`, else the position alone. Pure.
+ * @param {object} wp
+ * @returns {string}
+ */
+export function waypointLabel(wp) {
+    const at = posText(wp);
+    switch (wp?.kind) {
+        case 'door':
+        case 'gate':
+        case 'trapdoor':
+            return `the ${wp.kind} at ${at}`;
+        case 'ladder_top':
+            return `the top of the ladder at ${at}`;
+        case 'ladder_foot':
+            return `the foot of the ladder at ${at}`;
+        case 'room':
+            return `the room at ${at}`;
+        case 'tunnel':
+            return `the tunnel at ${at}`;
+        case 'start':
+            return `the start of ${routeLabel({ name: wp.name })} at ${at}`;
+        case 'end':
+            return `the end of ${routeLabel({ name: wp.name })} at ${at}`;
+        default:
+            return at;
+    }
+}
+
+/**
+ * The text of N1 for a hop without a path: `I find no way from (11, 67, 52) to the trapdoor at (13, 67, 51).`, and
+ * with `locked` (a closed openable that canOpen says no to) `I find no way from (9, 41, 42) to the door at (9, 41, 43):
+ * it is closed and I cannot open it.` Pure.
+ * @param {{x,y,z}} from
+ * @param {object} wp the waypoint the hop could not reach (the openable it passes, else its goal)
+ * @param {boolean} [locked]
+ * @returns {string}
+ */
+export function noWayText(from, wp, locked = false) {
+    const head = `I find no way from ${posText(from)} to ${waypointLabel(wp)}`;
+    return locked ? `${head}: it is closed and I cannot open it.` : `${head}.`;
+}
+
+// True when a door, gate or trapdoor stands at the cell and is closed, read from the world; an iron one too
+// (doorState knows only those a hand opens).
+function isClosed(bot, wp) {
+    const state = doorState(bot, wp);
+    if (state) {
+        return state.open !== true;
+    }
+    try {
+        const b = bot.blockAt(new Vec3(wp.x, wp.y, wp.z));
+        if (!b || typeof b.name !== 'string' || !/(_door|_trapdoor|_fence_gate)$/.test(b.name)) {
+            return false;
+        }
+        const props = (typeof b.getProperties === 'function' ? b.getProperties() : b._properties) ?? {};
+        return props.open !== true && props.open !== 'true';
+    } catch {
+        return false;
+    }
+}
+
+// The status of the search of one hop: 'success', 'noPath', 'timeout' (or 'partial' left over), 'interrupted', or
+// null when the bot has no path search to ask.
+async function searchHop(bot, movements, start, goal, fromBot, timeout, radius) {
+    const pf = bot?.pathfinder;
+    if (typeof pf?.getPathFromTo === 'function') {
+        // the first hop from the very position of the bot (on a slab its feet are half a block up), the others from the
+        // middle of the floor of their waypoint
+        const from = fromBot && isPoint(bot.entity?.position) ? new Vec3(bot.entity.position.x, bot.entity.position.y, bot.entity.position.z)
+            : new Vec3(start.x + 0.5, start.y, start.z + 0.5);
+        const gen = pf.getPathFromTo(movements, from, goal,
+            { timeout, searchRadius: radius, optimizePath: false });
+        let last = null;
+        for (;;) {
+            const step = gen.next();
+            if (step.done) {
+                break;
+            }
+            last = step.value?.result ?? null;
+            if (last?.status !== 'partial') {
+                break;
+            }
+            await nextTurn();
+            if (bot.interrupt_code) {
+                return 'interrupted';
+            }
+        }
+        return last?.status ?? null;
+    }
+    if (fromBot && typeof pf?.getPathTo === 'function') {
+        const r = await pf.getPathTo(movements, goal, timeout);
+        return r?.status ?? null;
+    }
+    return null;
+}
+
+/**
+ * The dry scan (I7, N1): the hops of planHops (as walkWaypoints walks them) searched one after the other without
+ * moving: the first from where the bot stands, each next from the goal of the hop before. Each hop with GoalNear 1
+ * and the movements of the walk (doors allowed, no digging), at most 2 s, within 24 blocks plus 2 per block of the
+ * hop. The first hop with no path ends the scan: `to` is the openable it passes (the first), else its goal; the
+ * cause is `door` (state closed) when that openable is closed and canOpen of the home pack says no, else `no_path`
+ * from `from` to `to`; `text` the text of N1. A hop whose search runs out of time counts as open.
+ * @param {object} bot
+ * @param {object[]} waypoints of waypointsOf
+ * @param {{from?: {x,y,z}, to?: {x,y,z}|{min,max}, timeoutMs?: number}} [options] from: where the bot stands (default
+ *   its position); to: the goal, as for walkWaypoints
+ * @returns {Promise<{ok: boolean, step: number|null, total: number, from: {x,y,z}|null, to: {x,y,z}|null, cause: object|null,
+ *   text: string}>}
+ */
+export async function dryScan(bot, waypoints, options = {}) {
+    const list = (Array.isArray(waypoints) ? waypoints : []).filter(isPoint);
+    const open = (total) => ({ ok: true, step: null, total, from: null, to: null, cause: null, text: '' });
+    let total = 0;
+    try {
+        const here = botPos(bot);
+        const me = isPoint(options?.from) ? options.from : here;
+        // the scan starts where the bot stands (the first hop is searched from its very position)
+        const atBot = Boolean(here) && Math.hypot(me.x - here.x, me.y - here.y, me.z - here.z) < 0.5;
+        if (!me || !bot?.pathfinder) {
+            return open(0);
+        }
+        const plan = planHops(list, me, options?.to ?? null);
+        total = plan.hops.length;
+        let movements;
+        try {
+            movements = makeMovements(bot, { dig: false, doors: true });
+        } catch (err) {
+            console.warn('Routes pack: no movements for the dry scan:', err?.message ?? err);
+            return open(total);
+        }
+        const timeout = isFiniteNumber(options?.timeoutMs) ? options.timeoutMs : DRY_SCAN_RULES.hopMs;
+        let start = cell(me);
+        for (let k = 0; k < total; k++) {
+            if (bot.interrupt_code) {
+                return { ok: false, step: k + 1, total, from: start, to: null, cause: { kind: 'interrupted' }, text: '' };
+            }
+            const hop = plan.hops[k];
+            const goalWp = list[hop.goal];
+            const length = Math.hypot(goalWp.x - start.x, goalWp.y - start.y, goalWp.z - start.z);
+            const radius = Math.ceil(DRY_SCAN_RULES.radius + DRY_SCAN_RULES.radiusPerBlock * length);
+            const goal = new goals.GoalNear(goalWp.x, goalWp.y, goalWp.z, 1);
+            let status;
+            try {
+                status = await searchHop(bot, movements, start, goal, k === 0 && atBot, timeout, radius);
+            } catch (err) {
+                console.warn('Routes pack: the dry scan of a hop failed:', err?.message ?? err);
+                status = null;
+            }
+            if (status === 'interrupted') {
+                return { ok: false, step: k + 1, total, from: start, to: null, cause: { kind: 'interrupted' }, text: '' };
+            }
+            if (status === 'noPath') {
+                const named = hop.passes.length > 0 ? list[hop.passes[0]] : goalWp;
+                const to = { x: named.x, y: named.y, z: named.z };
+                const locked = isOpenableWaypoint(named) && isClosed(bot, named) && !canOpen(bot, named);
+                const cause = locked ? { kind: 'door', name: named.kind, x: to.x, y: to.y, z: to.z, state: 'closed' }
+                    : { kind: 'no_path', from: { ...start }, to };
+                return { ok: false, step: k + 1, total, from: { ...start }, to, cause, text: noWayText(start, named, locked) };
+            }
+            start = { x: goalWp.x, y: goalWp.y, z: goalWp.z };
+            await nextTurn();
+        }
+        return open(total);
+    } catch (err) {
+        console.warn('Routes pack: the dry scan failed:', err?.message ?? err);
+        return open(total);
+    }
+}
