@@ -145,6 +145,19 @@ candidate for the fix round if the journeys or the play test show a fall.
 | Mines the bot dug itself go down through `descendToLevel` as before, without waypoints | the spec names `wayIn`, `wayOut`, `walkBack` |
 | From a tunnel `!leaveMine` runs `walkBack` before the dry scan of the route | the walk back is inside the tunnel |
 
+## The fix rounds (the lead, E4, E2), after the journeys on the real server
+
+| Finding | What changed |
+|---|---|
+| T3-1, F5, F9 | `goToPlayer` and `followPlayer` (skills.js): the search may think 10 s and has no cap on the length; a long way is walked in rounds along the partial path; where the search ends without a way the bot opens the closed doors and gates within 4 blocks that lie closer to the player and searches again; then the ladder step of v0.1.4.9 toward the player (missing ladders placed); the N2 text only when nothing brings it nearer |
+| F1, F6, F13 | `waypoints.js`, `dry_scan.js`, `replay.js`: a ladder hop walks to the standing cell and climbs by `ladderLeg` (exported, with `way` 'up' or 'down'); the scan checks a climb with `ladderCheck` (the column intact for the direction, or the ladders carried) and the trapdoor of the column in both directions with `canOpen`; two columns in one line are two climbs; a dug-away foot is never a goal; a hole under a ladder is bridged (`holeUnder`, `bridgeHole`); the gap text `... the ladder has a gap of 2 at y 42 and I have no ladders.` / `and I have only 1 ladder.` |
+| F7, F10 | `mine_way.js` `mineWaypoints`: the parent's waypoints in or over the child's shaft are dropped, the room sits in route order, the walk ends at the waypoint nearest the goal; `standCell` aims a hop beside an open shaft top; the scan covers the hops to the goal only, passes an openable `canOpen` accepts, answers within 10 s, skips a hop of zero length |
+| F8 | `waypoints.js`: the closed doors and gates a hop passes are opened when a hand reaches them (4.5 blocks); after a failure at a closed door the bot walks to it, opens it and tries once more; one half of a double door is enough |
+| F11 | `ladder.js` (mining pack): `slideDown` starting inside the column releases the controls of the hold and looks at the wall |
+| F12 | `door_logic.js` `DoorWatch.release(door, { passed })`, `doors.js` `release`, `releaseDoor`, the glue `homeContext().doors.release(door, options)`: a released reservation of a passed openable counts as a pass; `walkWaypoints` closes the openables it went through (with the other half of a double door) once the bot is out of the cell and 1 block past |
+| F14 | `mine_logic.js` `wayCells(mine)`, `shaftCellFree(p, way)`, `insideShaft(..., { mine })` with `moved` and the reason `no_cell`; `mining.js` says `TEXTS.noShaftCell` |
+| F2, F3 | `door_logic.js`, `doors.js` `occupiedBy`: a click sets the gate seen closed; a gate of a pen the bot opened while walking is closed 2 blocks past it; a gate is held only by an entity in its cell. `skills.js` `tossItems`: the give says nothing but the W5 texts |
+
 ## For part N (round 3)
 
 - `routes/index.js` does not re-export `causeText` or `legCause`: add them with the waypoint exports.

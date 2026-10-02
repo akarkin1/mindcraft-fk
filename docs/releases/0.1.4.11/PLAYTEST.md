@@ -46,7 +46,7 @@ Both profiles got two lines ("a question gets an answer", "a rule names a saved 
 | 7 | From the bottom say "get out". | It climbs the shaft, steps into the room, takes your way out. |
 | 8 | Inside the house say "get to the surface". | It goes out through the door and says `I went out through the door at (x, y, z) and stand under the open sky at (x, y, z).` Never the roof. |
 
-Dig the inner shaft from the room, not from the middle of a tunnel: a shaft in a tunnel leaves a hole in its floor (known limit).
+The inner shaft never starts on your way out (under a ladder, in a doorway): the bot moves to the nearest free floor cell of the room first. In the middle of a tunnel it leaves a hole in the floor (known limit): dig it from the room.
 
 ## 5. The places
 
