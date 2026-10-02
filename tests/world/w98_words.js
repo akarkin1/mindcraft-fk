@@ -12,9 +12,9 @@
 //   2. On the surface the owner says "dig a tunnel"; the fake model answers !newAction("dig a tunnel"): the result is
 //      `I do not write code for digging. From here: !mineOre("iron", 8, true).` (W7); the code model gets no request.
 //   3. !rememberRoute("a", "b"): `!rememberRoute takes 1 argument (name): !rememberRoute("name").` (W5).
-//   4. "give me 4 wheat" !givePlayer("w_player", "wheat", 4); the player steps onto the wheat the bot tosses (within 2
-//      blocks of him), as the owner picks it up: `Gave 4 wheat to w_player.`; the player has 4 wheat more (server) and
-//      the bot 4 less.
+//   4. The player (his wheat cleared) stands still on open ground 6 blocks from the bot, as in W44. "give me 4 wheat"
+//      !givePlayer("w_player", "wheat", 4): `Gave 4 wheat to w_player.`; within 8 s the player has 4 wheat more (server)
+//      and the bot 4 less.
 //   5. The player teaches the mine (journey.js partTeachMine); at the end of the tunnel "dig a tunnel", the model's
 //      !newAction("dig a tunnel"): `I do not write code for digging. From here: !mineOre("iron", 8).`
 //   6. The player walks back into the room, "come here" !goToPlayer("w_player", 2); "dig a tunnel", the model's
@@ -101,27 +101,20 @@ await scenarioMain({
             check(three.includes('!rememberRoute takes 1 argument (name): !rememberRoute("name").'), '3: the wrong number of arguments: `!rememberRoute takes 1 argument (name): !rememberRoute("name").` (W5)', JSON.stringify(three.slice(0, 200)));
 
             // ---------------------------------------------------------- 4. give
+            // as W44 proves a give to the control player: the player's wheat cleared, the player 6 blocks from the bot on
+            // open ground, standing still; the bot walks to him and tosses
+            await commands([`clear ${PLAYER} minecraft:wheat`]);
+            const botAt4 = await entityPos(NAME);
+            const giveAt = { x: Math.floor(botAt4.x) - 6, y: b.g + 1, z: Math.floor(botAt4.z) + 2 };
+            await tp(PLAYER, giveAt);
+            await sleep(1000);
             const pw0 = (await inventoryOf(PLAYER)).wheat || 0;
             const bw0 = (await inventoryOf(NAME)).wheat || 0;
-            const giving = orders.orderInfo(`!givePlayer("${PLAYER}", "wheat", 4)`, 60000);
-            // the owner picks up what the bot tosses: once wheat lies within 2 blocks of the player (as an item entity),
-            // the player steps onto each item, then waits up to 3 s for the server to give them to him
-            const giver = await entityPos(PLAYER);
-            const near = { min: { x: Math.floor(giver.x) - 2, y: Math.floor(giver.y) - 1, z: Math.floor(giver.z) - 2 }, max: { x: Math.floor(giver.x) + 2, y: Math.floor(giver.y) + 2, z: Math.floor(giver.z) + 2 } };
-            const wheatNear = async () => (await itemsOnGround(near)).filter((x) => x.name === 'wheat' && x.pos);
-            const tossed = await waitFor(async () => { const l = await wheatNear(); return l.length ? l : null; }, { ms: 30000, every: 200 });
-            note(`4: wheat on the ground within 2 blocks of the player: ${tossed.ok ? tossed.value.map((x) => `${x.count} at ${fmt(x.pos)}`).join(', ') : 'none within 30 s'}`);
-            if (tossed.ok) {
-                for (const it of tossed.value) {
-                    await tp(PLAYER, { x: Math.floor(it.pos.x), y: Math.floor(it.pos.y + 0.01), z: Math.floor(it.pos.z) });
-                    await sleep(250);
-                }
-                const gone = await waitFor(async () => (await wheatNear()).length === 0, { ms: 3000, every: 200 });
-                note(`4: after the player stepped onto the items ${gone.ok ? 'none lie there' : `${(await wheatNear()).reduce((n, x) => n + (x.count || 0), 0)} wheat still lie there`}`);
-            }
-            const four = (await giving).reply;
+            note(`4: the bot at ${fmt(botAt4)} with ${bw0} wheat, the player at ${fmt(await entityPos(PLAYER))} with ${pw0} wheat`);
+            const four = await orders.order(`!givePlayer("${PLAYER}", "wheat", 4)`, 60000);
             replies.push(four);
-            await sleep(1500);
+            const got = await waitFor(async () => ((await inventoryOf(PLAYER)).wheat || 0) - pw0 >= 4, { ms: 8000, every: 250 });
+            note(`4: the player's wheat rose by 4 ${got.ok ? `within ${(got.ms / 1000).toFixed(1)} s after the answer` : 'NOT within 8 s after the answer'}; wheat on the ground near him: ${JSON.stringify(await itemsOnGround({ min: { x: giveAt.x - 4, y: giveAt.y - 1, z: giveAt.z - 4 }, max: { x: giveAt.x + 4, y: giveAt.y + 2, z: giveAt.z + 4 } }))}`);
             const pw = ((await inventoryOf(PLAYER)).wheat || 0) - pw0;
             const bw = bw0 - ((await inventoryOf(NAME)).wheat || 0);
             note(`4: !givePlayer answered ${JSON.stringify(four.slice(0, 300))}; the player has ${pw} wheat more, the bot ${bw} less`);
