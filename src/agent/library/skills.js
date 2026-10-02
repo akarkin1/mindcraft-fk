@@ -2218,7 +2218,7 @@ const PLAYER_WAIT_MS = 2000; // F38: how long goToPlayer waits for the entity of
 const NO_WAY_TO_PLAYER = 'I find no way to you from here without digging. Come closer or tell me to dig.';
 // the search for a way without digging: think time of one round, rounds at most, the progress a round must make,
 // how often a follow that stands still asks again
-const PLAYER_SEARCH = { timeoutMs: 10000, rounds: 30, progress: 1, everyMs: 5000, doorRange: 4 };
+const PLAYER_SEARCH = { timeoutMs: 10000, totalMs: 20000, rounds: 30, progress: 1, everyMs: 5000, doorRange: 4 };
 const CAVE_RULES = { placedRange: 8, ceiling: 24, againRange: 16, againMs: 600000, everyMs: 500 };
 const caveStops = new WeakMap(); // bot -> { x, y, z, at }: the last stop at a cave; "go on" walks past it
 
@@ -2242,12 +2242,23 @@ async function walkWithoutDigging(bot, goal) {
 // One search without digging from where the bot stands, with no limit on the length of the way and at most 10 s:
 // { status, path } (status success, noPath, timeout or interrupted; path the complete path, or the partial one to the
 // best node), null when the bot has no search to ask. Never throws.
-async function searchWithoutDigging(bot, goal) {
+// F15: `budget` ({ leftMs }) bounds the time of all the searches of one order (20 s; the walks and climbs between
+// them do not count); a search that finds it spent answers { status: 'budget' }. While it runs, bot.searching is
+// true: the mode unstuck does not count that time (a bot that stands still while it thinks is not stuck;
+// stuckSample of modes.js).
+async function searchWithoutDigging(bot, goal, budget = null) {
+    const left = budget ? budget.leftMs : Infinity;
+    if (left <= 0)
+        return { status: 'budget', path: [] };
+    const timeout = Math.min(PLAYER_SEARCH.timeoutMs, left);
+    const began = Date.now();
+    bot.searching = true;
     try {
         const finder = bot.pathfinder;
         const movements = noDigMovements(bot);
         if (typeof finder?.getPathFromTo === 'function') {
-            const search = finder.getPathFromTo(movements, bot.entity.position, goal, { timeout: PLAYER_SEARCH.timeoutMs, searchRadius: -1 });
+            const search = finder.getPathFromTo(movements, bot.entity.position, goal, { timeout, searchRadius: -1 });
+            const end = Date.now() + timeout + 200;
             let result = null;
             for (;;) {
                 const step = search.next();
@@ -2256,19 +2267,29 @@ async function searchWithoutDigging(bot, goal) {
                 result = step.value?.result ?? null;
                 if (result?.status !== 'partial')
                     break;
+                if (Date.now() > end) {
+                    result = { status: 'timeout', path: result.path }; // the search is bounded here too
+                    break;
+                }
                 await new Promise(resolve => setImmediate(resolve));
                 if (bot.interrupt_code)
                     return { status: 'interrupted', path: [] };
             }
+            if (result?.status === 'timeout' && budget && budget.leftMs - (Date.now() - began) <= 0)
+                return { status: 'budget', path: Array.isArray(result.path) ? result.path : [] };
             return result ? { status: result.status, path: Array.isArray(result.path) ? result.path : [] } : null;
         }
         if (typeof finder?.getPathTo === 'function') {
-            const result = await finder.getPathTo(movements, goal, PLAYER_SEARCH.timeoutMs);
+            const result = await finder.getPathTo(movements, goal, timeout);
             return result ? { status: result.status, path: Array.isArray(result.path) ? result.path : [] } : null;
         }
         return null;
     } catch (err) {
         return null;
+    } finally {
+        bot.searching = false;
+        if (budget)
+            budget.leftMs -= Date.now() - began;
     }
 }
 
@@ -2322,14 +2343,18 @@ async function ladderTowardPlayer(bot, player, ladder) {
 
 // `first`: the result of a search the caller made already from where the bot stands; `ladder`: { passes, username }
 // for the ladder step of F9 (the passes of the call, at most 3 a minute).
-async function approachWithoutDigging(bot, player, distance, cave = null, first = null, ladder = null) {
+// `budget`: { leftMs } of the order (F15: at most 20 s of search in all before the text of no way).
+async function approachWithoutDigging(bot, player, distance, cave = null, first = null, ladder = null, budget = null) {
     const opened = new Set(); // F5: the openables opened in this order
+    const spend = budget ?? { leftMs: PLAYER_SEARCH.totalMs };
     for (let round = 0; round < PLAYER_SEARCH.rounds; round++) {
         if (bot.interrupt_code || cave?.at)
             return 'stopped';
-        const r = round === 0 && first ? first : await searchWithoutDigging(bot, new pf.goals.GoalFollow(player, distance));
+        const r = round === 0 && first ? first : await searchWithoutDigging(bot, new pf.goals.GoalFollow(player, distance), spend);
         if (!r)
             return 'unknown';
+        if (r.status === 'budget')
+            return bot.interrupt_code ? 'stopped' : 'none'; // F15: the owner waits at most 20 s for the answer
         if (r.status === 'success')
             return 'way';
         if (r.status === 'interrupted' || bot.interrupt_code)
@@ -2702,7 +2727,8 @@ export async function followPlayer(bot, username, distance=4) {
             way_checked = Date.now();
             // a complete way: the follow goes on as it is; none at all: stop; a partial one: the follow is stopped for
             // the rounds of the partial paths (T3-1), then set again
-            const first = await searchWithoutDigging(bot, new pf.goals.GoalFollow(player, distance));
+            const budget = { leftMs: PLAYER_SEARCH.totalMs };
+            const first = await searchWithoutDigging(bot, new pf.goals.GoalFollow(player, distance), budget);
             if (bot.interrupt_code)
                 break;
             if (first && first.status !== 'success') {
@@ -2710,7 +2736,7 @@ export async function followPlayer(bot, username, distance=4) {
                 cave.start();
                 let again;
                 try {
-                    again = await approachWithoutDigging(bot, player, distance, cave, first, { passes: ladder_passes, username });
+                    again = await approachWithoutDigging(bot, player, distance, cave, first, { passes: ladder_passes, username }, budget);
                 } catch (err) {
                     again = 'unknown';
                 } finally {

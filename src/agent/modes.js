@@ -380,6 +380,7 @@ function stuckSample(bot, label = '') {
         sleeping: Boolean(bot.isSleeping) && sleepIsProgress(label),
         usingItem: Boolean(bot.usingHeldItem),
         notedAt: bot.modes?.progress_at ?? 0,
+        searching: bot.searching === true, // v0.1.4.11 (F15): the walk to the player thinks, it is not stuck
     };
 }
 

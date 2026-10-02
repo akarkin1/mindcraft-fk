@@ -364,3 +364,51 @@ describe('F9: a column whose lowest rung is 2 blocks above the floor of the room
         assert.equal(bot.calls.filter(c => c[0] === 'dig').length, 0);
     });
 });
+
+describe('F15: the time of the search is no time stuck, and at most 20 s of search per order', () => {
+    test('while the search thinks: bot.searching, and the mode unstuck does not count that time', async () => {
+        const bot = scene({ status: 'success' });
+        let during = null;
+        bot.pathfinder.getPathFromTo = function* () {
+            const t0 = Date.now();
+            while (Date.now() - t0 < 1300) {
+                during = bot.searching;
+                yield { result: { status: 'partial', path: [] } };
+            }
+            yield { result: { status: 'noPath', path: [] } };
+        };
+        const r = await skills.goToPlayer(bot, PLAYER, 3);
+        assert.equal(r, false);
+        assert.equal(during, true);
+        assert.equal(bot.searching, false);
+    });
+
+    test('stuckStep: a sample with searching starts the stuck time again, without it the time runs', async () => {
+        const S = await loadSrc('src/agent/reflex/stuck_logic.js');
+        const pos = { x: 0, y: 64, z: 0 };
+        let st = S.stuckStep(S.newStuckState(), { pos }, 0).state;
+        const late = S.STUCK_RULES.limitMs + 1000;
+        assert.equal(S.stuckStep(st, { pos, searching: true }, late).stuck, false);
+        assert.equal(S.stuckStep(st, { pos, searching: true }, late).reason, 'searching');
+        assert.equal(S.stuckStep(st, { pos }, late).stuck, true);
+    });
+
+    test('a long way the search never finds whole: the text of no way after 20 s of search, not later', { timeout: 40000 }, async () => {
+        const bot = scene({ pos: [0.5, 64, 0.5], player: [200.5, 64, 0.5] });
+        const timeouts = [];
+        bot.pathfinder.getPathFromTo = function* (movements, start, goal, options) {
+            timeouts.push(options.timeout);
+            const t0 = Date.now();
+            while (Date.now() - t0 < options.timeout) yield { result: { status: 'partial', path: [] } };
+            yield { result: { status: 'timeout', path: [{ x: Math.floor(start.x) + 10, y: 64, z: 0 }] } };
+        };
+        bot.pathfinder.goto = async (goal) => { bot.entity.position = v(goal.x + 0.5, 64, 0.5); };
+        const t0 = Date.now();
+        const r = await skills.goToPlayer(bot, PLAYER, 3);
+        const spent = Date.now() - t0;
+        assert.equal(r, false);
+        assert.ok(bot.output.endsWith(`${NO_WAY}\n`), bot.output);
+        assert.ok(spent >= 19000 && spent <= 23000, `${spent} ms`);
+        assert.ok(timeouts.every(t => t <= 10000));
+    });
+});
