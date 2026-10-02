@@ -5,7 +5,7 @@
 import { describe, test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { loadSrc } from '../helpers/load.js';
-import { makeWorld, makeMiningBot, makeClock, v } from './mining_fake_bot.test.js';
+import { give, makeWorld, makeMiningBot, makeClock, v } from './mining_fake_bot.test.js';
 
 const W = await loadSrc('src/agent/packs/mining/mine_way.js');
 const R = await loadSrc('src/agent/packs/routes/index.js');
@@ -261,5 +261,83 @@ describe('F7: out of a shaft dug from the floor of the room', () => {
         assert.ok(!(c.x === 5 && c.z === 0), JSON.stringify(c));
         assert.equal(c.y, 41);
         assert.deepEqual(R.standCell(s.bot, { x: 3, y: 41, z: 0, kind: 'room' }), { x: 3, y: 41, z: 0 });
+    });
+});
+
+describe('F10: a mine remembered in its tunnel: the way in ends in the room', () => {
+    const TUNNELED_WAY = {
+        ...MINE,
+        route: [...MINE.route,
+            { kind: 'walk', from: { x: 2, y: 41, z: 1 }, to: { x: 4, y: 41, z: 0 } },
+            { kind: 'walk', from: { x: 4, y: 41, z: 0 }, to: { x: 12, y: 33, z: 0 } },
+            { kind: 'walk', from: { x: 12, y: 33, z: 0 }, to: { x: 13, y: 25, z: 9 } }],
+    };
+
+    test('the room stands in the order of the way, after its nearest waypoint, not after the tunnel', () => {
+        const s = scene();
+        const list = W.mineWaypoints(s.ctx, TUNNELED_WAY).map(w => [w.kind, w.x, w.y, w.z]);
+        const room = list.findIndex(w => w[0] === 'room');
+        assert.deepEqual(list[room], ['room', 3, 41, 1]);
+        assert.ok(room < list.length - 2, JSON.stringify(list));
+    });
+
+    test('wayIn: the scan and the walk go to the room', async () => {
+        const s = scene();
+        const r = await W.wayIn(s.bot, s.ctx, TUNNELED_WAY, { clock: s.clock });
+        assert.equal(r.ok, true);
+        assert.deepEqual(s.calls.scan[0].options.to, { x: 3, y: 41, z: 1 });
+        assert.deepEqual(s.calls.walk[0].options.to, { x: 3, y: 41, z: 1 });
+    });
+});
+
+describe('F13: the inner shaft dug from the floor cell under the second ladder of the parent', () => {
+    // the room at y 41 (floor 40), x 0..6, z 0..4; the basement above at y 51 (floor 50), x 0..6, z -2..2; ladder 2 of the
+    // parent at (5, 43..50, 0) facing south (on the rock at z -1), its lowest rung 2 above the room floor, the way up
+    // ends at (5, 51, -1); the child's shaft dug from the floor cell (5, 41, 0) under it, ladders facing north from
+    // y 40 down to y 20, its exit (5, 41, 1). The foot of ladder 2 is the hole of the child's shaft now.
+    function scene13({ ladders = 4 } = {}) {
+        const world = makeWorld({ groundY: 60 });
+        world.fill(0, 41, 0, 6, 43, 4, 'air');
+        world.fill(0, 51, -2, 6, 53, 2, 'air');
+        world.fill(5, 43, 0, 5, 50, 0, 'ladder', { facing: 'south' });
+        world.fill(5, 44, 0, 5, 50, 0, 'ladder', { facing: 'south' });
+        world.fill(5, 20, 0, 5, 40, 0, 'ladder', { facing: 'north' });
+        const bot = makeMiningBot({ world, pos: [5.5, 20, 0.5] });
+        if (ladders > 0) give(bot, 'ladder', ladders);
+        const clock = makeClock(bot);
+        const parent = {
+            name: 'mine', source: 'player', dimension: 'overworld', entrance: { x: 2, y: 51, z: -1 }, level: 41, tunnels: [],
+            room: { center: { x: 3, y: 41, z: 2 }, chest: null, table: null, furnace: null },
+            route: [
+                { kind: 'walk', from: { x: 2, y: 51, z: -1 }, to: { x: 5, y: 51, z: -1 } },
+                { kind: 'ladder', x: 5, z: 0, top: 50, bottom: 43, face: 'south', entry: { x: 5, y: 51, z: -1 }, foot: { x: 5, y: 41, z: 0 } },
+                { kind: 'walk', from: { x: 5, y: 41, z: 0 }, to: { x: 3, y: 41, z: 2 } },
+            ],
+        };
+        const child = { name: null, source: 'bot', parent: 'mine', entrance: { x: 5, y: 41, z: 0 }, level: 20, base: { x: 5, y: 20, z: 0 },
+            direction: 'north', end: { x: 5, y: 20, z: -2 }, tunnel: [{ x: 5, y: 20, z: -2 }], tunnels: [], dimension: 'overworld',
+            route: [{ kind: 'ladder', x: 5, z: 0, top: 40, bottom: 20, face: 'north', entry: { x: 5, y: 41, z: 1 } }] };
+        const ctx = { settings: { routes_by_search: true, mine_routes: true }, now: clock.now, log: () => {}, areas: [],
+            mines: { parentOf: m => (m.parent === 'mine' ? parent : null) } };
+        ctx.routes = R.bindRoutes(bot, ctx, { list: () => [] }, null);
+        const feet = () => [Math.floor(bot.entity.position.x), Math.floor(bot.entity.position.y + 0.01), Math.floor(bot.entity.position.z)];
+        return { world, bot, clock, ctx, child, feet };
+    }
+
+    test('out from the bottom: up the inner shaft, ladders into the hole, up ladder 2, out of the mine', async () => {
+        const s = scene13();
+        const r = await W.wayOut(s.bot, s.ctx, s.child, { clock: s.clock });
+        assert.equal(r.ok, true, r.text);
+        assert.equal(s.world.nameAt(5, 41, 0), 'ladder');
+        assert.equal(s.world.nameAt(5, 42, 0), 'ladder');
+        assert.deepEqual(s.feet(), [2, 51, -1]);
+    });
+
+    test('without ladders: the scan names the gap and the bot does not climb', async () => {
+        const s = scene13({ ladders: 0 });
+        const r = await W.wayOut(s.bot, s.ctx, s.child, { clock: s.clock });
+        assert.equal(r.ok, false);
+        assert.match(r.text, /the ladder has a gap of 2 at y 41 and I have no ladders\.$/);
+        assert.deepEqual(s.feet(), [5, 20, 0]);
     });
 });

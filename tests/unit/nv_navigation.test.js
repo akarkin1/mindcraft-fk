@@ -429,12 +429,18 @@ describe('I7 and N1: dryScan(bot, waypoints, { from, to })', () => {
         assert.deepEqual(s.feet(), before, 'the bot did not move');
     });
 
-    test('N1: a closed oak door that the bot can open is no lock: the first form', async () => {
+    test('N1: a closed oak door that the bot can open is no lock: the scan passes it and names the hop beyond it', async () => {
+        // F10 (the lead): a closed openable that canOpen accepts is passable in the scan (the walk opens it); the
+        // first form then names the hop beyond the door that has no way, never the door and never "cannot open it"
         const s = scene({ pos: [-0.5, 61, -2.5] });
         s.noPath.add(key(1, 61, -3));
         s.noPath.add(key(2, 61, -3));
         const r = await R.dryScan?.(s.bot, s.waypoints, { to: ROOM });
-        assert.equal(r?.text, 'I find no way from (-1, 61, -3) to the door at (0, 61, -3).');
+        assert.equal(r?.ok, false);
+        assert.match(r?.text ?? '', /^I find no way from \(-?\d+, -?\d+, -?\d+\) to /);
+        assert.ok(!/the door at \(0, 61, -3\)/.test(r?.text ?? ''), r?.text);
+        assert.ok(!/cannot open/.test(r?.text ?? ''), r?.text);
+        assert.ok(!/from (\(-?\d+, -?\d+, -?\d+\)) to \1\./.test(r?.text ?? ''), `a hop from a cell to itself is no hop: ${r?.text}`);
     });
 });
 

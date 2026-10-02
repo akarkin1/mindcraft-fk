@@ -604,7 +604,7 @@ export class Agent {
             // v0.1.4.11 (I8): a walk reserves the openable it is about to pass; the door service leaves it alone
             doors: {
                 reserve: (door, ms) => this.door_service?.reserve?.(door, ms) ?? false,
-                release: (door) => this.door_service?.release?.(door),
+                release: (door, options) => this.door_service?.release?.(door, options), // F12: { passed: true } counts as a pass
             },
         };
         ctx.routes = this._routes(ctx);

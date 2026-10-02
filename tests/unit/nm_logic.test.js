@@ -185,7 +185,7 @@ describe('I4: insideShaft, the face of a shaft from the floor of a known mine', 
     test('in the room: the ladders on a wall whose cell behind is open on solid ground; prefer first', () => {
         const w = oneWide();
         const r = L.insideShaft(w.get, { x: 2, y: 30, z: 2 }, 16, [], { prefer: 'north' });
-        assert.deepEqual(r, { top: { x: 2, y: 30, z: 2 }, face: 'north', entry: { x: 2, y: 30, z: 3 }, reason: null });
+        assert.deepEqual(r, { top: { x: 2, y: 30, z: 2 }, face: 'north', entry: { x: 2, y: 30, z: 3 }, moved: false, reason: null }); // F13: moved
         const e = L.insideShaft(w.get, { x: 2, y: 30, z: 2 }, 16, [], { prefer: 'east' });
         assert.deepEqual([e.face, e.entry], ['east', { x: 1, y: 30, z: 2 }]);
     });
@@ -201,5 +201,45 @@ describe('I4: insideShaft, the face of a shaft from the floor of a known mine', 
         const pocket = world().cell(5, 30, 5);
         assert.equal(L.insideShaft(pocket.get, { x: 5, y: 30, z: 5 }, 16, []).reason, 'no_entry');
         assert.equal(L.insideShaft(null, { x: 5, y: 30, z: 5 }, 16, []).reason, 'no_entry');
+    });
+});
+
+describe('F13 (W92): insideShaft never on the way of the parent', () => {
+    // the room x 0..4, z 0..4 at y 30; the parent came down a ladder at (1, 1) whose foot is (1, 30, 1), its entry
+    // above at (1, 40, 0); a door leg at the mouth of the tunnel (2, 30, -1)
+    const parent = () => ({
+        name: 'mine', source: 'player', room: { center: { x: 2, y: 30, z: 2 }, chest: { x: 0, y: 30, z: 4 }, table: { x: 4, y: 30, z: 4 }, furnace: null },
+        route: [{ kind: 'ladder', x: 1, z: 1, top: 39, bottom: 30, face: 'south', entry: { x: 1, y: 40, z: 0 }, foot: { x: 1, y: 30, z: 2 } },
+            { kind: 'door', kind2: 'door', name: 'oak_door', x: 2, y: 30, z: -1, from: { x: 2, y: 30, z: 0 }, to: { x: 2, y: 30, z: -2 } }],
+    });
+
+    test('wayCells and shaftCellFree: the ladder column, foot and entry within 1; the door and its two cells exactly', () => {
+        const way = L.wayCells(parent());
+        assert.equal(L.shaftCellFree({ x: 1, y: 30, z: 1 }, way), false, 'under the ladder');
+        assert.equal(L.shaftCellFree({ x: 2, y: 30, z: 2 }, way), false, 'beside the column');
+        assert.equal(L.shaftCellFree({ x: 2, y: 30, z: 3 }, way), false, 'beside the foot');
+        assert.equal(L.shaftCellFree({ x: 2, y: 30, z: 0 }, way), false, 'the cell before the door');
+        assert.equal(L.shaftCellFree({ x: 3, y: 30, z: 0 }, way), true);
+        assert.equal(L.shaftCellFree({ x: 3, y: 30, z: 3 }, way), true);
+        assert.equal(L.shaftCellFree({ x: 1, y: 30, z: 1 }, L.wayCells(null)), true, 'no route');
+    });
+
+    test('the bot at the foot of the ladder: the nearest free floor cell of the room, moved', () => {
+        const w = oneWide();
+        const r = L.insideShaft(w.get, { x: 1, y: 30, z: 1 }, 16, [], { mine: parent() });
+        assert.equal(r.moved, true);
+        assert.equal(r.reason, null);
+        assert.equal(L.shaftCellFree(r.top, L.wayCells(parent())), true, JSON.stringify(r.top));
+        assert.deepEqual(r.top, { x: 3, y: 30, z: 2 }, 'the nearest free cell of the room box (x 0..4, z 2..4)');
+        const stay = L.insideShaft(w.get, { x: 3, y: 30, z: 3 }, 16, [], { mine: parent() });
+        assert.deepEqual([stay.top, stay.moved], [{ x: 3, y: 30, z: 3 }, false], 'a free cell stays');
+    });
+
+    test('no free floor cell: no_cell; without a parent the feet as before', () => {
+        // a pocket of 3 cells under the ladder, no room
+        const w = world().room(0, 0, 0, 2, 30);
+        const p = { name: 'm', route: [{ kind: 'ladder', x: 0, z: 1, top: 39, bottom: 30, face: 'south', entry: { x: 0, y: 40, z: 0 } }] };
+        assert.equal(L.insideShaft(w.get, { x: 0, y: 30, z: 1 }, 16, [], { mine: p }).reason, 'no_cell');
+        assert.equal(L.insideShaft(w.get, { x: 0, y: 30, z: 1 }, 16, []).moved, false);
     });
 });

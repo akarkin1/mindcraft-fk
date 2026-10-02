@@ -8,19 +8,20 @@
 //   0. The bot and the player outside in front of the house door; the player teaches the mine (journey.js
 //      partTeachMine); "get out" !leaveMine brings the bot to the surface; the player in the house, "come here"
 //      !goToPlayer("w_player", 2): the bot is in the house (preconditions).
-//   1. The owner locks the room: both doors of the double door become iron doors (closed; no hand opens them).
-//      "go to the mine" !goToMine from the house: the answer is the text of N1 for the door, `I find no way from
-//      (x, y, z) to the door at <a door of the room>: it is closed and I cannot open it.`, and the bot did not move:
-//      within 1 block of where it stood, at the answer and all the time while it ran (sampled).
-//   2. The owner puts the oak doors back (closed). "go to the mine" !goToMine: the bot reaches the room within 180 s and
-//      the answer names no failure.
+//   1. The owner locks the way in (decision F10: the dry scan covers the hops from the bot to the room, which the
+//      double door of the room is not on): the oak trapdoor of the house over ladder 1 becomes a closed iron trapdoor
+//      (no hand opens it). "go to the mine" !goToMine from the house: the answer is the text of N1 for the trapdoor,
+//      `I find no way from (x, y, z) to the trapdoor at <the trapdoor>: it is closed and I cannot open it.`, and the
+//      bot did not move: within 1 block of where it stood, at the answer and all the time while it ran (sampled).
+//   2. The owner puts the oak trapdoor back (closed). "go to the mine" !goToMine: the bot reaches the room within 180 s
+//      and the answer names no failure.
 // Throughout: the process lives, no request reached a real model.
 import { scenarioMain, check, note, exitSoon, stopRealAgent, env, entityPos, fmt, sleep, tp, commands, startTrace } from './helpers.js';
 import { region, prepareRegion, releaseRegion, inBox, dist } from './world.js';
 import { basePlan, buildBase, BASE_RADIUS } from './base_world.js';
 import { loadDump } from './owner_region.js';
 import {
-    startJourney, JOURNEY_SETTINGS, spots, PLAYER, partTeachMine, playerIntoHouse, setDoubleDoor, waitBot, inside, onSurface, saidLines,
+    startJourney, JOURNEY_SETTINGS, spots, PLAYER, partTeachMine, playerIntoHouse, waitBot, inside, onSurface, saidLines,
     journeyTrace, printJourney,
 } from './journey.js';
 
@@ -31,17 +32,12 @@ const P = (p) => `(${p.x}, ${p.y}, ${p.z})`;
 const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const FAILED = /I could not|I find no way|Show me the way again/;
 
-// The double door of the room as iron doors (closed): the owner locked it.
-function ironDoors(b) {
-    const cmds = [];
-    for (const d of b.owner.doors) {
-        // F8 (the lead): both halves to air in one fill (a second setblock of air fails once the first removed both
-        // halves), then the lower half, then the upper
-        cmds.push(`fill ${d.lower.x} ${d.lower.y} ${d.lower.z} ${d.upper.x} ${d.upper.y} ${d.upper.z} minecraft:air`);
-        cmds.push(`setblock ${d.lower.x} ${d.lower.y} ${d.lower.z} minecraft:iron_door[facing=west,half=lower,hinge=${d.hinge},open=false]`);
-        cmds.push(`setblock ${d.upper.x} ${d.upper.y} ${d.upper.z} minecraft:iron_door[facing=west,half=upper,hinge=${d.hinge},open=false]`);
-    }
-    return commands(cmds);
+// The trapdoor of the house over ladder 1 (b.trapdoor): the oak one of base_world.js, or an iron one (the owner locked
+// it), closed, in the same state (facing south, the top half). The cell is set to air first.
+const TRAPDOOR_STATE = 'facing=south,half=top,open=false';
+function setTrapdoorKind(b, kind) {
+    const t = b.trapdoor;
+    return commands([`setblock ${t.x} ${t.y} ${t.z} minecraft:air`, `setblock ${t.x} ${t.y} ${t.z} minecraft:${kind}[${TRAPDOOR_STATE}]`]);
 }
 
 await scenarioMain({
@@ -84,11 +80,10 @@ await scenarioMain({
             check(inBox(inHouse, b.house.interior), '0: precondition: "come here" brings the bot into the house', fmt(inHouse));
             if (!inBox(inHouse, b.house.interior)) return;
 
-            // ---------------------------------------------------------- 1. the locked door
-            await ironDoors(b);
+            // ---------------------------------------------------------- 1. the locked trapdoor
+            await setTrapdoorKind(b, 'iron_trapdoor');
             await sleep(500);
-            const doors = b.owner.doors.map((d) => d.lower);
-            const doorText = new RegExp(`I find no way from \\(-?\\d+, -?\\d+, -?\\d+\\) to the door at (${doors.map((d) => esc(P(d))).join('|')}): it is closed and I cannot open it\\.`);
+            const trapText = new RegExp(`I find no way from \\(-?\\d+, -?\\d+, -?\\d+\\) to the trapdoor at ${esc(P(b.trapdoor))}: it is closed and I cannot open it\\.`);
             const before = await entityPos(NAME);
             const moved = startTrace(async () => ({ bot: await entityPos(NAME) }), 300);
             const t1 = Date.now();
@@ -97,13 +92,13 @@ await scenarioMain({
             const rows = await moved.stop();
             const after = await entityPos(NAME);
             const farthest = Math.max(0, ...rows.filter((x) => x.bot).map((x) => dist(x.bot, before)));
-            note(`1: with the iron doors !goToMine answered after ${((Date.now() - t1) / 1000).toFixed(1)} s: ${JSON.stringify(one.reply.slice(0, 400))}; the bot stood at ${fmt(before)}, is at ${fmt(after)}, at most ${farthest.toFixed(1)} blocks away meanwhile`);
-            check(doorText.test(one.reply), `1: the answer is the text of N1: \`I find no way from (x, y, z) to the door at ${P(doors[0])} (or ${P(doors[1])}): it is closed and I cannot open it.\``, JSON.stringify(one.reply.slice(0, 300)));
+            note(`1: with the iron trapdoor !goToMine answered after ${((Date.now() - t1) / 1000).toFixed(1)} s: ${JSON.stringify(one.reply.slice(0, 400))}; the bot stood at ${fmt(before)}, is at ${fmt(after)}, at most ${farthest.toFixed(1)} blocks away meanwhile`);
+            check(trapText.test(one.reply), `1: the answer is the text of N1: \`I find no way from (x, y, z) to the trapdoor at ${P(b.trapdoor)}: it is closed and I cannot open it.\``, JSON.stringify(one.reply.slice(0, 300)));
             check(dist(after, before) <= 1, '1: the bot did not move: within 1 block of where it stood, after the answer', `${dist(after, before).toFixed(2)} blocks`);
             check(farthest <= 1.5, '1: the bot did not walk while the scan ran (every sample within 1.5 blocks)', `${farthest.toFixed(2)} blocks`);
 
             // ---------------------------------------------------------- 2. the door open again
-            await setDoubleDoor(b, false);
+            await setTrapdoorKind(b, 'oak_trapdoor');
             await sleep(500);
             const trace = journeyTrace(agent, b);
             const t2 = Date.now();
@@ -112,7 +107,7 @@ await scenarioMain({
             const two = await go;
             printJourney('the way into the mine', await trace.stop());
             note(`2: !goToMine answered after ${((Date.now() - t2) / 1000).toFixed(1)} s: ${JSON.stringify(two.reply.slice(0, 300))}; the bot at ${fmt(await entityPos(NAME))}`);
-            check(there.ok, '2: with the oak doors back "go to the mine" brings the bot into the room within 180 s', fmt(there.bot));
+            check(there.ok, '2: with the oak trapdoor back "go to the mine" brings the bot into the room within 180 s', fmt(there.bot));
             check(two.done && !FAILED.test(two.reply), '2: the answer names no failure', JSON.stringify(two.reply.slice(0, 200)));
 
             note(`the bot said ${JSON.stringify(saidLines(s, t1).slice(0, 30))}`);

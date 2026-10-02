@@ -21,7 +21,7 @@ export { AIR_NAMES, AREA_DISTANCE, DEFAULT_TUNNEL_LENGTH, DIRECTIONS, ENTRANCE_A
     backOf, cellOf, chooseDirection, chooseEntrance, classify, dirVector, directionOf, entranceAllowed, faceNeighbours, isDirection, isFalling,
     leftOf, mineDirections, offset, pickaxeUses, posKey, returnTimeMs, rightOf, roomPlan, sameCell, shaftAllowed, shaftStep, shaftView,
     shouldReturn, staircaseSlots, staircaseStep, staircaseView, tripNeeds, tripStart, tunnelAllowed, tunnelSlots, tunnelStep, tunnelView,
-    usablePickaxes, veinOrder, addTunnel, corridorWidth, insideShaft, tunnelAt } from './mine_logic.js';
+    usablePickaxes, veinOrder, addTunnel, corridorWidth, insideShaft, shaftCellFree, tunnelAt, wayCells } from './mine_logic.js';
 export { BRANCH_EVERY, BRANCH_FROM, BRANCH_LENGTH, CORRIDOR_LIMIT, MAX_PASSED, MAX_SENSE_RANGE, PASSED_REASONS, addPassedEntry, branchCells,
     branchPlan, cleanPassedEntry, corridorDirections, isCorridor, legCells, legEnd, measureTunnel, mineAt, mineDistance, nearestLeg,
     removePassedAt, roomBox, senseCut, NATURAL_NAMES, WAY_BACK_HOP, WAY_BACK_REACH, isNaturalBlock, knownCells, wayBack, wayBackHops, TORCH_NAMES, torchDue, senseOres, tunnelCells, tunnelDirection, tunnelFor, tunnelsOf, veinParts } from './mine_logic.js';

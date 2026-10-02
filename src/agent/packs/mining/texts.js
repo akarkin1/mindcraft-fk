@@ -42,6 +42,8 @@ export const TEXTS = Object.freeze({
     noRouteWalk: 'I cannot walk the way of the mine: the routes pack is off.',
     // v0.1.4.11, W3: underground, in no mine the bot knows
     undergroundNoMine: 'I am underground, not in a mine I know. A new mine starts from the surface: say "leave the mine" or "go to the surface" first.',
+    // v0.1.4.11, F14: a shaft from inside never starts on the parent's way out
+    noShaftCell: 'I find no floor cell for a shaft here that leaves the way out free. Stand elsewhere in the room and tell me again.',
 });
 
 function listWords(words) {

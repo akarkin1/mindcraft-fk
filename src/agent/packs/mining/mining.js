@@ -186,6 +186,13 @@ function undergroundText() {
         : 'I am underground, not in a mine I know. A new mine starts from the surface: say "leave the mine" or "go to the surface" first.';
 }
 
+// F13 (W92): no floor cell for a shaft from inside that leaves the way of the parent free.
+function noShaftCellText() {
+    const text = TX.TEXTS?.noShaftCell;
+    return typeof text === 'string' && text.length > 0 ? text
+        : 'I find no floor cell for a shaft here that leaves the way out free. Stand elsewhere in the room and tell me again.';
+}
+
 // W3: a new mine asked for in a known mine with mine_from_inside off.
 function inMineWords(mine) {
     try {
@@ -2254,10 +2261,12 @@ export async function mineOre(bot, ctx = {}, ore = '', count = 8, options = {}) 
                 level += 1; // the key bot:<level> of another mine of the bot is never taken over
             }
             const prefer = here.tunnel !== null ? tunnelsOf(here.mine)[here.tunnel]?.dir : here.mine.direction ?? undefined;
-            const shaft = insideShaft(nameReader(bot), feet, level, areasOf(bot, tripCtx), { prefer });
+            // F13 (W92): never on the way of the parent; on it, the nearest free floor cell, where the bot walks first
+            const shaft = insideShaft(nameReader(bot), feet, level, areasOf(bot, tripCtx), { prefer, mine: here.mine });
             if (!shaft.top) {
                 const text = shaft.reason === 'area' ? `The way down from ${posText(feet)} would come too near a protected area.`
-                    : `I find no open cell beside ${posText(feet)} to climb out of a shaft. Stand on the floor of the room and tell me again.`;
+                    : shaft.reason === 'no_cell' ? noShaftCellText()
+                        : `I find no open cell beside ${posText(feet)} to climb out of a shaft. Stand on the floor of the room and tell me again.`;
                 logTo(ctx, text);
                 return early(shaft.reason === 'area' ? 'area' : 'no_entrance', text);
             }

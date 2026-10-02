@@ -188,8 +188,9 @@ describe('I4: mineOre from the room of a known mine (W3)', () => {
     });
 
     test('mine_from_inside on: a shaft with ladders from the floor cell, the child mine, back in the room; !mines; !leaveMine from the bottom', async () => {
-        const s = await scene({ pos: [1.5, 50, 1.5], settings: { mine_from_inside: true, mining_max_minutes: 10 } });
-        s.world.set(1, 25, -4, 'gold_ore');
+        // F13: the bot stands on a free cell of the room, 2 from the column of the parent's ladder at (0, 0)
+        const s = await scene({ pos: [-1.5, 50, 0.5], settings: { mine_from_inside: true, mining_max_minutes: 10 } });
+        s.world.set(-2, 25, -5, 'gold_ore');
         const r = await P.mineOre(s.bot, s.ctx, 'gold', 1, { ...s.opts, newMine: true });
         assert.equal(s.said.find(t => t.startsWith('I dig a shaft')), 'I dig a shaft down from here to level 25 for gold.');
         const child = s.ctx.mines.atLevel(25);
@@ -197,10 +198,10 @@ describe('I4: mineOre from the room of a known mine (W3)', () => {
         assert.equal(P.mineKey(child), 'bot:25');
         assert.equal(child.parent, 'mine');
         assert.equal(child.shaft, 'ladder');
-        assert.deepEqual(child.entrance, { x: 1, y: 50, z: 1 }, 'the floor cell the bot stood on');
+        assert.deepEqual(child.entrance, { x: -2, y: 50, z: 0 }, 'the floor cell the bot stood on');
         assert.equal(child.route[0].kind, 'ladder');
-        assert.deepEqual([child.route[0].x, child.route[0].z, child.route[0].top], [1, 1, 49]);
-        for (let y = 26; y <= 49; y++) assert.equal(s.world.nameAt(1, y, 1), 'ladder', `a ladder at y ${y}`);
+        assert.deepEqual([child.route[0].x, child.route[0].z, child.route[0].top], [-2, 0, 49]);
+        for (let y = 26; y <= 49; y++) assert.equal(s.world.nameAt(-2, y, 0), 'ladder', `a ladder at y ${y}`);
         assert.equal(r.ok, true, r.text);
         assert.equal(count(s.bot, 'raw_gold') >= 1, true);
         assert.equal(feet(s.bot).y, 50, `back in the room: ${JSON.stringify(feet(s.bot))}`);
@@ -232,5 +233,35 @@ describe('I4: mineOre from the room of a known mine (W3)', () => {
         assert.equal(again.mine?.parent, 'mine', again.text);
         assert.equal(again.ok, true, again.text);
         assert.equal(feet(s.bot).y, 64, 'a trip that started on the surface ends there');
+    });
+});
+
+describe('F13 (W92): the inner shaft leaves the way of the parent free', () => {
+    test('the bot at the foot of the parent\'s ladder: the shaft starts on the nearest free floor cell, the bot walks there', async () => {
+        const s = await scene({ pos: [0.5, 50, 0.5], settings: { mine_from_inside: true, mining_max_minutes: 10 } });
+        const r = await P.mineOre(s.bot, s.ctx, 'gold', 1, { ...s.opts, newMine: true });
+        assert.equal(s.said.find(t => t.startsWith('I dig a shaft')), 'I dig a shaft down from here to level 25 for gold.');
+        const child = s.ctx.mines.atLevel(25);
+        assert.ok(child, r.text);
+        const top = child.entrance;
+        assert.ok(Math.max(Math.abs(top.x), Math.abs(top.z)) >= 2, `the top ${JSON.stringify(top)} is more than 1 from the ladder column (0, 0)`);
+        assert.equal(top.y, 50);
+        assert.ok(top.x >= -2 && top.x <= 2 && top.z >= -2 && top.z <= 2, 'in the room');
+        for (let y = 50; y <= 62; y++) assert.equal(s.world.nameAt(0, y, 0), y >= 53 ? 'ladder' : 'air', `the parent's column at y ${y} is untouched`);
+        assert.equal(s.world.nameAt(0, 49, 0), 'stone', 'the floor under the parent\'s ladder is not dug');
+        assert.ok(s.bot.calls.some(c => c[0] === 'dig' && c[1] === top.x && c[2] === 49 && c[3] === top.z), 'the shaft was dug at the new top');
+    });
+
+    test('no free floor cell: the text, nothing dug, nothing saved', async () => {
+        const s = await scene({ pos: [21.5, 34, 13.5], settings: { mine_from_inside: true } });
+        // the parent's way runs through the end of its tunnel: a ladder at (21, 12) and a door at (21, 34, 10)
+        s.ctx.mines.set({ ...MINE(), room: null, route: [...LEGS,
+            { kind: 'ladder', x: 21, z: 12, top: 40, bottom: 34, face: 'south', entry: { x: 21, y: 41, z: 11 } },
+            { kind: 'door', kind2: 'door', name: 'oak_door', x: 21, y: 34, z: 10, from: { x: 21, y: 34, z: 9 }, to: { x: 21, y: 34, z: 11 } }] });
+        const r = await P.mineOre(s.bot, s.ctx, 'gold', 1, { ...s.opts, newMine: true });
+        assert.equal(r.ok, false);
+        assert.equal(r.text, 'I find no floor cell for a shaft here that leaves the way out free. Stand elsewhere in the room and tell me again.');
+        assert.equal(digs(s.bot).length, 0);
+        assert.equal(s.ctx.mines.list().length, 1);
     });
 });

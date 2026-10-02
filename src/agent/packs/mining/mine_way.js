@@ -93,6 +93,22 @@ export function bySearchOn(ctx) {
     }
 }
 
+function isOpenableKind(kind) {
+    return kind === 'door' || kind === 'gate' || kind === 'trapdoor';
+}
+
+/**
+ * The goal of the way into a mine (F10): its room when it has one (the waypoint of kind room), else the last waypoint.
+ * @param {object[]} waypoints of mineWaypoints
+ * @param {object} mine
+ * @returns {{x: number, y: number, z: number}|null}
+ */
+function wayInGoal(waypoints, mine) {
+    const room = typeof mine?.parent === 'string' && mine.parent.length > 0 ? null : waypoints.find(w => w.kind === 'room');
+    const goal = room ?? waypoints[waypoints.length - 1];
+    return goal ? { x: goal.x, y: goal.y, z: goal.z } : null;
+}
+
 /**
  * The waypoints of the way into a mine (v0.1.4.11, I7), from the surface to its deepest point: the waypoints of
  * its route (ctx.routes.waypointsOf) and the middle of its room (kind room) when it has one; a mine of a second
@@ -112,14 +128,29 @@ export function mineWaypoints(ctx, mine, depth = 0) {
         const shaft = (Array.isArray(mine?.route) ? mine.route : []).filter(l => l?.kind === 'ladder' && [l.x, l.z, l.top].every(Number.isFinite));
         const inHole = w => !['door', 'gate', 'trapdoor'].includes(w.kind)
             && shaft.some(l => w.x === Math.floor(l.x) && w.z === Math.floor(l.z) && w.y > l.top && w.y <= l.top + 2);
-        const out = parent ? [...mineWaypoints(ctx, parent, depth + 1).filter(w => !inHole(w)), ...own] : [...own];
-        if (!parent) {
+        const near = (list, p) => list.reduce((best, w, i) => {
+            const d = Math.hypot(w.x - p.x, w.y - p.y, w.z - p.z);
+            return d < best.d ? { i, d } : best;
+        }, { i: -1, d: Infinity }).i;
+        let out = [...own];
+        if (parent) {
+            // F10: the parent's way up to its waypoint nearest to the top of this shaft (a parent's way that goes on past
+            // the room, into its tunnel, is not walked), then this shaft
+            const above = mineWaypoints(ctx, parent, depth + 1).filter(w => !inHole(w));
+            const cut = own.length > 0 ? near(above, own[0]) : above.length - 1;
+            out = [...above.slice(0, cut + 1), ...own];
+        } else {
             const c = mine?.room?.center;
             if (c && [c.x, c.y, c.z].every(Number.isFinite)) {
+                // F10: the room in the order of the way, after the waypoint of the way nearest to it (a way remembered in
+                // the tunnel passes the room and goes on)
                 const room = { x: Math.floor(c.x), y: Math.floor(c.y), z: Math.floor(c.z) };
-                const last = out[out.length - 1];
-                if (!last || last.x !== room.x || last.y !== room.y || last.z !== room.z) {
-                    out.push({ ...room, kind: 'room', name });
+                const i = near(out, room);
+                const at = out[i];
+                if (!at || at.x !== room.x || at.y !== room.y || at.z !== room.z) {
+                    out.splice(i + 1, 0, { ...room, kind: 'room', name });
+                } else {
+                    at.kind = isOpenableKind(at.kind) ? at.kind : 'room';
                 }
             }
         }
@@ -176,8 +207,7 @@ async function wayInBySearch(bot, ctx, mine, options) {
     if (!mineAt([mine], feet) && !(parentMine(ctx, mine) && mineAt([parentMine(ctx, mine)], feet))) {
         logTo(ctx, `I go to ${mine.name ? `the mine "${mine.name}"` : 'the mine'} at ${posText(mine.entrance)}.`);
     }
-    const last = waypoints[waypoints.length - 1];
-    const r = await searchWalk(bot, ctx, mine, waypoints, { x: last.x, y: last.y, z: last.z }, options);
+    const r = await searchWalk(bot, ctx, mine, waypoints, wayInGoal(waypoints, mine), options);
     return { ok: r.ok, reason: r.reason, text: r.text, walked: r.ok };
 }
 

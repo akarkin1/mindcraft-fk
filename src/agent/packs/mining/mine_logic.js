@@ -810,37 +810,130 @@ export function tripStart(input) {
 }
 
 /**
+ * The cells of the way of a mine that a shaft of a second level must leave free (v0.1.4.11, I4, finding
+ * F13 of W92): for every ladder leg of its route the column from its bottom to one above its top, its foot
+ * and its entry, each with the cells within 1 block (`near`); for every door leg (door, gate, trapdoor) the
+ * openable and the cells before and behind it (`exact`, the cell and the one above and below).
+ * @param {object} mine
+ * @returns {{near: object[], exact: object[]}}
+ */
+export function wayCells(mine) {
+    const near = [];
+    const exact = [];
+    for (const leg of Array.isArray(mine?.route) ? mine.route : []) {
+        if (leg?.kind === 'ladder' && [leg.x, leg.z, leg.top, leg.bottom].every(isFiniteNumber)) {
+            for (let y = Math.floor(Math.min(leg.top, leg.bottom)); y <= Math.floor(Math.max(leg.top, leg.bottom)) + 1; y++) {
+                near.push({ x: Math.floor(leg.x), y, z: Math.floor(leg.z) });
+            }
+            for (const p of [cellOf(leg.foot), cellOf(leg.entry)]) {
+                if (p) {
+                    near.push(p);
+                }
+            }
+        } else if (leg?.kind === 'door') {
+            for (const p of [cellOf(leg), cellOf(leg.from), cellOf(leg.to)]) {
+                if (p) {
+                    exact.push(p);
+                }
+            }
+        }
+    }
+    return { near, exact };
+}
+
+/**
+ * True when a floor cell may be the top of a shaft of a second level in `mine` (F13): not within 1 block
+ * of a ladder column, foot or entry of its route, not a door cell or the cell before or behind a door.
+ * @param {{x,y,z}} p
+ * @param {{near: object[], exact: object[]}} way wayCells(mine)
+ * @returns {boolean}
+ */
+export function shaftCellFree(p, way) {
+    const c = cellOf(p);
+    if (!c) {
+        return false;
+    }
+    const close = (q, r) => Math.abs(q.x - c.x) <= r && Math.abs(q.y - c.y) <= r && Math.abs(q.z - c.z) <= r;
+    return !(way?.near ?? []).some(q => close(q, 1)) && !(way?.exact ?? []).some(q => q.x === c.x && q.z === c.z && Math.abs(q.y - c.y) <= 1);
+}
+
+// the face of a shaft at the top cell f: the first direction of mineDirections whose entry is open on solid ground
+function shaftFace(getName, f, level, areas, prefer) {
+    const dirs = mineDirections(f, level, areas, { prefer: isDirection(prefer) ? prefer : undefined });
+    if (dirs.length === 0) {
+        return { reason: 'area' };
+    }
+    for (const face of dirs) {
+        const entry = offset(f, backOf(face));
+        const under = classify(readName(getName, { x: entry.x, y: entry.y - 1, z: entry.z }));
+        if (openCell(getName, entry) && under === 'solid') {
+            return { face, entry, reason: null };
+        }
+    }
+    return { reason: 'no_entry' };
+}
+
+/**
  * The shaft of a second level from inside a known mine (v0.1.4.11, I4): its top is the floor cell the
  * bot stands on (`feet`), the ladders hang on the wall `face` as in a surface shaft and the bot climbs
  * out at the top to `entry`, the cell behind the face, which must be open (feet and head) on solid
  * ground. The face is the first of mineDirections(feet, level, areas) (the room and the tunnel at the
  * level keep to the protected areas) with such an entry, `prefer` first. null without one; `reason`
  * says why: `area` (no direction keeps to the areas) or `no_entry` (no open cell beside the top).
+ * F13 (W92): with `options.mine` (the parent) the top never lies on the way of the parent (shaftCellFree:
+ * a ladder column, foot or entry within 1 block, a door and the cells before and behind it). When the
+ * bot stands on such a cell, the top is the nearest free floor cell (open feet and head on solid ground,
+ * at the level of the feet) of the room of the parent (roomBox), else within 3 blocks, that has a face;
+ * `moved` is then true and the bot walks there first. None: reason `no_cell`.
  * @param {(x: number, y: number, z: number) => string|null} getName
  * @param {{x,y,z}} feet
  * @param {number} level
  * @param {object[]} areas
- * @param {{prefer?: string}} [options]
- * @returns {{top: object, face: string, entry: object, reason: null}|{top: null, face: null, entry: null, reason: 'area'|'no_entry'}}
+ * @param {{prefer?: string, mine?: object}} [options]
+ * @returns {{top: object, face: string, entry: object, moved: boolean, reason: null}
+ *   |{top: null, face: null, entry: null, moved: false, reason: 'area'|'no_entry'|'no_cell'}}
  */
 export function insideShaft(getName, feet, level, areas, options = {}) {
     const f = cellOf(feet);
-    const none = reason => ({ top: null, face: null, entry: null, reason });
+    const none = reason => ({ top: null, face: null, entry: null, moved: false, reason });
     if (!f || typeof getName !== 'function' || !isFiniteNumber(level)) {
         return none('no_entry');
     }
-    const dirs = mineDirections(f, level, areas, { prefer: isDirection(options?.prefer) ? options.prefer : undefined });
-    if (dirs.length === 0) {
-        return none('area');
+    const way = options?.mine ? wayCells(options.mine) : null;
+    if (!way || shaftCellFree(f, way)) {
+        const r = shaftFace(getName, f, level, areas, options?.prefer);
+        return r.reason ? none(r.reason) : { top: f, face: r.face, entry: r.entry, moved: false, reason: null };
     }
-    for (const face of dirs) {
-        const entry = offset(f, backOf(face));
-        const under = classify(readName(getName, { x: entry.x, y: entry.y - 1, z: entry.z }));
-        if (openCell(getName, entry) && under === 'solid') {
-            return { top: f, face, entry, reason: null };
+    const box = roomBox(options.mine);
+    const inBox = box && f.x >= box.min.x - 1 && f.x <= box.max.x + 1 && f.z >= box.min.z - 1 && f.z <= box.max.z + 1
+        && f.y >= box.min.y - 1 && f.y <= box.max.y;
+    const cells = [];
+    if (inBox) {
+        for (let x = box.min.x; x <= box.max.x; x++) {
+            for (let z = box.min.z; z <= box.max.z; z++) {
+                cells.push({ x, y: f.y, z });
+            }
+        }
+    } else {
+        for (let dx = -3; dx <= 3; dx++) {
+            for (let dz = -3; dz <= 3; dz++) {
+                cells.push({ x: f.x + dx, y: f.y, z: f.z + dz });
+            }
         }
     }
-    return none('no_entry');
+    const dist = p => Math.hypot(p.x - f.x, p.z - f.z);
+    const free = cells.filter(p => shaftCellFree(p, way) && openCell(getName, p)
+        && classify(readName(getName, { x: p.x, y: p.y - 1, z: p.z })) === 'solid')
+        .sort((a, b) => dist(a) - dist(b) || a.x - b.x || a.z - b.z);
+    let area = free.length > 0;
+    for (const p of free) {
+        const r = shaftFace(getName, p, level, areas, options?.prefer);
+        if (!r.reason) {
+            return { top: p, face: r.face, entry: r.entry, moved: true, reason: null };
+        }
+        area = area && r.reason === 'area';
+    }
+    return none(area ? 'area' : 'no_cell');
 }
 
 // ------------------------------------------------------------------ protected areas and the entrance

@@ -380,14 +380,29 @@ export class DoorWatch {
     }
 
     /**
-     * v0.1.4.11 (I8): the walk passed the openable or ended; the service treats it as before.
+     * v0.1.4.11 (I8): the walk passed the openable or ended; the service treats it as before. F12 of the fix round:
+     * with `passed` the walk went through it, and the service notes it as passed (closed by its rules: 2 blocks past
+     * a door or trapdoor, the feet out of the cell of a gate), also when it never saw the pass itself.
      * @param {{x,y,z}} [door] every reservation without one
+     * @param {{passed?: boolean, now?: number}} [options]
      */
-    release(door) {
+    release(door, options = {}) {
         if (door === undefined || door === null) {
             this._reserved.clear();
         } else if (isPoint(door)) {
-            this._reserved.delete(doorKey({ x: Math.floor(door.x), y: Math.floor(door.y), z: Math.floor(door.z) }));
+            const cell = { x: Math.floor(door.x), y: Math.floor(door.y), z: Math.floor(door.z) };
+            const key = doorKey(cell);
+            this._reserved.delete(key);
+            if (options?.passed === true) {
+                const now = isFiniteNumber(options.now) ? options.now : Date.now();
+                const entry = this._noted.get(key);
+                if (entry) {
+                    entry.passed = true;
+                } else {
+                    this._note(key, { ...cell, kind: typeof door.kind === 'string' ? door.kind : undefined }, 'passed', now);
+                    this._noted.get(key).passed = true;
+                }
+            }
         }
     }
 

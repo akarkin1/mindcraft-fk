@@ -11,6 +11,7 @@
 // Never throws.
 import { Vec3 } from 'vec3';
 import { botPos } from '../home/context.js';
+import { doorSides } from '../home/door_logic.js';
 import { canOpen, doorState } from '../home/doors.js';
 import { goals, makeMovements } from '../home/motion.js';
 import { isOpenableWaypoint, ladderCheck, ladderHop, ladderStand, planHops, standCell } from './waypoints.js';
@@ -19,6 +20,7 @@ import { posText, routeLabel } from './texts.js';
 /** The numbers of the dry scan. */
 export const DRY_SCAN_RULES = Object.freeze({
     hopMs: 2000,     // the search of one hop at most
+    totalMs: 10000,  // F10: the whole scan at most; what is left unsearched counts as open
     radius: 24,      // the search reaches this far beyond the straight way of a hop ...
     radiusPerBlock: 2, // ... plus this much per block of that way
 });
@@ -99,6 +101,24 @@ export function noLaddersText(from, wp, check) {
     return `I find no way from ${posText(from)} to ${waypointLabel(wp)}: the ladder has a gap of ${check?.gap ?? 1}${at} and I have ${carried}.`;
 }
 
+function blockName(bot, p) {
+    try {
+        return bot.blockAt(new Vec3(p.x, p.y, p.z))?.name ?? '';
+    } catch {
+        return '';
+    }
+}
+
+// True when the block of the cell lets a bot through (air, a torch, a plant ...)
+function readFree(bot, p) {
+    try {
+        const b = bot.blockAt(new Vec3(p.x, p.y, p.z));
+        return Boolean(b) && b.boundingBox === 'empty';
+    } catch {
+        return false;
+    }
+}
+
 // True when a door, gate or trapdoor stands at the cell and is closed, read from the world; an iron one too
 // (doorState knows only those a hand opens).
 function isClosed(bot, wp) {
@@ -130,7 +150,11 @@ async function searchHop(bot, movements, start, goal, fromBot, timeout, radius) 
         const gen = pf.getPathFromTo(movements, from, goal,
             { timeout, searchRadius: radius, optimizePath: false });
         let last = null;
+        const end = Date.now() + timeout + 100; // F10: the hop is bounded here too, whatever the search does
         for (;;) {
+            if (Date.now() > end) {
+                return 'timeout';
+            }
             const step = gen.next();
             if (step.done) {
                 break;
@@ -189,8 +213,12 @@ export async function dryScan(bot, waypoints, options = {}) {
             return open(total);
         }
         const timeout = isFiniteNumber(options?.timeoutMs) ? options.timeoutMs : DRY_SCAN_RULES.hopMs;
+        const until = Date.now() + (isFiniteNumber(options?.totalMs) ? options.totalMs : DRY_SCAN_RULES.totalMs);
         let start = cell(me);
         for (let k = 0; k < total; k++) {
+            if (Date.now() >= until) {
+                return open(total); // F10: a scan answers within 10 s
+            }
             if (bot.interrupt_code) {
                 return { ok: false, step: k + 1, total, from: start, to: null, cause: { kind: 'interrupted' }, text: '' };
             }
@@ -207,9 +235,16 @@ export async function dryScan(bot, waypoints, options = {}) {
                     const cause = { kind: 'ladder', x: climb.leg.x, z: climb.leg.z, y: check.y, gap: check.gap };
                     return { ok: false, step: k + 1, total, from: { ...start }, to, cause, text: noLaddersText(start, named, check) };
                 }
-                // up, the climb opens the trapdoor over the column (the openable of the hop after it) from the ladder
+                // the trapdoor over the column: up the climb opens it from the ladder (the openable of the hop after it),
+                // down from above before the slide (F6: in both ways, unless the climb starts below it)
                 const over = climb.way === 'up' && plan.hops[k + 1] ? plan.hops[k + 1].passes.map(i => list[i]) : [];
-                const locked = over.find(d => isClosed(bot, d) && !canOpen(bot, d));
+                const col = climb.leg;
+                if (climb.way === 'up' || start.y > col.top) {
+                    for (const y of [col.top + 1, col.top + 2]) {
+                        over.push({ x: col.x, y, z: col.z, kind: 'trapdoor' });
+                    }
+                }
+                const locked = over.find(d => isClosed(bot, d) && !canOpen(bot, d) && /_trapdoor$|_door$|_fence_gate$/.test(blockName(bot, d)));
                 if (locked) {
                     const to = { x: locked.x, y: locked.y, z: locked.z };
                     return { ok: false, step: k + 1, total, from: { ...start }, to, cause: { kind: 'door', name: locked.kind, ...to, state: 'closed' },
@@ -220,12 +255,31 @@ export async function dryScan(bot, waypoints, options = {}) {
             }
             // F1: onto a ladder: the cell where the bot stands to climb it, never a cell in the air
             const target = standCell(bot, goalWp);
+            // F10: a closed door, gate or trapdoor of the hop that the bot can open is passable (the walk opens it, F8):
+            // the hop is searched from the cell after it (the side of a door or gate away from the start; after a
+            // trapdoor nothing is searched)
+            const passable = hop.passes.map(i => list[i]).find(d => isClosed(bot, d) && canOpen(bot, d));
+            if (passable) {
+                const state = doorState(bot, passable);
+                const sides = state ? doorSides(state) : null;
+                if (!sides) {
+                    start = { x: target.x, y: target.y, z: target.z };
+                    continue;
+                }
+                const far = sides.reduce((a, b) => (Math.hypot(b.x - start.x, b.z - start.z) > Math.hypot(a.x - start.x, a.z - start.z) ? b : a));
+                // the cell beyond it may be a step lower (the descent of the base)
+                start = { x: far.x, y: readFree(bot, far) ? (readFree(bot, { ...far, y: far.y - 1 }) ? far.y - 1 : far.y) : far.y, z: far.z };
+            }
+            if (start.x === target.x && start.y === target.y && start.z === target.z) {
+                continue; // a hop from a cell to the same cell is no hop: the next real hop is searched (and named)
+            }
             const length = Math.hypot(target.x - start.x, target.y - start.y, target.z - start.z);
             const radius = Math.ceil(DRY_SCAN_RULES.radius + DRY_SCAN_RULES.radiusPerBlock * length);
             const goal = new goals.GoalNear(target.x, target.y, target.z, 1);
             let status;
             try {
-                status = await searchHop(bot, movements, start, goal, k === 0 && atBot, timeout, radius);
+                const left = until - Date.now();
+                status = left <= 0 ? null : await searchHop(bot, movements, start, goal, k === 0 && atBot && !passable, Math.min(timeout, left), radius);
             } catch (err) {
                 console.warn('Routes pack: the dry scan of a hop failed:', err?.message ?? err);
                 status = null;
@@ -234,7 +288,7 @@ export async function dryScan(bot, waypoints, options = {}) {
                 return { ok: false, step: k + 1, total, from: start, to: null, cause: { kind: 'interrupted' }, text: '' };
             }
             if (status === 'noPath') {
-                const named = hop.passes.length > 0 ? list[hop.passes[0]] : goalWp;
+                const named = !passable && hop.passes.length > 0 ? list[hop.passes[0]] : goalWp;
                 const to = { x: named.x, y: named.y, z: named.z };
                 const locked = isOpenableWaypoint(named) && isClosed(bot, named) && !canOpen(bot, named);
                 const cause = locked ? { kind: 'door', name: named.kind, x: to.x, y: to.y, z: to.z, state: 'closed' }

@@ -828,14 +828,16 @@ export function reserveDoor(bot, door, ms) {
 }
 
 /**
- * v0.1.4.11 (I8): ends the reservation of an openable (of every one without `door`). Never throws.
+ * v0.1.4.11 (I8): ends the reservation of an openable (of every one without `door`); with `options.passed` (F12)
+ * the service notes it as passed and closes it by its rules. Never throws.
  * @param {object} bot
  * @param {{x,y,z}} [door]
+ * @param {{passed?: boolean}} [options]
  */
-export function releaseDoor(bot, door) {
+export function releaseDoor(bot, door, options = {}) {
     try {
         const service = bot && typeof bot === 'object' ? services.get(bot) : null;
-        service?.release(door);
+        service?.release(door, options);
     } catch {
         // nothing reserved
     }
@@ -953,9 +955,9 @@ export function createDoorService(bot, ctx = {}, options = {}) {
             }
         },
 
-        release(door) {
+        release(door, options = {}) {
             try {
-                watch.release(door);
+                watch.release(door, { ...(options ?? {}), now: clock.now() });
             } catch {
                 // nothing reserved
             }
