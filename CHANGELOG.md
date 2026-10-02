@@ -6,6 +6,36 @@ This fork is based on [Mindcraft](https://github.com/mindcraft-bots/mindcraft) `
 
 Each release lists new settings and feature flags with their default value.
 
+## [0.1.4.11] - unreleased
+
+"Navigation and words": every failure text names the cause and the next step, a shaft from inside the
+mine, the tunnel accepted where you stand, the open sky, a place from one sentence, routes walked by the
+path search.
+
+### Added
+
+- **A shaft from inside** (`mine_from_inside`): in the room or at a tunnel end of a known mine, `!mineOre("diamond", 8, true)` digs a shaft down from where the bot stands, with ladders, to the level of the ore: `I dig a shaft down from here to level -58 for diamond.` The new level is a mine of the bot under its parent (`!mines` lists it as `bot:-58 (from the mine "mine")`); the way in and out goes through the parent; `!forgetMine` of the parent forgets it too.
+
+### Changed
+
+- **Every failure text of a route names its cause**: `I could not follow the route "mine" at step 6 of 12: the door at (9, 41, 43) is closed and I could not open it.`, a blocked gate, a ladder gap with the ladders needed, no way between two points, stuck at a point. "Show me the way again." is gone.
+- **The tunnel is accepted where you stand**: 1 or 2 wide (the width is said), measured from the bot's cell or from where you stand (`I measured the tunnel from where you stand: ...`), backwards when the bot stands at the rock face. A refusal names the first check that failed: `I stand in no tunnel: it is open on 3 sides at (10, 30, 6). Stand in the tunnel and say "dig here".`, the width ahead, the open ceiling, a corridor shorter than 4. `!mineOre` in an unsaved tunnel measures it first.
+- **The new mine underground**: `I am underground, not in a mine I know. A new mine starts from the surface: say "leave the mine" or "go to the surface" first.`; inside a known mine with the switch off, the text names the setting.
+- **`!goToSurface` means the open sky**: out of a building through its door or gate (`I went out through the door at (10, 67, 52) and stand under the open sky at (8, 67, 50).`), up from a mine by the way of the mining pack, else the nearest ground under open sky within 16 blocks; never the roof, never digging. `I find no way to the open sky from (x, y, z).` when there is none.
+- **The dig refusal names the call**: `I do not write code for digging. From here: !mineOre("iron", 8).` with the call that fits where the bot stands (in a tunnel, in a mine, on the surface, underground with no mine).
+- **`!givePlayer`** says `Gave 44 wheat to MartyByrde2.` or `MartyByrde2 took 40 of 44 wheat; 4 lie on the ground at (x, y, z).`, never "Discarded".
+- **A wrong number of arguments** answers with the form: `!rememberRoute takes 1 argument (name): !rememberRoute("name").`
+- **Two lines in both profiles**: `Answer a question with words, not with a command, and never stop a running command for a question.` and `A rule about a place names a place you saved; say "this is the aviary" first when it is not saved.` The descriptions of `!newAction`, `!goToMine`, `!leaveMine` and `!rememberTunnel` are shorter; the prompt with every switch on is 16,994 characters.
+- **The scorecard** counts the failure texts of a session: `Failure texts, <log>: <text> N, ...`.
+
+### Settings
+
+| Key | Default |
+|---|---|
+| `mine_from_inside` | `false` |
+
+The texts, the tunnel measurement and the surface are corrections without a switch.
+
 ## [0.1.4.10] - 2026-10-02
 
 "Goals": the bot keeps the job you gave it, the path search climbs ladders by itself, the item reflex
