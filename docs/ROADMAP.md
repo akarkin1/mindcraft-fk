@@ -1,6 +1,6 @@
 # Roadmap
 
-State of 2026-09-30. This file lists what is planned for the fork and in which order. `CHANGELOG.md` lists what is released.
+State of 2026-10-02. This file lists what is planned for the fork and in which order. `CHANGELOG.md` lists what is released.
 
 Rules that hold for every release:
 
@@ -15,8 +15,9 @@ Rules that hold for every release:
 |---|---|---|
 | 0.1.4.8 | Stability | Released |
 | 0.1.4.9 | The mine, the routes of the player, and the model comparison | Released |
-| 0.1.4.10 | Goals | Planned |
-| 0.1.4.11 | Understanding and watching | Planned, both trials passed |
+| 0.1.4.10 | Goals | Released |
+| 0.1.4.11 | Navigation and words | Planned, `docs/releases/0.1.4.11/PLAN.md` |
+| 0.1.4.12 | Understanding and watching | Planned, both trials passed |
 | Later | See the backlog | Not decided |
 
 ## 0.1.4.9 The mine, the routes of the player, and the model comparison
@@ -63,7 +64,11 @@ Also in 0.1.4.10, from the play tests of 0.1.4.9:
 | A play scenario with the model | `npm run test:play`: the first ten minutes with the chat model of the profile, on the owner's machine only, about 10 cents with Luna. The only test in which the model talks. |
 | Chat model | Decided from the routing check with Luna and Haiku: accuracy, time per answer, cost. |
 
-## 0.1.4.11 Understanding and watching
+## 0.1.4.11 Navigation and words
+
+Decided on 2026-10-02 from the two play sessions of that day (Luna and Haiku on v0.1.4.9): the same things went wrong with both models, and the cause was the texts the model reasons from and three rules of the code, not the model. The plan is `docs/releases/0.1.4.11/PLAN.md`: every failure text names the cause and the next step; a shaft from the room or a tunnel end; the tunnel accepted where the owner stands; the surface means open sky; a place from one sentence, with the kind the bot concludes from the scan of the area; routes as waypoints walked by the path search, a dry scan before the first step; no digging toward the player. "Understanding and watching" moves to 0.1.4.12.
+
+## 0.1.4.12 Understanding and watching
 
 ### Part A: the bot picks better examples
 
