@@ -663,7 +663,23 @@ function digPlace(agent, prompt, last) {
         const where = agent.whereAmI();
         if (!where || typeof where !== 'object')
             return null;
-        const mine = where.mine ?? null;
+        let mine = where.mine ?? null;
+        if (mine === null) {
+            // F17 (the full set, dig_code_refused): whereAmI().mine is null without mine_routes, but the mine store
+            // knows the mine; a bot in the tunnel of a known mine must be told !mineOre, never "leave the mine"
+            try {
+                const pack = agent.work_packs?.mining;
+                const mines = agent._workStores?.()?.mines;
+                const pos = agent.bot?.entity?.position;
+                if (typeof pack?.mineAt === 'function' && mines && pos) {
+                    const at = pack.mineAt(mines.list(agent.bot.game?.dimension), { x: pos.x, y: pos.y, z: pos.z });
+                    if (at?.mine)
+                        mine = { name: at.mine.name ?? null, tunnel: Number.isInteger(at.tunnel) ? at.tunnel : null };
+                }
+            } catch (error) {
+                console.warn('Could not read the mine store for the refusal:', error);
+            }
+        }
         return {
             inMine: mine !== null,
             inTunnel: mine !== null && mine.tunnel !== null && mine.tunnel !== undefined,

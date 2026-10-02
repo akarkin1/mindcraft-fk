@@ -59,3 +59,13 @@ W91 passes at the first run. The others, worst first:
 ## The gate, 2026-10-03
 
 The journey group of twenty (W59, W80 to W98) in the work folder: 18 of 20 at the first run (F15, F16), then W97 and W98 pass alone with the fixes; every journey of this release passed at least twice on the real server after the last change of its part. The fresh clone: see the verification below.
+
+## Found by the full world set in the fresh clone, 2026-10-03
+
+The set at 3276e4d: 89 scenario lines before the time limit of the run (every old scenario), 15 failed.
+
+| Id | Finding | Where | Decision | Owner |
+|---|---|---|---|---|
+| F17 | `!newAction("dig...")` at the end of the tunnel of a known mine answered the row of "underground, no mine" (`say "leave the mine", then !mineOre("iron", 8, true)`): `whereAmI().mine` is null without `mine_routes`, so the refusal did not see the mine. | dig_code_refused | The refusal reads the mine store itself when `whereAmI` gives no mine: in a tunnel of a known mine the row is `!mineOre("iron", 8)`. | lead, done |
+| F18 | W89 pen_gate_safe failed at step 1 once more (the gate open 1.4 blocks behind the stopped bot, 4 of its last 6 runs pass): a race between the scan's walk in, the service's close behind the bot, the path search opening the gate on the way out and the stop. | pen_gate_safe | A debug line behind `MC_DOOR_DEBUG` prints every decision of the service for a gate within 3 blocks; the failing run read, the cause fixed with a unit test. | N (E4) |
+| F19 | Thirteen old scenarios expect texts and walks of v0.1.4.10: nine the old answer of `!rememberArea` (shelter, night, protected_house, scan, creeper, sleep, creeper_standing, farm_scan), route_broken the I3 text with "Show me the way again", and W31, W38, W57 (part A) a `!followPlayer` that keeps the bot trying in a sealed room, which now ends with the N2 text as W97 wants. | the set | The nine and route_broken accept the P1 and W1 texts; the three stuck scenarios give `!goToCoordinates` instead of the follow, so that the reflex they test keeps its trigger. | T3 |
