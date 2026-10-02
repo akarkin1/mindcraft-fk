@@ -153,7 +153,7 @@ export const queryList = [
     },
     {
         name: "!craftable",
-        description: "Get the craftable items with the bot's inventory.",
+        description: "List what could be crafted now; crafts nothing.",
         perform: function (agent) {
             let craftable = world.getCraftableItems(agent.bot);
             let res = 'CRAFTABLE_ITEMS';
