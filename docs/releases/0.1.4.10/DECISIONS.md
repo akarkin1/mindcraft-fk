@@ -38,6 +38,30 @@ journeys (W59, W80 to W84, W85 to W90) pass, 12 of 12 in 1339 s, every climb smo
 in a follow or a walk except the owner's second shaft (its lowest ladder is out of jump reach; the fallback
 places the ladders). `npm test`: 6665 tests, 6664 pass, 0 failures, 1 skipped (Windows only).
 
+## Verification in a fresh clone, 2026-10-02
+
+Clone of `hotfix/goals` at 0b68189 into a new folder, `npm install` (547 packages, the patch of
+`mineflayer-pathfinder` applied), Node 22, the server 1.21.8 of the cloud:
+
+| Step | Result |
+|---|---|
+| `npm test` | 6665 tests, 6664 pass, 0 failures, 1 skipped (Windows only) |
+| `npm run test:e2e` | 17 of 17 in 138 s |
+| `npm run test:world`, the full set | 84 of 85 in 6559 s; `pen_gate_safe` failed, and failed again alone: finding T3-9 |
+
+After the fix of T3-9 (d74e99f), the same clone pulled to that head:
+
+| Step | Result |
+|---|---|
+| `npm test` | 6671 tests, 6670 pass, 0 failures, 1 skipped |
+| `npm run test:e2e` | 17 of 17 in 143 s |
+| `node tests/world/run.js journeys` | 12 of 12 in 1340 s (owner_base, first_minutes, first_mine, come_here_floors, chest_and_torches, ten_minutes, job_comes_back, blocker_steps, idle_list, ladders_native, pen_gate_safe, two_floors) |
+| `pen_gate_safe` in the work folder with the fix | 3 of 3 |
+
+The 84 scenarios of the full set that passed at 0b68189 do not touch the changed rule (the door service closes
+a gate the bot stands beside); the journey group, which holds every scenario with a pen gate, is the gate of the
+release and passed at d74e99f.
+
 ## The chat model, from the routing check of the owner (2026-10-01)
 
 The same 154 sentences, `profiles/claude.json`, every part on, on the owner's machine:
