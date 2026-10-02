@@ -279,3 +279,17 @@ the walks. Changes in the patch (`index.js`, `movements.js`) and `skills.js`:
 the slide before walking off). W88 C0 (up the second shaft of the owner's base, whose lowest ladder is 2
 blocks above the floor): no jump reaches it; the bot needs ladders in the bag (F22b), so the journey gives it 8
 ladders as W84 does.
+
+### Rounds 5 to 12 of part P on the server (E2)
+
+All four of `first_mine`, `ladders_native`, `first_minutes`, `come_here_floors` pass twice in a row (rounds
+11 and 12) with no fallback line in a follow or a walk. Fixes: no hold on the bottom rung when there is floor
+right below; the bot walks to the middle of the cell before it drops into a trapdoor; never a sneaking click
+(with an item in the hand it used the item, F11); a door, gate or trapdoor that opens or closes near the path
+re-plans it (the player closed the trapdoor during a climb); the last step out of a trapdoor cell is a jump,
+never in a ladder cell; the follow's fallback clock runs only while the player stands still; `footOf` of the
+mining ladder module also takes the floor under a column up to 3 blocks below, so the fallback places the
+missing ladders of the owner's second shaft (its lowest ladder is out of jump reach; the native search refuses
+it on purpose, and that one fallback line is left out of the no-fallback check). The text of a pass that ran
+out of time while the bot still arrived is no longer logged (`ladderTowards`, `followPlayer`).
+`gjp_pathfinder`: 28 tests.
