@@ -299,6 +299,9 @@ export const DOOR_SERVICE_RULES = Object.freeze({
  *   passed is noted, whoever opened it; one the bot did not pass is never closed (the player who opened a
  *   trapdoor and went down it keeps it open), except a gate of a pen or a farm (the bot came within 1.5)
  *   and the openables of the start.
+ * - v0.1.4.10, T3-5 and T3-9: a gate is closed as soon as the feet of the bot are out of its cell, when the
+ *   bot passed it or when the bot has stopped beside it (the pass is missed when the gate was seen closed
+ *   in between). Doors and trapdoors keep the 2 blocks.
  * - Up to 3 attempts, 1 s apart; forgotten after 60 s, 16 blocks away, or when seen closed.
  */
 /**
@@ -472,7 +475,11 @@ export class DoorWatch {
             // v0.1.4.10 (T3-5): a gate the bot went through is closed as soon as its feet are out of the gate
             // cell, at any distance (after "come here" the bot stopped 1 block past it and the animals walked out).
             const passed = entry.why === 'gate' ? entry.near || entry.passed : entry.passed;
-            const gateBehind = door.kind === 'gate' && entry.passed && !feetInCell(botPos, door);
+            // v0.1.4.10 (T3-9): the pass through a gate is missed when the gate is seen closed in between (the
+            // service's own click and the path search opening it again while the bot walks through): the bot
+            // then stands 1.4 blocks past an open gate that nobody closes. A noted gate the bot has stopped
+            // beside, its feet out of the gate cell, is closed too; while it walks the pass still decides.
+            const gateBehind = door.kind === 'gate' && !feetInCell(botPos, door) && (entry.passed || input.moving !== true);
             const away = entry.why === 'start' ? d > 0.8 : gateBehind || (passed && d >= DOOR_SERVICE_RULES.pastDistance);
             if (away) {
                 out.push({ ...door, why: entry.why, distance: d });

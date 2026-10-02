@@ -87,12 +87,71 @@ describe('T3-5: DoorWatch, a gate the bot went through', () => {
         assert.equal(look(w, 7200, at(612.5, 2.5), { ...DOOR, open: true }).length, 1);
     });
 
-    test('a gate the bot opened but did not pass: never closed (F21 stays)', () => {
+    test('a gate the bot opened but did not pass: not closed while the bot walks (F21 stays)', () => {
         const w = new L.DoorWatch();
         look(w, 6000, at(612.5, 2.5), { ...GATE, open: false });
         look(w, 6300, at(612.5, 2.5), { ...GATE, open: true });
         assert.deepEqual(look(w, 6600, at(611.5, 2.5), { ...GATE, open: true }), []);
         assert.deepEqual(look(w, 6900, at(612.5, 1.0), { ...GATE, open: true }), []);
+    });
+});
+
+// T3-9 (the fresh-clone run of 2026-10-02, W89 twice): the pass was missed because the gate was seen closed in
+// between (the service clicked it, the path search opened it again and the bot walked through); the bot stood
+// 1.4 blocks past the open gate and nothing closed it. A noted gate the bot has stopped beside, its feet out of
+// the cell, is closed; while the bot walks, only a tracked pass closes it before the 2 blocks.
+describe('T3-9: DoorWatch, a gate seen closed in the middle of the pass', () => {
+    // the bot in the pen, the gate open from its way in and noted; the service clicks it while the bot heads for
+    // it and the click succeeds (the note and the side tracking are dropped); the path search opens the gate
+    // again, the bot walks through while the service is busy, and the next look sees it out, 1.4 from the centre
+    function missedPass() {
+        const w = new L.DoorWatch();
+        look(w, 6000, at(612.5, 6.5), { ...GATE, gated: true, open: true });
+        look(w, 6300, at(612.5, 5.2), { ...GATE, gated: true, open: true });
+        assert.equal(w.noted(GATE)?.why, 'gate');
+        assert.equal(w.attempt(GATE, true, 6600), 'closed');
+        return w;
+    }
+
+    test('the bot stops 1.4 past the gate opened again: not closed while it still walks, closed once it stands', () => {
+        const w = missedPass();
+        assert.deepEqual(look(w, 6900, at(611.5, 3.5), { ...GATE, gated: true, open: true }, { moving: true }), [], 'walking, no pass seen');
+        assert.equal(w.noted(GATE)?.why, 'gate', 'noted again by coming near');
+        const out = look(w, 8500, at(611.5, 3.5), { ...GATE, gated: true, open: true }, { moving: false });
+        assert.equal(out.length, 1);
+        assert.deepEqual({ x: out[0].x, z: out[0].z }, { x: 612, z: 4 });
+    });
+
+    test('the bot walks on, 2 blocks past the gate: closed by the rule of a gate it came near', () => {
+        const w = missedPass();
+        look(w, 6900, at(611.5, 3.5), { ...GATE, gated: true, open: true });
+        assert.equal(look(w, 7200, at(612.5, 2.4), { ...GATE, gated: true, open: true }).length, 1);
+    });
+
+    test('a gate of a pen the bot only came near and stands beside, out of its cell: closed', () => {
+        const w = new L.DoorWatch();
+        look(w, 6000, at(612.5, 6.5), { ...GATE, gated: true, open: true });
+        look(w, 6300, at(612.5, 5.2), { ...GATE, gated: true, open: true });
+        assert.deepEqual(look(w, 6600, at(612.5, 5.8), { ...GATE, gated: true, open: true }, { moving: true }), [], 'walking, 1.3 away');
+        assert.equal(look(w, 8200, at(612.5, 5.8), { ...GATE, gated: true, open: true }, { moving: false }).length, 1, 'standing, 1.3 away');
+    });
+
+    test('standing in the gate cell: never', () => {
+        const w = missedPass();
+        look(w, 6700, at(612.5, 4.2), { ...GATE, gated: true, open: true });
+        assert.deepEqual(look(w, 8500, at(612.5, 4.4), { ...GATE, gated: true, open: true }, { moving: false }), []);
+    });
+
+    test('a door the bot stands beside, 1.4 past it: the 2 blocks stay', () => {
+        const w = walkOut(DOOR);
+        look(w, 6600, at(612.5, 4.5), { ...DOOR, open: true });
+        assert.deepEqual(look(w, 8500, at(611.5, 3.5), { ...DOOR, open: true }, { moving: false }), []);
+    });
+
+    test('another player within 2 blocks still holds the gate the bot stands beside', () => {
+        const w = missedPass();
+        look(w, 6700, at(612.5, 4.2), { ...GATE, gated: true, open: true });
+        assert.deepEqual(look(w, 8500, at(611.5, 3.5), { ...GATE, gated: true, open: true }, { moving: false, players: [at(613.5, 3.5)] }), []);
     });
 });
 
