@@ -10,11 +10,11 @@
 // Every executing function never throws.
 import { distanceToBox, isBox } from '../home/box_math.js';
 import { botPos, clockOf, logTo, noteProgress } from '../home/context.js';
-import { releaseDoor, reserveDoor } from '../home/doors.js';
+import { doorState, openDoor, releaseDoor, reserveDoor } from '../home/doors.js';
 import { goals, gotoGoal, isNear, makeMovements, walkNear } from '../home/motion.js';
 import { OPENABLE_KINDS, nearCell, routeEnds, trapdoorOverLadder } from './route_logic.js';
 import { footOf } from '../mining/ladder.js';
-import { REPLAY_RULES, ladderGap, ladderIntact, ladderLeg, legCause } from './replay.js';
+import { REPLAY_RULES, besideLadder, ladderGap, ladderIntact, ladderLeg, legCause } from './replay.js';
 import { readBlock } from './trail.js';
 import { TEXTS, emptyRouteText, routeDoneText, routeFailedText, routeLabel, routeStoppedText, routeTimeText } from './texts.js';
 
@@ -303,6 +303,35 @@ export function ladderStand(bot, wp) {
 }
 
 /**
+ * The cell a hop of the path search aims at for a waypoint (fix rounds F1 and F7): for a ladder waypoint the cell
+ * where the bot stands to climb it (ladderStand); for a waypoint in the open top of a column of ladders (no floor:
+ * its cell is free and a ladder is under it, as the cell of the room floor a shaft was dug from) the free cell beside
+ * it with ground, nearest to the bot (besideLadder of replay.js), so that no walk ends in the hole and falls down the
+ * shaft; else the waypoint. Never throws.
+ * @param {object} bot
+ * @param {object} wp
+ * @returns {{x: number, y: number, z: number}}
+ */
+export function standCell(bot, wp) {
+    if (wp?.ladder) {
+        return ladderStand(bot, wp);
+    }
+    try {
+        const here = readBlock(bot, wp.x, wp.y, wp.z);
+        const under = readBlock(bot, wp.x, wp.y - 1, wp.z);
+        if (here && here.solid === false && under?.name === 'ladder') {
+            const beside = besideLadder(bot, { x: wp.x, y: wp.y, z: wp.z });
+            if (beside) {
+                return beside;
+            }
+        }
+    } catch {
+        // the waypoint as it is
+    }
+    return { x: wp.x, y: wp.y, z: wp.z };
+}
+
+/**
  * Whether a climb can be done (fix round F1, the dry scan): down, the column holds its ladders with at most
  * REPLAY_RULES.fallGap missing in a row (ladderIntact); up, every ladder of the column and, under a column that ends
  * 2 or more blocks above the floor, the cells between the floor and its lowest ladder, which enterColumn fills with
@@ -357,6 +386,30 @@ export function ladderCheck(bot, leg, way) {
     } catch {
         return { ok: true, gap: 0, y: null, carried };
     }
+}
+
+// F8: opens the closed doors and gates of a list that a hand reaches from where the bot stands (4.5 blocks from the
+// eyes). True when one of them was opened, or none was closed. Never throws.
+async function openInReach(bot, ctx, doors, clock) {
+    let ok = true;
+    for (const door of doors) {
+        try {
+            const state = doorState(bot, door);
+            if (!state || state.open === true) {
+                continue;
+            }
+            const p = botPos(bot);
+            const eye = p ? Math.hypot(state.x + 0.5 - p.x, state.y + 0.5 - (p.y + 1.62), state.z + 0.5 - p.z) : Infinity;
+            if (eye > REPLAY_RULES.reach) {
+                ok = false;
+                continue;
+            }
+            ok = (await openDoor(bot, state, { ctx, now: clock.now, wait: clock.wait })) || false;
+        } catch {
+            ok = false;
+        }
+    }
+    return ok;
 }
 
 // I8: reserves an openable with ctx.doors.reserve, else with the running door service of the bot
@@ -486,9 +539,12 @@ export async function walkWaypoints(bot, ctx, waypoints, options = {}) {
                 continue;
             }
             // F1: onto a ladder from where the bot stands to climb it (its entry, or its foot on the floor)
-            const target = goal.ladder ? ladderStand(bot, goal) : goal;
+            const target = standCell(bot, goal);
+            // F8: the doors and gates the hop passes; the path search opens a closed one only on a level step, never
+            // the double door of the room that stands one block above the first step of the descent
+            const doors = hop.passes.map(i => list[i]).filter(d => d.kind === 'door' || d.kind === 'gate');
             let r = { ok: true, reason: null };
-            if (!nearCell(botPos(bot), target, WAYPOINT_RULES.near)) {
+            for (let attempt = 0; attempt < 2 && !nearCell(botPos(bot), target, WAYPOINT_RULES.near); attempt++) {
                 let movements;
                 try {
                     movements = makeMovements(bot, { dig: false, doors: true });
@@ -496,10 +552,33 @@ export async function walkWaypoints(bot, ctx, waypoints, options = {}) {
                     return result(false, 'error', routeFailedText(route, k + 1, total, feetOf(bot), { kind: 'stuck', at: feetOf(bot) }), k + 1,
                         { kind: 'stuck', at: feetOf(bot) });
                 }
+                if (attempt === 0) {
+                    await openInReach(bot, ctx, doors, clock);
+                } else {
+                    // the hop failed with a closed door or gate on it: to the door, open it, the hop once more
+                    const shut = doors.find(d => doorState(bot, d)?.open === false);
+                    if (!shut || clock.now() > limit) {
+                        break;
+                    }
+                    const p = botPos(bot);
+                    const eye = p ? Math.hypot(shut.x + 0.5 - p.x, shut.y + 0.5 - (p.y + 1.62), shut.z + 0.5 - p.z) : Infinity;
+                    if (eye > REPLAY_RULES.reach) {
+                        await gotoGoal(bot, new goals.GoalNear(shut.x, shut.y, shut.z, 2), { movements, timeoutMs: Math.max(1000, Math.min(20000, limit - clock.now())), clock });
+                        if (bot.interrupt_code) {
+                            return stopped(k);
+                        }
+                    }
+                    if (!(await openInReach(bot, ctx, [shut], clock))) {
+                        break;
+                    }
+                }
                 const ms = Math.max(1000, Math.min(WAYPOINT_RULES.hopMs, limit - clock.now()));
                 r = await gotoGoal(bot, new goals.GoalNear(target.x, target.y, target.z, WAYPOINT_RULES.near), { movements, timeoutMs: ms, clock });
                 if (r.reason === 'interrupted' || bot.interrupt_code) {
                     return stopped(k);
+                }
+                if (doors.length === 0) {
+                    break;
                 }
             }
             if (!nearCell(botPos(bot), target, WAYPOINT_RULES.near)) {

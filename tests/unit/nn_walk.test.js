@@ -393,3 +393,73 @@ describe('fix round F1: a ladder is climbed by the ladder leg, its foot on the f
         assert.deepEqual(P.ladderStand(s.bot, top), { x: 2, y: 61, z: -3 });
     });
 });
+
+describe('F8: out through the double door, one block above the first step of the descent', () => {
+    // the room at y 41 (floor 40), x 0..4, z -2..2, closed to the east by a stone wall at x 4 with a closed oak door at
+    // (4, 41, 0) facing west; the descent: step 1 at (5, 40, 0), step 2 at (6, 39, 0), cut 3 high. The path search of the
+    // fake has no move for the jump up into the closed door: a goal in the room fails while the door is closed.
+    function doorScene() {
+        const world = makeWorld();
+        world.fill(0, 41, -2, 4, 43, 2, 'air');
+        world.fill(4, 41, -2, 4, 43, 2, 'stone');
+        world.set(4, 41, 0, 'oak_door', { facing: 'west', half: 'lower', hinge: 'left', open: false, powered: false });
+        world.set(4, 42, 0, 'oak_door', { facing: 'west', half: 'upper', hinge: 'left', open: false, powered: false });
+        world.fill(5, 40, 0, 5, 42, 0, 'air');
+        world.fill(6, 39, 0, 6, 41, 0, 'air');
+        const bot = makeMiningBot({ world, pos: [6.5, 39, 0.5] });
+        const clock = makeClock(bot);
+        const clicks = [];
+        bot.activateBlock = async (block) => {
+            const p = block.position;
+            clicks.push([p.x, p.y, p.z]);
+            for (const y of [p.y, p.y + 1]) {
+                if (world.nameAt(p.x, y, p.z) === 'oak_door') world.set(p.x, y, p.z, 'oak_door', { ...world.propsAt(p.x, y, p.z), open: world.propsAt(p.x, y, p.z).open !== true });
+            }
+        };
+        const gotos = [];
+        bot.pathfinder.goto = async (goal) => {
+            gotos.push([goal.x, goal.y, goal.z]);
+            if (goal.x <= 3 && world.propsAt(4, 41, 0).open !== true) {
+                const err = new Error('No path to the goal!');
+                err.name = 'NoPath';
+                throw err;
+            }
+            bot.entity.position = v(goal.x + 0.5, goal.y, goal.z + 0.5);
+        };
+        bot.pathfinder.getPathFromTo = function* (m, start, goal) {
+            yield { result: { status: start.x >= 4 && goal.x <= 3 && world.propsAt(4, 41, 0).open !== true ? 'noPath' : 'success', path: [] } };
+        };
+        const route = { name: 'mine', legs: [
+            { kind: 'walk', from: { x: 6, y: 39, z: 0 }, to: { x: 5, y: 40, z: 0 } },
+            { kind: 'door', kind2: 'door', name: 'oak_door', x: 4, y: 41, z: 0, from: { x: 5, y: 40, z: 0 }, to: { x: 3, y: 41, z: 0 } },
+            { kind: 'walk', from: { x: 3, y: 41, z: 0 }, to: { x: 1, y: 41, z: 0 } },
+        ] };
+        const ctx = { now: clock.now, log: () => {}, doors: { reserve: () => true, release: () => {} } };
+        return { world, bot, clock, ctx, clicks, gotos, waypoints: P.waypointsOf(route) };
+    }
+
+    test('the dry scan: a door blocked behind is named with the second form', async () => {
+        const s = doorScene();
+        s.world.set(3, 41, 0, 'stone'); // blocked behind: it cannot be passed
+        assert.equal((await P.dryScan(s.bot, s.waypoints, { to: { x: 1, y: 41, z: 0 } })).text,
+            'I find no way from (5, 40, 0) to the door at (4, 41, 0): it is closed and I cannot open it.');
+    });
+
+    test('the walk opens the door before the hop through it and reaches the room', async () => {
+        const s = doorScene();
+        const r = await P.walkWaypoints(s.bot, s.ctx, s.waypoints, { to: { x: 1, y: 41, z: 0 }, clock: s.clock });
+        assert.equal(r.ok, true, r.text);
+        assert.deepEqual(s.clicks, [[4, 41, 0]]);
+        assert.deepEqual([Math.floor(s.bot.entity.position.x), Math.floor(s.bot.entity.position.y), Math.floor(s.bot.entity.position.z)], [1, 41, 0]);
+    });
+
+    test('a door out of reach when the hop fails: to the door, open it, the hop once more', async () => {
+        const s = doorScene();
+        s.bot.entity.position = v(12.5, 39, 0.5);
+        s.world.fill(7, 39, 0, 12, 41, 0, 'air');
+        const list = [{ x: 12, y: 39, z: 0, kind: 'start', name: 'mine' }, ...s.waypoints.slice(2)];
+        const r = await P.walkWaypoints(s.bot, s.ctx, list, { to: { x: 1, y: 41, z: 0 }, clock: s.clock });
+        assert.equal(r.ok, true, r.text);
+        assert.deepEqual(s.clicks, [[4, 41, 0]]);
+    });
+});

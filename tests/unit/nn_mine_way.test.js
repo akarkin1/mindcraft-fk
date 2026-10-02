@@ -185,3 +185,81 @@ describe('walkBack with routes_by_search on', () => {
         assert.equal(s.calls.walkRoute[0].options.reverse, true);
     });
 });
+
+describe('F7: out of a shaft dug from the floor of the room', () => {
+    // the room of the parent at y 41 (floor y 40), x 0..6, z -2..2, its shaft at (2, -2) from the grass; the child's shaft
+    // dug from the floor cell (5, 41, 0) where the parent's way ended: ladders facing north from y 40 (the floor) down to
+    // y 20, the exit cell (5, 41, 1) beside its top. The path search of the fake: a walk that aims at the open top of the
+    // shaft falls into it (as the real one did, stuck two rungs under the top).
+    function shaftScene() {
+        const world = makeWorld({ groundY: 60 });
+        world.fill(0, 41, -2, 6, 43, 2, 'air');
+        world.fill(2, 44, -2, 2, 60, -2, 'air');
+        world.fill(2, 41, -2, 2, 59, -2, 'ladder', { facing: 'south' });
+        world.fill(5, 20, 0, 5, 40, 0, 'ladder', { facing: 'north' });
+        const bot = makeMiningBot({ world, pos: [5.5, 20, 0.5] });
+        const clock = makeClock(bot);
+        const parent = {
+            name: 'mine', source: 'player', dimension: 'overworld', entrance: { x: 2, y: 61, z: -3 }, level: 41, tunnels: [],
+            room: { center: { x: 3, y: 41, z: 0 }, chest: null, table: null, furnace: null },
+            route: [
+                { kind: 'walk', from: { x: -3, y: 61, z: 2 }, to: { x: 2, y: 61, z: -3 } },
+                { kind: 'ladder', x: 2, z: -2, top: 59, bottom: 41, face: 'south', entry: { x: 2, y: 61, z: -3 } },
+                { kind: 'walk', from: { x: 2, y: 41, z: -1 }, to: { x: 5, y: 41, z: 0 } },
+            ],
+        };
+        // the record of part M (W92): top the highest rung at the floor, entry the floor cell beside it
+        const child = { name: null, source: 'bot', parent: 'mine', entrance: { x: 5, y: 41, z: 0 }, level: 20, base: { x: 5, y: 20, z: 0 },
+            direction: 'north', end: { x: 5, y: 20, z: -2 }, tunnel: [{ x: 5, y: 20, z: -2 }], tunnels: [], dimension: 'overworld',
+            route: [{ kind: 'ladder', x: 5, z: 0, top: 40, bottom: 20, face: 'north', entry: { x: 5, y: 41, z: 1 } }] };
+        const ctx = { settings: { routes_by_search: true, mine_routes: true }, now: clock.now, log: () => {}, areas: [],
+            mines: { parentOf: m => (m.parent === 'mine' ? parent : null) } };
+        ctx.routes = R.bindRoutes(bot, ctx, { list: () => [] }, null);
+        const gotos = [];
+        const goto = bot.pathfinder.goto.bind(bot.pathfinder);
+        bot.pathfinder.goto = async (g) => {
+            gotos.push([g.x, g.y, g.z]);
+            if (g.x === 5 && g.z === 0 && g.y >= 40) {
+                bot.entity.position = v(5.5, 39, 0.5); // into the hole
+                const err = new Error('Took too long');
+                err.name = 'Timeout';
+                throw err;
+            }
+            return goto(g);
+        };
+        const feet = () => [Math.floor(bot.entity.position.x), Math.floor(bot.entity.position.y + 0.01), Math.floor(bot.entity.position.z)];
+        return { world, bot, clock, ctx, child, parent, gotos, feet };
+    }
+
+    test('the parent\'s waypoint in the open top of the shaft is dropped; the climb ends on the exit cell', () => {
+        const s = shaftScene();
+        const list = W.mineWaypoints(s.ctx, s.child).map(w => [w.kind, w.x, w.y, w.z]);
+        assert.ok(!list.some(w => w[1] === 5 && w[3] === 0 && w[2] === 41), JSON.stringify(list));
+        assert.deepEqual(list.slice(-2), [['start', 5, 41, 1], ['ladder_foot', 5, 20, 0]]);
+    });
+
+    test('from the bottom with toParent: up the ladders, standing in the room', async () => {
+        const s = shaftScene();
+        const r = await W.wayOut(s.bot, s.ctx, s.child, { clock: s.clock, toParent: true });
+        assert.equal(r.ok, true, r.text);
+        assert.equal(r.text, 'I am back in the mine "mine" at (5, 41, 1).');
+        assert.deepEqual(s.feet(), [5, 41, 1], 'on the floor of the room beside the shaft, not in it');
+        assert.equal(s.bot.entity.onGround, true);
+    });
+
+    test('from the bottom to the surface: never a walk into the open top of the shaft', async () => {
+        const s = shaftScene();
+        const r = await W.wayOut(s.bot, s.ctx, s.child, { clock: s.clock });
+        assert.equal(r.ok, true, r.text);
+        assert.ok(!s.gotos.some(g => g[0] === 5 && g[2] === 0 && g[1] >= 40), JSON.stringify(s.gotos));
+        assert.deepEqual(s.feet(), [-3, 61, 2]);
+    });
+
+    test('standCell: a waypoint in the open top of a column is moved beside it', () => {
+        const s = shaftScene();
+        const c = R.standCell(s.bot, { x: 5, y: 41, z: 0, kind: 'end' });
+        assert.ok(!(c.x === 5 && c.z === 0), JSON.stringify(c));
+        assert.equal(c.y, 41);
+        assert.deepEqual(R.standCell(s.bot, { x: 3, y: 41, z: 0, kind: 'room' }), { x: 3, y: 41, z: 0 });
+    });
+});

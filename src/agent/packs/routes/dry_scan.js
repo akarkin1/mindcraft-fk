@@ -13,7 +13,7 @@ import { Vec3 } from 'vec3';
 import { botPos } from '../home/context.js';
 import { canOpen, doorState } from '../home/doors.js';
 import { goals, makeMovements } from '../home/motion.js';
-import { isOpenableWaypoint, ladderCheck, ladderHop, ladderStand, planHops } from './waypoints.js';
+import { isOpenableWaypoint, ladderCheck, ladderHop, ladderStand, planHops, standCell } from './waypoints.js';
 import { posText, routeLabel } from './texts.js';
 
 /** The numbers of the dry scan. */
@@ -219,7 +219,7 @@ export async function dryScan(bot, waypoints, options = {}) {
                 continue;
             }
             // F1: onto a ladder: the cell where the bot stands to climb it, never a cell in the air
-            const target = goalWp.ladder ? ladderStand(bot, goalWp) : goalWp;
+            const target = standCell(bot, goalWp);
             const length = Math.hypot(target.x - start.x, target.y - start.y, target.z - start.z);
             const radius = Math.ceil(DRY_SCAN_RULES.radius + DRY_SCAN_RULES.radiusPerBlock * length);
             const goal = new goals.GoalNear(target.x, target.y, target.z, 1);

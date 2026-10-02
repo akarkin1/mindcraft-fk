@@ -282,13 +282,15 @@ describe('I7: walkWaypoints(bot, ctx, waypoints, { from, to, clock, deadline })'
         assert.equal(r.step >= 1 && r.step <= r.total, true, `step ${r.step} of ${r.total}`);
     });
 
-    test('a hop through a closed door that fails: cause door, closed, and the W1 text', async () => {
+    test('a hop through a closed door that fails: cause door, blocked, and the W1 text', async () => {
+        // F8 (the lead): the walk opens a closed door it can reach before the hop, so a door whose far side is
+        // blocked fails as "blocked", not "closed"; the W1 text of a blocked openable
         const s = scene({ pos: [-0.5, 61, -2.5] });
         s.blocked.add(key(1, 61, -3));
         const r = await R.walkWaypoints?.(s.bot, s.ctx, s.waypoints, { to: ROOM, clock: s.clock });
         assert.equal(r?.ok, false);
-        assert.deepEqual(r?.cause, { kind: 'door', name: 'door', x: 0, y: 61, z: -3, state: 'closed' });
-        assert.match(r?.text ?? '', /^I could not follow the route "mine" at step \d+ of \d+: the door at \(0, 61, -3\) is closed and I could not open it\.$/);
+        assert.deepEqual(r?.cause, { kind: 'door', name: 'door', x: 0, y: 61, z: -3, state: 'blocked' });
+        assert.match(r?.text ?? '', /^I could not follow the route "mine" at step \d+ of \d+: the door at \(0, 61, -3\) is blocked\.$/);
     });
 
     test('each hop at most 60 s: a path search that never ends gives up after 60 s with the cause stuck', async () => {

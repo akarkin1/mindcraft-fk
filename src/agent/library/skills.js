@@ -6,7 +6,7 @@ import settings from "../../../settings.js";
 import agentSettings from "../settings.js";
 import { isOreName, oreInSight, oreKind, outOfSightText, sightRange, SIGHT_TEXT_DISTANCE } from "./ore_sight_logic.js";
 import { ladderStepTowards, ladderWayTowards, STEP_RULES } from "./ladder_pass.js";
-import { findOpenables, openDoor, passThrough } from "../packs/home/doors.js";
+import { findOpenables, openDoor, passThrough, reserveDoor } from "../packs/home/doors.js";
 import { walkNear } from "../packs/home/motion.js";
 import { GIVE_TEXTS, SURFACE_TEXTS } from "./skill_texts.js";
 import { sideOf } from "../packs/home/door_logic.js";
@@ -2218,7 +2218,7 @@ const PLAYER_WAIT_MS = 2000; // F38: how long goToPlayer waits for the entity of
 const NO_WAY_TO_PLAYER = 'I find no way to you from here without digging. Come closer or tell me to dig.';
 // the search for a way without digging: think time of one round, rounds at most, the progress a round must make,
 // how often a follow that stands still asks again
-const PLAYER_SEARCH = { timeoutMs: 10000, rounds: 30, progress: 1, everyMs: 5000 };
+const PLAYER_SEARCH = { timeoutMs: 10000, rounds: 30, progress: 1, everyMs: 5000, doorRange: 4 };
 const CAVE_RULES = { placedRange: 8, ceiling: 24, againRange: 16, againMs: 600000, everyMs: 500 };
 const caveStops = new WeakMap(); // bot -> { x, y, z, at }: the last stop at a cave; "go on" walks past it
 
@@ -2275,8 +2275,55 @@ async function searchWithoutDigging(bot, goal) {
 // T3-1: toward the player round by round, without digging. 'way': the search found a complete path from where the
 // bot now stands; 'none': it found no path at all, or a round brought the bot less than 1 block nearer; 'unknown': the
 // bot has no search to ask, or 30 rounds went by; 'stopped': interrupted, or the cave watch stopped a walk.
-// `first`: the result of a search the caller made already from where the bot stands.
-async function approachWithoutDigging(bot, player, distance, cave = null, first = null) {
+// F5 of the fix round: the path search opens a closed door only on a level step (getMoveForward); a jump up into a
+// closed door (the descent of the base up into the room, whose double door stands one block above the last step)
+// has no move, so the search without digging found no path at all. Where the search ends without a way, the closed
+// doors, gates and trapdoors within 4 blocks of the bot that lie nearer to the player than the bot are opened (each
+// once per order, reserved with the door service for 20 s so that it does not close them before the bot passes),
+// and the search runs again. Returns the number opened. Never throws.
+async function openTowardPlayer(bot, player, opened) {
+    let count = 0;
+    try {
+        const me = bot.entity.position;
+        const away = me.distanceTo(player.position);
+        const doors = findOpenables(bot, PLAYER_SEARCH.doorRange)
+            .filter(d => !d.open && !opened.has(`${d.x},${d.y},${d.z}`)
+                && player.position.distanceTo(new Vec3(d.x + 0.5, d.y, d.z + 0.5)) < away)
+            .sort((a, b) => me.distanceTo(new Vec3(a.x + 0.5, a.y, a.z + 0.5)) - me.distanceTo(new Vec3(b.x + 0.5, b.y, b.z + 0.5)));
+        for (const door of doors) {
+            if (bot.interrupt_code)
+                break;
+            opened.add(`${door.x},${door.y},${door.z}`);
+            reserveDoor(bot, door, 20000);
+            if (await openDoor(bot, door))
+                count++;
+        }
+    } catch (err) {
+        // the search decides without them
+    }
+    return count;
+}
+
+// F9 of the fix round: where the search finds no way at all (a column of ladders whose lowest rung is 2 blocks above
+// the floor: the path search cannot get onto it), the ladder step of v0.1.4.9 toward the player (ladderTowards: the
+// column within 6 blocks that leads toward his height; enterColumn places the missing ladders when the bot carries
+// some), then the search again. True when the pass brought the bot 1 block or more nearer to the player.
+async function ladderTowardPlayer(bot, player, ladder) {
+    try {
+        if (!ladder || ladderGap(bot, player.position) < LADDER_GAP)
+            return false;
+        const before = bot.entity.position.distanceTo(player.position);
+        const step = await ladderTowards(bot, player.position, ladder.passes, ladder.username);
+        return step.tried && !bot.interrupt_code && bot.entity.position.distanceTo(player.position) <= before - PLAYER_SEARCH.progress;
+    } catch (err) {
+        return false;
+    }
+}
+
+// `first`: the result of a search the caller made already from where the bot stands; `ladder`: { passes, username }
+// for the ladder step of F9 (the passes of the call, at most 3 a minute).
+async function approachWithoutDigging(bot, player, distance, cave = null, first = null, ladder = null) {
+    const opened = new Set(); // F5: the openables opened in this order
     for (let round = 0; round < PLAYER_SEARCH.rounds; round++) {
         if (bot.interrupt_code || cave?.at)
             return 'stopped';
@@ -2287,22 +2334,33 @@ async function approachWithoutDigging(bot, player, distance, cave = null, first 
             return 'way';
         if (r.status === 'interrupted' || bot.interrupt_code)
             return 'stopped';
-        if (r.status === 'noPath')
-            return 'none';
-        // timeout (or a partial result left over): the partial path to the best node
+        // noPath or timeout: the path to the best node of the search (on noPath the nearest cell it could reach)
         const before = bot.entity.position.distanceTo(player.position);
         const end = r.path[r.path.length - 1];
-        if (!end || player.position.distanceTo(new Vec3(end.x + 0.5, end.y, end.z + 0.5)) > before - PLAYER_SEARCH.progress)
-            return 'none';
-        try {
-            await walkWith(bot, new pf.goals.GoalNear(end.x, end.y, end.z, 1), noDigMovements(bot));
-        } catch (err) {
-            // a walk that ends short is measured below
+        const nearer = end && player.position.distanceTo(new Vec3(end.x + 0.5, end.y, end.z + 0.5)) <= before - PLAYER_SEARCH.progress;
+        if (nearer) {
+            try {
+                await walkWith(bot, new pf.goals.GoalNear(end.x, end.y, end.z, 1), noDigMovements(bot));
+            } catch (err) {
+                // a walk that ends short is measured below
+            }
+            if (bot.interrupt_code || cave?.at)
+                return 'stopped';
         }
-        if (bot.interrupt_code || cave?.at)
-            return 'stopped';
-        if (bot.entity.position.distanceTo(player.position) > before - PLAYER_SEARCH.progress)
+        const moved = bot.entity.position.distanceTo(player.position) <= before - PLAYER_SEARCH.progress;
+        if (r.status === 'noPath' || !moved) {
+            // F5: at the end of what the search reaches, a closed door toward the player is opened and the search runs again
+            if (await openTowardPlayer(bot, player, opened) > 0)
+                continue;
+            if (bot.interrupt_code || cave?.at)
+                return 'stopped';
+            // F9: a column of ladders toward the player that the path search cannot get onto
+            if (await ladderTowardPlayer(bot, player, ladder))
+                continue;
+            if (bot.interrupt_code || cave?.at)
+                return 'stopped';
             return 'none';
+        }
     }
     return 'unknown';
 }
@@ -2459,9 +2517,10 @@ export async function goToPlayer(bot, username, distance=3) {
     // v0.1.4.11 (N2, T3-1): no digging toward the player; along partial paths while they bring the bot nearer; without
     // a way the bot says so and stops
     const cave = caveWatch(bot, () => player.position).start();
+    const passes = []; // the ladder passes of this call (at most 3 a minute)
     let way;
     try {
-        way = await approachWithoutDigging(bot, player, distance, cave);
+        way = await approachWithoutDigging(bot, player, distance, cave, null, { passes, username });
     } catch (err) {
         way = 'unknown';
     }
@@ -2485,7 +2544,6 @@ export async function goToPlayer(bot, username, distance=3) {
     // v0.1.4.9 (section 13, F14; W75, L1): the ladder step when the path search ends with the player still 2 or
     // more blocks above or below, then the path search once more. v0.1.4.10 (P6): no step before the path search,
     // which climbs and descends ladders itself; the step is the fallback.
-    const passes = [];
     let failure = null;
     try {
         try {
@@ -2545,9 +2603,10 @@ export async function followPlayer(bot, username, distance=4) {
     // nearer; without a way it says so and stops
     const move = noDigMovements(bot);
     const cave = caveWatch(bot, () => player.position).start();
+    const ladder_passes = []; // the times of the passes of the last minute
     let way;
     try {
-        way = await approachWithoutDigging(bot, player, distance, cave);
+        way = await approachWithoutDigging(bot, player, distance, cave, null, { passes: ladder_passes, username });
     } catch (err) {
         way = 'unknown';
     } finally {
@@ -2580,7 +2639,6 @@ export async function followPlayer(bot, username, distance=4) {
     let still_gap = ladderGap(bot, player.position);
     let still_since = Date.now();
     let player_at = player.position.clone(); // v0.1.4.10 (P6): where the player was half a second ago
-    const ladder_passes = []; // the times of the passes of the last minute
     const ladder_failures = new Set(); // the texts of failed passes, each written once
 
     while (!bot.interrupt_code) {
@@ -2652,7 +2710,7 @@ export async function followPlayer(bot, username, distance=4) {
                 cave.start();
                 let again;
                 try {
-                    again = await approachWithoutDigging(bot, player, distance, cave, first);
+                    again = await approachWithoutDigging(bot, player, distance, cave, first, { passes: ladder_passes, username });
                 } catch (err) {
                     again = 'unknown';
                 } finally {

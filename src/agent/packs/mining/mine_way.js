@@ -107,7 +107,12 @@ export function mineWaypoints(ctx, mine, depth = 0) {
         const name = routeName(mine);
         const own = ctx.routes.waypointsOf({ name, legs: Array.isArray(mine?.route) ? mine.route : [] }) ?? [];
         const parent = typeof mine?.parent === 'string' && mine.parent.length > 0 && depth < 4 ? parentMine(ctx, mine) : null;
-        const out = parent ? [...mineWaypoints(ctx, parent, depth + 1), ...own] : [...own];
+        // F7: the shaft of a second level was dug from a floor cell of its parent; a waypoint of the parent in that cell
+        // (or just above it) is the open top of the shaft now, no place to walk to
+        const shaft = (Array.isArray(mine?.route) ? mine.route : []).filter(l => l?.kind === 'ladder' && [l.x, l.z, l.top].every(Number.isFinite));
+        const inHole = w => !['door', 'gate', 'trapdoor'].includes(w.kind)
+            && shaft.some(l => w.x === Math.floor(l.x) && w.z === Math.floor(l.z) && w.y > l.top && w.y <= l.top + 2);
+        const out = parent ? [...mineWaypoints(ctx, parent, depth + 1).filter(w => !inHole(w)), ...own] : [...own];
         if (!parent) {
             const c = mine?.room?.center;
             if (c && [c.x, c.y, c.z].every(Number.isFinite)) {

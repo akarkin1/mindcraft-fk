@@ -65,8 +65,9 @@ function doorOptions(ctx, clock) {
 // Walks to a cell (the bot is there when its feet are within 1 block): walkNear with doors allowed and no
 // digging, then once more with a goal GoalNear of 1.
 // Fix round 2 (F3): the cell to walk to instead of a cell with a ladder, where the path search would climb: the
-// free cell beside it with solid ground, nearest to the bot; null when there is none.
-function besideLadder(bot, target) {
+// free cell beside it with solid ground, nearest to the bot; null when there is none. Exported for the waypoint walk
+// of v0.1.4.11 (F7: a waypoint over the hole of a column of ladders).
+export function besideLadder(bot, target) {
     const free = (x, y, z) => {
         const b = readBlock(bot, x, y, z);
         return Boolean(b) && b.solid === false && b.name !== 'water' && b.name !== 'lava';

@@ -165,6 +165,8 @@ export async function playerDownToRoom(b, from) {
 export async function setDoubleDoor(b, open) {
     const cmds = [];
     for (const d of b.owner.doors) {
+        // F8 (the lead, W96): a door half placed over another kind of door is refused; both halves to air first
+        cmds.push(`fill ${d.lower.x} ${d.lower.y} ${d.lower.z} ${d.upper.x} ${d.upper.y} ${d.upper.z} minecraft:air`);
         cmds.push(`setblock ${d.lower.x} ${d.lower.y} ${d.lower.z} minecraft:oak_door[facing=west,half=lower,hinge=${d.hinge},open=${open}]`);
         cmds.push(`setblock ${d.upper.x} ${d.upper.y} ${d.upper.z} minecraft:oak_door[facing=west,half=upper,hinge=${d.hinge},open=${open}]`);
     }

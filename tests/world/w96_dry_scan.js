@@ -35,7 +35,9 @@ const FAILED = /I could not|I find no way|Show me the way again/;
 function ironDoors(b) {
     const cmds = [];
     for (const d of b.owner.doors) {
-        cmds.push(`setblock ${d.upper.x} ${d.upper.y} ${d.upper.z} minecraft:air`, `setblock ${d.lower.x} ${d.lower.y} ${d.lower.z} minecraft:air`);
+        // F8 (the lead): both halves to air in one fill (a second setblock of air fails once the first removed both
+        // halves), then the lower half, then the upper
+        cmds.push(`fill ${d.lower.x} ${d.lower.y} ${d.lower.z} ${d.upper.x} ${d.upper.y} ${d.upper.z} minecraft:air`);
         cmds.push(`setblock ${d.lower.x} ${d.lower.y} ${d.lower.z} minecraft:iron_door[facing=west,half=lower,hinge=${d.hinge},open=false]`);
         cmds.push(`setblock ${d.upper.x} ${d.upper.y} ${d.upper.z} minecraft:iron_door[facing=west,half=upper,hinge=${d.hinge},open=false]`);
     }

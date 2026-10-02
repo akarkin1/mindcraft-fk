@@ -6,7 +6,7 @@ import { describe, test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { register } from 'node:module';
 import { loadSrc } from '../helpers/load.js';
-import { REGISTRY, makeWorld, makeMiningBot, v } from './mining_fake_bot.test.js';
+import { REGISTRY, give, makeWorld, makeMiningBot, tick, v } from './mining_fake_bot.test.js';
 
 register('../helpers/mcdata_hooks.js', import.meta.url);
 const mcdata = await loadSrc('src/utils/mcdata.js');
@@ -218,5 +218,149 @@ describe('the cave (N2)', () => {
         walkInto(placed, [4, 40, 4]);
         await skills.goToPlayer(placed, PLAYER, 3);
         assert.ok(!placed.output.includes('ahead is a cave'), placed.output);
+    });
+});
+
+describe('F5: the way up the descent into the room, through the closed double door', () => {
+    // the room at y 41 (x 0..4, z -2..2) closed to the east by a wall at x 4 with a double oak door at (4, 41, -1) and
+    // (4, 41, 0), facing west; a descent of 1 block down and 1 east per step from x 5 (feet 40) to x 8 (feet 37), cut 3
+    // high; the bot on the landing at x 10, the player in the room. The path search of the fake: no path at all while
+    // both doors are closed (a jump up into a closed door has no move), its best node the first step; with a door open
+    // the whole way.
+    function descent() {
+        const world = makeWorld();
+        world.fill(0, 41, -2, 4, 43, 2, 'air');
+        world.fill(4, 41, -2, 4, 43, 2, 'stone');
+        for (const z of [-1, 0]) {
+            world.set(4, 41, z, 'oak_door', { facing: 'west', half: 'lower', hinge: z === 0 ? 'left' : 'right', open: false, powered: false });
+            world.set(4, 42, z, 'oak_door', { facing: 'west', half: 'upper', hinge: z === 0 ? 'left' : 'right', open: false, powered: false });
+        }
+        for (let k = 1; k <= 4; k++) world.fill(4 + k, 41 - k, 0, 4 + k, 43 - k, 0, 'air');
+        world.fill(9, 37, -1, 11, 39, 1, 'air');
+        const bot = scene({ world, pos: [10.5, 37, 0.5], player: [1.5, 41, 0.5] });
+        bot.activateBlock = async (block) => {
+            const p = block.position;
+            bot.calls.push(['activate', p.x, p.y, p.z]);
+            for (const y of [p.y, p.y + 1]) {
+                if (world.nameAt(p.x, y, p.z) === 'oak_door') world.set(p.x, y, p.z, 'oak_door', { ...world.propsAt(p.x, y, p.z), open: world.propsAt(p.x, y, p.z).open !== true });
+            }
+        };
+        bot.findBlocks = ({ matching, maxDistance = 16, point }) => {
+            const c = point ?? bot.entity.position;
+            const out = [];
+            const r = Math.ceil(maxDistance);
+            for (let x = Math.floor(c.x) - r; x <= Math.floor(c.x) + r; x++)
+                for (let y = Math.floor(c.y) - r; y <= Math.floor(c.y) + r; y++)
+                    for (let z = Math.floor(c.z) - r; z <= Math.floor(c.z) + r; z++)
+                        if (matching(world.block(x, y, z)) && Math.hypot(x + 0.5 - c.x, y + 0.5 - c.y, z + 0.5 - c.z) <= maxDistance) out.push(v(x, y, z));
+            return out;
+        };
+        const open = () => world.propsAt(4, 41, 0).open === true || world.propsAt(4, 41, -1).open === true;
+        bot.pathfinder.getPathFromTo = function* (movements, start, goal) {
+            bot.searches.push({ canDig: movements.canDig, goal: goal?.constructor?.name, open: open() });
+            yield { result: { status: 'partial', path: [] } };
+            yield { result: open() ? { status: 'success', path: [] } : { status: 'noPath', path: [{ x: 9, y: 37, z: 0 }, { x: 5, y: 40, z: 0 }] } };
+        };
+        bot.pathfinder.goto = async (goal) => {
+            bot.gotos.push([goal.x, goal.y, goal.z, goal.constructor?.name ?? goal.inner?.constructor?.name]);
+            if (goal.entity) bot.entity.position = v(2.5, 41, 0.5);
+            else bot.entity.position = v(goal.x + 0.5, goal.y, goal.z + 0.5);
+        };
+        return { world, bot };
+    }
+
+    test('"come here" from the landing: up the steps to the last one, the door toward the player opened, then the way to him', async () => {
+        const { world, bot } = descent();
+        await skills.goToPlayer(bot, PLAYER, 2);
+        assert.ok(!bot.output.includes(NO_WAY), bot.output);
+        assert.ok(bot.output.trim().endsWith(`You have reached ${PLAYER}.`), bot.output);
+        assert.deepEqual(bot.gotos[0].slice(0, 3), [5, 40, 0], 'first to the nearest cell the search reaches, the last step');
+        assert.ok(bot.calls.some(c => c[0] === 'activate' && c[1] === 4 && c[2] === 41), 'a door of the double door clicked');
+        assert.ok(world.propsAt(4, 41, 0).open === true || world.propsAt(4, 41, -1).open === true, 'a door is open');
+        assert.deepEqual(bot.searches.map(q => q.open), [false, true], 'searched again after the door opened');
+        assert.ok(bot.searches.every(q => q.canDig === false));
+        assert.equal(bot.calls.filter(c => c[0] === 'dig').length, 0);
+        assert.ok(!bot.output.includes('using destructive movements'));
+    });
+
+    test('followPlayer from the landing: the same, then it follows', async () => {
+        const { bot } = descent();
+        setTimeout(() => { bot.interrupt_code = true; }, 700);
+        const r = await skills.followPlayer(bot, PLAYER, 2);
+        assert.equal(r, true);
+        assert.ok(bot.output.startsWith(`You are now actively following player ${PLAYER}.`), bot.output);
+        assert.ok(bot.calls.some(c => c[0] === 'activate'));
+    });
+
+    test('a door that does not open: the text, nothing dug', async () => {
+        const { bot } = descent();
+        bot.activateBlock = async (block) => { bot.calls.push(['activate', block.position.x, block.position.y, block.position.z]); };
+        const r = await skills.goToPlayer(bot, PLAYER, 2);
+        assert.equal(r, false);
+        assert.ok(bot.output.endsWith(`${NO_WAY}\n`), bot.output);
+        assert.equal(bot.searches.length, 1, 'each door is tried once, then no search is left to try');
+        assert.equal(bot.calls.filter(c => c[0] === 'dig').length, 0);
+    });
+});
+
+describe('F9: a column whose lowest rung is 2 blocks above the floor of the room', () => {
+    // the room at y 41 (floor y 40), ladders facing south at (2, 43..59, -2) under a closed oak trapdoor at (2, 60, -2) in
+    // the grass; the player on the grass beside it. The path search of the fake finds no way at all while the bot is
+    // under the ground (it cannot get onto the column), the whole way once it is up.
+    function column({ ladders = 4 } = {}) {
+        const world = makeWorld({ groundY: 60 });
+        world.fill(0, 41, -2, 4, 43, 2, 'air');
+        world.fill(2, 44, -2, 2, 59, -2, 'air');
+        world.fill(2, 43, -2, 2, 59, -2, 'ladder', { facing: 'south' });
+        world.set(2, 60, -2, 'oak_trapdoor', { facing: 'south', half: 'top', open: false });
+        const solid = world.solid;
+        world.solid = (x, y, z) => (world.nameAt(x, y, z).endsWith('_trapdoor') && world.propsAt(x, y, z).open === true ? false : solid(x, y, z));
+        const bot = scene({ world, pos: [2.5, 41, 0.5], player: [3.5, 61, -0.5] });
+        if (ladders > 0) give(bot, 'ladder', ladders);
+        bot.activateBlock = async (block) => {
+            const p = block.position;
+            world.set(p.x, p.y, p.z, world.nameAt(p.x, p.y, p.z), { ...world.propsAt(p.x, p.y, p.z), open: world.propsAt(p.x, p.y, p.z).open !== true });
+        };
+        bot.pathfinder.getPathFromTo = function* (movements, start, goal) {
+            bot.searches.push({ canDig: movements.canDig, y: start.y });
+            yield { result: { status: start.y >= 60 ? 'success' : 'noPath', path: [] } };
+        };
+        const goto = bot.pathfinder.goto.bind(bot.pathfinder);
+        bot.pathfinder.goto = async (goal) => {
+            if (goal?.entity || goal?.inner?.entity) {
+                bot.entity.position = v(3.5, 61, 0.5);
+                return;
+            }
+            return goto(goal);
+        };
+        const timer = setInterval(() => tick(bot), 50);
+        return { world, bot, stop: () => clearInterval(timer) };
+    }
+
+    test('the bot with 4 ladders: places the missing ladder, climbs, reaches the player, no text of no way', { timeout: 60000 }, async () => {
+        const { world, bot, stop } = column();
+        try {
+            await skills.goToPlayer(bot, PLAYER, 2);
+        } finally {
+            stop();
+        }
+        assert.ok(!bot.output.includes(NO_WAY), bot.output);
+        assert.ok(bot.output.includes(`I climb up the ladder at`), bot.output);
+        assert.equal(world.nameAt(2, 42, -2), 'ladder', 'the missing ladder placed');
+        assert.ok(bot.output.trim().endsWith(`You have reached ${PLAYER}.`), bot.output);
+        assert.equal(bot.calls.filter(c => c[0] === 'dig').length, 0);
+    });
+
+    test('without ladders: the pass fails, then the text of no way', { timeout: 60000 }, async () => {
+        const { bot, stop } = column({ ladders: 0 });
+        let r;
+        try {
+            r = await skills.goToPlayer(bot, PLAYER, 2);
+        } finally {
+            stop();
+        }
+        assert.equal(r, false);
+        assert.ok(bot.output.endsWith(`${NO_WAY}\n`), bot.output);
+        assert.equal(bot.calls.filter(c => c[0] === 'dig').length, 0);
     });
 });
