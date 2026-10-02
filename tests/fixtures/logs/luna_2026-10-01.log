@@ -1,0 +1,199 @@
+[03:16:32] MindServer running on port 8080 on host localhost
+[03:16:32] MC server found. (Host: 127.0.0.1, Port: 55916, Version: 1.21.8)
+keys.json not found. Defaulting to environment variables.
+Connecting to MindServer
+[03:16:36] Client connected
+gpt connected to MindServer
+[03:16:36] Starting agent
+[03:16:36] Sandbox: SES lockdown active, code written by the model runs in an isolated compartment.
+[03:16:36] Initializing agent gpt...
+[03:16:37] Client connected
+[03:16:37] Client connected
+[03:16:41] Examples initialized.
+[03:16:41] No task.
+[03:16:41] gpt logging into minecraft...
+[03:16:43] gpt logged in!
+[03:16:43] gpt updating available agents
+[03:16:43] Initializing vision intepreter...
+[03:16:44] gpt spawned.
+[03:16:44] No memory file found.
+[03:16:44] received message from system : Respond with hello world and your name
+[03:16:44] Saved memory to: ./bots/gpt/worlds/seed-ce66bf80acdefa75/memory.json
+[03:16:45] selected examples:
+[03:16:45] Example: say hi to john_goodman
+[03:16:45] Example: set a goal to build whatever you want endlessly (context: you are in creative mode)
+[03:16:45] Awaiting openai api response from model gpt-6-luna
+[03:16:49] Received.
+[03:16:49] Generated response: hello world, I'm gpt!
+[03:16:49] gpt full response to system: ""hello world, I'm gpt!""
+[03:17:42] gpt received message from player : hi, gpt. You got lucky, you spawn exactly at the entrance to the mining area
+[03:17:42] received message from player : hi, gpt. You got lucky, you spawn exactly at the entrance to the mining area
+[03:17:42] Saved memory to: ./bots/gpt/worlds/seed-ce66bf80acdefa75/memory.json
+[03:17:42] selected examples:
+[03:17:42] Example: hal_7: this is the mine, remember this
+[03:17:42] Example: uma_3: dig here
+[03:17:42] Awaiting openai api response from model gpt-6-luna
+[03:17:46] Received.
+[03:17:46] Generated response: Hi Marty! Nice, IΓÇÖm right by the mining entrance.
+[03:17:46] gpt full response to player: ""Hi Marty! Nice, IΓÇÖm right by the mining entrance.""
+[03:18:08] gpt received message from player : follow me, I'll show you the mine and show you the ropes
+[03:18:08] received message from player : follow me, I'll show you the mine and show you the ropes
+[03:18:08] Saved memory to: ./bots/gpt/worlds/seed-ce66bf80acdefa75/memory.json
+[03:18:08] selected examples:
+[03:18:08] Example: hal_7: this is the mine, remember this
+[03:18:08] Example: sol_22: go down into the mine
+[03:18:08] Awaiting openai api response from model gpt-6-luna
+[03:18:11] Received.
+[03:18:11] Generated response: Following you! !followPlayer("player")
+[03:18:11] gpt full response to player: ""Following you! !followPlayer("player")""
+[03:18:11] stopping self-prompt loop
+[03:18:11] parsed command: { commandName: '!followPlayer', args: [ 'player', 4 ] }
+[03:18:11] executing code...
+
+[03:18:27] executing code...
+
+[03:18:27] action "mode:item_collecting" trying to interrupt current action "action:followPlayer"
+[03:18:27] waiting for code to finish executing...
+[03:18:27] waiting for code to finish executing...
+[03:18:27] Agent executed: !followPlayer and got: undefined
+[03:18:27] Unpausing mode unstuck
+[03:18:27] Unpausing mode elbow_room
+[03:18:29] Mode item_collecting finished executing, code_return: Action output:
+Found non-destructive path.
+Found non-destructive path.
+Picked up 2 items.
+
+[03:18:29] executing code...
+
+[03:18:30] Mode elbow_room finished executing, code_return: Action output:
+
+[03:18:30] executing code...
+
+[03:18:59] gpt received message from player : this is the mine, please continue digging the tunnel. Your goal is to collect some iron ore
+[03:18:59] received message from player : this is the mine, please continue digging the tunnel. Your goal is to collect some iron ore
+[03:18:59] Saved memory to: ./bots/gpt/worlds/seed-ce66bf80acdefa75/memory.json
+[03:19:00] selected examples:
+[03:19:00] Example: hal_4: find some iron
+[03:19:00] Example: nia_3: we need iron
+[03:19:00] Awaiting openai api response from model gpt-6-luna
+[03:19:02] Received.
+[03:19:02] Generated response: IΓÇÖll remember this mine first, then continue for iron. !rememberMine("mine")
+[03:19:02] gpt full response to player: ""IΓÇÖll remember this mine first, then continue for iron. !rememberMine("mine")""
+[03:19:02] stopping self-prompt loop
+[03:19:02] parsed command: { commandName: '!rememberMine', args: [ 'mine' ] }
+[03:19:02] Agent executed: !rememberMine and got: I was not under open sky in my last 22 steps. Walk with me from the entrance of the mine and tell me again.
+[03:19:02] Saved memory to: ./bots/gpt/worlds/seed-ce66bf80acdefa75/memory.json
+[03:19:03] selected examples:
+[03:19:03] Example: hal_4: find some iron
+[03:19:03] Example: nia_3: we need iron
+[03:19:03] Awaiting openai api response from model gpt-6-luna
+[03:19:04] Received.
+[03:19:04] Generated response: IΓÇÖll follow you back to the mine entrance. !followPlayer("player")
+[03:19:04] gpt full response to player: ""IΓÇÖll follow you back to the mine entrance. !followPlayer("player")""
+[03:19:04] stopping self-prompt loop
+[03:19:04] parsed command: { commandName: '!followPlayer', args: [ 'player', 4 ] }
+[03:19:04] executing code...
+
+[03:19:04] action "action:followPlayer" trying to interrupt current action "action:followPlayer"
+[03:19:04] waiting for code to finish executing...
+[03:19:04] waiting for code to finish executing...
+[03:19:04] Unpausing mode unstuck
+[03:19:04] Unpausing mode elbow_room
+[03:19:16] gpt received message from player : ok
+[03:19:16] received message from player : ok
+[03:19:16] Saved memory to: ./bots/gpt/worlds/seed-ce66bf80acdefa75/memory.json
+[03:19:17] selected examples:
+[03:19:17] Example: sam_9: wait here for a minute
+[03:19:17] Example: say hi to john_goodman
+[03:19:17] Awaiting openai api response from model gpt-6-luna
+[03:19:19] Received.
+[03:19:19] Generated response: ReadyΓÇöshow me the mine again when weΓÇÖre at the entrance.
+[03:19:19] gpt full response to player: ""ReadyΓÇöshow me the mine again when weΓÇÖre at the entrance.""
+[03:19:37] Door service: closed oak_door at (10, 41, 43).
+[03:19:46] gpt received message from player : ok, this is the entrance to the mine
+[03:19:46] received message from player : ok, this is the entrance to the mine
+[03:19:46] Storing memories...
+[03:19:46] Awaiting openai api response from model gpt-6-luna
+[03:19:49] Received.
+[03:19:49] Memory updated to:  In playerΓÇÖs New World 1.21.8, IΓÇÖm gpt and spawned at the mining area entrance. Marty welcomed me.
+[03:19:49] Saved memory to: ./bots/gpt/worlds/seed-ce66bf80acdefa75/memory.json
+[03:19:49] selected examples:
+[03:26:11] Awaiting openai api response from model gpt-6-luna
+[03:26:13] Received.
+[03:26:13] Generated response: Following you. !followPlayer("player", 3)
+[03:26:13] gpt full response to player: ""Following you. !followPlayer("player", 3)""
+[03:26:13] stopping self-prompt loop
+[03:26:13] parsed command: { commandName: '!followPlayer', args: [ 'player', 3 ] }
+[03:26:13] executing code...
+
+[03:26:36] Cost: session $0.02 (chat $0.01, memory $0.00, other $0.00), rate $0.06 per hour, 229 calls.
+[03:26:38] gpt received message from player : congrats! we are on the surface
+[03:26:38] received message from player : congrats! we are on the surface
+[03:26:38] Saved memory to: ./bots/gpt/worlds/seed-ce66bf80acdefa75/memory.json
+[03:26:39] selected examples:
+[03:26:39] Example: wren_1: come back up to the surface
+[03:26:39] Example: gort: (FROM OTHER BOT)Let's do it, onward!
+[03:26:39] Awaiting openai api response from model gpt-6-luna
+[03:26:43] Received.
+[03:26:43] Generated response: Thanks! Glad we made it up to the surface.
+[03:26:43] gpt full response to player: ""Thanks! Glad we made it up to the surface.""
+[03:26:43] Storing memories...
+[03:26:43] Awaiting openai api response from model gpt-6-luna
+[03:26:44] executing code...
+
+[03:26:44] action "mode:item_collecting" trying to interrupt current action "action:followPlayer"
+[03:26:44] waiting for code to finish executing...
+[03:26:44] waiting for code to finish executing...
+[03:26:44] Agent executed: !followPlayer and got: undefined
+[03:26:45] Unpausing mode unstuck
+[03:26:45] Unpausing mode elbow_room
+[03:26:46] Received.
+[03:26:46] Memory updated to:  In playerΓÇÖs New World 1.21.8, IΓÇÖm gpt. Mine entrance near (9,41,43); use !rememberTunnel when Marty identifies it, then !mineOre. Use !collectBlocks for visible blocks; never dig straight down or write digging code. !goToSurface failed before; !goToPlayer worked. IΓÇÖm at the mine entrance; Marty asked me to follow him to the ladder, and I issued !followPlayer("player", 3).
+[03:26:49] Mode item_collecting finished executing, code_return: Action output:
+Found non-destructive path.
+Found non-destructive path.
+Found non-destructive path.
+Found non-destructive path.
+Found non-destructive path.
+Picked up 5 items.
+
+[03:26:50] Door service: closed oak_fence_gate at (-8, 63, 45).
+[03:26:50] executing code...
+
+[03:26:54] gpt received message from player : stop
+[03:26:54] received message from player : stop
+[03:26:54] Saved memory to: ./bots/gpt/worlds/seed-ce66bf80acdefa75/memory.json
+[03:26:55] selected examples:
+[03:28:34] Agent executed: !moveAway and got: undefined
+[03:28:35] Mode unstuck finished executing, code_return: Action output:
+Found non-destructive path.
+Moved away from (-3, 64, 47) to (-7, 63, 44).
+
+[03:28:35] received message from system : (AUTO MESSAGE)Your previous action 'action:moveAway' was interrupted by unstuck.
+        Your behavior log: I'm stuck!
+I'm free.
+
+Respond accordingly.
+[03:28:35] Saved memory to: ./bots/gpt/worlds/seed-ce66bf80acdefa75/memory.json
+[03:35:56] Mode unstuck finished executing, code_return: Action output:
+Found non-destructive path.
+Moved away from (13, 59, 50) to (8, 59, 53).
+
+[03:35:56] received message from system : (AUTO MESSAGE)Your previous action 'action:goToSurface' was interrupted by unstuck.
+        Your behavior log: I'm stuck!
+I'm free.
+
+Respond accordingly.
+[03:35:56] Saved memory to: ./bots/gpt/worlds/seed-ce66bf80acdefa75/memory.json
+[03:35:58] Received.
+[03:35:58] Memory updated to:  World 1.21.8 (player). Home saved near house/door; basement is directly below, but saved basement bounds mistakenly matched homeΓÇöverify/correct. Beds are sleeping spot; saved as ΓÇ£bedΓÇ¥ and protected building. Follow with !followPlayer("player",4). Wheat farm (-13,61,23)-(-6,65,34); keep gate closed. Mine entrance near (9,41,43); remember tunnel before mining. Never dig straight down or write digging code. On ΓÇ£stop,ΓÇ¥ use !stay(-1), collect nothing afterward. Avoid chicken pen.
+[03:35:58] Received.
+[04:09:21] [LoginGuard] Connection Error: Error: write ECONNABORTED
+[04:09:21] Error event! Error: write ECONNABORTED
+[04:09:22] Disconnected: socketclosed
+[04:09:22] [LoginGuard] Connection Failed: Server is under maintenance or restarting. (socketClosed)
+[04:09:22] Agent process ends with exit code 1: [LoginGuard] Connection Failed: Server is under maintenance or restarting. (socketClosed)
+[04:09:22] Cost: session $0.13 (chat $0.12, memory $0.01, other $0.00), rate $0.18 per hour, 674 calls.
+[04:09:22] Agent gpt disconnected
+[04:09:22] Agent process exited with code 1 and signal null
+[04:09:22] Restarting agent...

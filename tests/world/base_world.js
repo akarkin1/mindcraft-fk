@@ -47,6 +47,7 @@ import { commands, env } from './control.js';
 import {
     MC, passed, fieldPlan, buildField, buildChest, blockNames, chestItems, cropAges, positions, inBox, fmt, boxPositions,
 } from './world.js';
+import { isDump, buildFromDump, spotsFromDump } from './owner_region.js';
 
 const P = (p) => `${p.x} ${p.y} ${p.z}`;
 
@@ -94,10 +95,44 @@ export const OWNER_ROOM_TORCH = Object.freeze({ dx: 1, dz: -2 });
 // ------------------------------------------------------------------ the plan
 
 // The coordinates of every part in the region r of region() (absolute). `crops(i, j)` chooses the cells of
-// the farm as fieldPlan does.
-export function basePlan(r, { crops = DEFAULT_CROPS, owner = false } = {}) {
+// the farm as fieldPlan does. v0.1.4.10 (T3): `dump` is a dump of the owner's region (loadDump() of
+// owner_region.js, null while tests/world/owner_region.json does not exist): with it the plan is the owner variant
+// and buildBase builds the dump over it, its center on the place "home" of the house (the dump is taken in front of
+// the owner's bed); the bed, the chest of the house, the trapdoor and the column of the ladder under it are then
+// taken from the dump (b.dump.spots). Without a dump nothing changes.
+export function basePlan(r, { crops = DEFAULT_CROPS, owner = false, dump = null } = {}) {
     const b = defaultPlan(r, crops);
+    if (dump && isDump(dump)) {
+        ownerPlan(b);
+        b.dump = { dump, origin: { x: b.house.home.x, y: b.g + 1, z: b.house.home.z }, spots: null, built: null };
+        return b;
+    }
     return owner ? ownerPlan(b) : b;
+}
+
+// The places of a plan that a built dump replaces (see basePlan): the bed, the chest of the house (the chest nearest
+// the place "home"), the trapdoor nearest to it and the ladder column under that trapdoor. Returns the plan.
+function applyDumpSpots(b) {
+    const sp = b.dump.spots;
+    const home = b.house.home;
+    const d2 = (p) => (p.x - home.x) ** 2 + (p.y - home.y) ** 2 + (p.z - home.z) ** 2;
+    const nearest = (list) => list.slice().sort((p, q) => d2(p) - d2(q))[0] ?? null;
+    if (sp.bed) {
+        b.house.bedFoot = { ...sp.bed.foot };
+        if (sp.bed.head) b.house.bedHead = { ...sp.bed.head };
+    }
+    const chest = nearest(sp.chests);
+    if (chest) b.house.chest = { x: chest.x, y: chest.y, z: chest.z };
+    const trap = nearest(sp.trapdoors);
+    if (trap) {
+        b.trapdoor = { x: trap.x, y: trap.y, z: trap.z };
+        const col = sp.ladderColumns.find((c) => c.x === trap.x && c.z === trap.z && c.top >= trap.y - 2);
+        if (col) {
+            b.shaft = { column: { x: col.x, y: 0, z: col.z }, ladders: [] };
+            for (let y = col.bottom; y <= col.top; y++) b.shaft.ladders.push({ x: col.x, y, z: col.z });
+        }
+    }
+    return b;
 }
 
 // The owner variant of a plan (see the head of the file): it replaces the trapdoor, the shaft, the torch of the room
@@ -414,6 +449,14 @@ export async function buildBase(b, { parts = ['house', 'mine', 'farm', 'pen'], c
     if (parts.includes('pen')) {
         await buildPen(b);
         if (animals) await penAnimals(b);
+    }
+    if (b.dump) {
+        // v0.1.4.10 (T3): the owner's region over the hand-built base (see basePlan); its chests are empty
+        b.dump.built = await buildFromDump(b.dump.dump, b.dump.origin);
+        if (!b.dump.built.ok) throw new Error(`the dump of the owner's region could not be built: ${b.dump.built.failed.slice(0, 3).join('; ')}`);
+        b.dump.spots = spotsFromDump(b.dump.dump, b.dump.origin);
+        applyDumpSpots(b);
+        if (chests && parts.includes('house')) await buildChest(b.house.chest, HOUSE_CHEST_ITEMS, { facing: 'west' });
     }
     return b;
 }

@@ -113,9 +113,10 @@ describe('I6: the key, byName, get', () => {
         store.set(BOT_MINE());
         store.set(PLAYER_MINE());
         const json = JSON.parse(fs.readFileSync(file, 'utf8'));
-        assert.deepEqual(Object.keys(json.mines).sort(), ['16', 'mine']);
+        // v0.1.4.10 (R4): a mine of the bot is keyed bot:<level>
+        assert.deepEqual(Object.keys(json.mines).sort(), ['bot:16', 'mine']);
         assert.equal(S.mineKey(PLAYER_MINE()), 'mine');
-        assert.equal(S.mineKey(BOT_MINE()), '16');
+        assert.equal(S.mineKey(BOT_MINE()), 'bot:16');
     });
 
     test('byName: the mine of that name in that dimension; null for another name', () => {

@@ -187,16 +187,16 @@ describe('X1 the logic: where the bot never stands (pure)', () => {
 });
 
 describe('X1, X2 the path search of mineflayer-pathfinder over the farm of the base', () => {
-    test('the cause: the walk to a bone meal on the rim (v0.1.4.8 before the fix) ended on top of the composter', () => {
+    test('the cause of v0.1.4.8, gone in v0.1.4.10 (P4): the plain path search no longer ends on top of the composter', () => {
         const w = baseFarm();
         const bot = pathBot(w);
-        // the plain path search: makeMovements of the home pack avoids the composter since the fix round (X1)
+        // the plain path search: since v0.1.4.10 the patch itself marks the composter as no standing place
         const old = new (require('mineflayer-pathfinder').Movements)(bot);
         old.canDig = false;
         const res = search(old, new goals.GoalNear(5, 62, 0, 1), { x: 4, y: 61, z: 0 });
-        assert.equal(res.status, 'success');
-        const end = res.path[res.path.length - 1];
-        assert.deepEqual([end.x, end.y, end.z], [5, 62, 0], 'on top of the hollow composter: the bot falls in');
+        // no cell within 1 block of the top of the composter is a standing place: no path, or a path that ends elsewhere
+        const end = res.path[res.path.length - 1] ?? null;
+        assert.ok(res.status !== 'success' || JSON.stringify([end.x, end.y, end.z]) !== JSON.stringify([5, 62, 0]), 'not on top of the hollow composter');
     });
 
     test('with the movements of the field and the safe goal the path search never goes into or onto the composter', () => {

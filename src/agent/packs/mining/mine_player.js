@@ -3,6 +3,7 @@
 // the setting mine_routes; the trail and its pure functions come from the routes pack through
 // ctx.routes (I4: ctx.routes.trail.list(), ctx.routes.logic.skyStart and routeFromSteps), which is
 // never imported. Executing: every function returns { ok, reason, text, ... } and never throws.
+// v0.1.4.10 (R4): forgetMine and minesText, for the commands !forgetMine and !mines.
 import { containsPos } from '../home/box_math.js';
 import { botPos, dimensionOf, listAreas, logTo } from '../home/context.js';
 import { blockAt, nameReader } from './dig.js';
@@ -11,7 +12,8 @@ import { NEAREST_RANGE, cleanMineName } from './mine_store.js';
 import { climbToSurface, descendToLevel, takePassedOre } from './mining.js';
 import { walksRoute, wayIn } from './mine_way.js';
 import { oreOf } from './ore_table.js';
-import { TEXTS, collectPassedText, noEntranceText, rememberMineText, rememberTunnelText, unknownOreText } from './texts.js';
+import { TEXTS, collectPassedText, forgetMineText, mineEntryText, minesListText, noEntranceText, rememberMineText, rememberTunnelText,
+    unknownOreText } from './texts.js';
 
 /** The room of a mine: these blocks within this many blocks of the bot or of a step of the way in (spec B2). */
 export const ROOM_RANGE = 6;
@@ -353,5 +355,59 @@ export async function collectPassedOre(bot, ctx = {}, ore = '', count = 8, optio
     } catch (err) {
         console.warn('Mining pack: collecting the ore left behind failed:', err?.stack ?? err);
         return { ok: false, reason: 'error', text: `I could not collect the ore I passed: ${errText(err)}`, collected: 0 };
+    }
+}
+
+/**
+ * Forgets a mine (spec I6, R4): the mine of that name, else for "16" or "bot:16" the mine of the bot at
+ * that level, else the mine of the bot for an ore (MineStore.remove). In every dimension.
+ * `Forgot the mine "mine".` or `I know no mine "mine".`
+ * @param {object} ctx with mines, the MineStore of the world
+ * @param {string} name
+ * @returns {{ok: boolean, reason: null|'no_store'|'no_mine'|'error', text: string}}
+ */
+export function forgetMine(ctx = {}, name = '') {
+    try {
+        const store = storeOf(ctx);
+        if (!store) {
+            return { ok: false, reason: 'no_store', text: NO_STORE };
+        }
+        const asked = typeof name === 'string' ? name.trim() : String(name ?? '').trim();
+        const mine = typeof store.find === 'function' ? store.find(name) : store.byName?.(name) ?? null;
+        if (!mine || typeof store.remove !== 'function' || !store.remove(name)) {
+            return { ok: false, reason: 'no_mine', text: forgetMineText(asked, false) };
+        }
+        const text = forgetMineText(mine.name ?? asked, true);
+        logTo(ctx, text);
+        return { ok: true, reason: null, text };
+    } catch (err) {
+        console.warn('Mining pack: forgetting the mine failed:', err?.stack ?? err);
+        return { ok: false, reason: 'error', text: `I could not forget the mine: ${errText(err)}` };
+    }
+}
+
+/**
+ * The mines the bot knows in a dimension (spec I6, R4), the mines with a name first, then the mines of
+ * the bot, the highest level first:
+ * `I know 2 mines: "mine", entrance (9, 67, 52), 2 tunnels at levels 30 and 25; the mine at (9, 67, 58) that I dug, level 16.`
+ * or `I know no mines.` Without a store the text of rememberMine without one. Never throws: an error gives
+ * `I could not read the mines: <error>`.
+ * @param {object} ctx with mines, the MineStore of the world
+ * @param {string} [dimension] all dimensions without one
+ * @returns {string}
+ */
+export function minesText(ctx = {}, dimension = undefined) {
+    try {
+        const store = storeOf(ctx);
+        if (!store) {
+            return NO_STORE;
+        }
+        const mines = store.list(dimension ?? undefined);
+        const named = mines.filter(m => typeof m.name === 'string' && m.name.length > 0);
+        const others = mines.filter(m => !named.includes(m));
+        return minesListText([...named, ...others].map(m => mineEntryText(m, tunnelsOf(m))));
+    } catch (err) {
+        console.warn('Mining pack: listing the mines failed:', err?.stack ?? err);
+        return `I could not read the mines: ${errText(err)}`;
     }
 }

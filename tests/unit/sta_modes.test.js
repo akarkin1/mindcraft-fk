@@ -10,8 +10,8 @@
 //   - A11: the mode hunger calls hungerStep every 2 s and walks only through state.walk;
 //   - A7: night_shelter without a home, and agent.whereAmI.
 //
-// Seams: a module hook (node:module register) gives modes.js, and only modes.js, fakes of three modules:
-// the home pack, skills.js and world.js. Each fake re-exports the real module and replaces a few
+// Seams: a module hook (node:module register) gives modes.js, and only modes.js, fakes of four modules:
+// the home pack, skills.js, world.js and (v0.1.4.10) areas/keep_out.js. Each fake re-exports the real module and replaces a few
 // functions by the ones in globalThis.__staFakes (else the real ones; world.isClearPath is true). So the
 // tests do not depend on the work of parts B and C in those files.
 import { describe, test, before, after, beforeEach, afterEach } from 'node:test';
@@ -39,6 +39,8 @@ const FAKES = {
     './library/skills.js': fakeSource('src/agent/library/skills.js', 'skills', ['moveAway', 'pickupNearbyItems', 'goToPlayer', 'defendSelf'],
         (name) => `real.${name}(...a)`),
     './library/world.js': fakeSource('src/agent/library/world.js', 'world', ['isClearPath'], () => 'Promise.resolve(true)'),
+    // v0.1.4.10, R1: the walk of item_collecting is collectItems of areas/keep_out.js, no longer skills.pickupNearbyItems
+    './areas/keep_out.js': fakeSource('src/agent/areas/keep_out.js', 'keepOut', ['collectItems'], (name) => `real.${name}(...a)`),
 };
 const HOOK = `const FAKES = ${JSON.stringify(FAKES)};
 export async function resolve(specifier, context, next) {
@@ -186,7 +188,7 @@ after(() => {
 beforeEach(() => {
     cap = captureConsole();
     M.settingsModule.setSettings({ ...BASE_SETTINGS });
-    fakes = { home: {}, skills: {}, world: {} };
+    fakes = { home: {}, skills: {}, world: {}, keepOut: {} };
     globalThis.__staFakes = fakes;
     offset += 10 * 60 * 1000;
 });
@@ -614,7 +616,7 @@ describe('item_collecting (A8)', () => {
 
     test('a pick-up that gained nothing: again after 3 s, not before, at most 3 times again', LIMIT, async () => {
         const tries = [];
-        fakes.skills.pickupNearbyItems = async () => { tries.push(Date.now()); return true; };
+        fakes.keepOut.collectItems = async () => { tries.push(Date.now()); return true; };
         const agent = makeAgent({ on: ['item_collecting'] });
         dropItem(agent);
         await agent.bot.modes.update(); // noticed
@@ -645,7 +647,7 @@ describe('item_collecting (A8)', () => {
     test('a pick-up that gained something: no second try of that item', LIMIT, async () => {
         let tries = 0;
         let agent = null;
-        fakes.skills.pickupNearbyItems = async () => { tries++; agent.bot.inventory.slots[36] = { name: 'oak_fence', count: 8 }; return true; };
+        fakes.keepOut.collectItems = async () => { tries++; agent.bot.inventory.slots[36] = { name: 'oak_fence', count: 8 }; return true; };
         agent = makeAgent({ on: ['item_collecting'] });
         dropItem(agent);
         await agent.bot.modes.update();
@@ -660,7 +662,7 @@ describe('item_collecting (A8)', () => {
 
     test('an item that the bot threw is left for 10 s', LIMIT, async () => {
         let tries = 0;
-        fakes.skills.pickupNearbyItems = async () => { tries++; return true; };
+        fakes.keepOut.collectItems = async () => { tries++; return true; };
         const agent = makeAgent({ on: ['item_collecting'] });
         const id = nextId++;
         const item = { id, name: 'item', type: 'object', position: agent.bot.entity.position.offset(0, 1.32, 0) };
@@ -682,7 +684,7 @@ describe('item_collecting (A8)', () => {
 
     test('another item beside the bot\'s own drop: nothing is picked up while the drop is younger than 10 s', LIMIT, async () => {
         let tries = 0;
-        fakes.skills.pickupNearbyItems = async () => { tries++; return true; };
+        fakes.keepOut.collectItems = async () => { tries++; return true; };
         const agent = makeAgent({ on: ['item_collecting'] });
         const own = { id: nextId++, name: 'item', type: 'object', position: agent.bot.entity.position.offset(0, 1.32, 0) };
         agent.bot.emit('entitySpawn', own);
@@ -693,7 +695,7 @@ describe('item_collecting (A8)', () => {
         offset += 2100;
         await agent.bot.modes.update();
         await settle(agent);
-        assert.equal(tries, 0, 'pickupNearbyItems would take the own drop too');
+        assert.equal(tries, 0, 'the walk would take the own drop too');
         offset += 8000;
         await agent.bot.modes.update();
         offset += 2100;
@@ -704,7 +706,7 @@ describe('item_collecting (A8)', () => {
 
     test('an item of another player appears 3 blocks away: collected as before', LIMIT, async () => {
         let tries = 0;
-        fakes.skills.pickupNearbyItems = async () => { tries++; return true; };
+        fakes.keepOut.collectItems = async () => { tries++; return true; };
         const agent = makeAgent({ on: ['item_collecting'] });
         const id = nextId++;
         const item = { id, name: 'item', type: 'object', position: agent.bot.entity.position.offset(3, 1.32, 0) };

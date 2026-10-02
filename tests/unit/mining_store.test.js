@@ -106,8 +106,8 @@ describe('MineStore', () => {
             const a = new S.MineStore(file, { now });
             a.set(IRON);
             const json = JSON.parse(fs.readFileSync(file, 'utf8'));
-            assert.equal(json.version, 1);
-            assert.deepEqual(Object.keys(json.mines), ['16']);
+            assert.equal(json.version, 2); // v0.1.4.10 (R4): version 2, a mine of the bot keyed bot:<level>
+            assert.deepEqual(Object.keys(json.mines), ['bot:16']);
             const b = new S.MineStore(file, { now });
             assert.equal(b.load(), 1);
             const m = b.get('iron');
@@ -115,7 +115,7 @@ describe('MineStore', () => {
             assert.equal(m.created, a.get('iron').created);
             assert.match(m.created, /^2026-09-28T10:0\d:00\.000Z$/);
             b.set({ ...IRON, ore: 'gold', level: -16, dimension: 'the_end' });
-            assert.deepEqual(Object.keys(JSON.parse(fs.readFileSync(file, 'utf8')).mines).sort(), ['16', 'the_end:-16']);
+            assert.deepEqual(Object.keys(JSON.parse(fs.readFileSync(file, 'utf8')).mines).sort(), ['bot:16', 'the_end:bot:-16']);
             b.remove('iron');
             const c = new S.MineStore(file);
             assert.equal(c.load(), 1);

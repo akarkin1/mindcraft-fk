@@ -133,6 +133,13 @@ const SCENARIOS = [
     ['come_here_floors', 'w82_come_here_across_floors.js', 600, false, 'base'],
     ['chest_and_torches', 'w83_chest_and_torches.js', 300, false, 'base'],
     ['ten_minutes', 'w84_ten_minutes.js', 1500, false, 'base'],
+    // v0.1.4.10 "Goals" (tester T3): the job, the blocker, the standing list, the ladders, the pen gate, the floors
+    ['job_comes_back', 'w85_job_comes_back.js', 1500, false, 'base'],
+    ['blocker_steps', 'w86_blocker_steps.js', 1800, false, 'base'],
+    ['idle_list', 'w87_idle_list.js', 1080, false, 'base'],
+    ['ladders_native', 'w88_ladders_native.js', 1500, false, 'base'],
+    ['pen_gate_safe', 'w89_pen_gate_safe.js', 600, false, 'base'],
+    ['two_floors', 'w90_two_floors.js', 900, false, 'base'],
 ];
 
 // Words that select a group of scenarios (spec v0.1.4.8, W30: the work scenarios of v0.1.4.7, which run
@@ -144,7 +151,10 @@ const GROUPS = {
     mine_routes_0149: ['trail_records', 'route_to_bed', 'route_reverse', 'route_broken', 'remember_mine', 'remember_tunnel', 'mine_known',
         'passed_ore', 'ore_sense', 'ore_in_sight', 'dusk_on_route', 'dig_code_refused', 'branches', 'flags_off_0149', 'follow_ladder'],
     // the journey scenarios W80 to W84 and their base W59 (README, "Journey scenarios")
-    journeys: ['owner_base', 'first_minutes', 'first_mine', 'come_here_floors', 'chest_and_torches', 'ten_minutes'],
+    journeys: [
+        'owner_base', 'first_minutes', 'first_mine', 'come_here_floors', 'chest_and_torches', 'ten_minutes',
+        'job_comes_back', 'blocker_steps', 'idle_list', 'ladders_native', 'pen_gate_safe', 'two_floors',
+    ],
 };
 
 const args = process.argv.slice(2);

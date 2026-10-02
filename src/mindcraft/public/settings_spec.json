@@ -348,6 +348,31 @@
         "description": "Whether !newAction refuses to write code for a request about digging and names the commands that do it. A !newAction that the player types still runs",
         "default": false
     },
+    "job_memory": {
+        "type": "boolean",
+        "description": "Whether the bot keeps its job (mining, farming, cutting wood ...) in bots/<name>/job.json and comes back to it after an errand or a restart. When a skill lacks something (torches, a pickaxe) the model plans the steps, at most 3 times per job. Also needed for idle_jobs",
+        "default": false
+    },
+    "job_resume_seconds": {
+        "type": "number",
+        "description": "With job_memory on: the seconds without an order and with nothing running before the bot goes back to its job, a whole number of 10 or more",
+        "default": 60
+    },
+    "idle_jobs": {
+        "type": "array",
+        "description": "With job_memory on: commands the bot runs in order when it has no job, a list of texts, e.g. [\"!farmCycle(\\\"farm\\\")\", \"!craftSupplies(\\\"torch\\\", 32)\"]. Empty for none",
+        "default": []
+    },
+    "idle_jobs_minutes": {
+        "type": "number",
+        "description": "With job_memory on: an entry of idle_jobs runs at most once per this many minutes, a whole number of 1 or more",
+        "default": 15
+    },
+    "area_floors": {
+        "type": "boolean",
+        "description": "Whether !rememberArea in a building with floors saves only the floor the bot stands on, so the house and the basement are two areas. A trapdoor or a ladder between the floors is a wall of the scan",
+        "default": false
+    },
     "code_timeout_mins": {
         "type": "number",
         "description": "Number of minutes to allow code execution. -1 for no timeout",

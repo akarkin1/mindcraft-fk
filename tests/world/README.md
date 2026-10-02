@@ -440,6 +440,89 @@ waits for the bot (`waitBot`), and the parts A (W80) and B (W81) that W84 chains
 | W83 | `w83_chest_and_torches.js` | "check the chest" `!viewChest`; "make 32 torches" `!craftSupplies("torch", 32)` | the chest of the house holds 20 oak_log and 9 coal: the answer names them; within 60 s the bot has 32 torches and does not say it lacks logs; nothing of the house taken |
 | W84 | `w84_ten_minutes.js` | W80, then W81 from the basement (led out under the open sky first), "let's sleep" `!goToBed` at night, "come here" from the mine room | every check of the parts; the bot sleeps and says "I slept. It is morning."; it reaches the player in the mine room within 120 s; the process never ends and the bot never dies |
 
+| `job_comes_back` | w85 | `!mineOre("iron", 8)`, then "follow me" 20 blocks and silence: `I go back to the mining, N of 8 iron.`, 8 raw_iron, on the surface (`job_memory`) |
+| `blocker_steps` | w86 | `!mineOre("iron", 4)` without torches and pickaxe, logs and coal in the house chest: the plan text, the steps, the iron |
+| `idle_list` | w87 | `idle_jobs` with the farm cycle and 8 torches: after 60 s of silence both run, no order given |
+| `ladders_native` | w88 | W80, W82 and the follow of W75 with the fallback counted: no `I go down the ladder` line, the climbs smooth |
+| `pen_gate_safe` | w89 | fences dropped in the pen: the gate stays closed, `I leave the oak_fence in the pen "pen". I do not open its gate.`; the same with a rule |
+| `two_floors` | w90 | `area_floors`: home is the house floor, the basement a second area, `!goToBed` sleeps below, `That is the area "home" already.` |
+## Tools of v0.1.4.10
+
+### The scorecard of a play log
+
+```
+node scripts/scorecard.js play.log [more.log ...]
+```
+
+One row per log and a total, then the commands chosen, most first. The log is the console output of the bot (UTF-8, or
+the UTF-16 of a PowerShell 5 redirect) or the output of a scenario (`MCW_LOG_DIR`).
+
+| Column | What it counts |
+|---|---|
+| Minutes | from the first to the last time stamp (`[HH:MM:SS]`, `log_timestamps`); `-` for a log without times |
+| Processes | the lines `Initializing agent <name>...` |
+| Ends | per process the reason of `Agent process ends with exit code N: <text>` (stuck, socket, kicked, restart, mindserver, code, players, other), or `exit N` when only `Agent process exited with code N` came |
+| Orders | the messages of players (`<bot> received message from <player> :`); handleMessage prints a message a second time, it counts once; messages of `system` are no orders |
+| Without result | the orders after which no `Agent executed:` line and no `full response to <player>` came within 60 s; a typed command also counts as answered by its `parsed command:` line (its answer is not printed). Without times: before the next order |
+| Calls | the calls of the last `Cost:` line of each process (cumulative, `It includes N earlier processes` replaces the sum); without a cost line the `Awaiting ... response` lines. In brackets the `Awaiting` lines per model |
+| Cost | the dollars of the same `Cost:` lines; `-` without one |
+| Stuck | the lines with `I'm stuck!` (also inside an AUTO MESSAGE) |
+| Doors open | the `Door service: closed ...` lines: doors the bot left open and the service closed; `could not close` lines are added as "N not closed" |
+
+A log cut in the middle counts what it holds: the calls of the cost meter are those of its last cost line, the
+`Awaiting` lines only those in the cut.
+
+### The dump of the owner's region
+
+`scripts/dump_region.js` reads the blocks around home in the owner's world into `tests/world/owner_region.json`.
+The owner runs it once, on his machine, while his world is open (the bot of the tests never connects to it):
+
+```
+fnm exec --using=v20.20.2 -- node scripts/dump_region.js --host 127.0.0.1 --port 55916 --name region_dump --center <x> <y> <z> --radius 24 --out tests/world/owner_region.json
+```
+
+- `--center` is the middle of the box, for example the floor of the house in front of the bed (F3 shows it); the box
+  is `2r+1` blocks wide, long and high (`--radius` 1 to 48, default 16). 24 holds the house, the basement and the
+  mine room when they lie within 24 blocks.
+- The script joins as a second player in offline mode (the world must allow it, as it does for the bot) and reads only:
+  no chat, no command, nothing dug or placed. It waits until every chunk of the box is loaded (`--wait`, 60 s): stand
+  near the box, or the script says which chunks are missing and where its player stands.
+- It writes `{ version: 1, center, radius, blocks: [[x, y, z, name, props]] }`, absolute coordinates, without air, one
+  block per line; props are `facing`, `half`, `open`, `hinge`, `part`, `type`, `axis`, `shape` when the block has
+  them. The contents of chests are not read. Then one table: the box, the cells, the blocks, the air, the cells not
+  loaded, the kinds, the beds, chests, doors, trapdoors and ladders. Exit 1 with one line on a bad argument, no
+  connection or chunks not loaded.
+
+`tests/world/owner_region.js` is the loader: `loadDump(file)` (null without the file), `buildFromDump(dump, origin)`
+clears the box at the origin and builds every block with the control (the center of the dump lands on `origin`, the
+attached blocks last, a door's and a bed's halves together), `buildCommands(dump, origin)` gives those commands, and
+`spotsFromDump(dump, origin)` finds the beds, the chests, the doors, the trapdoors and the ladders (with their
+columns). The region must be prepared with a radius of the dump's radius or more.
+
+### `npm run test:play`
+
+The first ten minutes with the chat model of the owner's profile: the only test in which the model talks. It runs on
+the owner's machine, by hand, never in `npm test`, and costs money (about 10 cents with Luna).
+
+```
+npm.cmd run test:play                                   the chat model of profiles/claude.json
+npm.cmd run test:play -- --profile profiles/gpt.json    another profile
+npm.cmd run test:play -- --fake                         the fake model of the world tests: no key, no cost
+```
+
+It refuses to run without the key of the chat model in the environment (`ANTHROPIC_API_KEY` for Claude,
+`OPENAI_API_KEY` for gpt and Luna, ...): `Play test refused: ...`. It starts the test server as the world runner does
+(`MC_TEST_SERVER_DIR`, `MC_TEST_JAVA`, 127.0.0.1, port 25599 or the next free one, a base world), builds the owner
+variant of the base, starts the bot with the model and the owner's switches of the journeys, and a second bot as the
+player says, in plain words, the sentences of W80 and W84 while it walks their way: "this is home", "follow me" (down
+to the basement), "remember the path here", "come here", "go to the basement", "follow me" (out, down both ladders, into
+the tunnel), "this is the mine", "find some iron". After each sentence it waits for the world fact of the journeys (an
+area around the middle of the house, the bot in the basement, a route with a ladder, the bot in the house, the bot in
+the tunnel, a mine of the player, 4 raw_iron). The table: the sentence, the command the model chose, the command of
+the journeys, the fact, pass or fail, the cost of the sentence; then the line of the cost meter. Exit 0 when every fact
+holds. With `--fake` the fake answers each sentence with the command of the journeys, and its cost is of a made-up
+usage (3000 tokens in, 40 out per call).
+
 ## Hygiene
 
 The runner checks at the end and fails the run otherwise: the java process it started has ended,

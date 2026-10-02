@@ -1,0 +1,200 @@
+CHECK PASS precondition: the scenario runs in the base world :: base
+[stderr] (node:5118) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+[stderr] (Use `node --trace-deprecation ...` to show where the warning was created)
+[stderr] keys.json not found. Defaulting to environment variables.
+Sandbox: SES lockdown active, code written by the model runs in an isolated compartment.
+Initializing agent bot...
+[stderr] Error with embedding model, using word-overlap instead.
+[stderr] Error with embedding model, using word-overlap instead.
+[stderr] Error with embedding model, using word-overlap instead.
+Examples initialized.
+No task.
+bot logging into minecraft...
+bot logged in!
+Initializing vision intepreter...
+bot spawned.
+Error reading construction file
+NOTE modes of the agent: {"self_preservation":true,"creeper_safety":true,"night_shelter":true,"unstuck":true,"cowardice":false,"self_defense":true,"hunger":true,"hunting":false,"item_collecting":true,"torch_placing":true,"elbow_room":true,"idle_staring":true,"cheat":false,"door_closing":true}
+CHECK PASS the modes of the agent are as the profile of the scenario sets them
+executing code...
+
+NOTE the memory at the start: areas [], places [], routes.json missing, mines.json missing
+CHECK PASS precondition: the memory of the bot is empty (no area, no place, no route, no mine) :: areas 0, places [], routes none, mines none
+bot received message from player : !rememberArea("home", "home")
+parsed command: { commandName: '!rememberArea', args: [ 'home', 'home' ] }
+NOTE A0: !rememberArea("home", "home") answered "Area \"home\" (home) saved: 11 x 15 x 13 blocks, from (1395, 52, -6) to (1405, 66, 6), 1 door. Tell me if that is wrong."
+NOTE A0: the area "home": {"min":{"x":1395,"y":52,"z":-6},"max":{"x":1405,"y":66,"z":6}}; the basement is y 53 to 55
+bot received message from player : !followPlayer("player", 3)
+parsed command: { commandName: '!followPlayer', args: [ 'player', 3 ] }
+executing code...
+
+action "action:followPlayer" trying to interrupt current action "action:followPlayer"
+waiting for code to finish executing...
+waiting for code to finish executing...
+The block at (1399, 61, 2) belongs to the protected area "home". I do not break or place blocks there.
+Mode torch_placing finished executing, code_return: Action output:
+The block at (1399, 61, 2) belongs to the protected area "home". I do not break or place blocks there.
+Failed to place torch at (1399, 61, 2).
+
+NOTE order !followPlayer("player", 3): no answer within 5000 ms, it keeps running
+NOTE A1: !followPlayer answered "(timeout)"
+Door service: closed oak_trapdoor at (1398, 60, -3).
+NOTE A1: the bot is in the basement: yes after 2.0 s; the bot at (1398.5, 53.0, -1.2), the player at (1400.5, 53.0, 1.5)
+CHECK PASS A1: within 60 s of "follow me" the bot followed the player down the ladder into the basement, without help :: (1398.5, 53.0, -1.2)
+NOTE A2: the bot passed the trapdoor at t=12.309s of the trace, the trapdoor was closed at t=13.548s; it is closed now
+CHECK PASS A2: the trapdoor is closed within 10 s after the bot passed it (the player is in the basement) :: {"passedAt":12.309,"closedAt":13.548,"ok":true}
+bot received message from player : !rememberRoute("basement")
+parsed command: { commandName: '!rememberRoute', args: [ 'basement' ] }
+NOTE A3: !rememberRoute("basement") answered "I remember the way \"basement\": from the area \"home\", level 61 to here, 3 steps, 1 ladder, 1 trapdoor. I walk it in both directions. I saved the place \"basement\" there too."
+CHECK PASS A3: !rememberRoute("basement") remembers a way with 1 ladder and 1 trapdoor :: "I remember the way \"basement\": from the area \"home\", level 61 to here, 3 steps, 1 ladder, 1 trapdoor. I walk it in both directions. I saved the place \"basement\" there too."
+NOTE A3: routes.json: {"version":1,"routes":{"basement":{"name":"basement","dimension":"overworld","from":{"name":"home, level 61","x":1398,"y":61,"z":-3,"kind":"area"},"to":{"name":"basement","x":1398,"y":53,"z":-1},"legs":[{"kind":"door","kind2":"trapdoor","name":"oak_trapdoor","x":1398,"y":60,"z":-3,"from":{"x":1398,"y":61,"z":-3},"to":{"x":1398,"y":59,"z":-3}},{"kind":"ladder","x":1398,"z":-3,"top":59,"bottom":53,"face":"south","entry":{"x":1398,"y":61,"z":-2},"foot":{"x":1398,"y":53,"z":-2}},{"kind":"walk","from":{"x":1398,"y":53,"z":-2},"to":{"x":1398,"y":53,"z":-1}}],"steps":12,"source":"trail","created":"2026-10-01T11:09:12.635Z","updated":"2026-10-01T11:09:12.635Z"}}}
+bot received message from player : !goToPlayer("player", 3)
+parsed command: { commandName: '!goToPlayer', args: [ 'player', 3 ] }
+executing code...
+
+action "action:goToPlayer" trying to interrupt current action "action:followPlayer"
+waiting for code to finish executing...
+Command !followPlayer was stopped by the command !goToPlayer. Done so far: You are now actively following player player.
+I go down the ladder at (1398, 60, -3) after player.
+I climb up the ladder at (1398, 60, -3) after player.
+Unpausing mode unstuck
+Unpausing mode elbow_room
+NOTE A4: the bot is in the house: yes after 2.2 s; the bot at (1398.5, 62.0, -3.1), the player at (1400.5, 61.0, -1.5)
+Unpausing mode cowardice
+Unpausing mode self_defense
+NOTE A4: !goToPlayer answered "Action output:\nI climb up the ladder at (1398, 60, -3) after player.\nFound non-destructive path.\nYou have reached player.\n"
+CHECK PASS A4: after "come here" from the house the bot climbed up into the house by itself within 60 s :: (1398.5, 62.0, -3.1)
+Door service: closed oak_trapdoor at (1398, 60, -3).
+bot received message from player : !goToRememberedPlace("basement")
+parsed command: { commandName: '!goToRememberedPlace', args: [ 'basement' ] }
+executing code...
+
+Door service: closed oak_trapdoor at (1398, 60, -3).
+Unpausing mode unstuck
+NOTE A5: the bot is in the basement: yes after 5.4 s; the bot at (1398.5, 53.0, -0.9), the player at (1400.5, 61.0, -1.5)
+NOTE A5: !goToRememberedPlace("basement") answered "Action output:\nI take the route \"basement\".\nI followed the route \"basement\", 3 steps.\nFound non-destructive path.\nYou have reached (1398, 53, -1).\n"; after the answer the bot is at (1398.5, 53.0, -0.7)
+CHECK PASS A5: "go to the basement" from the house brings the bot into the basement within 60 s (on its floor, also after the answer) :: (1398.5, 53.0, -0.9), after the answer (1398.5, 53.0, -0.7)
+TRACE part A: home and the basement (77 samples)
+TRACE   t=0.0s bot=(1399.5, 61.0, 2.5) player=(1398.5, 61.0, -1.5) trapdoor=closed action=action:followPlayer
+TRACE   t=0.5s bot=(1399.5, 61.0, 2.5) player=(1398.5, 61.0, -1.5) trapdoor=closed action=action:followPlayer
+TRACE   t=1.1s bot=(1398.5, 61.0, 1.5) player=(1398.5, 61.0, -1.5) trapdoor=closed action=action:followPlayer
+TRACE   t=1.6s bot=(1398.5, 61.0, 1.5) player=(1398.5, 61.0, -1.5) trapdoor=closed action=action:followPlayer
+TRACE   t=2.1s bot=(1398.5, 61.0, 1.5) player=(1398.5, 61.0, -1.5) trapdoor=closed action=action:followPlayer
+TRACE   t=2.7s bot=(1398.5, 61.0, 1.5) player=(1398.5, 61.0, -1.5) trapdoor=closed action=action:followPlayer
+TRACE   t=3.2s bot=(1398.5, 61.0, 1.5) player=(1398.5, 61.0, -1.5) trapdoor=closed action=action:followPlayer
+TRACE   t=3.8s bot=(1398.5, 61.0, 1.5) player=(1398.5, 61.0, -1.5) trapdoor=closed action=action:followPlayer
+TRACE   t=4.3s bot=(1398.5, 61.0, 1.5) player=(1398.5, 61.0, -1.5) trapdoor=closed action=action:followPlayer
+TRACE   t=4.9s bot=(1398.5, 61.0, 1.5) player=(1398.5, 61.0, -1.5) trapdoor=closed action=action:followPlayer
+TRACE   t=5.4s bot=(1398.5, 61.0, 1.5) player=(1398.5, 61.0, -1.5) trapdoor=closed action=action:followPlayer
+TRACE   t=6.0s bot=(1398.5, 61.0, 1.5) player=(1398.5, 61.0, -1.5) trapdoor=closed action=action:followPlayer
+TRACE   t=6.5s bot=(1398.5, 61.0, 1.5) player=(1398.5, 61.0, -1.5) trapdoor=closed action=action:followPlayer
+TRACE   t=7.1s bot=(1398.5, 61.0, 1.5) player=(1398.5, 61.0, -1.5) trapdoor=open action=action:followPlayer
+TRACE   t=7.7s bot=(1398.5, 61.0, 1.5) player=(1398.5, 59.5, -2.5) trapdoor=open action=action:followPlayer
+TRACE   t=8.2s bot=(1398.5, 61.0, 0.2) player=(1398.5, 57.8, -2.5) trapdoor=open action=action:followPlayer
+TRACE   t=8.8s bot=(1398.5, 61.0, -2.6) player=(1398.5, 56.0, -2.5) trapdoor=open action=action:followPlayer
+TRACE   t=9.3s bot=(1398.5, 61.0, -2.5) player=(1398.5, 54.0, -2.5) trapdoor=open action=action:followPlayer
+TRACE   t=9.9s bot=(1398.5, 61.1, -2.5) player=(1398.5, 53.0, -2.5) trapdoor=open action=action:followPlayer
+TRACE   t=10.6s bot=(1398.5, 60.0, -2.5) player=(1399.5, 53.0, -1.5) trapdoor=open action=action:followPlayer
+TRACE   t=11.1s bot=(1398.5, 59.0, -2.5) player=(1400.5, 53.0, -1.5) trapdoor=open action=action:followPlayer
+TRACE   t=11.7s bot=(1398.5, 59.0, -2.5) player=(1400.5, 53.0, 0.5) trapdoor=open action=action:followPlayer
+TRACE   t=12.3s bot=(1398.5, 57.7, -2.5) player=(1400.5, 53.0, 1.5) trapdoor=open action=action:followPlayer
+TRACE   t=12.9s bot=(1398.5, 55.8, -2.5) player=(1400.5, 53.0, 1.5) trapdoor=open action=action:followPlayer
+TRACE   t=13.5s bot=(1398.5, 54.0, -2.5) player=(1400.5, 53.0, 1.5) trapdoor=closed action=action:followPlayer
+TRACE   t=14.1s bot=(1398.5, 53.0, -1.7) player=(1400.5, 53.0, 1.5) trapdoor=closed action=action:followPlayer
+TRACE   t=14.7s bot=(1398.5, 53.0, -0.4) player=(1400.5, 53.0, 1.5) trapdoor=closed action=action:followPlayer
+TRACE   t=15.3s bot=(1398.5, 53.0, -0.4) player=(1400.5, 53.0, 1.5) trapdoor=closed action=action:followPlayer
+TRACE   t=15.8s bot=(1398.5, 53.0, -0.4) player=(1400.5, 53.0, 1.5) trapdoor=closed action=action:followPlayer
+TRACE   t=16.4s bot=(1398.5, 53.0, -0.4) player=(1400.5, 53.0, 1.5) trapdoor=closed action=action:followPlayer
+TRACE   t=16.9s bot=(1398.5, 53.0, -0.4) player=(1400.5, 53.0, 1.5) trapdoor=closed action=action:followPlayer
+TRACE   t=17.5s bot=(1398.5, 53.0, -0.4) player=(1400.5, 53.0, 1.5) trapdoor=closed action=action:followPlayer
+TRACE   t=18.0s bot=(1398.5, 53.0, -0.4) player=(1400.5, 53.0, 1.5) trapdoor=closed action=action:followPlayer
+TRACE   t=18.6s bot=(1398.5, 53.0, -0.4) player=(1400.5, 53.0, 1.5) trapdoor=closed action=action:followPlayer
+TRACE   t=19.1s bot=(1398.5, 53.0, -0.4) player=(1400.5, 53.0, 1.5) trapdoor=closed action=action:followPlayer
+TRACE   t=19.7s bot=(1398.5, 53.0, -0.4) player=(1400.5, 53.0, 1.5) trapdoor=closed action=action:followPlayer
+TRACE   t=20.2s bot=(1398.5, 53.0, -0.4) player=(1400.5, 53.0, 1.5) trapdoor=closed action=action:followPlayer
+TRACE   t=20.8s bot=(1398.5, 53.0, -0.4) player=(1400.5, 53.0, 1.5) trapdoor=closed action=action:followPlayer
+TRACE   t=21.3s bot=(1398.5, 53.0, -0.4) player=(1400.5, 53.0, 1.5) trapdoor=closed action=action:followPlayer
+TRACE   t=21.9s bot=(1398.5, 53.0, -0.4) player=(1400.5, 53.0, 1.5) trapdoor=closed action=action:followPlayer
+TRACE   t=22.4s bot=(1398.5, 53.0, -0.4) player=(1400.5, 53.0, 1.5) trapdoor=closed action=action:followPlayer
+TRACE   t=23.0s bot=(1398.5, 53.0, -0.4) player=(1400.5, 53.0, 1.5) trapdoor=closed action=action:followPlayer
+TRACE   t=23.5s bot=(1398.5, 53.0, -0.4) player=(1400.5, 53.0, 1.5) trapdoor=closed action=action:followPlayer
+TRACE   t=24.1s bot=(1398.5, 53.0, -0.4) player=(1400.5, 53.0, 1.5) trapdoor=closed action=action:followPlayer
+TRACE   t=24.6s bot=(1398.5, 53.0, -0.4) player=(1400.5, 53.0, 1.5) trapdoor=closed action=action:followPlayer
+TRACE   t=25.2s bot=(1398.5, 53.0, -0.4) player=(1400.5, 53.0, 1.5) trapdoor=closed action=action:followPlayer
+TRACE   t=25.7s bot=(1398.5, 53.0, -0.4) player=(1399.5, 53.0, 1.5) trapdoor=closed action=action:followPlayer
+TRACE   t=26.3s bot=(1398.5, 53.0, -0.4) player=(1398.5, 53.0, 0.5) trapdoor=closed action=action:followPlayer
+TRACE   t=26.8s bot=(1398.5, 53.0, -0.4) player=(1398.5, 53.0, -0.5) trapdoor=closed action=action:followPlayer
+TRACE   t=27.4s bot=(1398.5, 53.0, -0.4) player=(1398.5, 53.0, -2.5) trapdoor=closed action=action:followPlayer
+TRACE   t=28.0s bot=(1398.5, 53.0, -0.4) player=(1398.5, 54.8, -2.5) trapdoor=closed action=action:followPlayer
+TRACE   t=28.6s bot=(1398.5, 53.0, -0.4) player=(1398.5, 57.0, -2.5) trapdoor=closed action=action:followPlayer
+TRACE   t=29.2s bot=(1398.5, 53.0, -1.8) player=(1398.5, 57.3, -2.5) trapdoor=closed action=action:followPlayer
+TRACE   t=29.8s bot=(1398.5, 53.2, -2.5) player=(1398.5, 57.6, -2.5) trapdoor=open action=action:followPlayer
+TRACE   t=30.3s bot=(1398.5, 54.6, -2.5) player=(1398.5, 59.2, -2.5) trapdoor=open action=action:followPlayer
+TRACE   t=30.9s bot=(1398.5, 55.9, -2.5) player=(1398.5, 61.0, -1.5) trapdoor=open action=action:followPlayer
+TRACE   t=31.5s bot=(1398.5, 57.5, -2.5) player=(1400.5, 61.0, -1.5) trapdoor=open action=action:followPlayer
+TRACE   t=32.1s bot=(1398.5, 57.5, -2.5) player=(1400.5, 61.0, -1.5) trapdoor=open action=action:goToPlayer
+TRACE   t=32.6s bot=(1398.5, 58.7, -2.5) player=(1400.5, 61.0, -1.5) trapdoor=open action=action:goToPlayer
+TRACE   t=33.2s bot=(1398.5, 60.0, -2.5) player=(1400.5, 61.0, -1.5) trapdoor=open action=action:goToPlayer
+TRACE   t=33.7s bot=(1398.5, 61.0, -2.6) player=(1400.5, 61.0, -1.5) trapdoor=open action=action:goToPlayer
+TRACE   t=34.3s bot=(1398.5, 61.1, -3.6) player=(1400.5, 61.0, -1.5) trapdoor=open action=-
+TRACE   t=34.8s bot=(1398.5, 61.0, -3.5) player=(1400.5, 61.0, -1.5) trapdoor=closed action=-
+TRACE   t=35.4s bot=(1398.5, 61.0, -3.5) player=(1400.5, 61.0, -1.5) trapdoor=closed action=-
+TRACE   t=35.9s bot=(1398.5, 61.0, -3.5) player=(1400.5, 61.0, -1.5) trapdoor=closed action=-
+TRACE   t=36.5s bot=(1398.5, 61.0, -3.5) player=(1400.5, 61.0, -1.5) trapdoor=closed action=action:goToRememberedPlace
+TRACE   t=37.1s bot=(1398.5, 61.0, -2.1) player=(1400.5, 61.0, -1.5) trapdoor=open action=action:goToRememberedPlace
+TRACE   t=37.6s bot=(1398.5, 61.0, -2.1) player=(1400.5, 61.0, -1.5) trapdoor=open action=action:goToRememberedPlace
+TRACE   t=38.2s bot=(1398.5, 61.0, -2.3) player=(1400.5, 61.0, -1.5) trapdoor=open action=action:goToRememberedPlace
+TRACE   t=38.7s bot=(1398.5, 60.8, -2.3) player=(1400.5, 61.0, -1.5) trapdoor=open action=action:goToRememberedPlace
+TRACE   t=39.3s bot=(1398.5, 59.1, -2.3) player=(1400.5, 61.0, -1.5) trapdoor=open action=action:goToRememberedPlace
+TRACE   t=39.8s bot=(1398.5, 57.5, -2.3) player=(1400.5, 61.0, -1.5) trapdoor=closed action=action:goToRememberedPlace
+TRACE   t=40.4s bot=(1398.5, 55.7, -2.3) player=(1400.5, 61.0, -1.5) trapdoor=closed action=action:goToRememberedPlace
+TRACE   t=41.0s bot=(1398.5, 53.9, -2.3) player=(1400.5, 61.0, -1.5) trapdoor=closed action=action:goToRememberedPlace
+TRACE   t=41.6s bot=(1398.5, 53.0, -1.5) player=(1400.5, 61.0, -1.5) trapdoor=closed action=-
+TRACE   t=42.2s bot=(1398.5, 53.0, -0.7) player=(1400.5, 61.0, -1.5) trapdoor=closed action=-
+TRACE   t=42.8s bot=(1398.5, 53.0, -0.7) player=(1400.5, 61.0, -1.5) trapdoor=closed action=-
+NOTE part A: the bot said ["*player used rememberArea*","Area \"home\" (home) saved: 11 x 15 x 13 blocks, from (1395, 52, -6) to (1405, 66, 6), 1 door. Tell me if that is wrong.","*player used followPlayer*","*player used rememberRoute*","I remember the way \"basement\": from the area \"home\", level 61 to here, 3 steps, 1 ladder, 1 trapdoor. I walk it in both directions. I saved the place \"basement\" there too.","*player used goToPlayer*","Command !followPlayer was stopped by the command !goToPlayer. Done so far: You are now actively following player player.\nI go down the ladder at (1398, 60, -3) after player.\nI climb up the ladder at (1398, 60, -3) after player.","Action output:\nI climb up the ladder at (1398, 60, -3) after player.\nFound non-destructive path.\nYou have reached player.\n","*player used goToRememberedPlace*","Action output:\nI take the route \"basement\".\nI followed the route \"basement\", 3 steps.\nFound non-destructive path.\nYou have reached (1398, 53, -1).\n"]
+NOTE A ended at minute 0.7: passed
+bot received message from player : !followPlayer("player", 4)
+parsed command: { commandName: '!followPlayer', args: [ 'player', 4 ] }
+executing code...
+
+NOTE order !followPlayer("player", 4): no answer within 5000 ms, it keeps running
+NOTE B1: !followPlayer answered "(timeout)"
+NOTE B1: the bot followed up ladder 1 into the house: yes after 2.8 s; the bot at (1398.5, 62.3, -3.5), the player at (1398.5, 61.0, -1.5)
+CHECK PASS B1: the bot followed up ladder 1 into the house within 60 s, by itself :: (1398.5, 62.3, -3.5)
+Door service: closed oak_trapdoor at (1398, 60, -3).
+NOTE B1: the bot followed out of the house under the open sky: yes after 4.5 s; the bot at (1400.5, 61.0, -5.3), the player at (1400.5, 61.0, -10.5)
+CHECK PASS B1: the bot followed out of the house under the open sky within 60 s, by itself :: (1400.5, 61.0, -5.3)
+NOTE B1: with the player beside the trapdoor the bot is NOT in the house at (1400.5, 61.0, -4.4), 3.5 blocks from the player
+Door service: closed oak_door at (1400, 61, -5).
+Door service: closed oak_trapdoor at (1398, 60, -3).
+NOTE B1: the bot followed down ladder 1 into the basement: yes after 1.6 s; the bot at (1398.5, 53.0, -2.5), the player at (1400.5, 53.0, 1.5)
+CHECK PASS B1: the bot followed down ladder 1 into the basement within 60 s, by itself :: (1398.5, 53.0, -2.5)
+NOTE B1: the bot followed down ladder 2 (ending 2 blocks above the floor) into the room: yes after 23.7 s; the bot at (1403.5, 43.1, -1.5), the player at (1401.5, 41.0, 0.5)
+CHECK PASS B1: the bot followed down ladder 2 (ending 2 blocks above the floor) into the room within 60 s, by itself :: (1403.5, 43.1, -1.5)
+Door service: closed oak_door at (1404, 41, 0).
+executing code...
+
+action "mode:torch_placing" trying to interrupt current action "action:followPlayer"
+waiting for code to finish executing...
+Door service: closed oak_door at (1404, 41, -1).
+Mode torch_placing finished executing, code_return: Action output:
+Placed torch at (1407, 38, 0).
+
+executing code...
+
+executing code...
+
+action "mode:torch_placing" trying to interrupt current action "action:followPlayer"
+waiting for code to finish executing...
+Mode torch_placing finished executing, code_return: Action output:
+Placed torch at (1415, 30, 0).
+
+executing code...
+
+executing code...
+
+action "mode:torch_placing" trying to interrupt current action "action:followPlayer"
+waiting for code to finish executing...
+waiting for code to finish executing...
+Mode torch_placing finished executing, code_return: Action output:

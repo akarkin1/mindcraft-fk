@@ -329,7 +329,18 @@ export function footOf(bot, leg) {
         return { x: Math.floor(leg.foot.x), y: Math.floor(leg.foot.y), z: Math.floor(leg.foot.z) };
     }
     const cell = offset({ x: leg.x, y: leg.bottom, z: leg.z }, leg.face);
-    return standable(bot, cell) ? cell : null;
+    if (standable(bot, cell)) {
+        return cell;
+    }
+    // v0.1.4.10 (P6): a column that ends 2 or more blocks above the floor (shaft 2 of the owner's mine) has its foot
+    // on the floor under it, at most 3 blocks below the lowest ladder; enterColumn then places the missing ladders
+    for (let y = leg.bottom - 1; y >= leg.bottom - 3; y--) {
+        const under = { x: leg.x, y, z: leg.z };
+        if (standable(bot, under)) {
+            return under;
+        }
+    }
+    return null;
 }
 
 /**

@@ -6,6 +6,43 @@ This fork is based on [Mindcraft](https://github.com/mindcraft-bots/mindcraft) `
 
 Each release lists new settings and feature flags with their default value.
 
+## [0.1.4.10] - 2026-10-02
+
+"Goals": the bot keeps the job you gave it, the path search climbs ladders by itself, the item reflex
+never opens a pen, the house and the basement are two places, and a play log is a table.
+
+### Added
+
+- **The job** (`job_memory`, off): an order with a result that code can check (mine N of an ore, farm a field, get N logs, make N of an item, collect N blocks) becomes the job of the bot, kept in `bots/<name>/job.json`. Errands ("follow me", "come here", "check the chest", "wait", "go to bed", the questions) do not end it. After `job_resume_seconds` (60) without an order and nothing running the bot goes back by itself: `I go back to the mining, 6 of 16 iron.` No call of the model for that. "Stop", "that's enough" or a new job end it: `I leave the mining at 6 of 16 iron.` It survives a restart: `I was mining iron, 6 of 16. I go on.` One line when the job is done: `The mining is done: 16 iron.`
+- **A blocker becomes steps**: a skill that fails for a missing supply (no torches, no pickaxe, no wood, no food) asks the model once for steps (at most 6, only wood, storage and crafting commands, at most 3 plans per job): `I have no torches. I get wood, planks, sticks and torches, then I go on.` and `Step 2 of 4 done: 16 sticks.`; when no plan comes: `I could not plan the steps for the torches. Tell me what to do.`
+- **The standing list** (`idle_jobs`, `[]`; `idle_jobs_minutes`, 15): commands the bot runs in order when it has no job, each at most once per `idle_jobs_minutes`, for example `["!farmCycle(\"farm\")", "!craftSupplies(\"torch\", 32)"]`. Needs `job_memory`.
+- **Two commands with `mining_pack`**: `!mines` lists the mines (`I know 2 mines: "mine", entrance (9, 67, 52), 2 tunnels at levels 30 and 25; the mine at (9, 67, 58) that I dug, level 16.`) and `!forgetMine("name")` forgets one.
+- **Floors** (`area_floors`, off): "this is home" upstairs saves the floor you stand on; "this is the basement" below saves a second area; the shelter is the floor with the bed. A scan that gives the box of an existing area answers `That is the area "home" already.` A rule such as "never enter the chicken pen" marks that area keep out: `I marked the area "chicken_pen" as keep out.`
+- **Tools**: `node scripts/scorecard.js <log>` prints one table per play log (minutes, processes and why they ended, orders and orders without a result, calls and cost per model, stuck lines, doors left open, the commands chosen). `node scripts/dump_region.js` reads the blocks around a point of your world into `tests/world/owner_region.json`, from which the test base is built. `npm run test:play` plays the first minutes with the chat model of your profile, on your machine only, and prints the sentence, the command the model chose, the fact and the cost.
+- The job line in the knowledge block: `Job: the mining, 6 of 16 iron, step 2 of 4.`
+
+### Changed
+
+- **The path search climbs and descends ladders itself**, opens a closed trapdoor on its way, centres every door point, takes a tolerance of 0.35 blocks at doors, gates, trapdoors and ladders, never stands on a bottom slab, bottom stairs, a cauldron, a composter or a hopper, pays 50 more for a one-wide pit and 100 more for 30 s for a point it could not reach, so the next plan takes another way. On a ladder it looks at the wall and holds or releases forward, never jumps. The ladder step of v0.1.4.9 stays as the fallback after a walk, and mid-walk when the bot stands still.
+- **The item reflex never opens the gate of a pen or a farm** and never picks an item inside such an area or an area marked keep out while the bot is outside: `I leave the oak_fence in the pen "pen". I do not open its gate.` once a minute. A gate the bot went through, or has stopped beside, is closed as soon as its feet are out of the gate cell.
+- A mine of the bot is keyed by its level (`bot:16`), a mine of the player by its name; `mines.json` becomes version 2 at the first load, every mine kept. A mine named "16" no longer collides.
+- The descriptions of `!mines` and `!forgetMine` are short; the prompt with every switch on is 16,981 characters. `!craftable` says it crafts nothing (Haiku took "make 10 ladders" for it).
+- `profiles/gpt.json` picks its prompt examples with the same embedding model as the claude profile. The routing check of 2026-10-01: Luna 146 of 154 for 5 cents, Haiku 145 of 154 for 78 cents; three stale expectations of the sentence list widened.
+- A ladder pass that ran out of time while the bot still arrived claims no failure.
+- The house rule "Never dig straight down." is gone from `profiles/claude.json` and `profiles/gpt.json` (the owner, 2026-10-02: digging down is conditional, a shaft with ladders is fine). Both profiles carry no HOUSE RULES block; the rules of the player stay in `rules.json`.
+
+### Settings
+
+| Key | Default | Meaning |
+|---|---|---|
+| `job_memory` | `false` | The bot keeps its job and comes back to it |
+| `job_resume_seconds` | `60` | Seconds without an order, and nothing running, before it comes back (10 or more) |
+| `idle_jobs` | `[]` | Commands the bot runs when it has no job, in order |
+| `idle_jobs_minutes` | `15` | An entry of the list runs at most once per this many minutes |
+| `area_floors` | `false` | A scan of a building stops at a floor |
+
+The path search, the pen gate, the duplicate area and the mine commands are corrections and have no switch.
+
 ## [0.1.4.9] - 2026-09-30
 
 The mine, the routes of the player, and the model comparison. The bot learns a place by walking through it with the player: the way into the mine, with its ladders, doors and trapdoors, and the way from one room of the base to another. Code stores the way as a route and walks it again. The language model never has to understand what a tunnel is, and it no longer writes tunnel code.

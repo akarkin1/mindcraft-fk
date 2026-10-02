@@ -119,15 +119,15 @@ describe('X1: the blocks the bot never stands in or on (stand_logic.js, pure)', 
 });
 
 describe('X1: makeMovements and gotoGoal of the home pack (real path search)', () => {
-    test('the cause: the plain path search ends a walk to the rim of the composter on top of it', () => {
+    test('the cause of v0.1.4.8, gone in v0.1.4.10 (P4): the plain path search no longer ends a walk to the rim of the composter on top of it', () => {
         const w = realWorld();
         w.set(COMPOSTER.x, COMPOSTER.y, COMPOSTER.z, 'composter', { level: 0 });
         const old = new pf.Movements(pathBot(w));
         old.canDig = false;
         const res = search(old, new pf.goals.GoalNear(4, 62, 0, 1), { x: 2, y: 61, z: 0 });
-        assert.equal(res.status, 'success');
-        const end = res.path[res.path.length - 1];
-        assert.deepEqual([end.x, end.y, end.z], [4, 62, 0], 'on top of the hollow composter');
+        // no cell within 1 block of the top of the composter is a standing place: no path, or a path that ends elsewhere
+        const end = res.path[res.path.length - 1] ?? null;
+        assert.ok(res.status !== 'success' || JSON.stringify([end.x, end.y, end.z]) !== JSON.stringify([4, 62, 0]), 'the composter is no standing place in the patched path search');
     });
 
     test('with makeMovements and safeGoal no walk goes into or onto a composter, chest, cauldron or hopper', () => {

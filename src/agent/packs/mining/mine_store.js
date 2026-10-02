@@ -14,6 +14,11 @@
 // have door legs ({ kind: 'door', kind2, name, x, y, z, from, to }). A mine of v0.1.4.7 loads with
 // name null, source 'bot', room null, tunnels [], passed []. The key of a mine is its name when it
 // has one, else its level (mineKey). get and atLevel see the mines of the bot only.
+//
+// v0.1.4.10 (spec I6, R4): the file is { version: 2, mines: { "bot:<level>": mine, "<name>": mine } }. A
+// mine without a name has the key bot:<level>, so a mine of the player named "16" no longer meets the
+// mine of the bot at level 16. A file of version 1 is read as before and written again as version 2 at
+// load, every mine kept (the key of a level becomes bot:<level>).
 import { readJsonSafe, writeJsonAtomic } from '../../../utils/safe_json.js';
 import { MAX_PASSED, addPassedEntry, cleanPassedEntry, isDirection, mineDistance, removePassedAt } from './mine_logic.js';
 import { oreOf, targetLevel } from './ore_table.js';
@@ -27,7 +32,9 @@ export const DOOR_KINDS = Object.freeze(['door', 'gate', 'trapdoor']);
 /** How far `nearest` looks for a mine (spec I6). */
 export const NEAREST_RANGE = 64;
 
-const FILE_VERSION = 1;
+const FILE_VERSION = 2;
+/** The front of the key of a mine without a name (R4). */
+export const BOT_KEY_PREFIX = 'bot:';
 
 function isPlainObject(value) {
     return value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -67,14 +74,14 @@ export function cleanMineName(name) {
 }
 
 /**
- * The key of a mine in the store and in the file (spec I6): its name when it has one, else its
- * level; with the dimension in front outside the overworld (`the_nether:16`).
+ * The key of a mine in the store and in the file (spec I6, v0.1.4.10 R4): its name when it has one,
+ * else `bot:<level>`; with the dimension in front outside the overworld (`the_nether:bot:16`).
  * @param {object} mine
  * @returns {string}
  */
 export function mineKey(mine) {
     const dimension = normalizeDimension(mine?.dimension);
-    const id = cleanMineName(mine?.name) ?? String(Math.floor(mine?.level));
+    const id = cleanMineName(mine?.name) ?? `${BOT_KEY_PREFIX}${Math.floor(mine?.level)}`;
     return dimension === 'overworld' ? id : `${dimension}:${id}`;
 }
 
@@ -251,16 +258,26 @@ export class MineStore {
             if (result.status === 'ok') {
                 const mines = result.data.mines;
                 if (isPlainObject(mines)) {
-                    for (const entry of Object.values(mines)) {
+                    for (const [oldKey, entry] of Object.entries(mines)) {
                         try {
                             const clean = validateMine(entry, null);
                             clean.created = typeof entry.created === 'string' ? entry.created : null;
                             clean.updated = typeof entry.updated === 'string' ? entry.updated : null;
+                            if (this._mines.has(mineKey(clean))) {
+                                // R4: never two mines under one key; only a file written by hand gets here
+                                console.warn(`Mine file ${this.filePath}: the mine "${oldKey}" has the key "${mineKey(clean)}" of another mine. I keep the first one.`);
+                                continue;
+                            }
                             this._mines.set(mineKey(clean), clean);
                         } catch {
                             // an invalid entry is left out
                         }
                     }
+                }
+                // R4: a file of version 1 is written again as version 2, its mines under the new keys
+                if (result.data.version !== FILE_VERSION && this._mines.size > 0) {
+                    console.log(`Mine file ${this.filePath}: version ${result.data.version} read, written as version ${FILE_VERSION} with ${this._mines.size} mine(s).`);
+                    this._save();
                 }
             } else if (result.status !== 'missing') {
                 let warning = `Mine file ${this.filePath} could not be read (${result.status}: ${result.error?.message}).`;
@@ -362,7 +379,12 @@ export class MineStore {
     }
 
     _byKey(key) {
-        return this._mines.get(typeof key === 'string' ? key : mineKey(key)) ?? null;
+        if (typeof key !== 'string') {
+            return this._mines.get(mineKey(key)) ?? null;
+        }
+        // v0.1.4.10 (R4): the key of a level of v0.1.4.9 ("16", "the_nether:16") is that of bot:<level>
+        const old = /^(?:(.+):)?(-?\d+)$/.exec(key);
+        return this._mines.get(key) ?? (old ? this._mines.get(`${old[1] ? `${old[1]}:` : ''}${BOT_KEY_PREFIX}${old[2]}`) : null) ?? null;
     }
 
     /**
@@ -416,14 +438,39 @@ export class MineStore {
     }
 
     /**
-     * Removes the mine of an ore (as get finds it), of a level, or of a name (v0.1.4.9), and writes the file.
-     * @param {string|number} oreOrLevel
+     * The mine that remove(name) removes (v0.1.4.10, R4), or null: the mine of that name first; else
+     * for "bot:16", "16" or 16 the mine of the bot at that level; else the mine of an ore as get finds it.
+     * @param {string|number} name
+     * @param {string} [dimension]
+     * @returns {object|null} a copy
+     */
+    find(name, dimension) {
+        if (typeof name === 'number') {
+            return Number.isFinite(name) ? this.atLevel(name, dimension) : null;
+        }
+        if (typeof name !== 'string') {
+            return null;
+        }
+        const byName = this.byName(name, dimension);
+        if (byName) {
+            return byName;
+        }
+        const level = /^\s*(?:bot:)?(-?\d+)\s*$/i.exec(name);
+        if (level) {
+            return this.atLevel(Number(level[1]), dimension);
+        }
+        return this.get(name, dimension);
+    }
+
+    /**
+     * Removes a mine and writes the file (v0.1.4.10, R4: by name first, see find). A number or "bot:16"
+     * is the mine of the bot at that level, an ore the mine of the bot for it (v0.1.4.7).
+     * @param {string|number} name
      * @param {string} [dimension]
      * @returns {boolean} true if it existed
      */
-    remove(oreOrLevel, dimension) {
-        const mine = typeof oreOrLevel === 'number' ? this.atLevel(oreOrLevel, dimension)
-            : this.get(oreOrLevel, dimension) ?? this.byName(oreOrLevel, dimension);
+    remove(name, dimension) {
+        const mine = this.find(name, dimension);
         if (!mine) {
             return false;
         }

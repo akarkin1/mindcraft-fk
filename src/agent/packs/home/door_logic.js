@@ -142,6 +142,11 @@ export function sideOf(door, pos) {
     return along < -0.3 ? -1 : 0;
 }
 
+// True when the feet of the bot are in the cell of the openable (v0.1.4.10, T3-5).
+function feetInCell(pos, door) {
+    return Math.floor(pos.x) === door.x && Math.floor(pos.z) === door.z && Math.abs(Math.floor(pos.y + 0.01) - door.y) <= 1;
+}
+
 function isIronDoorRecord(door) {
     return isIronOpenable(door.name) || (typeof door.kind === 'string' && door.kind.startsWith('iron'));
 }
@@ -262,7 +267,7 @@ export const DOOR_SERVICE_RULES = Object.freeze({
     playerOpenRange: 3,   // ... unless the bot stands still and a player is this close to it (the player opened it)
     movedWithinMs: 1500,  // the bot moves when it moved during this time
     nearDistance: 1.5,    // the bot passed an openable when it came this close to its centre
-    pastDistance: 2,      // a passed openable is closed when the bot is this far from it
+    pastDistance: 2,      // a passed door or trapdoor is closed when the bot is this far from it (a gate: feet out of its cell)
     leftDistance: 4,      // (v0.1.4.8: one the bot opened and did not pass; since v0.1.4.9 F21 never closed)
     sideRange: 3,         // v0.1.4.9 F21: the bot is on a side of a door or gate within this distance of it
     reach: 5,             // farther away the bot cannot click it
@@ -286,13 +291,17 @@ export const DOOR_SERVICE_RULES = Object.freeze({
  *   blocks.
  * - A noted openable is returned to close when it is open, nobody stands in it or is within 1 block of
  *   it (`occupied`), no other player is within 2 blocks, it is within 5 blocks of the bot, and the bot
- *   passed it and is now 2 blocks or more from it. A noted one of the start is returned without passing,
+ *   passed it and is now 2 blocks or more from it; a gate the bot passed as soon as the feet of the bot are out
+ *   of its cell (v0.1.4.10, T3-5). A noted one of the start is returned without passing,
  *   when the bot does not stand in it.
  * - v0.1.4.9, F21: the bot passed an openable when its own feet were on one side of it and then on the
  *   other (passSide; a trapdoor: above it, then below it, or the reverse). Every open openable the bot
  *   passed is noted, whoever opened it; one the bot did not pass is never closed (the player who opened a
  *   trapdoor and went down it keeps it open), except a gate of a pen or a farm (the bot came within 1.5)
  *   and the openables of the start.
+ * - v0.1.4.10, T3-5 and T3-9: a gate is closed as soon as the feet of the bot are out of its cell, when the
+ *   bot passed it or when the bot has stopped beside it (the pass is missed when the gate was seen closed
+ *   in between). Doors and trapdoors keep the 2 blocks.
  * - Up to 3 attempts, 1 s apart; forgotten after 60 s, 16 blocks away, or when seen closed.
  */
 /**
@@ -462,9 +471,16 @@ export class DoorWatch {
             if (door.occupied === true || playerWithin(door, DOOR_SERVICE_RULES.playerClearance) || d > DOOR_SERVICE_RULES.reach) {
                 continue;
             }
-            // F21: only an openable the bot passed (a gate of a pen or farm: came near), 2 blocks past it
+            // F21: only an openable the bot passed (a gate of a pen or farm: came near), 2 blocks past it.
+            // v0.1.4.10 (T3-5): a gate the bot went through is closed as soon as its feet are out of the gate
+            // cell, at any distance (after "come here" the bot stopped 1 block past it and the animals walked out).
             const passed = entry.why === 'gate' ? entry.near || entry.passed : entry.passed;
-            const away = entry.why === 'start' ? d > 0.8 : passed && d >= DOOR_SERVICE_RULES.pastDistance;
+            // v0.1.4.10 (T3-9): the pass through a gate is missed when the gate is seen closed in between (the
+            // service's own click and the path search opening it again while the bot walks through): the bot
+            // then stands 1.4 blocks past an open gate that nobody closes. A noted gate the bot has stopped
+            // beside, its feet out of the gate cell, is closed too; while it walks the pass still decides.
+            const gateBehind = door.kind === 'gate' && !feetInCell(botPos, door) && (entry.passed || input.moving !== true);
+            const away = entry.why === 'start' ? d > 0.8 : gateBehind || (passed && d >= DOOR_SERVICE_RULES.pastDistance);
             if (away) {
                 out.push({ ...door, why: entry.why, distance: d });
             }

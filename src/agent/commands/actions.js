@@ -4,10 +4,11 @@ import settings from '../settings.js';
 import convoManager from '../conversation.js';
 import { Vec3 } from 'vec3';
 import { normalizeBox, contains, boxSize } from '../areas/area_geometry.js';
-import { scanBuilding, findFencedGroundNear } from '../areas/area_scan.js';
-import { AREA_TYPES, normalizeAreaName, replaceRefusal } from '../areas/area_store.js';
+import { scanBuilding, scanWithoutType, findFencedGroundNear } from '../areas/area_scan.js';
+import { AREA_TYPES, normalizeAreaName, replaceRefusal, sameBox, sameBoxText } from '../areas/area_store.js';
 import { goToShelter, sleepInBed, eatBestFood, enterBuilding, passThrough, closeNear } from '../packs/home/index.js';
 import { REMEMBER_RULE_DESCRIPTION, rememberRuleReply, forgetRuleReply } from '../rules/rule_commands.js';
+import { areaFlagOf } from '../rules/rule_logic.js';
 import { isDiggingRequest, digRefusalText } from '../dig_request_logic.js';
 import { oreInSight, sightRange } from '../library/ore_sight_logic.js';
 
@@ -207,17 +208,20 @@ const pointText = (p) => `(${p.x}, ${p.y}, ${p.z})`;
 const countText = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 const GATED_TYPES = ['farm', 'pen']; // areas with a fence: their gates are counted first
 
-// "1 door" for a house, "1 gate" for a farm or a pen; the other kind only when there is one.
+// "1 door" for a house, "1 gate" for a farm or a pen; the other kind only when there is one, then the trapdoors.
 function entrancesText(area) {
     const entrances = Array.isArray(area.entrances) ? area.entrances : [];
-    const doors = entrances.filter(e => e.kind !== 'gate').length;
-    const gates = entrances.length - doors;
+    const trapdoors = entrances.filter(e => e.kind === 'trapdoor').length; // v0.1.4.10 (R3): only the scan of a floor finds them
+    const gates = entrances.filter(e => e.kind === 'gate').length;
+    const doors = entrances.length - gates - trapdoors;
     const gated = GATED_TYPES.includes(area.type);
     const parts = gated ? [countText(gates, 'gate')] : [countText(doors, 'door')];
     if (gated && doors > 0)
         parts.push(countText(doors, 'door'));
     if (!gated && gates > 0)
         parts.push(countText(gates, 'gate'));
+    if (trapdoors > 0)
+        parts.push(countText(trapdoors, 'trapdoor'));
     return parts.join(', ');
 }
 
@@ -242,6 +246,37 @@ function areaErrorText(error, name) {
 
 // The name of the block at x, y, z for the scans, null when it is not loaded.
 const blockNameOf = (bot) => (x, y, z) => bot.blockAt(new Vec3(x, y, z))?.name ?? null;
+
+// v0.1.4.10 (R3): the options of a scan of a building: with area_floors the scan stops at a floor, else none
+// (the scan of v0.1.4.9).
+const scanOptions = () => (settings.area_floors === true ? { floors: true } : undefined);
+
+// v0.1.4.10 (R3, a correction): the saved area of another name whose box is this box, so that one box is never
+// saved as a second area; null otherwise (the same name saves the area again, as before).
+function sameAreaAs(store, name, box, dimension) {
+    const same = sameBox(store, { min: box.min, max: box.max, dimension });
+    return same && normalizeAreaName(same.name) !== normalizeAreaName(name) ? same : null;
+}
+
+// v0.1.4.10 (R2, a correction): after a rule was saved, a rule that keeps the bot out of a saved area (its
+// name and "never enter", "stay out" ...) marks that area no_enter. The sentence for the reply, or null.
+// Never throws.
+const RULE_SAVED = /^Rule \d+ saved: |^That rule is already saved\.$/;
+function markKeepOut(agent, text, reply) {
+    try {
+        const store = agent.area_store;
+        if (!store || typeof reply !== 'string' || !RULE_SAVED.test(reply))
+            return null;
+        const flag = areaFlagOf(text, store.list().map(a => a.name));
+        if (!flag)
+            return null;
+        const area = store.setFlag(flag.area, flag.flag, true);
+        return area ? `I marked the area "${area.name}" as keep out.` : null;
+    } catch (error) {
+        console.warn('Could not mark the area of the rule:', error);
+        return null;
+    }
+}
 
 // v0.1.4.7 Amendment 2, I6: the doors (the lower block only) and fence gates in the box, from the
 // world. An entrance that was saved before stays where its block is not loaded.
@@ -276,9 +311,15 @@ function saveBuildingAround(agent, name) {
         if (!store || store.get(name))
             return null;
         const bot = agent.bot;
-        const scan = scanBuilding(blockNameOf(bot), bot.entity.position);
+        // v0.1.4.10 (T3-6): inside a fenced enclosure the pen, not a building beyond the fence
+        const scan = scanWithoutType(blockNameOf(bot), bot.entity.position, scanOptions());
         if (!scan?.found)
             return null;
+        if (scan.kind === 'pen') {
+            const pen = store.set({ name, type: 'pen', min: scan.min, max: scan.max, dimension: bot.game?.dimension,
+                entrances: scan.entrances ?? [], source: 'scan' });
+            return `I also saved the fenced pen around it as a protected area: ${sizeText(pen)}, ${entrancesText(pen)}.`;
+        }
         // v0.1.4.8: the place "home" is the house, so its building is an area of the type home (D6)
         const type = normalizeAreaName(name) === 'home' ? 'home' : 'building';
         const area = store.set({ name, type, min: scan.min, max: scan.max, dimension: bot.game?.dimension,
@@ -914,14 +955,26 @@ export const actionsList = [
                 const bot = agent.bot;
                 const origin = bot.entity.position;
                 const dimension = bot.game?.dimension;
-                const scan = scanBuilding(blockNameOf(bot), origin);
+                // v0.1.4.10 (R3): with area_floors the scan stops at a floor. T3-6: without a type (the parser
+                // fills in "building", so the command cannot tell it from a typed "building") the scan starts with
+                // the pen around the bot: inside a fence the pen is saved, not a building beyond the fence
+                const untyped = type === 'building';
+                const scan = untyped ? scanWithoutType(blockNameOf(bot), origin, scanOptions()) : scanBuilding(blockNameOf(bot), origin, scanOptions());
                 if (scan?.found) {
-                    const area = store.set({ name, type, min: scan.min, max: scan.max, dimension, entrances: scan.entrances ?? [], source: 'scan' });
-                    return `${areaSavedText(area)} Tell me if that is wrong.`;
+                    const same = sameAreaAs(store, name, scan, dimension); // v0.1.4.10 (R3): no second area of one box
+                    if (same)
+                        return sameBoxText(same.name);
+                    const pen = untyped && scan.kind === 'pen';
+                    const area = store.set({ name, type: pen ? 'pen' : type, min: scan.min, max: scan.max, dimension, entrances: scan.entrances ?? [], source: 'scan' });
+                    const saved = `${areaSavedText(area)} Tell me if that is wrong.`;
+                    return pen ? `I stand inside a fence, so I saved the pen. ${saved}` : saved;
                 }
                 // no building found: a box around the bot, 12 blocks in x and z, 4 below and 8 above
                 const x = Math.floor(origin.x), y = Math.floor(origin.y), z = Math.floor(origin.z);
                 const box = normalizeBox({ x: x - 12, y: y - 4, z: z - 12 }, { x: x + 12, y: y + 8, z: z + 12 });
+                const same = sameAreaAs(store, name, box, dimension);
+                if (same)
+                    return sameBoxText(same.name);
                 const area = store.set({ name, type, min: box.min, max: box.max, dimension, entrances: [], source: 'radius' });
                 if (type === 'mine')
                     return `I saved a box of ${sizeText(area)} around this place as the mine "${area.name}". Use !setArea to correct it.`;
@@ -1018,7 +1071,9 @@ export const actionsList = [
         description: REMEMBER_RULE_DESCRIPTION,
         params: {'text': { type: 'string', description: 'The rule as one short sentence.' }},
         perform: async function (agent, text) {
-            return rememberRuleReply(agent.rule_store, text); // never throws, also without a store
+            const reply = rememberRuleReply(agent.rule_store, text); // never throws, also without a store
+            const marked = markKeepOut(agent, text, reply); // v0.1.4.10 (R2): a rule about a saved area marks it
+            return marked ? `${reply} ${marked}` : reply;
         }
     },
     {
@@ -1413,6 +1468,26 @@ export const actionsList = [
             if (!settings.mining_pack)
                 return MINING_OFF;
             return await runPack(agent, 'leaveMine', agent.work_packs?.mining, 'mining', (pack, bot, ctx) => pack.climbToSurface(bot, ctx));
+        }
+    },
+    // v0.1.4.10 (R4): the mines the bot knows, from the mine store; plain commands that do not move the bot
+    {
+        name: '!mines',
+        description: 'List your mines.',
+        perform: async function (agent) {
+            if (!settings.mining_pack)
+                return MINING_OFF;
+            return await runPlain(agent, agent.work_packs?.mining, 'mining', (pack) => pack.minesText(agent.packContext(), agent.bot.game?.dimension));
+        }
+    },
+    {
+        name: '!forgetMine',
+        description: 'Forget a mine.',
+        params: {'name': { type: 'string', description: 'The name of the mine.' }},
+        perform: async function (agent, name) {
+            if (!settings.mining_pack)
+                return MINING_OFF;
+            return await runPlain(agent, agent.work_packs?.mining, 'mining', (pack) => pack.forgetMine(agent.packContext(), name));
         }
     },
     // v0.1.4.9 (I10): the ways of the player (routes_pack) and the mine of the player (mine_routes). All but

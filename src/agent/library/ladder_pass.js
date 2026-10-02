@@ -4,6 +4,8 @@
 // footOf) does it with control states. That module is loaded with a dynamic import() on the first pass, so
 // that the library loads without the pack. It runs whatever the settings are (a correction of the path search,
 // no switch; decision of the owner and the tech lead), also when the mining pack is off and agent.work_packs is null.
+// v0.1.4.10 (P6): the patched path search climbs and descends a column and opens its trapdoor itself; this pass is
+// the fallback, run only when a walk ends or stands still with the target 2 or more blocks above or below.
 //
 // Down: a closed trapdoor over the column is opened from above with a click without sneak (a sneaking click
 // with an item in the hand uses the item, F11 of the real server), then slideDown from the cell beside the
