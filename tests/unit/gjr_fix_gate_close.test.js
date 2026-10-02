@@ -215,3 +215,46 @@ describe('T3-5: the bot itself never holds a gate open', () => {
         assert.equal(D.somebodyInDoor(s.bot, s.gate), true);
     });
 });
+
+// v0.1.4.11, F18 (W89 in the fresh clone): the door service was made with the area store of that moment (ctx.areas);
+// the store of the world is made anew when the world is known, so the pen saved later was not in it, the gate was no
+// gate of a pen, and a pass the service did not see (the bot fast through the gate between two looks) left it open.
+describe('F18: the gate of a pen saved after the service was made', () => {
+    function scene() {
+        const world = makeWorld();
+        world.set(612, 61, 4, 'oak_fence_gate', { facing: 'south', open: true });
+        const bot = makeFakeBot({ world, pos: [612.5, 61, 8.5] });
+        // the guard of the areas reads the store of now: the pen x 608..616, z 4..12
+        bot.areaGuard = { areaAt: p => (p.x >= 608 && p.x <= 617 && p.z >= 4 && p.z <= 13 ? { name: 'pen', type: 'pen' } : null) };
+        let t = 1_000_000;
+        const clock = { now: () => t, wait: async (ms) => { t += Math.max(ms, 1); await Promise.resolve(); } };
+        const service = D.createDoorService(bot, { areas: [], settings: { home_pack: true }, now: clock.now, log: () => {} },
+            { now: clock.now, wait: clock.wait, checkMs: 40 });
+        const step = async (pos, ms = 250) => {
+            if (pos) bot.entity.position = v(...pos);
+            t += ms;
+            service.tick();
+            await new Promise(r => setTimeout(r, 5));
+        };
+        return { world, bot, step, isOpen: () => world.propsAt(612, 61, 4).open === true };
+    }
+
+    test('the bot out through the open gate, stopped 1.4 blocks past it: the gate is closed by the areas of now', async () => {
+        const s = scene();
+        await s.step(); // 4 blocks inside, out of the side range of the gate
+        await s.step([612.5, 61, 4.5]); // in the gate
+        await s.step([611.5, 61, 3.5]); // stopped beside it, outside
+        for (let i = 0; i < 20 && s.isOpen(); i++) await s.step();
+        assert.equal(s.isOpen(), false);
+    });
+
+    test('without a pen there (the guard knows no area): the gate the bot only walked through, unseen, stays as before', async () => {
+        const s = scene();
+        s.bot.areaGuard = { areaAt: () => null };
+        await s.step();
+        await s.step([612.5, 61, 4.5]);
+        await s.step([611.5, 61, 3.5]);
+        for (let i = 0; i < 20; i++) await s.step();
+        assert.equal(s.isOpen(), true, 'no rule of before closes a gate of no pen whose pass was not seen');
+    });
+});

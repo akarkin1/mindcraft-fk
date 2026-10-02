@@ -846,6 +846,10 @@ export function releaseDoor(bot, door, options = {}) {
 export function createDoorService(bot, ctx = {}, options = {}) {
     const clock = clockOf(ctx, options);
     const watch = new DoorWatch();
+    // F18: MC_DOOR_DEBUG=1 prints the decision of each look for every gate within 3 blocks
+    const debug = typeof process !== 'undefined' && process.env?.MC_DOOR_DEBUG === '1';
+    watch.debug = debug;
+    let lastDebug = '';
     const scanMs = isFiniteNumber(options?.scanMs) ? options.scanMs : 250;
     const checkMs = isFiniteNumber(options?.checkMs) ? options.checkMs : 300;
     let stopped = false;
@@ -854,16 +858,45 @@ export function createDoorService(bot, ctx = {}, options = {}) {
     let lastPos = null;
     let movedAt = -Infinity;
 
+    // F18 (W89): the areas the service was given are the store of the moment it was made (ctx.areas of the home
+    // context); the store of the world is made anew when the world is known or changes, so a pen saved later was
+    // missing and its gate was no gate of a pen. The guard of the areas (bot.areaGuard.areaAt) reads the store of
+    // now: the areas at the openable and the cells beside it (a gate in the fence line of a pen).
+    const liveAreas = (door) => {
+        const out = [];
+        try {
+            for (const [dx, dz] of [[0, 0], [1, 0], [-1, 0], [0, 1], [0, -1]]) {
+                const area = bot.areaGuard?.areaAt?.({ x: door.x + dx + 0.5, y: door.y, z: door.z + dz + 0.5 });
+                if (area && typeof area.name === 'string') {
+                    out.push(area);
+                }
+            }
+        } catch {
+            // the areas given at the start only
+        }
+        return out;
+    };
     const read = (me, now) => {
         const areas = listAreas(ctx, dimensionOf(bot)).map(a => ({ area: a, box: expandBox(a, 1) }));
         const doors = findOpenables(bot, DOOR_SERVICE_RULES.scanRange).map(door => ({
             ...door,
-            inArea: areas.some(({ box }) => containsPos(box, door)),
-            gated: door.kind === 'gate' && areas.some(({ area, box }) => isGatedArea(area) && containsPos(box, door)),
+            inArea: areas.some(({ box }) => containsPos(box, door)) || liveAreas(door).length > 0,
+            gated: door.kind === 'gate' && (areas.some(({ area, box }) => isGatedArea(area) && containsPos(box, door))
+                || liveAreas(door).some(a => a.type === 'pen' || a.type === 'farm')),
             occupied: occupiedBy(bot, door),
         }));
         const moving = now - movedAt <= DOOR_SERVICE_RULES.movedWithinMs || bot.pathfinder?.isMoving?.() === true;
-        return watch.observe({ now, botPos: me, moving, doors, players: otherPlayerPositions(bot, 16) });
+        const out = watch.observe({ now, botPos: me, moving, doors, players: otherPlayerPositions(bot, 16) });
+        if (debug) {
+            for (const line of watch.debugLines()) {
+                const text = JSON.stringify(line);
+                if (text !== lastDebug) {
+                    console.log(`Door service debug: ${text}`);
+                    lastDebug = text;
+                }
+            }
+        }
+        return out;
     };
 
     const closeOne = async (door) => {

@@ -544,6 +544,26 @@ export class DoorWatch {
             }
         }
         const out = [];
+        // F18: with `debug` on, the decision for each gate within 3 blocks (see debugLines)
+        this._debug = this.debug === true ? [] : null;
+        const why = (door, text, extra = {}) => {
+            if (this._debug && door?.kind === 'gate' && dist3(botPos, doorCenter(door)) <= 3) {
+                const key = doorKey(door);
+                const entry = this._noted.get(key);
+                this._debug.push({ at: key, open: door.open === true, noted: entry?.why ?? null, near: entry?.near ?? false,
+                    passed: entry?.passed ?? false, side: this._sides.get(key)?.side ?? null, moving: input.moving === true,
+                    occupied: door.occupied === true, players2: playerWithin(door, DOOR_SERVICE_RULES.playerClearance),
+                    reserved: this.isReserved(door, now, botPos), d: Math.round(dist3(botPos, doorCenter(door)) * 100) / 100,
+                    feetIn: feetInCell(botPos, door), decision: text, ...extra });
+            }
+        };
+        if (this._debug) {
+            for (const door of doors) {
+                if (door.kind === 'gate' && !this._noted.has(doorKey(door))) {
+                    why(door, door.open === true ? 'not noted' : 'closed');
+                }
+            }
+        }
         for (const [key, entry] of this._noted) {
             const d = dist3(botPos, doorCenter(entry.door));
             if (now - entry.notedAt > DOOR_SERVICE_RULES.forgetMs || d > DOOR_SERVICE_RULES.forgetDistance) {
@@ -553,12 +573,15 @@ export class DoorWatch {
             }
             const door = visible.get(key);
             if (!door || entry.tries >= DOOR_SERVICE_RULES.tries || now < entry.nextTryAt) {
+                why(door ?? entry.door, !door ? 'not visible' : (entry.tries >= DOOR_SERVICE_RULES.tries ? 'tries used' : 'retry later'));
                 continue;
             }
             if (door.occupied === true || playerWithin(door, DOOR_SERVICE_RULES.playerClearance) || d > DOOR_SERVICE_RULES.reach) {
+                why(door, door.occupied === true ? 'occupied' : (d > DOOR_SERVICE_RULES.reach ? 'out of reach' : 'player within 2'));
                 continue;
             }
             if (this.isReserved(door, now, botPos)) {
+                why(door, 'reserved');
                 continue; // v0.1.4.11 (I8): a walk is about to pass it
             }
             // F21: only an openable the bot passed (a gate of a pen or farm: came near), 2 blocks past it.
@@ -575,11 +598,20 @@ export class DoorWatch {
             // opened the gate again and the bot walked on to the farm with the gate open behind it)
             const gateOpened = door.kind === 'gate' && door.gated === true && entry.why === 'opened' && d >= DOOR_SERVICE_RULES.pastDistance;
             const away = entry.why === 'start' ? d > 0.8 : gateBehind || gateOpened || (passed && d >= DOOR_SERVICE_RULES.pastDistance);
+            why(door, away ? 'close' : 'wait', { gateBehind, gateOpened });
             if (away) {
                 out.push({ ...door, why: entry.why, distance: d });
             }
         }
         return out.sort((a, b) => a.distance - b.distance);
+    }
+
+    /**
+     * F18: the decisions of the last look for the gates within 3 blocks, with `debug` set on the watch; [] else.
+     * @returns {object[]}
+     */
+    debugLines() {
+        return Array.isArray(this._debug) ? this._debug : [];
     }
 
     /**
