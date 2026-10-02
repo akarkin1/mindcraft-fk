@@ -29,3 +29,24 @@ when `main` is merged after the fix release.
 
 The journeys W80 to W84 pass on the fix branch of v0.1.4.9 (run 15 and 16 of the lead); on this branch they
 pass after the merge of `main`.
+
+## The chat model, from the routing check of the owner (2026-10-01)
+
+The same 154 sentences, `profiles/claude.json`, every part on, on the owner's machine:
+
+| Model | Right | Median time | Cost of the run | Per hour at that rate |
+|---|---|---|---|---|
+| GPT-6 Luna | 146 of 154 (95%) | 1.9 s | $0.05 | $0.21 |
+| Claude Haiku 4.5 | 145 of 154 (94%) | 0.8 s | $0.78 | $3.12 |
+
+Both answer "mine 5 gold" and "give me all the wheat you've got" in words without a command. Luna also
+answers "store the wheat" and "we need coal for torches" in words and sends "go farm" to a remembered place;
+Haiku takes "make 10 ladders" and "craft a chest" for `!craftable` and "get 16 birch logs" for
+`!searchForBlock`, and answers "kill that zombie", "get a stone pickaxe" and "come up from the mine" in
+words. Three expectations of the list were stale and are widened (`!rememberMine` for "remember this spot
+as the mine", `!givePlayer` for "fetch me some bread from the chest", `!rememberRule` for the chicken coop).
+
+Decision: Luna for play (the same accuracy at a fifteenth of the cost, with the "command alone" rule of its
+profile), Haiku when speed matters. For this release: the description of `!craftable` reads too much like
+crafting (G), and an example of a short order answered with a command alone is worth its characters when the
+prompt has room.
