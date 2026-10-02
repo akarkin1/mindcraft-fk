@@ -102,6 +102,7 @@ function simBot(world, pos) {
     bot.activateBlock = async (block) => {
         const p = block.position;
         bot.clicks.push(`${p.x},${p.y},${p.z}`);
+        if (bot.controlState.sneak) bot.sneakClicks = (bot.sneakClicks ?? 0) + 1;
         const name = world.nameAt(p.x, p.y, p.z);
         const props = world.propsAt(p.x, p.y, p.z);
         const open = props.open !== true;
@@ -277,6 +278,7 @@ describe('P2: ladders inside the search', () => {
         assert.deepEqual(bot.clicks, ['2,60,-2', '2,60,-2'], 'opened, then closed behind the bot');
         assert.equal(world.propsAt(2, 60, -2).open, false);
         assert.equal(Math.floor(bot.entity.position.y), 61);
+        assert.equal(bot.sneakClicks ?? 0, 0, 'no sneaking click (with an item in the hand it uses the item)');
         assert.ok(r.ticks < 400, `${r.ticks} ticks`);
         assert.equal(bot.log.some((e) => e.name === 'ladder' && e.jump), false, 'jump on the ladder');
         assert.deepEqual(r.resets.filter((x) => x === 'stuck'), []);
@@ -306,6 +308,27 @@ describe('P2: ladders inside the search', () => {
             assert.equal(r.done, 'ok', JSON.stringify(options));
             assert.deepEqual(bot.clicks, clicks);
         }
+    });
+
+    test('a player closes the trapdoor over the ladder the bot climbs: the path is planned again and opens it, no stuck', { timeout: 30000 }, async () => {
+        const world = ladderWorld({ open: true });
+        const bot = simBot(world, [2.5, 41, 0.5]);
+        const tick = bot.tick;
+        let ticks = 0;
+        bot.tick = () => {
+            tick();
+            if (++ticks === 60) { // the bot is on the ladder; the server reports the closed trapdoor
+                const before = world.getBlock(new Vec3(2, 60, -2));
+                world.set(2, 60, -2, 'oak_trapdoor', { facing: 'south', half: 'top', open: false });
+                bot.emit('blockUpdate', before, world.getBlock(new Vec3(2, 60, -2)));
+            }
+        };
+        const r = await walk(bot, new pf.goals.GoalNear(2, 61, 1, 1));
+        assert.equal(r.done, 'ok', JSON.stringify(bot.entity.position));
+        assert.ok(r.resets.includes('block_updated'), r.resets.join(', '));
+        assert.deepEqual(r.resets.filter((x) => x === 'stuck'), []);
+        assert.equal(bot.clicks[0], '2,60,-2', 'opened by the bot');
+        assert.ok(r.ticks < 320, `${r.ticks} ticks`);
     });
 
     test('a walk never ends hanging on a ladder: the goal near the top is reached on the floor beside it', { timeout: 30000 }, async () => {

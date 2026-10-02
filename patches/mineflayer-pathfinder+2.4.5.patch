@@ -1,5 +1,5 @@
 diff --git a/node_modules/mineflayer-pathfinder/index.js b/node_modules/mineflayer-pathfinder/index.js
-index b38bd30..603dedc 100644
+index b38bd30..2efecd4 100644
 --- a/node_modules/mineflayer-pathfinder/index.js
 +++ b/node_modules/mineflayer-pathfinder/index.js
 @@ -12,8 +12,11 @@ const Physics = require('./lib/physics')
@@ -66,10 +66,16 @@ index b38bd30..603dedc 100644
      if (stopPathing) return stop()
    }
  
-@@ -165,12 +182,41 @@ function inject (bot) {
+@@ -165,12 +182,47 @@ function inject (bot) {
  
    bot.on('physicsTick', monitorMovement)
  
++  function openChanged (oldBlock, newBlock) {
++    if (!stateMovements.openable?.has(newBlock.type)) return false
++    const open = (b) => (typeof b.getProperties === 'function' ? b.getProperties() : b._properties)?.open === true
++    return open(oldBlock) !== open(newBlock)
++  }
++
 +  // P3: a door, a fence gate or a trapdoor (door is in the name of both doors)
 +  function isDoorLike (b) {
 +    return Boolean(b) && (b.name.includes('door') || b.name.includes('fence_gate'))
@@ -110,7 +116,7 @@ index b38bd30..603dedc 100644
          curPoint.x = Math.floor(curPoint.x) + 0.5
          curPoint.y = Math.floor(curPoint.y)
          curPoint.z = Math.floor(curPoint.z) + 0.5
-@@ -329,6 +375,7 @@ function inject (bot) {
+@@ -329,6 +381,7 @@ function inject (bot) {
     */
    function fullStop () {
      bot.clearControlStates()
@@ -118,7 +124,18 @@ index b38bd30..603dedc 100644
  
      // Force horizontal velocity to 0 (otherwise inertia can move us too far)
      // Kind of cheaty, but the server will not tell the difference
-@@ -417,6 +464,11 @@ function inject (bot) {
+@@ -397,7 +450,9 @@ function inject (bot) {
+ 
+   bot.on('blockUpdate', (oldBlock, newBlock) => {
+     if (!oldBlock || !newBlock) return
+-    if (isPositionNearPath(oldBlock.position, path) && oldBlock.type !== newBlock.type) {
++    // v0.1.4.10 (P1): a door, gate or trapdoor near the path that opens or closes is a change too (a player closed
++    // the trapdoor over the ladder the path climbs, and the bot climbed into it)
++    if (isPositionNearPath(oldBlock.position, path) && (oldBlock.type !== newBlock.type || openChanged(oldBlock, newBlock))) {
+       resetPath('block_updated', false)
+     }
+   })
+@@ -417,6 +472,11 @@ function inject (bot) {
    })
  
    function monitorMovement () {
@@ -130,7 +147,7 @@ index b38bd30..603dedc 100644
      // Test freemotion
      if (stateMovements && stateMovements.allowFreeMotion && stateGoal && stateGoal.entity) {
        const target = stateGoal.entity
-@@ -456,7 +508,7 @@ function inject (bot) {
+@@ -456,7 +516,7 @@ function inject (bot) {
      if (path.length === 0) {
        lastNodeTime = performance.now()
        if (stateGoal && stateMovements) {
@@ -139,8 +156,24 @@ index b38bd30..603dedc 100644
            if (!dynamicGoal) {
              bot.emit('goal_reached', stateGoal)
              stateGoal = null
-@@ -524,6 +576,9 @@ function inject (bot) {
-         bot.activateBlock(bot.blockAt(new Vec3(placingBlock.x, placingBlock.y, placingBlock.z))).then(() => {
+@@ -521,9 +581,24 @@ function inject (bot) {
+       // Open gates or doors
+       if (placingBlock?.useOne) {
+         if (!lockUseBlock.tryAcquire()) return
+-        bot.activateBlock(bot.blockAt(new Vec3(placingBlock.x, placingBlock.y, placingBlock.z))).then(() => {
++        // v0.1.4.10 (P2): never a sneaking click (with an item in the hand it uses the item, F11 of v0.1.4.9). On a
++        // ladder the bot climbs at the wall while it clicks, instead of holding on with sneak: the server checks the
++        // distance of a click, not the look
++        bot.setControlState('sneak', false)
++        holding = false
++        const clicked = bot.activateBlock(bot.blockAt(new Vec3(placingBlock.x, placingBlock.y, placingBlock.z)))
++        const rung = bot.entity.onGround ? null : climbingBlock(bot.entity.position.floored())
++        const wall = rung ? wallYaw(rung) : null
++        if (wall !== null) {
++          bot.look(wall, 0)
++          bot.setControlState('forward', true)
++        }
++        clicked.then(() => {
            lockUseBlock.release()
            placingBlock = nextPoint.toPlace.shift()
 +          if (!placingBlock) {
@@ -149,7 +182,7 @@ index b38bd30..603dedc 100644
          }, err => {
            console.error(err)
            lockUseBlock.release()
-@@ -550,6 +605,7 @@ function inject (bot) {
+@@ -550,6 +625,7 @@ function inject (bot) {
              lockEquipItem.release()
              const refBlock = bot.blockAt(new Vec3(placingBlock.x, placingBlock.y, placingBlock.z), false)
              if (!lockPlaceBlock.tryAcquire()) return
@@ -157,7 +190,7 @@ index b38bd30..603dedc 100644
              if (interactableBlocks.includes(refBlock.name)) {
                bot.setControlState('sneak', true)
              }
-@@ -557,6 +613,7 @@ function inject (bot) {
+@@ -557,6 +633,7 @@ function inject (bot) {
                .then(function () {
                  // Dont release Sneak if the block placement was not successful
                  bot.setControlState('sneak', false)
@@ -165,7 +198,7 @@ index b38bd30..603dedc 100644
                  if (bot.pathfinder.LOSWhenPlacingBlocks && placingBlock.returnPos) returningPos = placingBlock.returnPos.clone()
                })
                .catch(_ignoreError => {
-@@ -576,7 +633,8 @@ function inject (bot) {
+@@ -576,7 +653,8 @@ function inject (bot) {
      let dx = nextPoint.x - p.x
      const dy = nextPoint.y - p.y
      let dz = nextPoint.z - p.z
@@ -175,7 +208,7 @@ index b38bd30..603dedc 100644
        // arrived at next point
        lastNodeTime = performance.now()
        if (stopPathing) {
-@@ -587,9 +645,11 @@ function inject (bot) {
+@@ -587,9 +665,11 @@ function inject (bot) {
        if (path.length === 0) { // done
          // If the block the bot is standing on is not a full block only checking for the floored position can fail as
          // the distance to the goal can get greater then 0 when the vector is floored.
@@ -188,7 +221,7 @@ index b38bd30..603dedc 100644
          }
          fullStop()
          return
-@@ -604,6 +664,24 @@ function inject (bot) {
+@@ -604,6 +684,24 @@ function inject (bot) {
        dz = nextPoint.z - p.z
      }
  
@@ -213,7 +246,7 @@ index b38bd30..603dedc 100644
      bot.look(Math.atan2(-dx, -dz), 0)
      bot.setControlState('forward', true)
      bot.setControlState('jump', false)
-@@ -611,6 +689,9 @@ function inject (bot) {
+@@ -611,6 +709,9 @@ function inject (bot) {
      if (bot.entity.isInWater) {
        bot.setControlState('jump', true)
        bot.setControlState('sprint', false)
@@ -223,7 +256,7 @@ index b38bd30..603dedc 100644
      } else if (stateMovements.allowSprinting && physics.canStraightLine(path, true)) {
        bot.setControlState('jump', false)
        bot.setControlState('sprint', true)
-@@ -628,12 +709,178 @@ function inject (bot) {
+@@ -628,12 +729,193 @@ function inject (bot) {
        bot.setControlState('sprint', false)
      }
  
@@ -293,7 +326,8 @@ index b38bd30..603dedc 100644
 +  let strafing = false // P2: stepping sideways off a ladder to its way out
 +  function holdOnLadder () {
 +    const feet = bot.entity?.position?.floored()
-+    if (!feet || bot.entity.onGround || (!climbingBlock(feet) && !trapdoorOverLadder(feet))) return
++    // not over a floor (the bottom rung): there the bot drops to the floor
++    if (!feet || bot.entity.onGround || !hangsAt(feet)) return
 +    bot.setControlState('sneak', true)
 +    holding = true
 +  }
@@ -334,6 +368,8 @@ index b38bd30..603dedc 100644
 +    for (const e of Object.values(bot.entities ?? {})) {
 +      if (e !== bot.entity && e?.type === 'player' && e.position && e.position.distanceTo(pos.offset(0.5, 0.5, 0.5)) < 2.5) return
 +    }
++    bot.setControlState('sneak', false) // never a sneaking click (F11)
++    holding = false
 +    bot.activateBlock(b).catch(() => {})
 +    try {
 +      // the door service of the bot reads the new state at once and does not click it a second time
@@ -365,6 +401,17 @@ index b38bd30..603dedc 100644
 +      bot.setControlState('jump', true)
 +      return true
 +    }
++    // down the column, standing on the rim of the hole (a bot that dropped into the cell off its middle stands on the
++    // edge of the block beside it): to the middle of the cell first, where it falls onto the ladder
++    if (down && sameColumn && bot.entity.onGround && Math.max(Math.abs(p.x - feet.x - 0.5), Math.abs(p.z - feet.z - 0.5)) > 0.15) {
++      bot.look(Math.atan2(-(feet.x + 0.5 - p.x), -(feet.z + 0.5 - p.z)), 0)
++      bot.setControlState('sprint', false)
++      bot.setControlState('sneak', false)
++      bot.setControlState('jump', false)
++      bot.setControlState('forward', true)
++      holding = false
++      return true
++    }
 +    // down to a point beside: slide in the column until level with it, then walk (sideways first, the head of a
 +    // bot above the opening hits the wall, and a ladder lifts a bot that pushes against a wall)
 +    const slideFirst = down && !sameColumn && !bot.entity.onGround && nextPoint.y < p.y - 0.1
@@ -376,8 +423,8 @@ index b38bd30..603dedc 100644
 +    if (up && !sameColumn && wall !== null) {
 +      // up to a point beside (the way out at the top). Turned towards it the bot leaves the wall, nothing lifts it and
 +      // it drops a quarter block: a way out along the wall is reached by pressing into the wall and stepping sideways;
-+      // a way out behind the bot by climbing at the wall into the top cell, then turning to it with sneak, which holds
-+      // the bot on the ladder until the block of the way out lifts it
++      // a way out behind the bot by climbing at the wall into the top cell, then turning to it with jump held, which
++      // climbs a ladder in 1.21 (climbUsingJump) whether or not the bot touches the block of the way out yet
 +      const dx = nextPoint.x - p.x
 +      const dz = nextPoint.z - p.z
 +      const across = dx * Math.cos(wall) - dz * Math.sin(wall) // to the right of a bot that faces the wall
@@ -394,10 +441,11 @@ index b38bd30..603dedc 100644
 +    const yaw = sameColumn || slideFirst || climbFirst || side !== 0 ? wall : null
 +    bot.look(yaw ?? Math.atan2(-(nextPoint.x - p.x), -(nextPoint.z - p.z)), 0)
 +    bot.setControlState('sprint', false)
-+    bot.setControlState('sneak', turnHeld)
-+    holding = turnHeld // the walk on the floor releases it
++    bot.setControlState('sneak', false)
++    holding = false
 +    bot.setControlState('forward', up)
-+    bot.setControlState('jump', up && sameColumn && yaw === null) // a vine without a wall is climbed by jumping
++    // a vine without a wall is climbed by jumping; the turn to a way out behind climbs by jumping too
++    bot.setControlState('jump', (up && sameColumn && yaw === null) || turnHeld)
 +    return true
 +  }
  }

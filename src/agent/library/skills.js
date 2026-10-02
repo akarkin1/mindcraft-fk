@@ -2256,6 +2256,7 @@ export async function followPlayer(bot, username, distance=4) {
     let still_cell = feetCellOf(bot);
     let still_gap = ladderGap(bot, player.position);
     let still_since = Date.now();
+    let player_at = player.position.clone(); // v0.1.4.10 (P6): where the player was half a second ago
     const ladder_passes = []; // the times of the passes of the last minute
     const ladder_failures = new Set(); // the texts of failed passes, each written once
 
@@ -2268,9 +2269,12 @@ export async function followPlayer(bot, username, distance=4) {
             const cell = feetCellOf(bot);
             const gap = ladderGap(bot, player.position);
             // still_gap is the smallest height difference since the clock started: bobbing does not beat it
-            // v0.1.4.10 (P6): the clock runs only while the player is 2 or more blocks above or below, so that the path
-            // search, which climbs and descends ladders itself, has its 3 s before the fallback step
-            if (cell.x !== still_cell.x || cell.z !== still_cell.z || gap < still_gap - 0.5 || gap < LADDER_GAP) {
+            // v0.1.4.10 (P6): the clock runs only while the player is 2 or more blocks above or below and stands still, so
+            // that the path search, which climbs and descends ladders itself, has its 3 s before the fallback step (a
+            // player still on the ladder is followed by the path search once it is out)
+            const player_moved = player.position.distanceTo(player_at) >= 0.3;
+            player_at = player.position.clone();
+            if (cell.x !== still_cell.x || cell.z !== still_cell.z || gap < still_gap - 0.5 || gap < LADDER_GAP || player_moved) {
                 still_cell = cell;
                 still_gap = gap;
                 still_since = Date.now();
