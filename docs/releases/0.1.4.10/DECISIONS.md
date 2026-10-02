@@ -57,3 +57,17 @@ Decision: Luna for play (the same accuracy at a fifteenth of the cost, with the 
 profile), Haiku when speed matters. For this release: the description of `!craftable` reads too much like
 crafting (G), and an example of a short order answered with a command alone is worth its characters when the
 prompt has room.
+
+## The house rule, from the two play sessions of 2026-10-02
+
+The owner played v0.1.4.9 with Luna (47 minutes, $0.11) and with Haiku (23 minutes, $0.57). The same
+things went wrong with both: the tunnel the owner stood in was not recognised (`I stand in no tunnel`), a new
+mine was refused underground (`I start a new mine only from the surface`) and the model went up, `!goToSurface`
+aimed at the roof of the house, the route replay failed on a ladder leg and at doors, the house box held the
+basement. The profile's own prompt has one rule, "Never dig straight down."; the texts the models reasoned
+from are the command descriptions and the result texts of the skills.
+
+Decision of the owner: there is no such rule, digging down is conditional (a shaft with ladders is fine).
+The HOUSE RULES block is removed from both profiles in this release. The texts and the three code rules
+(surface only, the strict tunnel, the roof) are the subject of the next release, with the route as waypoints
+walked by the path search.

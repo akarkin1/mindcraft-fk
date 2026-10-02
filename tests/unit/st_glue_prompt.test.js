@@ -6,8 +6,8 @@
 //     (the sizes all off and all on are printed as diagnostics);
 //   - no example shows a safety reflex being switched off; each of the 14 commands that had no example has
 //     one; "let's get some sleep" has an example that leads to !goToBed; the examples of section 11, item 11;
-//   - profiles/claude.json: HOUSE RULES holds exactly one rule, "- Never dig straight down.", and code_model
-//     is still there.
+//   - profiles/claude.json: no HOUSE RULES block since 2026-10-02 (the owner: digging down is conditional, so
+//     no rule), and code_model is still there.
 // Prompter.promptConvo runs on an object made with Object.create(Prompter.prototype): no model is made and
 // no key is read. $STATS and $INVENTORY are replaced by fixed texts of the size of a bot in play.
 import { describe, test, before, after } from 'node:test';
@@ -210,18 +210,11 @@ describe('item 7: the examples', () => {
 });
 
 describe('item 8: profiles/claude.json', () => {
-    test('HOUSE RULES holds exactly one rule, "- Never dig straight down."', () => {
+    test('no HOUSE RULES block and no rule about digging down (the owner, 2026-10-02: it is conditional)', () => {
         const text = CLAUDE.conversing;
-        const start = text.indexOf('HOUSE RULES');
-        assert.ok(start >= 0);
-        assert.equal(text.indexOf('HOUSE RULES', start + 1), -1, 'one block');
-        const lines = text.slice(start).split('\n');
-        const rules = [];
-        for (const line of lines.slice(1)) {
-            if (!line.startsWith('- ')) break;
-            rules.push(line);
-        }
-        assert.deepEqual(rules, ['- Never dig straight down.']);
+        assert.equal(text.indexOf('HOUSE RULES'), -1);
+        assert.ok(!/dig straight down/i.test(text));
+        assert.ok(!text.split('\n').some((line) => line.startsWith('- ')), 'no rule lines');
     });
 
     test('code_model is still there', () => {

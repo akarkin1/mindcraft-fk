@@ -5,7 +5,7 @@
 //     prompt is the one of v0.1.4.7;
 //   - the size: with every switch of the fork on and a block of knowledge_max_chars, the conversing prompt
 //     without conversation stays at 17,000 characters or less (the sizes are printed);
-//   - profiles/claude.json: HOUSE RULES holds one rule, "Never dig straight down.";
+//   - profiles/claude.json: no HOUSE RULES block since 2026-10-02 (the owner: digging down is conditional);
 //   - the examples: the commands that had none, the new commands and types; "let's get some sleep" and
 //     "go to bed please" lead to !goToBed; no example switches a safety reflex off.
 import { describe, test, before, after } from 'node:test';
@@ -214,13 +214,12 @@ describe('the size of the conversing prompt (section 11, item 12)', () => {
 });
 
 describe('profiles/claude.json (section 11, item 12 of the task)', () => {
-    test('HOUSE RULES holds only "Never dig straight down."; the text around it is the one of the default profile', () => {
-        const rules = 'HOUSE RULES (always follow these, they override casual chat):\n- Never dig straight down.\nSummarized memory:';
-        assert.ok(CLAUDE.conversing.includes(rules), CLAUDE.conversing);
-        assert.equal(CLAUDE.conversing.split('HOUSE RULES').length, 2);
-        assert.ok(!/night|shelter|door|health/i.test(CLAUDE.conversing.slice(CLAUDE.conversing.indexOf('HOUSE RULES'), CLAUDE.conversing.indexOf('Summarized memory'))));
-        const [before, after] = CLAUDE.conversing.split(`\n${rules}`);
-        assert.equal(before, DEFAULT.conversing.slice(0, DEFAULT.conversing.indexOf('\nSummarized memory:')), 'the text before the rules');
+    test('no HOUSE RULES block (the owner, 2026-10-02: digging down is conditional, no rule); the text is the one of the default profile', () => {
+        assert.ok(!CLAUDE.conversing.includes('HOUSE RULES'), CLAUDE.conversing);
+        assert.ok(!/dig straight down/i.test(CLAUDE.conversing));
+        const marker = '\nSummarized memory:';
+        const [before, after] = CLAUDE.conversing.split(marker);
+        assert.equal(before, DEFAULT.conversing.slice(0, DEFAULT.conversing.indexOf(marker)), 'the text before the memory');
         assert.equal(after, "'$MEMORY'\n$STATS\n$INVENTORY\n$COMMAND_DOCS\n$EXAMPLES\nConversation Begin:");
         // the owner's profile may carry an embedding model (v0.1.4.9 play guide); the five keys of the release are there
         assert.deepEqual(Object.keys(CLAUDE).filter(k => k !== 'embedding'), ['name', 'model', 'speak_model', 'conversing', 'code_model']);

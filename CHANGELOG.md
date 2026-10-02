@@ -29,6 +29,7 @@ never opens a pen, the house and the basement are two places, and a play log is 
 - The descriptions of `!mines` and `!forgetMine` are short; the prompt with every switch on is 16,981 characters. `!craftable` says it crafts nothing (Haiku took "make 10 ladders" for it).
 - `profiles/gpt.json` picks its prompt examples with the same embedding model as the claude profile. The routing check of 2026-10-01: Luna 146 of 154 for 5 cents, Haiku 145 of 154 for 78 cents; three stale expectations of the sentence list widened.
 - A ladder pass that ran out of time while the bot still arrived claims no failure.
+- The house rule "Never dig straight down." is gone from `profiles/claude.json` and `profiles/gpt.json` (the owner, 2026-10-02: digging down is conditional, a shaft with ladders is fine). Both profiles carry no HOUSE RULES block; the rules of the player stay in `rules.json`.
 
 ### Settings
 
