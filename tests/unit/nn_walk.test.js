@@ -586,3 +586,91 @@ describe('F6: a closed iron trapdoor over the column on the way down', () => {
         assert.equal((await P.dryScan(s.bot, s.waypoints, { to: TO_ROOM })).ok, true);
     });
 });
+
+describe('F12 (W95): each door closed right after its hop, released as passed at that moment', () => {
+    // a door A at (3, 64, 0) in a wall at x 3; a column of ladders at (6, 64..69, 0) on a stone wall at x 7, its way out on
+    // (7, 70, 0); a door B at (8, 70, 0) in a wall at x 8 on the platform; the end at (10, 70, 0)
+    function twoDoors() {
+        const world = makeWorld();
+        world.fill(3, 64, -1, 3, 66, 1, 'stone');
+        for (const [x, y] of [[3, 64], [8, 70]]) {
+            world.set(x, y, 0, 'oak_door', { facing: 'east', half: 'lower', hinge: 'left', open: false, powered: false });
+            world.set(x, y + 1, 0, 'oak_door', { facing: 'east', half: 'upper', hinge: 'left', open: false, powered: false });
+        }
+        world.fill(7, 64, 0, 7, 69, 0, 'stone');
+        world.fill(6, 64, 0, 6, 69, 0, 'ladder', { facing: 'west' });
+        world.fill(7, 69, -1, 10, 69, 1, 'stone');
+        world.fill(8, 71, -1, 8, 72, 1, 'stone');
+        world.set(8, 70, -1, 'stone');
+        world.set(8, 70, 1, 'stone');
+        const bot = makeMiningBot({ world, pos: [0.5, 64, 0.5] });
+        const clock = makeClock(bot);
+        const events = [];
+        bot.activateBlock = async (block) => {
+            const p = block.position;
+            const open = world.propsAt(p.x, p.y, p.z).open !== true;
+            events.push(`${open ? 'open' : 'close'} ${p.x},${p.y},${p.z}`);
+            for (const y of [p.y, p.y + 1]) {
+                if (world.nameAt(p.x, y, p.z) === 'oak_door') world.set(p.x, y, p.z, 'oak_door', { ...world.propsAt(p.x, y, p.z), open });
+            }
+        };
+        bot.pathfinder.goto = async (goal) => {
+            events.push(`goto ${goal.x},${goal.y},${goal.z}`);
+            bot.entity.position = v(goal.x + 0.5, goal.y, goal.z + 0.5);
+        };
+        const ctx = { now: clock.now, log: () => {}, doors: { reserve: () => true,
+            release: (door, options) => events.push(`release ${door.x},${door.y},${door.z}${options?.passed ? ' passed' : ''}`) } };
+        const route = { name: 'mine', legs: [
+            { kind: 'walk', from: { x: 0, y: 64, z: 0 }, to: { x: 2, y: 64, z: 0 } },
+            { kind: 'door', kind2: 'door', name: 'oak_door', x: 3, y: 64, z: 0, from: { x: 2, y: 64, z: 0 }, to: { x: 4, y: 64, z: 0 } },
+            { kind: 'walk', from: { x: 4, y: 64, z: 0 }, to: { x: 5, y: 64, z: 0 } },
+            { kind: 'ladder', x: 6, z: 0, top: 69, bottom: 64, face: 'west', entry: { x: 7, y: 70, z: 0 }, foot: { x: 5, y: 64, z: 0 } },
+            { kind: 'door', kind2: 'door', name: 'oak_door', x: 8, y: 70, z: 0, from: { x: 7, y: 70, z: 0 }, to: { x: 9, y: 70, z: 0 } },
+            { kind: 'walk', from: { x: 9, y: 70, z: 0 }, to: { x: 10, y: 70, z: 0 } },
+        ] };
+        return { world, bot, clock, ctx, events, waypoints: P.waypointsOf(route) };
+    }
+
+    test('door A closed and released before the climb, door B right after its hop; both closed at the end', async () => {
+        const s = twoDoors();
+        const r = await P.walkWaypoints(s.bot, s.ctx, s.waypoints, { to: { x: 10, y: 70, z: 0 }, clock: s.clock });
+        assert.equal(r.ok, true, r.text);
+        const at = (e) => s.events.indexOf(e);
+        assert.ok(at('open 3,64,0') >= 0 && at('close 3,64,0') > at('open 3,64,0'), s.events.join(' | '));
+        assert.ok(at('release 3,64,0 passed') > at('close 3,64,0'), 'released as passed right after the hop');
+        assert.ok(at('close 3,64,0') < at('open 8,70,0'), 'A closed before the bot comes to B');
+        assert.ok(at('close 8,70,0') > at('open 8,70,0') && at('release 8,70,0 passed') > at('close 8,70,0'), s.events.join(' | '));
+        assert.equal(s.world.propsAt(3, 64, 0).open, false);
+        assert.equal(s.world.propsAt(8, 70, 0).open, false);
+    });
+});
+
+describe('F12 (W95): a walk that would end in a doorway', () => {
+    test('the last hop ends beside the door with GoalNear 1 in the doorway: the bot steps on and closes the door', async () => {
+        const world = makeWorld();
+        world.fill(3, 64, -1, 3, 66, 1, 'stone');
+        world.set(3, 64, 0, 'oak_door', { facing: 'east', half: 'lower', hinge: 'left', open: false, powered: false });
+        world.set(3, 65, 0, 'oak_door', { facing: 'east', half: 'upper', hinge: 'left', open: false, powered: false });
+        const bot = makeMiningBot({ world, pos: [0.5, 64, 0.5] });
+        const clock = makeClock(bot);
+        bot.activateBlock = async (block) => {
+            const p = block.position;
+            const open = world.propsAt(p.x, p.y, p.z).open !== true;
+            for (const y of [p.y, p.y + 1]) world.set(p.x, y, p.z, 'oak_door', { ...world.propsAt(p.x, y, p.z), open });
+        };
+        bot.pathfinder.goto = async (goal) => {
+            // GoalNear 1 to the cell past the door stops in the doorway, as the real path search did
+            const x = Math.sqrt(goal.rangeSq ?? 0) >= 1 && goal.x === 4 ? 3 : goal.x;
+            bot.entity.position = v(x + 0.5, goal.y, goal.z + 0.5);
+        };
+        const route = { name: 'home', legs: [
+            { kind: 'walk', from: { x: 0, y: 64, z: 0 }, to: { x: 2, y: 64, z: 0 } },
+            { kind: 'door', kind2: 'door', name: 'oak_door', x: 3, y: 64, z: 0, from: { x: 2, y: 64, z: 0 }, to: { x: 4, y: 64, z: 0 } },
+        ] };
+        const ctx = { now: clock.now, log: () => {}, doors: { reserve: () => true, release: () => {} } };
+        const r = await P.walkWaypoints(bot, ctx, P.waypointsOf(route), { to: { x: 4, y: 64, z: 0 }, clock });
+        assert.equal(r.ok, true, r.text);
+        assert.equal(Math.floor(bot.entity.position.x), 4, 'out of the doorway');
+        assert.equal(world.propsAt(3, 64, 0).open, false);
+    });
+});

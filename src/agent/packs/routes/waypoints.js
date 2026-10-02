@@ -525,8 +525,18 @@ function release(bot, ctx, door, passed = false) {
     releaseDoor(bot, door, options);
 }
 
+// True when the feet of the bot are in the cell of an openable (a door: its two blocks; a trapdoor: its column).
+function inOpenableCell(bot, door) {
+    const p = botPos(bot);
+    if (!p || Math.floor(p.x) !== door.x || Math.floor(p.z) !== door.z) {
+        return false;
+    }
+    const y = Math.floor(p.y + 0.01);
+    return y >= door.y - (door.kind === 'trapdoor' ? 3 : 1) && y <= door.y + 1;
+}
+
 // F12 of the fix round: right after a hop through openables, each one that is open is closed by the walk when the bot
-// is through (out of its cell, 1 block or more from it, not in the column under a trapdoor) and a hand reaches it,
+// is through (out of its cell, not in the column under a trapdoor) and a hand reaches it,
 // with the other half of a double door; one out of reach is left to the door service. Never throws.
 async function closeBehind(bot, ctx, doors, clock) {
     for (const door of doors) {
@@ -541,12 +551,12 @@ async function closeBehind(bot, ctx, doors, clock) {
                 if (!p) {
                     return;
                 }
-                const near = Math.hypot(state.x + 0.5 - p.x, state.z + 0.5 - p.z);
                 const inCell = Math.floor(p.x) === state.x && Math.floor(p.z) === state.z
                     && Math.floor(p.y + 0.01) >= state.y - (state.kind === 'trapdoor' ? 3 : 1) && Math.floor(p.y + 0.01) <= state.y + 1;
                 const eye = Math.hypot(state.x + 0.5 - p.x, state.y + 0.5 - (p.y + 1.62), state.z + 0.5 - p.z);
-                // the bot is through: out of its cell (of a trapdoor: not in the column under it) and 1 block from it
-                if (inCell || near < 1 || eye > REPLAY_RULES.reach || bot.interrupt_code) {
+                // the bot is through: out of its cell (of a trapdoor: not in the column under it); a door is closed from
+                // the next cell
+                if (inCell || eye > REPLAY_RULES.reach || bot.interrupt_code) {
                     continue;
                 }
                 await closeDoor(bot, state, { ctx, now: clock.now, wait: clock.wait });
@@ -604,6 +614,16 @@ export async function walkWaypoints(bot, ctx, waypoints, options = {}) {
     const route = { name };
     const reserved = [];
     const passedDoors = []; // F12: the openables the walk went through
+    // F12 (W95): an openable the hop went through is released as passed right away, while the door service still sees it
+    const releasePassed = (doors) => {
+        for (const door of doors) {
+            const i = reserved.findIndex(d => sameCell(d, door));
+            if (i >= 0) {
+                release(bot, ctx, reserved[i], true);
+                reserved.splice(i, 1);
+            }
+        }
+    };
     let total = 0;
     let k = 0;
     const result = (ok, reason, text, step, cause) => ({ ok, reason, text, step, total, at: feetOf(bot), cause: ok ? null : cause, route: name });
@@ -673,6 +693,7 @@ export async function walkWaypoints(bot, ctx, waypoints, options = {}) {
                 }
                 passedDoors.push(...hop.passes.map(i => list[i]));
                 await closeBehind(bot, ctx, passedDoors.slice(-4), clock);
+                releasePassed(hop.passes.map(i => list[i]));
                 noteProgress(bot, 'route');
                 continue;
             }
@@ -728,8 +749,22 @@ export async function walkWaypoints(bot, ctx, waypoints, options = {}) {
                 return result(false, reason, routeFailedText(route, k + 1, total, feetOf(bot), cause), k + 1, cause);
             }
             // F12: through the openables of the hop: closed behind the bot
+            // F12 (W95): a hop whose goal is the cell beside a door ends with GoalNear 1 in the doorway; out of it first
+            const doorway = hop.passes.map(i => list[i]).find(d => inOpenableCell(bot, d));
+            if (doorway && !(doorway.x === target.x && doorway.z === target.z)) {
+                try {
+                    await gotoGoal(bot, new goals.GoalNear(target.x, target.y, target.z, 0),
+                        { movements: makeMovements(bot, { dig: false, doors: true }), timeoutMs: 5000, clock });
+                } catch {
+                    // it stays in the doorway: the door service closes the door later
+                }
+                if (bot.interrupt_code) {
+                    return stopped(k);
+                }
+            }
             passedDoors.push(...hop.passes.map(i => list[i]));
-            await closeBehind(bot, ctx, passedDoors.slice(-4), clock); // also one the bot was still too near to before
+            await closeBehind(bot, ctx, passedDoors.slice(-4), clock); // also one the bot was still in before
+            releasePassed(hop.passes.map(i => list[i]));
             noteProgress(bot, 'route');
         }
         await closeBehind(bot, ctx, passedDoors, clock); // F12: the last ones, at the end of the walk
