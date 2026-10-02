@@ -135,3 +135,17 @@ describe('canOpen (N1)', () => {
         assert.equal(H.canOpen(bot, { x: 5, y: 61, z: 5 }), false);
     });
 });
+
+describe('F20: the service never closes a trapdoor over the column the bot is in', () => {
+    const TRAP = { x: 2, y: 60, z: -2, kind: 'trapdoor', open: true, name: 'oak_trapdoor', facing: 'south' };
+    test('opened while the bot climbs up under it: never closed while it is in the column; beside it on the floor: closed', () => {
+        const watch = new L.DoorWatch();
+        const look = (t, pos, open = true) => watch.observe({ now: t, botPos: pos, moving: true, doors: [{ ...TRAP, open }], players: [] });
+        look(0, { x: 2.5, y: 57.4, z: -1.5 }, false);
+        assert.deepEqual(look(300, { x: 2.5, y: 58.2, z: -1.5 }), [], 'opened from below, 2 below it');
+        assert.deepEqual(look(600, { x: 2.5, y: 57.9, z: -1.5 }), [], 'still in the column');
+        assert.deepEqual(look(900, { x: 2.5, y: 60.7, z: -1.5 }), [], 'in the open trapdoor cell');
+        assert.deepEqual(look(1200, { x: 3.5, y: 61, z: -1.5 }), [], 'out beside it, 1 block');
+        assert.equal(look(1500, { x: 4.5, y: 61, z: -1.5 }).length, 1, '2 blocks past it');
+    });
+});

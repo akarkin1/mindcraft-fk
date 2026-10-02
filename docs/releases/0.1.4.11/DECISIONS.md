@@ -78,3 +78,16 @@ me: ...` (the fallback box of 25 x 13 x 25 of v0.1.4.6 is gone; `!setArea` with 
 three stuck scenarios (W31, W38, W57 part A) start a walking action of the agent instead of a typed order, since
 every typed walk now ends by itself (the N2 text, or "Path not found" within a second) and the reflex they test
 needs an action that keeps trying. dig_code_refused saves no mine, so its row is "underground, no known mine".
+
+The set again at 8f5f0fb: 90 of 92 run before the time limit (the eight journeys of this release ran in the
+group), 2 failed, both at the climb up ladder 1 under the trapdoor:
+
+| Id | Finding | Where | Decision | Owner |
+|---|---|---|---|---|
+| F20 | W88: the last climb up ladder 1 took 54 s with a stall of 35 s under the trapdoor; W84 B3: after the climb up ladder 2 the way home stuck at the top of that ladder (`I got stuck at (16403, 53, 0)`), the bot left in the basement. Both passed in the journey group before the second version of F12 (release and close right after the hop) and F18. | ten_minutes, ladders_native | No openable is released or closed by the walk before the bot is through it in the walking direction (a trapdoor: feet above it going up, below going down); the door service never closes a trapdoor over a column while the bot is in the column; the hop after a climb starts at once. | N (E4) |
+
+F20: fixed by E4. The stall of W88 was in `followPlayer`: the bot hung in the open trapdoor cell at the top of
+the column with the player 2.2 blocks away, within the follow distance, so the path search counted the goal as
+met and held it on the ladder for 35 s; now a follow that hangs in an open trapdoor for 1 s with the player above
+jumps and walks out (at most 3 times). The door service never closes a trapdoor over a column while the bot
+climbs up in it. W84 and W88 pass after the change; alone at 69de4d1 both had passed too (a race).

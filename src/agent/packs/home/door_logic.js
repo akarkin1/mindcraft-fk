@@ -147,6 +147,12 @@ function feetInCell(pos, door) {
     return Math.floor(pos.x) === door.x && Math.floor(pos.z) === door.z && Math.abs(Math.floor(pos.y + 0.01) - door.y) <= 1;
 }
 
+// F20: the feet of the bot in the column under a trapdoor (its x and z, from 40 below it up to 1 above it).
+function inColumnUnder(pos, door) {
+    const y = Math.floor(pos.y + 0.01);
+    return Math.floor(pos.x) === door.x && Math.floor(pos.z) === door.z && y <= door.y + 1 && y >= door.y - 40;
+}
+
 function isIronDoorRecord(door) {
     return isIronOpenable(door.name) || (typeof door.kind === 'string' && door.kind.startsWith('iron'));
 }
@@ -583,6 +589,10 @@ export class DoorWatch {
             if (this.isReserved(door, now, botPos)) {
                 why(door, 'reserved');
                 continue; // v0.1.4.11 (I8): a walk is about to pass it
+            }
+            if (door.kind === 'trapdoor' && inColumnUnder(botPos, door) && !(entry.passed && passSide(door, botPos) === -1)) {
+                why(door, 'bot in the column');
+                continue; // v0.1.4.11 (F20): never a trapdoor over the column the bot climbs up in (down through it: as before)
             }
             // F21: only an openable the bot passed (a gate of a pen or farm: came near), 2 blocks past it.
             // v0.1.4.10 (T3-5): a gate the bot went through is closed as soon as its feet are out of the gate

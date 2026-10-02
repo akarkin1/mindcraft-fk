@@ -2215,6 +2215,49 @@ const PLAYER_WAIT_MS = 2000; // F38: how long goToPlayer waits for the entity of
 // walk of these two that enters a cave (open air 3 wide and 3 high around the bot under a natural ceiling, in no
 // saved area, no block the bot placed within 8 blocks), while the player is not under such a ceiling himself, stops
 // once and says so. Other walks keep the fallback of goToGoal.
+// F20: true when the bot hangs at the top of a column of ladders: not on the ground, its feet in the open trapdoor
+// over it (lower in the column the ladder step of the follow helps). Never throws.
+function hangsInColumn(bot) {
+    try {
+        if (bot.entity?.onGround === true)
+            return false;
+        const b = bot.blockAt(bot.entity.position.floored());
+        if (!b || typeof b.name !== 'string')
+            return false;
+        const props = (typeof b.getProperties === 'function' ? b.getProperties() : b._properties) ?? {};
+        return b.name.endsWith('_trapdoor') && (props.open === true || props.open === 'true');
+    } catch (err) {
+        return false;
+    }
+}
+
+// F20: out of the open trapdoor at the top of a column toward a point: look at it, jump and walk forward for at most
+// 1.2 s, until the bot stands on the ground out of the trapdoor. Never throws.
+async function climbOutToward(bot, point) {
+    try {
+        const p = bot.entity.position;
+        await bot.lookAt(new Vec3(point.x, p.y + 1.6, point.z), true);
+        bot.setControlState('sneak', false);
+        bot.setControlState('forward', true);
+        bot.setControlState('jump', true);
+        const end = Date.now() + 1200;
+        while (Date.now() < end && !bot.interrupt_code) {
+            await new Promise(resolve => setTimeout(resolve, 50));
+            if (bot.entity.onGround && !hangsInColumn(bot) && bot.blockAt(bot.entity.position.floored())?.name?.endsWith('_trapdoor') !== true)
+                break;
+        }
+    } catch (err) {
+        // the follow goes on
+    } finally {
+        try {
+            bot.setControlState('jump', false);
+            bot.setControlState('forward', false);
+        } catch (err) {
+            // nothing to release
+        }
+    }
+}
+
 const NO_WAY_TO_PLAYER = 'I find no way to you from here without digging. Come closer or tell me to dig.';
 // the search for a way without digging: think time of one round, rounds at most, the progress a round must make,
 // how often a follow that stands still asks again
@@ -2628,6 +2671,8 @@ export async function followPlayer(bot, username, distance=4) {
     // nearer; without a way it says so and stops
     const move = noDigMovements(bot);
     const cave = caveWatch(bot, () => player.position).start();
+    let hang_since = null; // F20: since when the bot hangs in the open trapdoor at the top of a column
+    let hang_tries = 0; // F20: the climbs out since the bot last stood on the ground
     const ladder_passes = []; // the times of the passes of the last minute
     let way;
     try {
@@ -2714,6 +2759,25 @@ export async function followPlayer(bot, username, distance=4) {
         const ignore_modes_distance = 30;
         const nearby_distance = distance + 2;
 
+        // v0.1.4.11, F20 (W88): the follow goal is met within its distance, also with the bot hanging in the open
+        // trapdoor at the top of a column of ladders under the player: the path search then holds it there. A bot that
+        // hangs there for 1 s while the player stands above it climbs out toward him (at most 3 times until it stands).
+        if (hangsInColumn(bot) && player.position.y >= bot.entity.position.y - 0.5) {
+            if (hang_since === null)
+                hang_since = Date.now();
+            else if (Date.now() - hang_since >= 1000 && hang_tries < 3) {
+                // out of the trapdoor toward the player as a player does: look at him, jump and walk forward (no new
+                // goal: a reset of the path search lets the bot slide down the ladder first)
+                hang_tries++;
+                await climbOutToward(bot, player.position);
+                hang_since = null;
+            }
+        }
+        else {
+            hang_since = null;
+            if (bot.entity.onGround)
+                hang_tries = 0;
+        }
         // v0.1.4.11 (N2): a follow that enters a cave stops once and says so
         if (cave.check()) {
             log(bot, caveText(cave.at));

@@ -412,3 +412,35 @@ describe('F15: the time of the search is no time stuck, and at most 20 s of sear
         assert.ok(timeouts.every(t => t <= 10000));
     });
 });
+
+describe('F20 (W88): a follow that hangs in the open trapdoor under the player climbs out', () => {
+    test('the follow goal met while hanging: after 1 s it jumps out toward the player, the follow goal stays', { timeout: 20000 }, async () => {
+        const world = makeWorld({ groundY: 60 });
+        world.fill(2, 53, -2, 2, 59, -2, 'ladder', { facing: 'south' });
+        world.set(2, 60, -2, 'oak_trapdoor', { facing: 'south', half: 'top', open: true });
+        const bot = scene({ world, pos: [2.5, 60.7, -1.5], player: [4.5, 61, -1.5], status: 'success' });
+        bot.entity.onGround = false;
+        const goals = [];
+        const setGoal = bot.pathfinder.setGoal.bind(bot.pathfinder);
+        bot.pathfinder.setGoal = (goal, dynamic) => {
+            goals.push(goal?.constructor?.name ?? null);
+            return setGoal(goal, dynamic);
+        };
+        const set = bot.setControlState;
+        let jumped = false;
+        bot.setControlState = (k, val) => {
+            if (k === 'jump' && val && bot.controls.forward) {
+                jumped = true;
+                bot.entity.position = v(3.5, 61, -1.5); // out beside the trapdoor
+                bot.entity.onGround = true;
+            }
+            return set(k, val);
+        };
+        setTimeout(() => { bot.interrupt_code = true; }, 3000);
+        await skills.followPlayer(bot, PLAYER, 4);
+        assert.equal(jumped, true);
+        assert.equal(Math.floor(bot.entity.position.y), 61);
+        assert.deepEqual(goals, ['GoalFollow'], 'no reset of the path search');
+    });
+
+});
