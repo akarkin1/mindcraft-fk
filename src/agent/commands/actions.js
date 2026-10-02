@@ -668,7 +668,7 @@ function digPlace(agent, prompt, last) {
             // F17 (the full set, dig_code_refused): whereAmI().mine is null without mine_routes, but the mine store
             // knows the mine; a bot in the tunnel of a known mine must be told !mineOre, never "leave the mine"
             try {
-                const pack = agent.work_packs?.mining;
+                const pack = settings.mining_pack ? agent.work_packs?.mining : null;
                 const mines = agent._workStores?.()?.mines;
                 const pos = agent.bot?.entity?.position;
                 if (typeof pack?.mineAt === 'function' && mines && pos) {
