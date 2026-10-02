@@ -86,11 +86,11 @@ const settings = {
     "mine_routes": true, // with mining_pack and routes_pack: the mine of the player: !rememberMine, !rememberTunnel, !collectPassedOre
     "ore_sense_range": 0, // 0: only ore that touches the tunnel or the open air is taken. 3: also ore within 3 blocks of the wall
     "skills_over_code": true, // !newAction writes no code for digging while a command can do it
-    "job_memory": false, // keep the job (mining, farming ...) in bots/<name>/job.json and come back to it after an errand or a restart
+    "job_memory": true, // keep the job (mining, farming ...) in bots/<name>/job.json and come back to it after an errand or a restart
     "job_resume_seconds": 60, // with job_memory: seconds without an order and with nothing running before the bot goes back to its job, 10 or more
     "idle_jobs": [], // with job_memory: commands the bot runs in order when it has no job, e.g. ["!farmCycle(\"farm\")", "!craftSupplies(\"torch\", 32)"]
     "idle_jobs_minutes": 15, // with job_memory: an entry of idle_jobs runs at most once per this many minutes, 1 or more
-    "area_floors": false, // !rememberArea in a building with floors saves only the floor the bot stands on, so the house and the basement are two areas
+    "area_floors": true, // !rememberArea in a building with floors saves only the floor the bot stands on, so the house and the basement are two areas
     "allow_vision": false, // allows vision model to interpret screenshots as inputs
     "blocked_actions" : ["!checkBlueprint", "!checkBlueprintLevel", "!getBlueprint", "!getBlueprintLevel", "!restart"] , // commands to disable and remove from docs. Ex: ["!setMode"]
     "code_timeout_mins": -1, // minutes code is allowed to run. -1 for no timeout
