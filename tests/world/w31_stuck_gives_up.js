@@ -10,11 +10,13 @@
 // Flat world, the modes of the owner (MODES_PROFILE), stuck_restart_after 3. The bot stands in a closed
 // room of 1 x 1 x 2 blocks of obsidian (the path search finds no way out: "Path not found, but attempting to
 // navigate anyway using destructive movements."). The player stands 10 blocks away.
-//   round 1  The player types !followPlayer("w_player", 2); the bot cannot move. unstuck says "I'm stuck!",
+// v0.1.4.11: in place of the typed follow, each round starts an action of the agent that walks toward the player again
+// and again (walkOut below: a follow that finds no way now says so and ends, N2 and W97; this scenario tests the reflex).
+//   round 1  The walk toward the player starts; the bot cannot move. unstuck says "I'm stuck!",
 //            the escape fails, the reflex gives up: the behaviour log gets "I am stuck at (x, y, z) and could
 //            not walk away." with the position of the bot. The process lives. The player asks "where are
 //            you?": the request to the model holds that line (the model is told the position).
-//   round 2  A new order (!followPlayer again) ends the pause of the reflex; the second failed escape gives
+//   round 2  A new one (the walk again, a new command for the reflex) ends the pause of the reflex; the second failed escape gives
 //            up again. The process lives (2 failed escapes of 3).
 //   round 3  The third failed escape in a row ends the process with "Got stuck and couldn't get unstuck"
 //            (the meaning of the setting: failed escapes in a row before the restart).
@@ -23,7 +25,7 @@
 import { fileURLToPath } from 'node:url';
 import {
     scenarioMain, check, note, exitSoon, startAgent, stopRealAgent, NEW_FLAGS_OFF, FLAGS_0148_OFF, withModes, placeBot,
-    resetBot, waitFor, entityPos, fmt, commands, orderChannel, runPhase, emitData, STUCK_SAID, env,
+    resetBot, waitFor, entityPos, fmt, commands, orderChannel, runPhase, emitData, STUCK_SAID, env, sleep, importProject,
 } from './helpers.js';
 import { region, prepareRegion, releaseRegion } from './world.js';
 
@@ -36,6 +38,24 @@ const KILL_TEXT = "Got stuck and couldn't get unstuck";
 const r = region(24);
 const g = r.g;
 const CELL = { x: r.ox, y: g + 1, z: r.oz }; // the air of the room: CELL and the block above it
+const TO = { x: CELL.x + 10, y: g + 1, z: CELL.z }; // the player, 10 blocks away
+
+// v0.1.4.11 (N2, W97): no typed order keeps the bot trying in the closed room any more: a follow that finds no way to
+// the player says so and ends, a walk without a way ends within a second (and every new action starts the stuck time
+// from zero), !newAction pauses the reflex, and a follow with the player in reach is no being stuck. So in place of the
+// order the scenario starts an action of the agent, as a typed command starts one (the label action:walkOut counts as a
+// new command for the reflex), that walks toward the player 10 blocks away again and again until it is stopped. It is
+// not awaited: the reflex stops it.
+let skillsLib = null;
+async function walkOut(agent, to) {
+    skillsLib ??= await importProject('src/agent/library/skills.js');
+    agent.actions.runAction('action:walkOut', async () => {
+        for (let i = 0; i < 600 && !agent.bot.interrupt_code; i++) {
+            await skillsLib.goToPosition(agent.bot, to.x, to.y, to.z, 1);
+            await sleep(500);
+        }
+    }, { timeout: 15 }).catch(() => {});
+}
 
 // A box of obsidian from g to g+3 around the column of CELL, with air at g+1 and g+2 in the middle.
 async function buildRoom() {
@@ -61,14 +81,13 @@ await scenarioMain({
             await resetBot(NAME);
             const at = await placeBot(agent, CELL, 0);
             check(at && Math.floor(at.x) === CELL.x && Math.floor(at.z) === CELL.z, 'precondition: the bot stands in the closed room of obsidian', fmt(at));
-            orders = await orderChannel(s, { name: PLAYER, at: { x: CELL.x + 10, y: g + 1, z: CELL.z } });
+            orders = await orderChannel(s, { name: PLAYER, at: TO });
 
             // ---------------------------------------------------------- round 1
             let from = s.behavior.length;
             const t1 = Date.now();
-            const o1 = orders.orderInfo(`!followPlayer("${PLAYER}", 2)`, 5000); // endless: it runs on
+            await walkOut(agent, TO);
             const g1 = await nextGiveUp(s, from, 120000);
-            await o1;
             const stuck1 = s.behavior.slice(from).filter((x) => x.text.includes(STUCK_SAID)).length;
             const pos1 = await entityPos(NAME);
             note(`round 1: ${((Date.now() - t1) / 1000).toFixed(1)} s after the order; behaviour log ${JSON.stringify(s.behavior.slice(from).map((x) => x.text))}`);
@@ -91,10 +110,9 @@ await scenarioMain({
 
             // ---------------------------------------------------------- round 2
             from = s.behavior.length;
-            await waitFor(() => !agent.actions.executing || agent.actions.currentActionLabel === 'action:followPlayer', { ms: 10000 });
-            const o2 = orders.orderInfo(`!followPlayer("${PLAYER}", 2)`, 5000);
+            await waitFor(() => !agent.actions.executing, { ms: 10000 });
+            await walkOut(agent, TO);
             const g2 = await nextGiveUp(s, from, 120000);
-            await o2;
             note(`round 2: behaviour log ${JSON.stringify(s.behavior.slice(from).map((x) => x.text))}`);
             check(Boolean(g2), 'round 2: after a new order the reflex found the bot stuck again and gave up again', g2 ? g2.line : 'no such line within 120 s');
             check(s.killed === null, 'round 2: the process lives after the second failed escape in a row', String(s.killed));
@@ -103,7 +121,7 @@ await scenarioMain({
             // ---------------------------------------------------------- round 3: the kill
             s.killExpected = true;
             from = s.behavior.length;
-            orders.orderInfo(`!followPlayer("${PLAYER}", 2)`, 5000);
+            await walkOut(agent, TO);
             const killed = await waitFor(() => s.killed !== null, { ms: 120000, every: 250 });
             // the process ends in cleanKill; this line is reached only when it did not
             check(false, 'round 3: the third failed escape in a row ends the process', killed.ok ? String(s.killed) : 'the process still runs 120 s after the third order');

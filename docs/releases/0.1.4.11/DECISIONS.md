@@ -69,3 +69,12 @@ The set at 3276e4d: 89 scenario lines before the time limit of the run (every ol
 | F17 | `!newAction("dig...")` at the end of the tunnel of a known mine answered the row of "underground, no mine" (`say "leave the mine", then !mineOre("iron", 8, true)`): `whereAmI().mine` is null without `mine_routes`, so the refusal did not see the mine. | dig_code_refused | The refusal reads the mine store itself when `whereAmI` gives no mine: in a tunnel of a known mine the row is `!mineOre("iron", 8)`. | lead, done |
 | F18 | W89 pen_gate_safe failed at step 1 once more (the gate open 1.4 blocks behind the stopped bot, 4 of its last 6 runs pass): a race between the scan's walk in, the service's close behind the bot, the path search opening the gate on the way out and the stop. | pen_gate_safe | A debug line behind `MC_DOOR_DEBUG` prints every decision of the service for a gate within 3 blocks; the failing run read, the cause fixed with a unit test. | N (E4) |
 | F19 | Thirteen old scenarios expect texts and walks of v0.1.4.10: nine the old answer of `!rememberArea` (shelter, night, protected_house, scan, creeper, sleep, creeper_standing, farm_scan), route_broken the I3 text with "Show me the way again", and W31, W38, W57 (part A) a `!followPlayer` that keeps the bot trying in a sealed room, which now ends with the N2 text as W97 wants. | the set | The nine and route_broken accept the P1 and W1 texts; the three stuck scenarios give `!goToCoordinates` instead of the follow, so that the reflex they test keeps its trigger. | T3 |
+
+F18: fixed by E4 (the door service kept the area store it was made with; a pen saved after the world was
+identified was invisible to it, so its gate never counted as a pen gate; now the service asks the area guard of
+the moment; a debug line behind `MC_DOOR_DEBUG`). F19: done by T3, all 14 pass one at a time. Two decisions of T3
+accepted: on an open field `!rememberArea("camp", "building")` saves nothing and answers `I find no border around
+me: ...` (the fallback box of 25 x 13 x 25 of v0.1.4.6 is gone; `!setArea` with corners saves such a place); the
+three stuck scenarios (W31, W38, W57 part A) start a walking action of the agent instead of a typed order, since
+every typed walk now ends by itself (the N2 text, or "Path not found" within a second) and the reflex they test
+needs an action that keeps trying. dig_code_refused saves no mine, so its row is "underground, no known mine".

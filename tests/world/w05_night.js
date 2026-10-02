@@ -39,7 +39,8 @@ await scenarioMain({
             check(agent.bot.modes.exists('night_shelter') && agent.bot.modes.isOn('night_shelter'), 'home_pack on: the mode night_shelter exists and is on');
             await placeBot(agent, h.inside, 0);
             const saved = await command_(agent, '!rememberArea("home", "home")', 30000); // v0.1.4.8: a shelter is an area of type home (C4)
-            check(/Area "home" \(home\) saved: .*\b1 door\b/.test(saved), 'precondition: !rememberArea saved the house as "home" with its door', JSON.stringify(saved.slice(0, 200)));
+            // v0.1.4.11 (P1): the answer names the kind, the border, the size and the contents
+            check(/I saved "home": an? \w+, \w+, \d+ x \d+( with a roof)?, [^.]*\b1 door\b/.test(saved), 'precondition: !rememberArea saved the house as "home" with its door (the answer of P1)', JSON.stringify(saved.slice(0, 200)));
             player = await connectPlayer(PLAYER);
             await command(`gamemode creative ${PLAYER}`);
             await placeBot(agent, work, 180);

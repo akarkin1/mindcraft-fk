@@ -44,7 +44,8 @@ await scenarioMain({
             check(agent.bot.modes.exists('creeper_safety') && agent.bot.modes.isOn('creeper_safety'), 'home_pack on: the mode creeper_safety exists and is on');
             await placeBot(agent, h.inside, 0);
             const saved = await command_(agent, '!rememberArea("home", "building")', 30000);
-            check(/Area "home" \(building\) saved: .*\b1 door\b/.test(saved), 'precondition: !rememberArea saved the house as "home" with its door', JSON.stringify(saved.slice(0, 200)));
+            // v0.1.4.11 (P1): the answer names the kind, the border, the size and the contents
+            check(/I saved "home": an? \w+, \w+, \d+ x \d+( with a roof)?, [^.]*\b1 door\b/.test(saved), 'precondition: !rememberArea saved the house as "home" with its door (the answer of P1)', JSON.stringify(saved.slice(0, 200)));
             snap = await snapshotBox(h.box);
 
             let deaths = 0;

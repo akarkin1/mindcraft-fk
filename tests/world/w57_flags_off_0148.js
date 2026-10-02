@@ -3,7 +3,8 @@
 // v0.1.4.6 and v0.1.4.7 are on as the owner plays (OWNER_SWITCHES), the modes of the owner on.
 // Not a defect of the play test: it guards the promise of the switches (a new behaviour must not come on by
 // itself). Each part fails when the new behaviour runs although its switch is off.
-//   A  stuck_restart_after 1: the bot in a closed room of obsidian, the player types !followPlayer. As in
+//   A  stuck_restart_after 1: the bot in a closed room of obsidian, an action of the agent walks toward the player 10
+//      blocks away again and again (v0.1.4.11: a follow that finds no way says so and ends, N2; see walkOut). As in
 //      v0.1.4.7 (decision of the tech lead: "1 is exactly v0.1.4.7, only the time limit of 10 s ends the
 //      process"): after "I'm stuck!" the escape returns at once and says "I'm free." although the bot is still
 //      in the room; the reflex does not give up with "I am stuck at (x, y, z) and could not walk away.", and
@@ -27,7 +28,7 @@
 import path from 'node:path';
 import {
     scenarioMain, check, note, exitSoon, startAgent, stopRealAgent, OWNER_SWITCHES, FLAGS_0148_OFF, withModes, placeBot,
-    resetBot, waitFor, waitIdle, commands, orderChannel, listFiles, sleep, tp, STUCK_SAID, FREE_SAID,
+    resetBot, waitFor, waitIdle, commands, orderChannel, listFiles, sleep, tp, STUCK_SAID, FREE_SAID, importProject,
 } from './helpers.js';
 import { region, prepareRegion, releaseRegion, blockNames, inventoryOf, itemsText } from './world.js';
 
@@ -40,6 +41,23 @@ const r = region(40);
 const g = r.g;
 const CELL = { x: r.ox - 20, y: g + 1, z: r.oz - 20 };
 const FENCES = [0, 1, 2, 3, 4].map((i) => ({ x: r.ox + 4 + i, y: g + 1, z: r.oz + 6 }));
+
+// v0.1.4.11 (N2, W97): no typed order keeps the bot trying in the closed room any more: a follow that finds no way to
+// the player says so and ends, a walk without a way ends within a second (and every new action starts the stuck time
+// from zero), !newAction pauses the reflex, and a follow with the player in reach is no being stuck. So in place of the
+// order the scenario starts an action of the agent, as a typed command starts one (the label action:walkOut counts as a
+// new command for the reflex), that walks toward the player 10 blocks away again and again until it is stopped. It is
+// not awaited: the reflex stops it.
+let skillsLib = null;
+async function walkOut(agent, to) {
+    skillsLib ??= await importProject('src/agent/library/skills.js');
+    agent.actions.runAction('action:walkOut', async () => {
+        for (let i = 0; i < 600 && !agent.bot.interrupt_code; i++) {
+            await skillsLib.goToPosition(agent.bot, to.x, to.y, to.z, 1);
+            await sleep(500);
+        }
+    }, { timeout: 15 }).catch(() => {});
+}
 
 await scenarioMain({
     async main() {
@@ -83,12 +101,14 @@ await scenarioMain({
                 await tp(PLAYER, { x: CELL.x + 10, y: g + 1, z: CELL.z });
                 await sleep(500);
                 const tA = Date.now();
-                orders.orderInfo(`!followPlayer("${PLAYER}", 2)`, 5000);
-                const freed = await waitFor(() => {
+                const freedNow = () => {
                     const lines = s.behavior.filter((x) => x.t >= tA).map((x) => x.text);
                     const i = lines.indexOf(STUCK_SAID);
                     return i >= 0 && lines.slice(i + 1).includes(FREE_SAID);
-                }, { ms: 90000, every: 250 });
+                };
+                // v0.1.4.11 (N2, W97): a follow that finds no way says so and ends; walkOut keeps the bot trying
+                await walkOut(agent, { x: CELL.x + 10, y: g + 1, z: CELL.z });
+                const freed = await waitFor(freedNow, { ms: 90000, every: 250 });
                 const linesA = s.behavior.filter((x) => x.t >= tA).map((x) => x.text);
                 note(`A: the behaviour log: ${JSON.stringify(linesA)}`);
                 check(freed.ok, `A: stuck_restart_after 1: after "${STUCK_SAID}" the escape that returned says "${FREE_SAID}" (v0.1.4.7), although the bot is still in the room`);

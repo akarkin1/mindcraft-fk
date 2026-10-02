@@ -57,7 +57,7 @@ The inner shaft never starts on your way out (under a ladder, in a doorway): the
 | 11 | Say "no, it is a farm" about a wrong kind. | `"aviary" is a farm now. I only plant and harvest there.` |
 | 12 | Walk the bot into a fenced place you never named. | After 3 s: `I am in a fenced pen 9 x 7 with 6 chickens and 1 gate that I have not saved. Tell me its name and I keep it.` Once per place. |
 
-Name a pen while its animals are inside: an empty fence is a yard, which the bot may enter.
+Name a pen while its animals are inside: an empty fence is a yard, which the bot may enter. On open ground with no border at all nothing is saved (`I find no border around me: ...`); say the corners with `!setArea` for such a place.
 
 ## 6. The routes
 

@@ -33,7 +33,8 @@ await scenarioMain({
             await placeBot(agent, h.inside, 0);
             const saved = await command_(agent, '!rememberArea("home", "home")', 30000);
             note(`!rememberArea: ${JSON.stringify(saved)}`);
-            check(/Area "home" \(home\) saved: .*\b1 door\b/.test(saved), 'precondition: !rememberArea saved the house as "home" with its door', JSON.stringify(saved.slice(0, 200)));
+            // v0.1.4.11 (P1): the answer names the kind, the border, the size and the contents
+            check(/I saved "home": an? \w+, \w+, \d+ x \d+( with a roof)?, [^.]*\b1 door\b/.test(saved) && agent.area_store?.get?.('home'), 'precondition: !rememberArea saved the house as "home" with its door (the answer of P1)', JSON.stringify(saved.slice(0, 200)));
 
             // 32 blocks south-east of the middle of the room: 40.3 blocks from the house (spec section 8, F5)
             const far = { x: h.inside.x + 32, y: g + 1, z: h.inside.z + 32 };
@@ -73,8 +74,8 @@ await scenarioMain({
             // house grown by 1 block (A3), so the doorstep lies inside the box of the area although
             // the bot is outside the house.
             const doorstep = { x: h.door.x, y: g + 1, z: h.door.z - 1 };
-            const home = saved.match(/from \((-?\d+), (-?\d+), (-?\d+)\) to \((-?\d+), (-?\d+), (-?\d+)\)/);
-            if (home) note(`the saved box is from (${home[1]}, ${home[2]}, ${home[3]}) to (${home[4]}, ${home[5]}, ${home[6]}); the doorstep is (${doorstep.x}, ${doorstep.y}, ${doorstep.z})`);
+            const home = agent.area_store?.get?.('home'); // v0.1.4.11 (P1): the answer has no corners; the store has them
+            if (home) note(`the saved box is from (${home.min.x}, ${home.min.y}, ${home.min.z}) to (${home.max.x}, ${home.max.y}, ${home.max.z}); the doorstep is (${doorstep.x}, ${doorstep.y}, ${doorstep.z})`);
             await placeBot(agent, doorstep, 180);
             const fromStep = await command_(agent, '!goToShelter', 60000);
             const endStep = await entityPos(NAME);

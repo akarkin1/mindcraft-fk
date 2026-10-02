@@ -8,10 +8,9 @@
 // Base world, the owner's switches and settings, the switches of v0.1.4.9 on with skills_over_code, the modes of the
 // owner. The bot stands in the tunnel of the base.
 //   1. The player writes "dig a tunnel to the east"; the fake model answers !newAction("dig a tunnel to the east").
-//      The result in the history is the text of I8 with the three digging commands that are on: "I do not write
-//      code for digging. I have skills for it: !mineOre for an ore, !rememberTunnel and then !mineOre to dig on in
-//      a tunnel, !collectBlocks for blocks in sight."; the fake code model got no request; nothing around the bot
-//      was dug.
+//      The result in the history is the text of W7 of v0.1.4.11 (F17) for a bot underground in no known mine (the
+//      scenario saves no mine): "I do not write code for digging. From here: say "leave the mine", then
+//      !mineOre("iron", 8, true)."; the fake code model got no request; nothing around the bot was dug.
 //   2. The player types !newAction("dig a tunnel to the east") himself: it runs, the code model is asked (G5: a
 //      command typed by the player runs).
 import {
@@ -24,7 +23,10 @@ import { basePlan, buildBase, saveHomePlace, BASE_RADIUS } from './base_world.js
 
 const NAME = 'w_rcode';
 const PLAYER = 'w_player';
-const REFUSAL = 'I do not write code for digging. I have skills for it: !mineOre for an ore, !rememberTunnel and then !mineOre to dig on in a tunnel, !collectBlocks for blocks in sight.';
+// v0.1.4.11 (W7, F17): the refusal names the one call to make from where the bot stands. The bot stands in the tunnel
+// of the base, underground, and knows no mine (this scenario saves only the place "home"): the row "underground, no
+// known mine" of W7
+const REFUSAL = 'I do not write code for digging. From here: say "leave the mine", then !mineOre("iron", 8, true).';
 
 await scenarioMain({
     async main() {
@@ -57,7 +59,7 @@ await scenarioMain({
             const results = s.added.filter((a) => a.t >= t1 && a.name === 'system').map((a) => a.content);
             note(`1: the system lines of the history: ${JSON.stringify(results.map((x) => x.slice(0, 300)))}`);
             check(back.ok, '1: the result of the !newAction of the model came back into the history');
-            check(Boolean(back.value?.content?.includes(REFUSAL)), '1: the result is the text of I8 with !mineOre, !rememberTunnel and !collectBlocks', JSON.stringify(back.value?.content));
+            check(Boolean(back.value?.content?.includes(REFUSAL)), `1: the result is the text of W7 for a bot underground in no known mine (v0.1.4.11, F17): \`${REFUSAL}\``, JSON.stringify(back.value?.content));
             check(s.code.requests.length === 0, '1: the fake code model got no request', `${s.code.requests.length} requests`);
             const cmp = await compareSnapshot(snap);
             check(cmp.same, '1: nothing around the bot was dug or placed', describeDifferences(cmp.differences));
