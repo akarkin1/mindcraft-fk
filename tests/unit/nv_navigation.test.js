@@ -15,7 +15,7 @@ import fs from 'node:fs';
 import { register } from 'node:module';
 import { loadSrc } from '../helpers/load.js';
 import { repoPath } from '../helpers/paths.js';
-import { REGISTRY, makeWorld, makeMiningBot, makeClock, v } from './mining_fake_bot.test.js';
+import { REGISTRY, makeWorld, makeMiningBot, makeClock, give, v } from './mining_fake_bot.test.js';
 
 register('../helpers/mcdata_hooks.js', import.meta.url);
 
@@ -60,17 +60,30 @@ const ROOM = { x: 2, y: 41, z: 1 };
 const key = (x, y, z) => `${x},${y},${z}`;
 const cellOf = (p) => ({ x: Math.floor(p.x), y: Math.floor(p.y), z: Math.floor(p.z) });
 
-function scene({ pos = [-2.5, 61, 2.5], iron = false } = {}) {
+function scene({ pos = [-2.5, 61, 2.5], iron = false, lowest = 41 } = {}) {
     const world = makeWorld({ groundY: 60 });
     world.fill(0, 41, -2, 4, 43, 2, 'air');
-    world.fill(2, 41, -2, 2, 59, -2, 'ladder', { facing: 'south' });
+    world.fill(2, 44, -2, 2, 59, -2, 'air');
+    world.fill(2, lowest, -2, 2, 59, -2, 'ladder', { facing: 'south' });
     world.set(2, 60, -2, 'oak_trapdoor', { facing: 'south', half: 'top', open: false });
     const doorName = iron ? 'iron_door' : 'oak_door';
     world.set(0, 61, -3, doorName, { half: 'lower', facing: 'east', open: false, hinge: 'left', powered: false });
     world.set(0, 62, -3, doorName, { half: 'upper', facing: 'east', open: false, hinge: 'left', powered: false });
+    // F1 (DECISIONS.md): the climb is the ladder leg of replay.js, which clicks the trapdoor; as in rta_replay.test.js an
+    // open trapdoor is no solid block and activateBlock toggles an openable
+    const solid = world.solid;
+    world.solid = (x, y, z) => {
+        if (world.nameAt(x, y, z).endsWith('_trapdoor') && world.propsAt(x, y, z).open === true) return false;
+        return solid(x, y, z);
+    };
     const bot = makeMiningBot({ world, pos });
     const clock = makeClock(bot);
     bot.modes = { noteProgress: () => {} };
+    bot.activateBlock = async (block) => {
+        const p = block.position;
+        bot.calls.push(['activate', p.x, p.y, p.z]);
+        world.set(p.x, p.y, p.z, world.nameAt(p.x, p.y, p.z), { ...world.propsAt(p.x, p.y, p.z), open: world.propsAt(p.x, p.y, p.z).open !== true });
+    };
     const events = [];
     const blocked = new Set();
     bot.hang = false;
@@ -121,10 +134,8 @@ describe('I7: waypointsOf(route)', () => {
     });
 
     test('the kinds are those of I7', () => {
-        // FINDING (I7, low harm): the spec lists the kinds start, door, gate, trapdoor, ladder_top, ladder_foot, room,
-        // tunnel, end. waypointsOf gives the ends of walk and stairs legs the kind 'walk', which is not in that list
-        // (WAYPOINT_KINDS of waypoints.js adds it). A reader that switches on the kinds of I7 meets an unknown kind.
-        // The spec itself names "the ends of every leg" as waypoints without a kind for them; see the report.
+        // Was finding T1-1 (the kind 'walk' was not in the list of I7); the lead added 'walk' to the spec (DECISIONS T1-1),
+        // so SPEC_KINDS above holds it.
         const kinds = (R.waypointsOf?.(MINE) ?? []).map((w) => w.kind);
         const unknown = kinds.filter((k) => !SPEC_KINDS.includes(k));
         assert.deepEqual([...new Set(unknown)], []);
@@ -204,10 +215,16 @@ describe('I7: walkWaypoints(bot, ctx, waypoints, { from, to, clock, deadline })'
         assert.deepEqual(s.feet(), ROOM);
         const gotos = s.events.filter((e) => e.goto);
         assert.ok(gotos.length > 0);
-        for (const g of gotos) {
+        // F1 (DECISIONS.md): GoalNear 1 holds for the hops of the path search; the climb is the ladder leg of replay.js
+        // with its own goals: the cells of the column at (2, -2), its entry (2, 61, -3) and its foot (2, 41, -1)
+        const ladderLeg = ([x, y, z]) => (x === 2 && z === -2) || (x === 2 && y === 61 && z === -3) || (x === 2 && y === 41 && z === -1);
+        const searchHops = gotos.filter((g) => !ladderLeg(g.goto));
+        assert.ok(searchHops.length > 0, 'hops of the path search');
+        for (const g of searchHops) {
             assert.equal(g.rangeSq, 1, `GoalNear 1: ${JSON.stringify(g)}`);
             assert.equal(g.canDig, false, `no digging: ${JSON.stringify(g)}`);
         }
+        for (const g of gotos) assert.notEqual(g.canDig, true, `no digging: ${JSON.stringify(g)}`);
         assert.equal(s.bot.calls.filter((c) => c[0] === 'dig').length, 0);
     });
 
@@ -227,6 +244,7 @@ describe('I7: walkWaypoints(bot, ctx, waypoints, { from, to, clock, deadline })'
     });
 
     test('the direction: from the room toward the house the walk goes the other way', async () => {
+        // F1 (DECISIONS.md): the climb up is the ladder leg of replay.js; it opens the trapdoor with activateBlock (scene)
         const s = scene({ pos: [2.5, 41, 1.5] });
         const r = await R.walkWaypoints?.(s.bot, s.ctx, s.waypoints, { to: HOUSE, clock: s.clock });
         assert.equal(r?.ok, true, r?.text);
@@ -245,6 +263,7 @@ describe('I7: walkWaypoints(bot, ctx, waypoints, { from, to, clock, deadline })'
     });
 
     test('joined in the room, toward the house: from the nearest waypoint, not from the start', async () => {
+        // F1 (DECISIONS.md): the climb up is the ladder leg of replay.js; it opens the trapdoor with activateBlock (scene)
         const s = scene({ pos: [1.5, 41, -0.5] });
         const r = await R.walkWaypoints?.(s.bot, s.ctx, s.waypoints, { to: HOUSE, clock: s.clock });
         assert.equal(r?.ok, true, r?.text);
@@ -351,15 +370,40 @@ describe('I7 and N1: dryScan(bot, waypoints, { from, to })', () => {
         assert.ok(!s.searches.some((q) => q.to[1] === 41), 'no search after the first hop without a path');
     });
 
-    test('N1: the hop to the trapdoor: I find no way from (2, 61, -3) to the trapdoor at (2, 60, -2).', async () => {
-        const s = scene({ pos: [2.5, 61, -2.5] });
-        // the hop that passes the trapdoor goes down to the ladder; it has no path
-        for (let y = 41; y <= 61; y++) s.noPath.add(key(2, y, -2));
+    test('N1: the climb up to a trapdoor that cannot be opened: the second form naming the trapdoor', async () => {
+        // F1 (DECISIONS.md): a climb is checked (ladderCheck), not searched into the column; an intact column under an
+        // openable trapdoor is open. So the trapdoor here is iron (canOpen says no) and the bot climbs up from the room.
+        const s = scene({ pos: [2.5, 41, 0.5] });
+        s.world.set(2, 60, -2, 'iron_trapdoor', { facing: 'south', half: 'top', open: false, powered: false });
         const before = s.feet();
-        const r = await R.dryScan?.(s.bot, s.waypoints, { to: ROOM });
+        const r = await R.dryScan?.(s.bot, s.waypoints, { to: HOUSE });
         assert.equal(r?.ok, false);
-        assert.equal(r?.text, 'I find no way from (2, 61, -3) to the trapdoor at (2, 60, -2).');
+        assert.equal(r?.text, 'I find no way from (2, 41, -1) to the trapdoor at (2, 60, -2): it is closed and I cannot open it.');
+        assert.deepEqual(r?.cause, { kind: 'door', name: 'trapdoor', x: 2, y: 60, z: -2, state: 'closed' });
         assert.deepEqual(s.feet(), before, 'the bot did not move');
+    });
+
+    test('F1: a column with a gap and no ladders in the bag: the cause ladder and the gap text', async () => {
+        // F1 (DECISIONS.md): the ladders start at y 44, 2 blocks above the floor of the room at y 41 (the cells 42 and 43
+        // are missing); the bot carries no ladders
+        const s = scene({ pos: [2.5, 41, 0.5], lowest: 44 });
+        const before = s.feet();
+        const r = await R.dryScan?.(s.bot, s.waypoints, { to: HOUSE });
+        assert.equal(r?.ok, false);
+        assert.deepEqual(r?.cause, { kind: 'ladder', x: 2, z: -2, y: 42, gap: 2 });
+        assert.equal(r?.text, 'I find no way from (2, 41, -1) to the foot of the ladder at (2, 41, -2): the ladder has a gap of 2 at y 42 and I have no ladders.');
+        assert.deepEqual(s.feet(), before, 'the bot did not move');
+        assert.equal(s.events.filter((e) => e.goto).length, 0, 'no step');
+    });
+
+    test('F1: the same gap with 1 ladder in the bag: "and I have only 1 ladder."; with 2 the scan is open', async () => {
+        const s = scene({ pos: [2.5, 41, 0.5], lowest: 44 });
+        give(s.bot, 'ladder', 1);
+        const r = await R.dryScan?.(s.bot, s.waypoints, { to: HOUSE });
+        assert.equal(r?.text, 'I find no way from (2, 41, -1) to the foot of the ladder at (2, 41, -2): the ladder has a gap of 2 at y 42 and I have only 1 ladder.');
+        give(s.bot, 'ladder', 1);
+        const open = await R.dryScan?.(s.bot, s.waypoints, { to: HOUSE });
+        assert.equal(open?.ok, true, open?.text);
     });
 
     test('N1: a closed iron door that the bot cannot open: the second form, cause door closed', async () => {
