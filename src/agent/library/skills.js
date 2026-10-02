@@ -2089,7 +2089,9 @@ function feetCellOf(bot) {
 // The ladder step of goToPosition and goToPlayer: the text of a pass that failed goes to the log. Never throws.
 async function ladderTowards(bot, target, passes, after = null) {
     const step = await ladderStepTowards(bot, target, { after, passes, log: (text) => log(bot, text) });
-    if (step.tried && !step.ok && step.reason !== 'interrupted')
+    // v0.1.4.10: a pass that ran out of time while the bot still arrived (the path search finished the climb)
+    // claims no failure: the text is logged only while the target is still 2 or more blocks above or below
+    if (step.tried && !step.ok && step.reason !== 'interrupted' && ladderGap(bot, target) >= LADDER_GAP)
         log(bot, step.text);
     return step;
 }
@@ -2288,8 +2290,8 @@ export async function followPlayer(bot, username, distance=4) {
                 if (bot.interrupt_code)
                     break;
                 if (step.tried) {
-                    if (!step.ok && !ladder_failures.has(step.text)) {
-                        ladder_failures.add(step.text);
+                    if (!step.ok && !ladder_failures.has(step.text) && ladderGap(bot, player.position) >= LADDER_GAP) {
+                        ladder_failures.add(step.text); // a pass that ran out of time while the bot arrived claims no failure
                         log(bot, step.text);
                     }
                     bot.pathfinder.setMovements(move);
