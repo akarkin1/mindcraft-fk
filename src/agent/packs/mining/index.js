@@ -7,6 +7,10 @@
 // rememberTunnel), the work in a known mine along its route, side branches, the ore list
 // (collectPassedOre), and mineAt for where the bot is (I6, I7).
 //
+// v0.1.4.11 (part M): the tunnel at a cell with its checks (tunnelAt, corridorWidth, addTunnel; I3) and the
+// shaft of a second level from inside a known mine behind mine_from_inside (insideShaft, mineId, parentMine,
+// fromInsideOn; I4).
+//
 // Pure modules (no mineflayer, no src/agent/library): ore_table, mine_logic, texts.
 // The store: mine_store (one file per world, <worldDir>/mines.json).
 // Executing modules (they move the bot and get the pack context `ctx`): dig, ladder, mining, mine_way, mine_player.
@@ -17,14 +21,14 @@ export { AIR_NAMES, AREA_DISTANCE, DEFAULT_TUNNEL_LENGTH, DIRECTIONS, ENTRANCE_A
     backOf, cellOf, chooseDirection, chooseEntrance, classify, dirVector, directionOf, entranceAllowed, faceNeighbours, isDirection, isFalling,
     leftOf, mineDirections, offset, pickaxeUses, posKey, returnTimeMs, rightOf, roomPlan, sameCell, shaftAllowed, shaftStep, shaftView,
     shouldReturn, staircaseSlots, staircaseStep, staircaseView, tripNeeds, tripStart, tunnelAllowed, tunnelSlots, tunnelStep, tunnelView,
-    usablePickaxes, veinOrder } from './mine_logic.js';
+    usablePickaxes, veinOrder, addTunnel, corridorWidth, insideShaft, tunnelAt } from './mine_logic.js';
 export { BRANCH_EVERY, BRANCH_FROM, BRANCH_LENGTH, CORRIDOR_LIMIT, MAX_PASSED, MAX_SENSE_RANGE, PASSED_REASONS, addPassedEntry, branchCells,
     branchPlan, cleanPassedEntry, corridorDirections, isCorridor, legCells, legEnd, measureTunnel, mineAt, mineDistance, nearestLeg,
     removePassedAt, roomBox, senseCut, NATURAL_NAMES, WAY_BACK_HOP, WAY_BACK_REACH, isNaturalBlock, knownCells, wayBack, wayBackHops, TORCH_NAMES, torchDue, senseOres, tunnelCells, tunnelDirection, tunnelFor, tunnelsOf, veinParts } from './mine_logic.js';
 export { NO_TORCHES_TEXT, STOP_REASONS, TEXTS, TRAIL_MAX_STEPS, article, askMineText, cannotMineText, collectPassedText, descendText, mineLabel, mineOreText, mineText,
     noEntranceText, noTunnelText, passedText, rememberMineText, rememberTunnelText, suppliesStoppedText, suppliesText, tunnelText,
     unknownOreText, wayBlockedText, wayWords } from './texts.js';
-export { DOOR_KINDS, MINE_FILE, MineStore, NEAREST_RANGE, SHAFT_KINDS, cleanMineName, mineKey } from './mine_store.js';
+export { DOOR_KINDS, MINE_FILE, MineStore, NEAREST_RANGE, SHAFT_KINDS, cleanMineName, mineId, mineKey } from './mine_store.js';
 export { FALL_TRIES, FILLERS, REACH, blockAt, collectDrops, countOf, digBlock, digClear, equipPickaxe, fillerCount, fillerOf, freeSlots,
     inventoryList, isDroppedItem, isFree, isSolid, logicName, nameReader, patchAll, placeInto, placeTorch, race, referenceFor, usesLeftOf,
     walkTo } from './dig.js';
@@ -32,5 +36,5 @@ export { climbUp, followDown, followUp, placeLadder, slideDown, waitStanding, ya
 export { BRANCH_BLOCKED, DEFAULT_MAX_MINUTES, MAX_SHAFT_MOVES, PROPOSAL_MS, TUNNEL_CHUNK, climbToSurface, currentMine, depositAtBase,
     descendToLevel, digTunnel, extendTunnel, goToMine, leaveMine, mineOre, prepareMiningTrip, setupMineBase, takePassedOre, TRIP_FILLER_KEEP,
     TRIP_FOOD_KEEP, tripKeep } from './mining.js';
-export { MINE_RANGE, chooseMine, hasDoorLeg, mineRoutesOn, routeEndOf, senseRangeOf, walkBack, walksRoute, wayIn, wayOut } from './mine_way.js';
+export { MINE_RANGE, chooseMine, fromInsideOn, hasDoorLeg, mineRoutesOn, parentMine, routeEndOf, senseRangeOf, walkBack, walksRoute, wayIn, wayOut } from './mine_way.js';
 export { MIN_TUNNEL_AHEAD, MIN_TUNNEL_CELLS, ROOM_RANGE, SAME_TUNNEL, collectPassedOre, findRoom, forgetMine, minesText, rememberMine, rememberTunnel } from './mine_player.js';

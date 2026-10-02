@@ -9,7 +9,7 @@ import { AREA_TYPES, normalizeAreaName, replaceRefusal, sameBox, sameBoxText } f
 import { goToShelter, sleepInBed, eatBestFood, enterBuilding, passThrough, closeNear } from '../packs/home/index.js';
 import { REMEMBER_RULE_DESCRIPTION, rememberRuleReply, forgetRuleReply } from '../rules/rule_commands.js';
 import { areaFlagOf } from '../rules/rule_logic.js';
-import { isDiggingRequest, digRefusalText } from '../dig_request_logic.js';
+import { isDiggingRequest, digRefusalText, oreOfRequest } from '../dig_request_logic.js';
 import { oreInSight, sightRange } from '../library/ore_sight_logic.js';
 
 
@@ -593,6 +593,21 @@ async function walkRememberedWay(agent, pos) {
     }
 }
 
+// v0.1.4.11 (W4): what goToSurface gets: with the mining pack on, the pack context and the mining pack for its way out
+// of a mine (climbToSurface); else the home context (whereAmI, the areas). null without one. Never throws.
+function surfaceContext(agent) {
+    try {
+        if (settings.mining_pack && agent.work_packs?.mining) {
+            const ctx = agent.packContext();
+            return ctx && typeof ctx === 'object' ? { ...ctx, mining: agent.work_packs.mining } : null;
+        }
+        return typeof agent?.homeContext === 'function' ? agent.homeContext() ?? null : null;
+    } catch (error) {
+        console.warn('Could not build the context of !goToSurface:', error);
+        return null;
+    }
+}
+
 // v0.1.4.9 (I8): the digging commands that are on, for digRefusalText: !mineOre with mining_pack, !rememberTunnel
 // with the mine routes, !collectBlocks always; none that settings.blocked_actions or the agent hides.
 function diggingCommands(agent) {
@@ -625,11 +640,37 @@ function digCodeRefusal(agent, prompt) {
     try {
         if (typedByPlayer(agent, '!newAction'))
             return null;
-        if (!isDiggingRequest(prompt).digging && !isDiggingRequest(lastPlayerMessage(agent)).digging)
+        const last = lastPlayerMessage(agent);
+        if (!isDiggingRequest(prompt).digging && !isDiggingRequest(last).digging)
             return null;
-        return digRefusalText(diggingCommands(agent));
+        return digRefusalText(diggingCommands(agent), digPlace(agent, prompt, last));
     } catch (error) {
         console.warn('Could not check the code request for digging:', error);
+        return null;
+    }
+}
+
+// v0.1.4.11 (W7, I2): where the bot stands, for the one call that the refusal names: inMine and inTunnel from the
+// mine of whereAmI() (mineAt of the mining pack, with mine_routes), underground from whereAmI(), fromInside the
+// setting mine_from_inside, the ore of the request (of the prompt, else of the player's last message), else iron.
+// null when whereAmI() cannot be read: the text of v0.1.4.9. Never throws.
+function digPlace(agent, prompt, last) {
+    try {
+        if (typeof agent?.whereAmI !== 'function')
+            return null;
+        const where = agent.whereAmI();
+        if (!where || typeof where !== 'object')
+            return null;
+        const mine = where.mine ?? null;
+        return {
+            inMine: mine !== null,
+            inTunnel: mine !== null && mine.tunnel !== null && mine.tunnel !== undefined,
+            underground: where.underground === true,
+            fromInside: settings.mine_from_inside === true,
+            ore: oreOfRequest(prompt) ?? oreOfRequest(last) ?? 'iron',
+        };
+    } catch (error) {
+        console.warn('Could not ask where the bot is for the refusal:', error);
         return null;
     }
 }
@@ -706,9 +747,9 @@ async function rememberFenced(agent, store, name, type) {
 export const actionsList = [
     {
         name: '!newAction',
-        description: 'Perform new and unknown custom behaviors that are not available as a command.', 
+        description: 'Write code for what no command does.', // v0.1.4.11, W: shorter, the prompt stays at 17,000
         params: {
-            'prompt': { type: 'string', description: 'A natural language prompt to guide code generation. Make a detailed step-by-step plan.' }
+            'prompt': { type: 'string', description: 'A step-by-step plan.' }
         },
         perform: async function(agent, prompt) {
             // just ignore prompt - it is now in context in chat history
@@ -1453,8 +1494,8 @@ export const actionsList = [
     },
     {
         name: '!goToMine',
-        description: 'Go down into your mine.',
-        params: {'ore': { type: 'string', description: 'The ore of the mine, empty for the nearest mine.', default: '' }},
+        description: 'Go into your mine.',
+        params: {'ore': { type: 'string', description: 'The ore, empty for the nearest mine.', default: '' }},
         perform: async function (agent, ore) {
             if (!settings.mining_pack)
                 return MINING_OFF;
@@ -1463,7 +1504,7 @@ export const actionsList = [
     },
     {
         name: '!leaveMine',
-        description: 'Come up from the mine to the surface.',
+        description: 'Climb out of the mine.',
         perform: async function (agent) {
             if (!settings.mining_pack)
                 return MINING_OFF;
@@ -1535,13 +1576,15 @@ export const actionsList = [
     },
     {
         name: '!rememberTunnel',
-        description: 'Measure the tunnel you stand in, to dig on at its end later. Use this when the player says "dig here".',
-        params: {'name': { type: 'string', description: 'The mine, empty for the one here.', default: '' }},
+        description: 'Measure the tunnel here. Use this when the player says "dig here".',
+        params: {'name': { type: 'string', description: 'The mine, empty for this one.', default: '' }},
         perform: async function (agent, name) {
             if (!mineRoutesOn())
                 return MINE_ROUTES_OFF;
             const playerYaw = orderPlayerYaw(agent);
-            return await runPlain(agent, agent.work_packs?.mining, 'mining', (pack) => pack.rememberTunnel(agent.bot, agent.packContext(), name, { playerYaw }));
+            // v0.1.4.11 I3: the player's position too, so that the tunnel is measured from where the player stands
+            const playerPos = agent.bot?.players?.[agent?.last_order?.by]?.entity?.position ?? null;
+            return await runPlain(agent, agent.work_packs?.mining, 'mining', (pack) => pack.rememberTunnel(agent.bot, agent.packContext(), name, { playerYaw, playerPos }));
         }
     },
     {
@@ -1709,10 +1752,10 @@ export const actionsList = [
     },
     {
         name: '!goToSurface',
-        description: 'Go up to the highest block above you, usually the surface.',
+        description: 'Go out under the open sky: out of a building through its door, up from a mine. Use this when the player says "get to the surface" or "get out".',
         params: {},
         perform: runAsAction(async (agent) => {
-            await skills.goToSurface(agent.bot);
+            await skills.goToSurface(agent.bot, surfaceContext(agent));
         })
     },
     {

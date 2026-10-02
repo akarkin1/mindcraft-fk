@@ -13,7 +13,7 @@ import { closeDoor, doorState, openDoor } from '../home/doors.js';
 import { goals, gotoGoal, isNear, makeMovements, walkNear } from '../home/motion.js';
 import { climbUp, enterColumn, footOf, slideDown, waitStanding, walkStairs, yawOf, holdOnLadder } from '../mining/ladder.js';
 import { backOf, nearCell, nearestRoute, reverseRoute, routeEnds, trapdoorOverLadder } from './route_logic.js';
-import { TEXTS, emptyRouteText, needLaddersText, noWayToStartText, routeDoneText, routeErrorText, routeFailedText, routeLabel, routeStoppedText,
+import { TEXTS, emptyRouteText, noWayToStartText, routeDoneText, routeErrorText, routeFailedText, routeLabel, routeStoppedText,
     routeTimeText, stoppedBeforeRouteText } from './texts.js';
 import { readBlock } from './trail.js';
 
@@ -203,7 +203,7 @@ async function climbToOpen(bot, ctx, leg, trap, clock) {
     }
     if (!opened) {
         release(bot);
-        return { ok: false, reason: 'blocked_door' };
+        return { ok: false, reason: 'blocked_door', door: trap };
     }
     return OK;
 }
@@ -225,7 +225,7 @@ async function ladderLeg(bot, ctx, leg, clock, ms) {
                 }
             }
             if (!(await openDoor(bot, trap, doorOptions(ctx, clock)))) {
-                return bot.interrupt_code ? INTERRUPTED : { ok: false, reason: 'blocked_door' };
+                return bot.interrupt_code ? INTERRUPTED : { ok: false, reason: 'blocked_door', door: trap };
             }
         }
         // the trapdoor the bot came through is closed by the leg itself, 2 blocks below it (as the ladder pass does)
@@ -256,7 +256,7 @@ async function ladderLeg(bot, ctx, leg, clock, ms) {
                 if (into.reason === 'interrupted' || bot.interrupt_code) {
                     return INTERRUPTED;
                 }
-                return { ok: false, reason: 'no_path', note: into.missing?.length > 0 ? needLaddersText(into.missing) : null };
+                return { ok: false, reason: 'no_path', missing: into.missing ?? null };
             }
         }
         if (trap && !trap.open) {
@@ -270,7 +270,7 @@ async function ladderLeg(bot, ctx, leg, clock, ms) {
             if (r.reason === 'interrupted' || bot.interrupt_code) {
                 return INTERRUPTED;
             }
-            return { ok: false, reason: 'no_path', note: r.missing?.length > 0 ? needLaddersText(r.missing) : null };
+            return { ok: false, reason: 'no_path', missing: r.missing ?? null };
         }
         // F35: the trapdoor the bot climbed out of is closed at once (the next leg would walk over the hole)
         if (trap) {
@@ -376,6 +376,80 @@ async function walkLeg(bot, ctx, legs, i, clock, limit) {
     }
 }
 
+// ---- the cause of a failed leg (v0.1.4.11, I1): from what the replay knows, the walk itself is unchanged ----
+
+// The largest run of missing ladders in the column of a ladder leg above its bottom, as { y, gap } with y the
+// lowest cell of the run (the lowest run of the largest); null when every ladder is there. Never throws.
+function ladderGap(bot, leg) {
+    try {
+        let best = null;
+        let run = 0;
+        for (let y = leg.top; y > leg.bottom; y--) {
+            run = readBlock(bot, leg.x, y, leg.z)?.name === 'ladder' ? 0 : run + 1;
+            if (run > 0 && (best === null || run >= best.gap)) {
+                best = { y, gap: run };
+            }
+        }
+        return best;
+    } catch {
+        return null;
+    }
+}
+
+// The cause of I1 of a ladder leg: the missing ladders (cells of climbUp or enterColumn, else read from the
+// column), or stuck at the feet.
+function ladderCause(bot, leg, missing) {
+    const at = feetOf(bot);
+    if (!leg || !isFiniteNumber(leg.x) || !isFiniteNumber(leg.z)) {
+        return { kind: 'stuck', at };
+    }
+    const cells = (Array.isArray(missing) ? missing : []).filter(isPoint);
+    if (cells.length > 0) {
+        return { kind: 'ladder', x: leg.x, z: leg.z, y: Math.min(...cells.map(c => c.y)), gap: cells.length };
+    }
+    const gap = isFiniteNumber(leg.top) && isFiniteNumber(leg.bottom) ? ladderGap(bot, leg) : null;
+    return gap ? { kind: 'ladder', x: leg.x, z: leg.z, y: gap.y, gap: gap.gap } : { kind: 'stuck', at };
+}
+
+// The cause of I1 of an openable: closed when it is closed now, else blocked.
+function doorCause(bot, door, name) {
+    const state = doorState(bot, door);
+    const kind = typeof state?.kind === 'string' ? state.kind : name;
+    return { kind: 'door', name: ['door', 'gate', 'trapdoor'].includes(kind) ? kind : 'door', x: door.x, y: door.y, z: door.z,
+        state: state && state.open === false ? 'closed' : 'blocked' };
+}
+
+/**
+ * The cause of I1 for a leg that failed (v0.1.4.11): a door leg gives `door`, a ladder leg `ladder` (or `door`
+ * for its trapdoor, `stuck` when every ladder is there), a walk or stairs leg `no_path` from the feet to its end;
+ * anything else `stuck` at the feet. Never throws.
+ * @param {object} bot
+ * @param {object} leg the leg as it was walked
+ * @param {{reason?: string, door?: object, missing?: object[]}} r the result of the leg
+ * @returns {object}
+ */
+export function legCause(bot, leg, r) {
+    try {
+        const at = feetOf(bot);
+        if (r?.reason === 'blocked_door' && isPoint(r.door)) {
+            return doorCause(bot, r.door, r.door.kind ?? 'trapdoor');
+        }
+        switch (leg?.kind) {
+            case 'door':
+                return isPoint(leg) ? doorCause(bot, leg, leg.kind2 ?? 'door') : { kind: 'stuck', at };
+            case 'ladder':
+                return ladderCause(bot, leg, r?.missing);
+            case 'walk':
+            case 'stairs':
+                return isPoint(leg.to) && at ? { kind: 'no_path', from: at, to: { x: leg.to.x, y: leg.to.y, z: leg.to.z } } : { kind: 'stuck', at };
+            default:
+                return { kind: 'stuck', at };
+        }
+    } catch {
+        return { kind: 'stuck', at: null };
+    }
+}
+
 /**
  * Walks a route leg by leg (I3). A walk leg: walkNear to `to` with doors allowed and no digging, 20 s, then
  * a second try with a goal GoalNear of 1. A ladder leg: slideDown or climbUp of the mining pack by where
@@ -389,11 +463,13 @@ async function walkLeg(bot, ctx, legs, i, clock, limit) {
  * @param {{name?: string, legs: object[]}} route
  * @param {{reverse?: boolean, clock?: object, deadline?: number, timeoutMs?: number, now?: Function, wait?: Function}} [options]
  *   deadline: a time of the clock; timeoutMs (120000): the whole route
- * @returns {Promise<{ok: boolean, reason: string|null, text: string, leg: number|null, at: {x,y,z}|null}>}
+ * @returns {Promise<{ok: boolean, reason: string|null, text: string, leg: number|null, at: {x,y,z}|null, route: string|null,
+ *   step: number|null, total: number, cause: object|null}>}
  *   reasons: no_path, blocked_door, interrupted, time, error; `leg` is the index (in the order walked) of the
- *   leg that failed. F22b: `changed` lists { leg, bottom } of the ladder legs (index in route.legs) whose bottom
- *   moved down because ladders were placed under the column; route.legs gets the new bottom. A leg that failed
- *   for want of ladders adds `I need N ladders at (x, y, z) to climb out.` to the failure text.
+ *   leg that failed, `step` the same from 1. F22b: `changed` lists { leg, bottom } of the ladder legs (index in
+ *   route.legs) whose bottom moved down because ladders were placed under the column; route.legs gets the new
+ *   bottom. v0.1.4.11 (I1): on failure `cause` (door, ladder, no_path, stuck, interrupted) and the text of W1
+ *   that names it; null on success.
  */
 export async function walkRoute(bot, ctx, route, options = {}) {
     const clock = options?.clock ?? clockOf(ctx, options);
@@ -402,16 +478,19 @@ export async function walkRoute(bot, ctx, route, options = {}) {
     const total = legs.length;
     // F22b: ladder legs whose bottom moved down (ladders placed under the column), as indexes of route.legs
     const changed = [];
-    const result = (ok, reason, text, leg) => ({ ok, reason, text, leg, at: feetOf(bot), changed });
-    const failed = (i, reason, note = null) => result(false, reason, `${routeFailedText(route, i + 1, total, feetOf(bot))}${note ? ` ${note}` : ''}`, i);
-    const stopped = i => result(false, 'interrupted', routeStoppedText(route, i + 1, total), i);
+    const name = typeof route?.name === 'string' ? route.name : null;
+    const result = (ok, reason, text, leg, cause = null) => ({ ok, reason, text, leg, at: feetOf(bot), changed, route: name,
+        step: Number.isInteger(leg) ? leg + 1 : null, total, cause: ok ? null : cause });
+    const failed = (i, reason, cause) => result(false, reason, routeFailedText(route, i + 1, total, feetOf(bot), cause), i, cause);
+    const stopped = i => result(false, 'interrupted', routeStoppedText(route, i + 1, total), i, { kind: 'interrupted' });
+    const late = i => result(false, 'time', routeTimeText(route, i + 1, total, feetOf(bot)), i, { kind: 'stuck', at: feetOf(bot) });
     let i = 0;
     try {
         if (!bot || !botPos(bot)) {
-            return { ok: false, reason: 'error', text: TEXTS.noBody, leg: null, at: null };
+            return { ok: false, reason: 'error', text: TEXTS.noBody, leg: null, at: null, route: name, step: null, total, cause: { kind: 'stuck', at: null } };
         }
         if (total === 0) {
-            return result(false, 'no_path', emptyRouteText(route), null);
+            return result(false, 'no_path', emptyRouteText(route), null, { kind: 'stuck', at: feetOf(bot) });
         }
         const timeoutMs = isFiniteNumber(options?.timeoutMs) ? options.timeoutMs : REPLAY_RULES.timeoutMs;
         const limit = Math.min(clock.now() + timeoutMs, isFiniteNumber(options?.deadline) ? options.deadline : Infinity);
@@ -420,13 +499,13 @@ export async function walkRoute(bot, ctx, route, options = {}) {
                 return stopped(i);
             }
             if (clock.now() > limit) {
-                return result(false, 'time', routeTimeText(route, i + 1, total, feetOf(bot)), i);
+                return late(i);
             }
             const leg = legs[i];
             const next = legs[i + 1];
             // the ladder under a trapdoor is looked at before the trapdoor is opened over it
             if (trapdoorOverLadder(leg, next) && leg.from?.y > leg.y && !ladderIntact(bot, next, REPLAY_RULES.fallGap)) {
-                return failed(i + 1, 'no_path');
+                return failed(i + 1, 'no_path', ladderCause(bot, next, null));
             }
             const bottom = leg?.kind === 'ladder' ? leg.bottom : null;
             const r = await walkLeg(bot, ctx, legs, i, clock, limit);
@@ -445,16 +524,16 @@ export async function walkRoute(bot, ctx, route, options = {}) {
             }
             if (!r.ok) {
                 if (clock.now() > limit && r.reason !== 'blocked_door') {
-                    return result(false, 'time', routeTimeText(route, i + 1, total, feetOf(bot)), i);
+                    return late(i);
                 }
-                return failed(i, r.reason === 'blocked_door' || r.reason === 'error' ? r.reason : 'no_path', r.note);
+                return failed(i, r.reason === 'blocked_door' || r.reason === 'error' ? r.reason : 'no_path', legCause(bot, leg, r));
             }
             noteProgress(bot, 'route');
         }
         return result(true, null, routeDoneText(route, total), null);
     } catch (err) {
         console.warn('Routes pack: walking the route failed:', err?.message ?? err);
-        return result(false, 'error', routeErrorText(route, i + 1, total, err), i);
+        return result(false, 'error', routeErrorText(route, i + 1, total, err), i, { kind: 'stuck', at: feetOf(bot) });
     }
 }
 
@@ -486,10 +565,13 @@ export async function walkByRoute(bot, ctx, routes, target, options = {}) {
         if (!nearCell(botPos(bot), start)) {
             const w = await walkToCell(bot, start, clock, REPLAY_RULES.startMs);
             if (w.reason === 'interrupted' || bot.interrupt_code) {
-                return { ok: false, reason: 'interrupted', text: stoppedBeforeRouteText(route), route: route.name ?? null };
+                return { ok: false, reason: 'interrupted', text: stoppedBeforeRouteText(route), route: route.name ?? null, step: null, total: route.legs?.length ?? 0,
+                    at: feetOf(bot), cause: { kind: 'interrupted' } };
             }
             if (!w.ok) {
-                return { ok: false, reason: 'no_path', text: noWayToStartText(route, start), route: route.name ?? null };
+                const from = feetOf(bot);
+                return { ok: false, reason: 'no_path', text: noWayToStartText(route, start, from), route: route.name ?? null, step: null,
+                    total: route.legs?.length ?? 0, at: from, cause: { kind: 'no_path', from, to: { x: start.x, y: start.y, z: start.z } } };
             }
         }
         const r = await walkRoute(bot, ctx, route, { reverse: pick.reverse, clock, deadline: options?.deadline, timeoutMs: options?.timeoutMs });
@@ -503,6 +585,7 @@ export async function walkByRoute(bot, ctx, routes, target, options = {}) {
         return { ...r, route: route.name ?? null };
     } catch (err) {
         console.warn('Routes pack: the walk by a route failed:', err?.message ?? err);
-        return { ok: false, reason: 'error', text: `I could not walk ${route ? routeLabel(route) : 'a route'}: ${err?.message ?? err}`, route: route?.name ?? null };
+        return { ok: false, reason: 'error', text: `I could not walk ${route ? routeLabel(route) : 'a route'}: ${err?.message ?? err}`, route: route?.name ?? null,
+            step: null, total: route?.legs?.length ?? 0, at: null, cause: { kind: 'stuck', at: null } };
     }
 }

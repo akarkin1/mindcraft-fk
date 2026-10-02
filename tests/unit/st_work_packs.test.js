@@ -366,7 +366,8 @@ describe('E4: mining, the minimum', () => {
         const { bot, ctx, calls } = base({ underground: true });
         const r = await mining.mineOre(bot, ctx, 'iron', 8, { newMine: true });
         assert.equal(r.ok, false);
-        assert.equal(r.text, 'I am underground. I start a new mine only from the surface.');
+        // v0.1.4.11, W3: the text names the next step (underground, in no mine the bot knows)
+        assert.equal(r.text, 'I am underground, not in a mine I know. A new mine starts from the surface: say "leave the mine" or "go to the surface" first.');
         assert.deepEqual(calls, []);
     });
 

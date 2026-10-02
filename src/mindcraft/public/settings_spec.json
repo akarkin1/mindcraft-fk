@@ -373,6 +373,11 @@
         "description": "Whether !rememberArea in a building with floors saves only the floor the bot stands on, so the house and the basement are two areas. A trapdoor or a ladder between the floors is a wall of the scan",
         "default": false
     },
+    "mine_from_inside": {
+        "type": "boolean",
+        "description": "Whether a new shaft may start from the room or a tunnel of a known mine, when an ore lies deeper (a second level of the mine with ladders, listed under its mine). Off: a new mine starts from the surface only",
+        "default": false
+    },
     "code_timeout_mins": {
         "type": "number",
         "description": "Number of minutes to allow code execution. -1 for no timeout",

@@ -205,11 +205,19 @@ describe('rememberTunnel (B3)', () => {
         s.world.fill(30, 40, 0, 32, 41, 2, 'air'); // a room of 3 x 3, 2 high
         s.world.fill(40, 40, 0, 40, 41, 3, 'air'); // a corridor of 4
         s.world.fill(44, 40, 0, 44, 41, 2, 'air'); // a corridor of 3
-        const refused = { ok: false, reason: 'no_corridor', text: 'I stand in no tunnel. A tunnel is 1 wide and 2 high and open ahead of me.' };
-        for (const [x, z, what] of [[30, 0, 'a corner of the room'], [31, 0, 'the middle of a wall'], [31, 1, 'the middle of the room'], [44, 0, 'a corridor of 3']]) {
+        // v0.1.4.11, W2 and I3: the text names the first check that failed (open sides at the feet, the width
+        // ahead, the ceiling); a corridor of 3 fails on its length, which W2 does not name (the text of part W)
+        const refused = (text) => ({ ok: false, reason: 'no_corridor', text });
+        const cases = [
+            [30, 0, 'a corner of the room', 'I stand in no tunnel: the way ahead at (31, 40, 0) is 3 wide. A tunnel is 1 or 2 wide and 2 high.'],
+            [31, 0, 'the middle of a wall', 'I stand in no tunnel: it is open on 3 sides at (31, 40, 0). Stand in the tunnel and say "dig here".'],
+            [31, 1, 'the middle of the room', 'I stand in no tunnel: it is open on 4 sides at (31, 40, 1). Stand in the tunnel and say "dig here".'],
+            [44, 0, 'a corridor of 3', 'I stand in no tunnel: the corridor at (44, 40, 0) is only 3 long. A tunnel is 4 or more.'], // the lead's text, round 1
+        ];
+        for (const [x, z, what, text] of cases) {
             s.bot.entity.position = { x: x + 0.5, y: 40, z: z + 0.5 };
             const r = await P.rememberTunnel(s.bot, s.ctx, '', {});
-            assert.deepEqual({ ok: r.ok, reason: r.reason, text: r.text }, refused, what);
+            assert.deepEqual({ ok: r.ok, reason: r.reason, text: r.text }, refused(text), what);
         }
         assert.equal(s.ctx.mines.byName('mine').tunnels.length, 1, 'nothing saved');
         s.bot.entity.position = { x: 40.5, y: 40, z: 0.5 };
@@ -224,7 +232,8 @@ describe('rememberTunnel (B3)', () => {
         s.bot.entity.position = { x: 40.5, y: 34, z: 0.5 };
         s.ctx.mines.byName('mine');
         const r = await P.rememberTunnel(s.bot, s.ctx, '');
-        assert.deepEqual([r.reason, r.text], ['no_corridor', 'I stand in no tunnel. A tunnel is 1 wide and 2 high and open ahead of me.']);
+        // v0.1.4.11: a pocket of 1 cell is a corridor too short (the lead's text, round 1)
+        assert.deepEqual([r.reason, r.text], ['no_corridor', 'I stand in no tunnel: the corridor at (40, 34, 0) is only 1 long. A tunnel is 4 or more.']);
         const empty = await scene();
         const n = await P.rememberTunnel(empty.bot, empty.ctx, '');
         assert.deepEqual([n.reason, n.text], ['no_mine', 'I know no mine here. Tell me "this is the mine" first.']);

@@ -81,9 +81,9 @@ describe('the command docs of the six commands (I10), as the model sees them', (
             '!rememberMine: Learn the mine you walked into: the way in, the room and a tunnel. Use this when the player says "remember this mine".',
             'Params:',
             'name: (string) The name of the mine. (optional, default "mine")',
-            '!rememberTunnel: Measure the tunnel you stand in, to dig on at its end later. Use this when the player says "dig here".',
+            '!rememberTunnel: Measure the tunnel here. Use this when the player says "dig here".', // v0.1.4.11, W: shorter, the prompt stays at 17,000
             'Params:',
-            'name: (string) The mine, empty for the one here. (optional, default "")',
+            'name: (string) The mine, empty for this one. (optional, default "")',
             '!collectPassedOre: Collect the ore you left behind in the mine, when the player asks for it.',
             'Params:',
             'ore: (string) The ore, for example "coal", empty for all.',

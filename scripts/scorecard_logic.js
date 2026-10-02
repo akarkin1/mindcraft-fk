@@ -16,10 +16,31 @@
 //   I'm stuck!                                           the mode unstuck (also inside an AUTO MESSAGE)
 //   Door service: closed <name> at (x, y, z).            a door the bot left open, closed by the service
 //   Door service: could not close <name> at ...          a door that stayed open
+// v0.1.4.11 (W8): the result texts after "and got:" of an `Agent executed` line, with the lines without a time that
+// follow it in a log with times (an output of several lines), give the failure texts: each sentence that begins
+// with one of FAILURE_STARTS, cut at the first colon or period (event `failure`, text).
 /* global Buffer */
 export const RESULT_WINDOW_S = 60;
 
 export const COLUMNS = Object.freeze(['Log', 'Minutes', 'Processes', 'Ends', 'Orders', 'Without result', 'Calls', 'Cost', 'Stuck', 'Doors open']);
+
+/** The beginnings of a failure text (v0.1.4.11, W8). */
+export const FAILURE_STARTS = Object.freeze(['I could not', 'I find no', 'I stand in no', 'I am underground', 'I cannot']);
+
+/** The most failure texts that the line of a log names. */
+export const FAILURE_TOP = 10;
+
+const FAILURE_RE = new RegExp(`(?:^|(?<=[.!?:]\\s+)|(?<=\\n))(?:${FAILURE_STARTS.join('|')})\\b[^:.\\n]*`, 'g');
+
+/**
+ * The failure texts of a result text (W8): each sentence that begins with one of FAILURE_STARTS (at the start, after
+ * a period, a colon, ! or ? and a space, or after a line break), cut at the first colon or period.
+ * @param {string} text
+ * @returns {string[]}
+ */
+export function failureTexts(text) {
+    return (String(text ?? '').match(FAILURE_RE) ?? []).map((t) => t.trim()).filter((t) => t.length > 0);
+}
 
 const STREAM = /^\[(?:stderr|stdout)\] /;
 const TIME = /^\[(\d\d):(\d\d):(\d\d)\] /;
@@ -114,6 +135,7 @@ export function parseLog(text) {
     let lastT = null;
     let first = null;
     let pendingDup = null; // the order printed by respondFunc, which handleMessage prints again
+    let inResult = false; // W8: the lines without a time after an `Agent executed ... got:` line belong to its result
     for (let i = 0; i < raw.length; i++) {
         let s = raw[i].replace(STREAM, '');
         let t = null;
@@ -129,6 +151,12 @@ export function parseLog(text) {
         lines.push({ n, t, text: s });
         const ev = (type, extra = {}) => events.push({ type, n, t, ...extra });
         let m;
+        // W8: a line without a time inside the output of a result (only in a log with times)
+        if (inResult && t === null && first !== null) {
+            for (const text of failureTexts(s)) ev('failure', { text });
+            continue;
+        }
+        inResult = false;
         if ((m = RE.start.exec(s))) ev('start', { name: m[1] });
         else if ((m = RE.end.exec(s))) ev('end', { code: Number(m[1]), message: m[2], reason: endReason(m[2]) });
         else if ((m = RE.exit.exec(s))) ev('exit', { code: m[1] });
@@ -143,7 +171,14 @@ export function parseLog(text) {
             const dup = pendingDup && pendingDup.player === m[1] && pendingDup.text === m[2];
             pendingDup = null;
             if (!dup && m[1] !== 'system') ev('order', { player: m[1], text: m[2], typed: m[2].trim().startsWith('!') });
-        } else if ((m = RE.executed.exec(s))) ev('executed', { command: m[1] });
+        } else if ((m = RE.executed.exec(s))) {
+            ev('executed', { command: m[1] });
+            const got = s.indexOf(' and got: ');
+            if (got >= 0) {
+                for (const text of failureTexts(s.slice(got + ' and got: '.length))) ev('failure', { text });
+                inResult = t !== null;
+            }
+        }
         else if ((m = RE.answer.exec(s))) ev('answer', { to: m[2] });
         else if ((m = RE.command.exec(s))) ev('command', { command: m[1] });
         else if ((m = RE.cost.exec(s))) {
@@ -229,6 +264,7 @@ export function scorecard(events, { name = 'log' } = {}) {
         doors: list.filter((e) => e.type === 'door').length,
         doorsFailed: list.filter((e) => e.type === 'door_failed').length,
         commands,
+        failures: list.filter((e) => e.type === 'failure').reduce((acc, e) => add(acc, e.text), {}),
     }];
 }
 
@@ -258,6 +294,7 @@ export function totalRow(rows) {
         doors: sum('doors'),
         doorsFailed: sum('doorsFailed'),
         commands: merge('commands'),
+        failures: merge('failures'),
     };
 }
 
@@ -301,6 +338,22 @@ export function formatTable(rows) {
     const untimed = rows.filter((r) => !r.timed && r.log !== 'Total');
     for (const r of untimed) {
         out.push(`${r.log} has no times: an order counts as without result when no result came before the next order.`);
+    }
+    return out.join('\n');
+}
+
+/**
+ * The failure texts per row (v0.1.4.11, W8), one line each, printed after the table and the commands chosen:
+ * `Failure texts, <log>: <text> N, ...`, the most frequent first, at most 10; `none` without one.
+ * @param {object[]} rows
+ * @returns {string}
+ */
+export function formatFailures(rows) {
+    const out = [];
+    for (const r of Array.isArray(rows) ? rows : []) {
+        const top = Object.entries(r?.failures ?? {})
+            .sort((a, b) => (b[1] - a[1]) || (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0)).slice(0, FAILURE_TOP);
+        out.push(`Failure texts, ${r?.log}: ${countsText(Object.fromEntries(top)) || 'none'}`);
     }
     return out.join('\n');
 }

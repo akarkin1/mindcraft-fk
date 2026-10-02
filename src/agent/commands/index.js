@@ -117,7 +117,7 @@ export function parseCommandMessage(message, lookup = getCommand) {
     const paramNames = commandParamNames(command);
     
     if (args.length !== params.length && !defaultsFill(params, args.length))
-        return `Command ${command.name} was given ${args.length} args, but requires ${params.length} args.`;
+        return argumentsText(command); // v0.1.4.11, W5
 
     
     for (let i = 0; i < args.length; i++) {
@@ -185,6 +185,47 @@ export function parseCommandMessage(message, lookup = getCommand) {
         args.push(params[i].default);
     
     return { commandName, args };
+}
+
+// The parameter types whose value is written in quotes in a call.
+const QUOTED_TYPES = new Set(['string', 'ItemName', 'BlockName', 'BlockOrItemName']);
+
+/**
+ * The answer to a command called with the wrong number of arguments (v0.1.4.11, W5), built from its params:
+ * `!rememberRoute takes 1 argument (name): !rememberRoute("name").`,
+ * `!goToCoordinates takes 3 or 4 arguments (x, y, z, closeness): !goToCoordinates(x, y, z).`
+ * The names in order; the parameters with a default at the end are counted in the range (`2 to 4 arguments`
+ * for two of them); the example names the required ones, a string parameter in quotes. A command without
+ * parameters: `!stop takes no arguments: !stop.` Never throws.
+ * @param {Object} command
+ * @returns {string}
+ */
+export function argumentsText(command) {
+    const name = typeof command?.name === 'string' ? command.name : '!command';
+    try {
+        const params = commandParams(command);
+        const names = commandParamNames(command);
+        if (params.length === 0)
+            return `${name} takes no arguments: ${name}.`;
+        let required = 0;
+        params.forEach((param, i) => {
+            if (param?.default === undefined)
+                required = i + 1; // a parameter with a default before a required one cannot be left out
+        });
+        const max = params.length;
+        let count;
+        if (required === max)
+            count = `${max} ${max === 1 ? 'argument' : 'arguments'}`;
+        else if (max - required === 1)
+            count = `${required} or ${max} arguments`;
+        else
+            count = `${required} to ${max} arguments`;
+        const example = names.slice(0, required).map((n, i) => (QUOTED_TYPES.has(params[i]?.type) ? `"${n}"` : n));
+        const call = example.length > 0 ? `${name}(${example.join(', ')})` : name;
+        return `${name} takes ${count} (${names.join(', ')}): ${call}.`;
+    } catch {
+        return `${name} was called with the wrong number of arguments.`;
+    }
 }
 
 // True when fewer arguments than parameters are given and every missing parameter has a default.
@@ -378,7 +419,7 @@ export async function executeCommand(agent, message, options = {}) {
             numArgs = parsed.args.length;
         }
         if (numArgs !== numParams(command))
-            return `Command ${command.name} was given ${numArgs} args, but requires ${numParams(command)} args.`;
+            return argumentsText(command); // v0.1.4.11, W5
         else {
             const typed = options?.by === 'system' ? false : (typeof options?.typed === 'boolean' ? options.typed : typedOrder(agent, command.name));
             const guard = agent?.repeat_guard ?? null;

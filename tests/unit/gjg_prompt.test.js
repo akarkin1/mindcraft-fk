@@ -69,7 +69,7 @@ describe('the command docs of !mines and !forgetMine', () => {
         const at = docs.indexOf('\n!leaveMine: ');
         assert.ok(at > 0);
         assert.equal(docs.slice(at + 1, docs.indexOf('\n!rememberRoute: ') + 1), [
-            '!leaveMine: Come up from the mine to the surface.',
+            '!leaveMine: Climb out of the mine.', // v0.1.4.11, W (engineer E1): shorter, the prompt stays at 17,000
             '!mines: List your mines.',
             '!forgetMine: Forget a mine.',
             'Params:',

@@ -213,8 +213,9 @@ describe('corridorDirections, measureTunnel, tunnelDirection, isCorridor (B3)', 
     test('measured to the south from the end: start before the landing, end, 12 blocks, level 25', () => {
         const w = baseMine();
         for (const feet of [{ x: 22, y: 25, z: 13 }, { x: 22, y: 25, z: 7 }, { x: 22, y: 25, z: 2 }]) {
+            // v0.1.4.11, I3: measureTunnel returns the width too (1 or 2)
             assert.deepEqual(L.measureTunnel(w.get, feet, 'south'),
-                { start: { x: 22, y: 25, z: 2 }, end: { x: 22, y: 25, z: 13 }, length: 12, level: 25, dir: 'south' }, JSON.stringify(feet));
+                { start: { x: 22, y: 25, z: 2 }, end: { x: 22, y: 25, z: 13 }, length: 12, level: 25, dir: 'south', width: 1 }, JSON.stringify(feet));
         }
         const back = L.measureTunnel(w.get, { x: 22, y: 25, z: 13 }, 'north');
         assert.deepEqual([back.start, back.end], [{ x: 22, y: 25, z: 13 }, { x: 22, y: 25, z: -1 }], 'the end is the last open cell before rock');

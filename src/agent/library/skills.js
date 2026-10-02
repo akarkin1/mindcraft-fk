@@ -7,6 +7,8 @@ import agentSettings from "../settings.js";
 import { isOreName, oreInSight, oreKind, outOfSightText, sightRange, SIGHT_TEXT_DISTANCE } from "./ore_sight_logic.js";
 import { ladderStepTowards, ladderWayTowards, STEP_RULES } from "./ladder_pass.js";
 import { findOpenables, openDoor, passThrough } from "../packs/home/doors.js";
+import { walkNear } from "../packs/home/motion.js";
+import { GIVE_TEXTS, SURFACE_TEXTS } from "./skill_texts.js";
 import { sideOf } from "../packs/home/door_logic.js";
 import { acquireEatLock } from "../packs/home/eat_lock.js";
 import { wakeUp } from "../packs/home/wake.js";
@@ -1562,28 +1564,68 @@ export async function giveToPlayer(bot, itemType, username, num=1) {
     }
 
     await bot.lookAt(player.position);
-    if (await discard(bot, itemType, num)) {
-        let given = false;
-        bot.once('playerCollect', (collector, collected) => {
-            console.log(collected.name);
-            if (collector.username === username) {
-                log(bot, `${username} received ${itemType}.`);
-                given = true;
+    // v0.1.4.11, W5: the items the player picked up are counted; the text says how many he took and where the rest lie
+    const before = world.getInventoryCounts(bot)[itemType] ?? 0;
+    let taken = 0;
+    let dropped = 0;
+    const onCollect = (collector, collected) => {
+        if (collector?.username !== username)
+            return;
+        const item = droppedItemOf(collected);
+        if (item && item.name !== itemType)
+            return;
+        taken += Number.isFinite(item?.count) && item.count > 0 ? item.count : Math.max(1, dropped - taken);
+    };
+    bot.on('playerCollect', onCollect);
+    try {
+        if (await discard(bot, itemType, num)) {
+            dropped = Math.max(0, before - (world.getInventoryCounts(bot)[itemType] ?? 0)) || num;
+            let start = Date.now();
+            while (taken < dropped && !bot.interrupt_code) {
+                await new Promise(resolve => setTimeout(resolve, 500));
+                if (Date.now() - start > 3000) {
+                    break;
+                }
             }
-        });
-        let start = Date.now();
-        while (!given && !bot.interrupt_code) {
-            await new Promise(resolve => setTimeout(resolve, 500));
-            if (given) {
+            if (taken >= dropped) {
+                log(bot, GIVE_TEXTS.given(dropped, itemType, username));
                 return true;
             }
-            if (Date.now() - start > 3000) {
-                break;
-            }
+            log(bot, GIVE_TEXTS.partly(username, taken, dropped, itemType, groundItemAt(bot, itemType) ?? bot.entity.position));
+            return taken > 0;
         }
+    } finally {
+        bot.removeListener('playerCollect', onCollect);
     }
     log(bot, `Failed to give ${itemType} to ${username}, it was never received.`);
     return false;
+}
+
+// The item of a dropped item entity ({ name, count }), or null when it cannot be read.
+function droppedItemOf(entity) {
+    try {
+        const item = typeof entity?.getDroppedItem === 'function' ? entity.getDroppedItem() : null;
+        return item && typeof item.name === 'string' ? item : null;
+    } catch (err) {
+        return null;
+    }
+}
+
+// The position of the dropped item of this name nearest to the bot, or null.
+function groundItemAt(bot, itemType) {
+    try {
+        const me = bot.entity.position;
+        let best = null;
+        for (const entity of Object.values(bot.entities ?? {})) {
+            if (entity?.name !== 'item' || !entity.position || droppedItemOf(entity)?.name !== itemType)
+                continue;
+            if (!best || entity.position.distanceTo(me) < best.position.distanceTo(me))
+                best = entity;
+        }
+        return best ? best.position : null;
+    } catch (err) {
+        return null;
+    }
 }
 
 export async function goToGoal(bot, goal) {
@@ -2978,23 +3020,200 @@ export async function digDown(bot, distance = 10) {
     return true;
 }
 
-export async function goToSurface(bot) {
-    /**
-     * Navigate to the surface (highest non-air block at current x,z).
-     * @param {MinecraftBot} bot, reference to the minecraft bot.
-     * @returns {Promise<boolean>} true if the surface was reached, false otherwise.
-     **/
-    const pos = bot.entity.position;
-    for (let y = 360; y > -64; y--) { // probably not the best way to find the surface but it works
-        const block = bot.blockAt(new Vec3(pos.x, y, pos.z));
-        if (!block || block.name === 'air' || block.name === 'cave_air') {
-            continue;
+// v0.1.4.11, W4: the numbers of goToSurface (its texts are in skill_texts.js).
+const SURFACE_RULES = Object.freeze({
+    roofReach: 6,    // a block this far above the head counts as a roof
+    skyRange: 16,    // the open sky is looked for within this distance
+    doorRange: 16,   // the entrance of a building within this distance
+    doorHeight: 3,   // and at most this many blocks above or below the feet
+    tries: 3,        // the nearest columns with open sky that are tried
+    walkMs: 20000,   // one walk
+});
+const SKY_AIR = new Set(['air', 'cave_air', 'void_air']);
+const BUILDING_KINDS = new Set(['home', 'building', 'storage']);
+
+function feetCell(bot) {
+    const p = bot?.entity?.position;
+    return p ? { x: Math.floor(p.x), y: Math.floor(p.y + 0.01), z: Math.floor(p.z) } : null;
+}
+
+// The y below which nothing is built and the y of the top of the world.
+function worldTop(bot) {
+    const minY = Number.isFinite(bot?.game?.minY) ? bot.game.minY : -64;
+    const height = Number.isFinite(bot?.game?.height) ? bot.game.height : 384;
+    return minY + height;
+}
+
+// True when no block is above the cell of the feet up to the top of the world (W4: "open sky"); the cell of the
+// head and everything above it is air. An unloaded block is no open sky. Never throws.
+function underOpenSky(bot, feet) {
+    try {
+        const top = worldTop(bot);
+        for (let y = Math.floor(feet.y) + 1; y < top; y++) {
+            const block = bot.blockAt(new Vec3(Math.floor(feet.x), y, Math.floor(feet.z)));
+            if (!block || !SKY_AIR.has(block.name))
+                return false;
         }
-        await goToPosition(bot, block.position.x, block.position.y + 1, block.position.z, 0); // this will probably work most of the time but a custom mining and towering up implementation could be added if needed
-        log(bot, `Going to the surface at y=${y+1}.`);``
         return true;
+    } catch (err) {
+        return false;
+    }
+}
+
+// True when a block that is not air is within SURFACE_RULES.roofReach above the head.
+function roofAbove(bot, feet) {
+    for (let y = feet.y + 2; y <= feet.y + 1 + SURFACE_RULES.roofReach; y++) {
+        const block = bot.blockAt(new Vec3(feet.x, y, feet.z));
+        if (block && !SKY_AIR.has(block.name))
+            return true;
     }
     return false;
+}
+
+// True inside a building: in an area of kind home, building or storage, or under a roof within 6 blocks.
+function inBuildingHere(bot, feet) {
+    try {
+        const area = bot.areaGuard?.areaAt?.(feet) ?? null;
+        if (area && (BUILDING_KINDS.has(area.kind) || BUILDING_KINDS.has(area.type)))
+            return true;
+        return roofAbove(bot, feet);
+    } catch (err) {
+        return false;
+    }
+}
+
+// True when a cell under the open sky is ground, not a roof: the two blocks under it are not air, and it is in
+// no building that the bot protects (W4: never on the roof).
+function groundCell(bot, cell) {
+    for (const dy of [1, 2]) {
+        const below = bot.blockAt(new Vec3(cell.x, cell.y - dy, cell.z));
+        if (!below || SKY_AIR.has(below.name))
+            return false;
+    }
+    const area = bot.areaGuard?.areaAt?.(cell) ?? null;
+    return !(area && (BUILDING_KINDS.has(area.kind) || BUILDING_KINDS.has(area.type)));
+}
+
+// The cells within SURFACE_RULES.skyRange where the bot can stand under the open sky, the nearest first (a
+// block up counts twice): per column the highest block that is not air, solid, with ground under it. Never throws.
+function openSkyCells(bot, feet) {
+    const cells = [];
+    try {
+        const top = worldTop(bot);
+        const r = SURFACE_RULES.skyRange;
+        for (let dx = -r; dx <= r; dx++) {
+            for (let dz = -r; dz <= r; dz++) {
+                if (dx * dx + dz * dz > r * r)
+                    continue;
+                const x = feet.x + dx;
+                const z = feet.z + dz;
+                for (let y = top - 1; y >= feet.y - r; y--) {
+                    const block = bot.blockAt(new Vec3(x, y, z));
+                    if (!block)
+                        break; // not loaded
+                    if (SKY_AIR.has(block.name))
+                        continue;
+                    if (block.boundingBox === 'block' && !['water', 'lava'].includes(block.name)) {
+                        const cell = { x, y: y + 1, z };
+                        const up = cell.y - feet.y;
+                        if (Math.hypot(dx, up, dz) <= r && groundCell(bot, cell))
+                            cells.push({ ...cell, d: Math.hypot(dx, dz) + Math.abs(up) + Math.max(0, up) });
+                    }
+                    break; // only the highest block of a column has the open sky above it
+                }
+            }
+        }
+    } catch (err) {
+        // the cells found so far
+    }
+    return cells.sort((a, b) => a.d - b.d);
+}
+
+// Walks to the nearest cells with open sky, without digging; the cell reached, or null.
+async function walkToOpenSky(bot, feet) {
+    for (const cell of openSkyCells(bot, feet).slice(0, SURFACE_RULES.tries)) {
+        if (bot.interrupt_code)
+            return null;
+        await walkNear(bot, cell, 0, { timeoutMs: SURFACE_RULES.walkMs, allowDoors: true, allowDig: false });
+        const here = feetCell(bot);
+        if (here && underOpenSky(bot, here))
+            return here;
+    }
+    return null;
+}
+
+// The nearest door or gate within SURFACE_RULES.doorRange at about the height of the feet (no trapdoor).
+function nearestEntrance(bot, feet) {
+    try {
+        const doors = findOpenables(bot, SURFACE_RULES.doorRange)
+            .filter((d) => (d.kind === 'door' || d.kind === 'gate') && Math.abs(d.y - feet.y) <= SURFACE_RULES.doorHeight);
+        doors.sort((a, b) => Math.hypot(a.x - feet.x, a.y - feet.y, a.z - feet.z) - Math.hypot(b.x - feet.x, b.y - feet.y, b.z - feet.z));
+        return doors[0] ?? null;
+    } catch (err) {
+        return null;
+    }
+}
+
+export async function goToSurface(bot, ctx = null) {
+    /**
+     * Go out under the open sky (no block above the bot up to the top of the world). Inside a building the bot
+     * leaves through the nearest door first; elsewhere it walks to the nearest place with open sky within 16
+     * blocks. It never digs.
+     * @param {MinecraftBot} bot, reference to the minecraft bot.
+     * @returns {Promise<boolean>} true if the bot stands under the open sky, false otherwise.
+     **/
+    // v0.1.4.11, W4: ctx (optional, the glue of !goToSurface gives it): whereAmI() and, with the mining pack on,
+    // mining.climbToSurface(bot, ctx), the way out of a mine. Without ctx the skill works without them.
+    const start = feetCell(bot);
+    if (!start)
+        return false;
+    try {
+        if (underOpenSky(bot, start)) {
+            log(bot, SURFACE_TEXTS.already());
+            return true;
+        }
+        const where = typeof ctx?.whereAmI === 'function' ? ctx.whereAmI() : null;
+        if (where?.mine && typeof ctx?.mining?.climbToSurface === 'function') {
+            const out = await ctx.mining.climbToSurface(bot, ctx);
+            if (bot.interrupt_code)
+                return false;
+            const here = feetCell(bot);
+            if (here && underOpenSky(bot, here)) {
+                log(bot, SURFACE_TEXTS.climbed(here));
+                return true;
+            }
+            if (out && out.ok === false && typeof out.text === 'string' && out.text !== '')
+                log(bot, out.text);
+        }
+        const from = feetCell(bot) ?? start;
+        if (inBuildingHere(bot, from)) {
+            const door = nearestEntrance(bot, from);
+            if (door) {
+                const walk = await passThrough(bot, door, ctx ?? {}, { allowDig: false });
+                if (bot.interrupt_code)
+                    return false;
+                if (walk?.ok) {
+                    const here = feetCell(bot);
+                    const sky = here && underOpenSky(bot, here) ? here : await walkToOpenSky(bot, here ?? from);
+                    if (sky) {
+                        log(bot, SURFACE_TEXTS.door(door.kind, door, sky));
+                        return true;
+                    }
+                }
+            }
+        }
+        const sky = await walkToOpenSky(bot, feetCell(bot) ?? from);
+        if (sky) {
+            log(bot, SURFACE_TEXTS.climbed(sky));
+            return true;
+        }
+        if (!bot.interrupt_code)
+            log(bot, SURFACE_TEXTS.noWay(feetCell(bot) ?? start));
+        return false;
+    } catch (err) {
+        log(bot, SURFACE_TEXTS.noWay(feetCell(bot) ?? start));
+        return false;
+    }
 }
 
 export async function useToolOn(bot, toolName, targetName) {

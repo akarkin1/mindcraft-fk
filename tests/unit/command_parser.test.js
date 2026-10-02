@@ -121,7 +121,8 @@ describe('calls that were read before are read the same way', () => {
     test('double quoted strings and numbers', () => {
         assert.deepEqual(parse('On my way! !goToPlayer("zZZn98", 3)'), ok('!goToPlayer', ['zZZn98', 3]));
         assert.deepEqual(parse('!goToPlayer("steve",0.5)'), ok('!goToPlayer', ['steve', 0.5]));
-        assert.deepEqual(parse('!goToPlayer( "steve" , 2)'), 'Command !goToPlayer was given 0 args, but requires 2 args.', 'a space after ( was never allowed');
+        // v0.1.4.11, W5 (engineer E1): a wrong number of arguments is answered with the form of the command
+        assert.deepEqual(parse('!goToPlayer( "steve" , 2)'), '!goToPlayer takes 2 arguments (player_name, closeness): !goToPlayer("player_name", closeness).', 'a space after ( was never allowed');
     });
 
     test('negative numbers', () => {
@@ -159,14 +160,15 @@ describe('calls that were read before are read the same way', () => {
         assert.deepEqual(parse('!say("a") !stop'), ok('!say', ['a']));
     });
 
+    // v0.1.4.11, W5 (engineer E1): the text of a wrong number of arguments is the form of the command, built from its params
     test('too many arguments', () => {
-        assert.equal(parse('!goToPlayer("a", 1, 2)'), 'Command !goToPlayer was given 3 args, but requires 2 args.');
-        assert.equal(parse('!stop("now")'), 'Command !stop was given 1 args, but requires 0 args.');
+        assert.equal(parse('!goToPlayer("a", 1, 2)'), '!goToPlayer takes 2 arguments (player_name, closeness): !goToPlayer("player_name", closeness).');
+        assert.equal(parse('!stop("now")'), '!stop takes no arguments: !stop.');
     });
 
-    test('too few arguments without defaults: the old error', () => {
-        assert.equal(parse('!goToPlayer("a")'), 'Command !goToPlayer was given 1 args, but requires 2 args.');
-        assert.equal(parse('!goToPlayer'), 'Command !goToPlayer was given 0 args, but requires 2 args.');
+    test('too few arguments without defaults: the form of the command (W5)', () => {
+        assert.equal(parse('!goToPlayer("a")'), '!goToPlayer takes 2 arguments (player_name, closeness): !goToPlayer("player_name", closeness).');
+        assert.equal(parse('!goToPlayer'), '!goToPlayer takes 2 arguments (player_name, closeness): !goToPlayer("player_name", closeness).');
     });
 
     test('not a command and badly formatted text', () => {
@@ -241,7 +243,10 @@ describe('calls that were read before are read the same way', () => {
             assert.deepEqual(result, ok(old.name, old.tokens.map(strip)), JSON.stringify(message));
             assert.equal(index.truncCommandMessage(message), message.substring(0, old.index + old.matched.length), JSON.stringify(message));
             const wrongCount = index.parseCommandMessage(message, stringsLookup(old.tokens.length + 1));
-            assert.equal(wrongCount, `Command ${old.name} was given ${old.tokens.length} args, but requires ${old.tokens.length + 1} args.`);
+            // v0.1.4.11, W5 (engineer E1): the form of the command instead of "was given N args, but requires M args"
+            const names = Array.from({ length: old.tokens.length + 1 }, (_, i) => `p${i}`);
+            const takes = names.length === 1 ? '1 argument' : `${names.length} arguments`;
+            assert.equal(wrongCount, `${old.name} takes ${takes} (${names.join(', ')}): ${old.name}(${names.map((n) => `"${n}"`).join(', ')}).`);
         }
         assert.ok(compared > 500, `compared ${compared} calls`);
     });
@@ -288,9 +293,10 @@ describe('single quotes', () => {
         assert.deepEqual(parse("!craft('oak_plank', 1)"), ok('!craft', ['oak_planks', 1]));
     });
 
-    test('too many and too few arguments give the old errors', () => {
-        assert.equal(parse("!goToPlayer('a', 1, 'b')"), 'Command !goToPlayer was given 3 args, but requires 2 args.');
-        assert.equal(parse("!goToPlayer('a')"), 'Command !goToPlayer was given 1 args, but requires 2 args.');
+    test('too many and too few arguments give the form of the command (v0.1.4.11, W5)', () => {
+        // v0.1.4.11, W5: the form of the command
+        assert.equal(parse("!goToPlayer('a', 1, 'b')"), '!goToPlayer takes 2 arguments (player_name, closeness): !goToPlayer("player_name", closeness).');
+        assert.equal(parse("!goToPlayer('a')"), '!goToPlayer takes 2 arguments (player_name, closeness): !goToPlayer("player_name", closeness).');
     });
 
     test('containsCommand and truncCommandMessage keep the whole call', () => {
@@ -300,7 +306,7 @@ describe('single quotes', () => {
     });
 
     test('an unclosed single quote is not an argument', () => {
-        assert.equal(parse("!say('never closed)"), 'Command !say was given 0 args, but requires 1 args.');
+        assert.equal(parse("!say('never closed)"), '!say takes 1 argument (text): !say("text").', 'v0.1.4.11, W5');
     });
 });
 
@@ -329,24 +335,26 @@ describe('default values', () => {
         assert.deepEqual(index.parseCommandMessage('!x', (n) => defs[n]), ok('!x', [99]));
     });
 
-    test('a missing argument without a default in the middle keeps the old error', () => {
-        assert.equal(parse('!middle("a")'), 'Command !middle was given 1 args, but requires 3 args.');
+    test('a missing argument without a default in the middle gives the form of the command (W5)', () => {
+        // v0.1.4.11, W5: the form of the command; a default before a required parameter cannot be left out
+        assert.equal(parse('!middle("a")'), '!middle takes 3 arguments (a, b, c): !middle("a", b, c).');
         assert.deepEqual(parse('!middle("a", 1, 2)'), ok('!middle', ['a', 1, 2]));
     });
 
-    test('a missing argument without a default at the end keeps the old error', () => {
-        assert.equal(parse('!middle("a", 1)'), 'Command !middle was given 2 args, but requires 3 args.');
-        assert.equal(parse('!coords(1, 2)'), 'Command !coords was given 2 args, but requires 4 args.');
+    test('a missing argument without a default at the end gives the form of the command (W5)', () => {
+        // v0.1.4.11, W5: the form of the command, the defaults at the end counted in the range
+        assert.equal(parse('!middle("a", 1)'), '!middle takes 3 arguments (a, b, c): !middle("a", b, c).');
+        assert.equal(parse('!coords(1, 2)'), '!coords takes 3 or 4 arguments (x, y, z, closeness): !coords(x, y, z).');
         assert.deepEqual(parse('!coords(1, 2, 3)'), ok('!coords', [1, 2, 3, 1]));
     });
 
     test('too many arguments stay an error with defaults', () => {
-        assert.equal(parse('!follow("a", 1, 2)'), 'Command !follow was given 3 args, but requires 2 args.');
+        assert.equal(parse('!follow("a", 1, 2)'), '!follow takes 1 or 2 arguments (player_name, follow_dist): !follow("player_name").', 'v0.1.4.11, W5');
     });
 
     test('a default of undefined is no default', () => {
         const defs = { '!x': { name: '!x', params: { a: param('int', { default: undefined }) } } };
-        assert.equal(index.parseCommandMessage('!x', (n) => defs[n]), 'Command !x was given 0 args, but requires 1 args.');
+        assert.equal(index.parseCommandMessage('!x', (n) => defs[n]), '!x takes 1 argument (a): !x(a).', 'v0.1.4.11, W5');
     });
 
     test('falsy defaults work: 0, false and the empty text', () => {

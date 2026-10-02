@@ -219,7 +219,10 @@ describe('profiles/claude.json (section 11, item 12 of the task)', () => {
         assert.ok(!/dig straight down/i.test(CLAUDE.conversing));
         const marker = '\nSummarized memory:';
         const [before, after] = CLAUDE.conversing.split(marker);
-        assert.equal(before, DEFAULT.conversing.slice(0, DEFAULT.conversing.indexOf(marker)), 'the text before the memory');
+        // v0.1.4.11, W6 (engineer E1): the two lines of the prompt follow "take a deep breath and have fun :)", each on its own line
+        const W6 = '\nAnswer a question with words, not with a command, and never stop a running command for a question.'
+            + '\nA rule about a place names a place you saved; say "this is the aviary" first when it is not saved.';
+        assert.equal(before, DEFAULT.conversing.slice(0, DEFAULT.conversing.indexOf(marker)) + W6, 'the text before the memory');
         assert.equal(after, "'$MEMORY'\n$STATS\n$INVENTORY\n$COMMAND_DOCS\n$EXAMPLES\nConversation Begin:");
         // the owner's profile may carry an embedding model (v0.1.4.9 play guide); the five keys of the release are there
         assert.deepEqual(Object.keys(CLAUDE).filter(k => k !== 'embedding'), ['name', 'model', 'speak_model', 'conversing', 'code_model']);

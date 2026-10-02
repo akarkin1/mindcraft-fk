@@ -373,7 +373,7 @@ describe('executeCommand: the hooks of the job (I4)', () => {
 
     test('a command that does not parse or that the repeat guard refuses: no hook', async () => {
         const agent = jobAgent();
-        assert.equal(await M.index.executeCommand(agent, '!forgetMine(1, 2)', { typed: false }), 'Command !forgetMine was given 2 args, but requires 1 args.');
+        assert.equal(await M.index.executeCommand(agent, '!forgetMine(1, 2)', { typed: false }), '!forgetMine takes 1 argument (name): !forgetMine("name").', 'v0.1.4.11, W5: the form of the command');
         agent.repeat_guard = { check: () => 'I tried !forgetMine 3 times with the same result.', record() {} };
         assert.equal(await M.index.executeCommand(agent, '!forgetMine("old")', { typed: false }), 'I tried !forgetMine 3 times with the same result.');
         assert.deepEqual(agent.calls, []);

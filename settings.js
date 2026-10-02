@@ -91,6 +91,7 @@ const settings = {
     "idle_jobs": [], // with job_memory: commands the bot runs in order when it has no job, e.g. ["!farmCycle(\"farm\")", "!craftSupplies(\"torch\", 32)"]
     "idle_jobs_minutes": 15, // with job_memory: an entry of idle_jobs runs at most once per this many minutes, 1 or more
     "area_floors": false, // !rememberArea in a building with floors saves only the floor the bot stands on, so the house and the basement are two areas
+    "mine_from_inside": false, // with mining_pack: a new shaft may start from the room or a tunnel of a known mine (a second level), not only from the surface
     "allow_vision": false, // allows vision model to interpret screenshots as inputs
     "blocked_actions" : ["!checkBlueprint", "!checkBlueprintLevel", "!getBlueprint", "!getBlueprintLevel", "!restart"] , // commands to disable and remove from docs. Ex: ["!setMode"]
     "code_timeout_mins": -1, // minutes code is allowed to run. -1 for no timeout

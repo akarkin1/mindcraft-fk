@@ -18,6 +18,7 @@ const SUCCESS_SIGNS = [
     /^Successfully\b/,
     /^(Collected|Picked up|I picked up|I planted|I made|I took|I harvested|I stored|I mined|I ate|I cut|I crafted|I collected) [1-9]/,
     /^(Consumed|Equipped|Placed|Discarded|Moved away|Stayed for|Tilled|Planted|Teleported)\b/,
+    /^(Gave [1-9]|\S+ took [1-9])/, // v0.1.4.11 W5: the give texts
     /^I (slept|crafted|closed [a-z]|opened|went through)\b/,
     /^(Location|Area .*|Rule \d+) saved\b/,
     /^I (also )?saved\b/,
@@ -27,7 +28,9 @@ const SUCCESS_SIGNS = [
 const FAILURE_SIGNS = [
     /^(Could not|Couldn't|Cannot|Can't|Failed|Unable)\b/i,
     /^I (cannot|can't|could not|couldn't)\b/,
-    /^I (have|carry|know|see|found) no\b/,
+    /^I (have|carry|know|see|found|find) no\b/,
+    /^I (stand in no|am underground)\b/, // v0.1.4.11 W2, W3: the tunnel and the new mine underground
+    /^!\w+ takes\b/, // v0.1.4.11 W5: the argument text
     /^I (have|found|ate|picked up) nothing\b/,
     /^(You do not have|You don't have|Don't have|You have no|You cannot)\b/,
     /^There is no\b/,

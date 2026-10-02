@@ -107,9 +107,11 @@ export const SPEC_COMMANDS = [
         description: 'Craft torches, ladders, a chest or a crafting table, and collect the wood for it.' },
     { name: '!mineOre', section: 'M5', part: 'mining_pack', params: [{ name: 'ore', type: 'string' }, { name: 'num', type: 'int', default: 8 }, { name: 'new_mine', type: 'boolean', default: false }],
         description: 'Mine an ore and come back. Without a known mine you first ask the player. Use this when the player asks for an ore or for mining.' },
+    // v0.1.4.11 (part W, engineer E1): the descriptions of !goToMine and !leaveMine are shorter, so that the prompt with
+    // the two lines of W6 and the description of !goToSurface (W4) stays at 17,000 characters
     { name: '!goToMine', section: 'M5', part: 'mining_pack', params: [{ name: 'ore', type: 'string', default: '' }],
-        description: 'Go down into your mine.' },
-    { name: '!leaveMine', section: 'M5', part: 'mining_pack', params: [], description: 'Come up from the mine to the surface.' },
+        description: 'Go into your mine.' },
+    { name: '!leaveMine', section: 'M5', part: 'mining_pack', params: [], description: 'Climb out of the mine.' },
     // v0.1.4.10 (R4 of its spec): the mines the bot knows; the descriptions are the glue's
     { name: '!mines', section: 'R4', part: 'mining_pack', params: [], description: 'List your mines.' },
     { name: '!forgetMine', section: 'R4', part: 'mining_pack', assumed: 'type of the parameter (string)', params: [{ name: 'name', type: 'string' }],

@@ -19,6 +19,10 @@
 // mine without a name has the key bot:<level>, so a mine of the player named "16" no longer meets the
 // mine of the bot at level 16. A file of version 1 is read as before and written again as version 2 at
 // load, every mine kept (the key of a level becomes bot:<level>).
+//
+// v0.1.4.11 (I4): a mine of the bot dug from inside a known mine (a second level, mine_from_inside) has
+// `parent`, the id of that mine (mineId: its name, else bot:<level>); every other mine has no `parent`
+// field, so the records of v0.1.4.10 stay as they were. `children(mine)` lists the mines of a parent.
 import { readJsonSafe, writeJsonAtomic } from '../../../utils/safe_json.js';
 import { MAX_PASSED, addPassedEntry, cleanPassedEntry, isDirection, mineDistance, removePassedAt } from './mine_logic.js';
 import { oreOf, targetLevel } from './ore_table.js';
@@ -83,6 +87,24 @@ export function mineKey(mine) {
     const dimension = normalizeDimension(mine?.dimension);
     const id = cleanMineName(mine?.name) ?? `${BOT_KEY_PREFIX}${Math.floor(mine?.level)}`;
     return dimension === 'overworld' ? id : `${dimension}:${id}`;
+}
+
+/**
+ * The id of a mine in its dimension (v0.1.4.11, I4): its name when it has one, else `bot:<level>`; the
+ * key of mineKey without the dimension. The `parent` of a mine of a second level is this id.
+ * @param {object} mine
+ * @returns {string}
+ */
+export function mineId(mine) {
+    return cleanMineName(mine?.name) ?? `${BOT_KEY_PREFIX}${Math.floor(mine?.level)}`;
+}
+
+function cleanParent(value) {
+    if (typeof value !== 'string') {
+        return null;
+    }
+    const clean = value.trim().toLowerCase().replace(/\s+/g, '_');
+    return clean.length > 0 ? clean : null;
 }
 
 function cleanLeg(leg) {
@@ -218,6 +240,7 @@ function validateMine(mine, now) {
         tunnels: (Array.isArray(mine.tunnels) ? mine.tunnels : []).map(cleanTunnel).filter(Boolean),
         passed: cleanPassed(mine.passed),
         area: typeof mine.area === 'string' && mine.area.trim().length > 0 ? mine.area.trim() : null,
+        ...(cleanParent(mine.parent) ? { parent: cleanParent(mine.parent) } : {}),
     };
 }
 
@@ -351,6 +374,35 @@ export class MineStore {
     byName(name, dimension) {
         const wanted = cleanMineName(name);
         return wanted === null ? null : this.list(dimension).find(m => m.name === wanted) ?? null;
+    }
+
+    /**
+     * The mine a mine of a second level was dug from (v0.1.4.11, I4), by its `parent`: the mine of that
+     * name, else for `bot:16` the mine of the bot at that level. null without a parent or when it is gone.
+     * @param {object} mine
+     * @param {string} [dimension] the dimension of the mine without one
+     * @returns {object|null} a copy
+     */
+    parentOf(mine, dimension) {
+        const id = cleanParent(mine?.parent);
+        if (!id) {
+            return null;
+        }
+        const dim = dimension ?? mine?.dimension;
+        const level = /^bot:(-?\d+)$/.exec(id);
+        const found = level ? this.atLevel(Number(level[1]), dim) : this.byName(id, dim);
+        return found && mineKey(found) !== mineKey(mine) ? found : null;
+    }
+
+    /**
+     * The mines dug from inside a mine (v0.1.4.11, I4): those whose `parent` is its id, in its dimension,
+     * the highest level first.
+     * @param {object} mine
+     * @returns {object[]} copies
+     */
+    children(mine) {
+        const id = mine ? mineId(mine) : null;
+        return id ? this.list(normalizeDimension(mine.dimension)).filter(m => m.parent === id && mineKey(m) !== mineKey(mine)) : [];
     }
 
     /**
