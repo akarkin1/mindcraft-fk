@@ -287,3 +287,55 @@ describe('F4: one pass, and the time of a slow scan', () => {
             'I saved "aviary": a pen, fenced, 9 x 7, 1 gate, 6 chickens. I keep its gate closed and pick nothing up inside it. The scan took 3 s.');
     });
 });
+
+describe('F10: a scan is bounded', () => {
+    test('an unbounded cave (air everywhere between a floor and a thick roof): found false, no_border, fast, under the caps', () => {
+        let reads = 0;
+        const get = (x, y, z) => { reads++; return y < FEET || y > FEET + 3 ? 'stone' : 'air'; };
+        const started = Date.now();
+        const r = S.scanEnclosure(get, at(0, 0), { tunnelAt: M.tunnelAt });
+        assert.ok(Date.now() - started < 200, `${Date.now() - started} ms`);
+        assert.equal(r.found, false);
+        assert.equal(r.reason, 'no_border');
+        assert.notEqual(r.border, 'rock');
+        assert.ok(reads <= S.SCAN_READ_LIMIT, `${reads} reads`);
+    });
+
+    test('unbounded open air on a floor: found false, fast', () => {
+        const started = Date.now();
+        const r = S.scanEnclosure((x, y) => (y < FEET ? 'stone' : 'air'), at(0, 0), { tunnelAt: M.tunnelAt });
+        assert.ok(Date.now() - started < 200);
+        assert.equal(r.found, false);
+    });
+
+    test('a reader that never repeats a cell is cut at SCAN_READ_LIMIT: the scan ends as an open place', () => {
+        let reads = 0;
+        // a building of planks everywhere around: the building scan would read its whole region
+        const r = S.scanEnclosure(() => { reads++; return reads % 3 === 0 ? 'oak_planks' : 'air'; }, at(0, 0), { mode: 'building' });
+        assert.equal(typeof r.found, 'boolean');
+        assert.ok(reads <= S.SCAN_READ_LIMIT, `${reads} reads`);
+    });
+
+    test('a tunnel that opens into a big cave: still a tunnel, the cave beyond is not in its box', () => {
+        const world = rock();
+        world.fill(0, FEET, 0, 0, FEET + 1, 9, 'air'); // the tunnel, 1 wide, z 0..9
+        world.fill(-30, FEET, 10, 30, FEET + 3, 70, 'air'); // the big cave beyond its south end
+        const started = Date.now();
+        const r = scan(world, at(0, 3));
+        assert.ok(Date.now() - started < 200);
+        assert.equal(K.kindOf(r, null), 'tunnel');
+        assert.ok(r.box.max.z - r.box.min.z + 1 <= S.ROCK_BOX_MAX.xz);
+        const inCave = scan(world, at(0, 40));
+        assert.equal(inCave.found, false);
+        assert.notEqual(inCave.border, 'rock', 'a cave wider than the caps is open');
+    });
+
+    test('a tunnel longer than 46 cells has a box over 48: open, nothing to say', () => {
+        const world = rock();
+        world.fill(0, FEET, 0, 0, FEET + 1, 59, 'air');
+        const r = scan(world, at(0, 30));
+        assert.equal(r.found, false);
+        assert.equal(r.reason, 'no_border');
+        assert.notEqual(r.border, 'rock');
+    });
+});

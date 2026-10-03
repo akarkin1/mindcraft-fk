@@ -121,7 +121,10 @@ function reader(getBlockName) {
     return (x, y, z) => {
         try {
             return baseName(getBlockName(x, y, z));
-        } catch {
+        } catch (error) {
+            if (error instanceof ScanLimit) {
+                throw error; // F10: the scan ends
+            }
             return null;
         }
     };
@@ -685,6 +688,7 @@ export function scanText(reason, info = {}) {
 // `bounds`; with `water: true` a cell whose ground is water bounds the ground too (a pond, a moat).
 function floodFenced(read, origin, radius, maxSpan, options = {}) {
     const water = options?.water === true;
+    const maxCells = Number.isInteger(options?.maxCells) && options.maxCells > 0 ? options.maxCells : Infinity; // F10
     const ox = Math.floor(origin.x);
     const oz = Math.floor(origin.z);
     const feetY = Math.floor(origin.y);
@@ -755,7 +759,7 @@ function floodFenced(read, origin, radius, maxSpan, options = {}) {
                 }
                 continue;
             }
-            if (Math.max(Math.abs(nx - ox), Math.abs(nz - oz)) > radius) {
+            if (Math.max(Math.abs(nx - ox), Math.abs(nz - oz)) > radius || queue.length >= maxCells) {
                 flood.reason = 'not_enclosed';
                 return flood;
             }
@@ -1284,13 +1288,32 @@ export function tookText(ms) {
     return Number.isFinite(ms) && ms > SCAN_SLOW_MS ? `The scan took ${Math.round(ms / 1000)} s.` : '';
 }
 
+/**
+ * F10: the most cells one scan reads (and keeps). The largest legitimate scan, that of a building (radius 24, height 16
+ * and their margins: 55 x 39 x 55 = 117,975 cells), stays below it; a scan that reaches it ends as an open place.
+ */
+export const SCAN_READ_LIMIT = 131072;
+
+/** F10: the most ground cells the flood of a place visits in mode auto (the radius 24 gives at most 49 x 49). */
+export const FLOOD_MAX_CELLS = 4096;
+
+/** F10: the largest box of a place in rock: 48 in x and z, 24 in y; a larger one is an open place. */
+export const ROCK_BOX_MAX = Object.freeze({ xz: 48, y: 24 });
+
+// Thrown by the reader of a scan that reached SCAN_READ_LIMIT; scanEnclosure ends the scan as an open place.
+class ScanLimit extends Error {}
+
 // F4: one pass, every cell read once per scan: the names of getBlockName kept by x, y, z. A read that throws is null.
+// F10: at most SCAN_READ_LIMIT cells.
 function cachedNames(getBlockName) {
     const cache = new Map();
     return (x, y, z) => {
         const key = `${x},${y},${z}`;
         if (cache.has(key)) {
             return cache.get(key);
+        }
+        if (cache.size >= SCAN_READ_LIMIT) {
+            throw new ScanLimit('the scan read too many cells');
         }
         let name = null;
         try {
@@ -1465,6 +1488,10 @@ function cavePlace(read, origin) {
 // A place in rock (F1): found false (nothing of !rememberArea without a type), with its box, the border 'rock', the
 // reason and the text of the refusal, and the facts of the tunnel or the cave.
 function rockFound(kind, box, facts) {
+    if (box.max.x - box.min.x + 1 > ROCK_BOX_MAX.xz || box.max.z - box.min.z + 1 > ROCK_BOX_MAX.xz
+        || box.max.y - box.min.y + 1 > ROCK_BOX_MAX.y) {
+        return null; // F10: too big for one place: open
+    }
     return {
         found: false,
         box: { min: { ...box.min }, max: { ...box.max } },
@@ -1492,7 +1519,7 @@ function rockPlace(read, origin, bounds, measure) {
     const tunnel = tunnelHere(read, origin, measure);
     if (tunnel) {
         const place = tunnelPlace(read, tunnel);
-        return rockShare(place.counts) ? rockFound('tunnel', place.box, tunnel) : null;
+        return rockShare(place.counts) ? (rockFound('tunnel', place.box, tunnel) ?? OPEN) : null;
     }
     const counts = {};
     for (const [x, z, surface] of bounds) {
@@ -1502,11 +1529,17 @@ function rockPlace(read, origin, bounds, measure) {
         return null;
     }
     const cave = cavePlace(read, origin);
+    if (cave.box.max.x - cave.box.min.x + 1 > ROCK_BOX_MAX.xz || cave.box.max.z - cave.box.min.z + 1 > ROCK_BOX_MAX.xz) {
+        return OPEN; // F10: a cave wider than 48 is open ground underground
+    }
     if (showsUse(read, cave.box)) {
         return null; // v0.1.4.12 (F7): a dug room that is lived in (a basement, the room of a mine) goes the old way
     }
-    return rockFound('cave', cave.box, { at: cave.at, width: cave.width, sides: cave.sides });
+    return rockFound('cave', cave.box, { at: cave.at, width: cave.width, sides: cave.sides }) ?? OPEN;
 }
+
+// F10: rockPlace found rock, but a place too big for one: open (no enclosure, no rock place, no building scan).
+const OPEN = Object.freeze({ open: true });
 
 // v0.1.4.12 (F7): the blocks that show that a place in rock is used: a door or a trapdoor in its border or roof, a
 // bed, a chest or a barrel, a furnace (blast furnace, smoker), a crafting table, a ladder. Torches do not count.
@@ -1558,7 +1591,9 @@ function showsUse(read, box) {
  * text of the refusal of !rememberArea without a type, its box (the tunnel or the cave, from the floor to the roof),
  * and `tunnel` ({ start, end, dir, length, width, level }) or `cave` ({ at, width, sides }).
  * F4: every cell is read once per scan; a scan over 2 s gets `ms`, `took` (`The scan took 3 s.`) and the took text
- * appended to a text that is not empty.
+ * appended to a text that is not empty. F10: a scan reads at most SCAN_READ_LIMIT cells, the flood of mode auto
+ * visits at most FLOOD_MAX_CELLS ground cells, and a place in rock has a box of at most 48 x 24 x 48; beyond any of
+ * them the place is open: found false with the text of no_border (not_enclosed in the modes building and ground).
  *
  * @param {(x: number, y: number, z: number) => string|null} getBlockName
  * @param {{x: number, y: number, z: number}} origin usually the position of the bot
@@ -1581,7 +1616,16 @@ export function scanEnclosure(getBlockName, origin, options = {}) {
     // v0.1.4.12 (F4): one pass, each cell read once; a scan over 2 s says how long it took
     const clock = typeof opts.now === 'function' ? opts.now : Date.now;
     const started = clock();
-    const result = enclosureOf(cachedNames(getBlockName), origin, opts);
+    let result;
+    try {
+        result = enclosureOf(cachedNames(getBlockName), origin, opts);
+    } catch (error) {
+        if (!(error instanceof ScanLimit)) {
+            throw error;
+        }
+        const reason = opts.mode === 'building' || opts.mode === 'ground' ? 'not_enclosed' : 'no_border'; // F10: open
+        result = enclosureNotFound(reason, scanText(reason, { radius: positiveInt(opts.radius, FARM_DEFAULTS.radius) }), null);
+    }
     const ms = clock() - started;
     const took = tookText(ms);
     if (took) {
@@ -1613,7 +1657,7 @@ function enclosureOf(getBlockName, origin, opts) {
     let unloaded = false;
     let roofed = null;
     let made = false; // the first flood closed and made blocks bound it
-    const first = floodFenced(read, origin, radius, Infinity);
+    const first = floodFenced(read, origin, radius, Infinity, { maxCells: FLOOD_MAX_CELLS });
     if (first.reason === null) {
         const ground = groundEnclosure(read, first);
         if (ground && !ground.roof) {
@@ -1623,7 +1667,7 @@ function enclosureOf(getBlockName, origin, opts) {
         made = ground !== null;
     } else if (first.reason === 'not_enclosed') {
         fences = first.fences;
-        const second = floodFenced(read, origin, radius, Infinity, { water: true });
+        const second = floodFenced(read, origin, radius, Infinity, { water: true, maxCells: FLOOD_MAX_CELLS });
         if (second.reason === null) {
             const ground = groundEnclosure(read, second);
             if (ground && !ground.roof) {
@@ -1643,6 +1687,9 @@ function enclosureOf(getBlockName, origin, opts) {
     // v0.1.4.12 (F1): under rock, ground bounded by natural rock is a tunnel or a cave, never a building
     if (!made && (first.reason === null || first.reason === 'not_enclosed') && underRock(read, ox, feet, oz)) {
         const rock = rockPlace(read, origin, first.bounds, Object.hasOwn(opts, 'tunnelAt') ? opts.tunnelAt : tunnelMeasure);
+        if (rock === OPEN) {
+            return enclosureNotFound('no_border', scanText('no_border', info), null);
+        }
         if (rock) {
             return rock;
         }

@@ -63,3 +63,12 @@ The old set in the fresh clone at c8d9146: the first half (37 scenarios, 2642 s)
 
 The old set at c8d9146, both halves: 73 scenarios, 87 of 88 lines passed (2642 s and 3807 s); the one failure is W47 of F10
 (1 of 3 runs). The fix of F10, the creeper runs and a last gate follow before the merge.
+
+F10, bisected by E5 (56 runs): the heap crash is not of part F. With part F fully reverted W47 crashed 1 time in 30; with
+part F and the caps 2 in 26; the crash comes right after `executing code...` of the creeper_safety mode, the bot at the
+landing after the explosion at health 1.2, and the creeper action never finishes (`waiting for code to finish
+executing...`). The same crash is in the full set of 2026-10-01 (v0.1.4.10, `verify_world3.txt`: one SIGABRT). The caps of
+the scan stay (`SCAN_READ_LIMIT` 131,072 reads, `FLOOD_MAX_CELLS` 4,096, `ROCK_BOX_MAX` 48 x 24: a larger place is open and
+nothing is said; a tunnel longer than 46 says nothing). Decision: F10 is an intermittent defect of the creeper action's
+keep-away loop that predates this release; it goes to v0.1.4.13 with a profiling run inside the agent process (E5's
+suggestion), and the release ships with it noted in the changelog.
