@@ -54,3 +54,9 @@ Unit 7720 of 7722 (1 skipped; the launch-script test counted two secrets, now th
 `/home/user/mc-verify12` (a fresh clone of the branch, the pathfinder package installed again for the changed patch).
 Unit 7725 of 7726 (1 skipped, Windows only). End-to-end 17 of 17. The 30 journeys: 30 of 30 (51 minutes). The old set
 follows below.
+
+The old set in the fresh clone at c8d9146: the first half (37 scenarios, 2642 s) 52 of 52 lines; the second half found:
+
+| Id | Finding | Where | Decision | Owner |
+|---|---|---|---|---|
+| F10 | W47 creeper_in_sight (the bot in the tunnel of a saved mine area) died twice of `JavaScript heap out of memory` after 220 s; run 1 passed in 12 s; the scenario passed in every set before part F. The flood of the rock scan runs out through the natural caves of the world without a bound. | creeper_in_sight | A hard cap on the flood and the cache (cells and box); at the cap the place is open: found false, no rock place, nothing said. | F (E5) |
