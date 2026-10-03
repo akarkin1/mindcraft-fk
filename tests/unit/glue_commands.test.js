@@ -328,8 +328,8 @@ describe('the descriptions of the spec', () => {
     // v0.1.4.8 (part G): the descriptions say what the commands do now (five types, only a home as shelter,
     // eat until full); the size of the prompt made them shorter (tests/routing/commands.js holds them too)
     test('!rememberArea and !allowChanges', () => {
-        assert.equal(command('!rememberArea').description, 'Save the place you stand in as a protected area; without a type you conclude the kind from what is there. Use this when the player says "this is home", "this is the farm" or "this is the mine".');
-        assert.equal(command('!allowChanges').description, 'Allow yourself to break and place blocks in a protected area for some minutes. ONLY when the player tells you to build, repair or break something there.');
+        assert.equal(command('!rememberArea').description, 'Save the place you stand in as a protected area; without a type you conclude the kind (home, building, farm, pen, mine) from what is there. Use this when the player says "this is home", "this is the farm" or "this is the mine".');
+        assert.equal(command('!allowChanges').description, 'Allow yourself to break and place blocks in a protected area for some minutes, only when the player asks you to build, repair or break something there.');
     });
 
     test('!goToShelter and !eat, and !goToBed with and without the home pack', () => {

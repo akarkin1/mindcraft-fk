@@ -1081,7 +1081,7 @@ export const actionsList = [
     },
     {
         name: '!rememberArea',
-        description: 'Save the place you stand in as a protected area; without a type you conclude the kind from what is there. Use this when the player says "this is home", "this is the farm" or "this is the mine".',
+        description: 'Save the place you stand in as a protected area; without a type you conclude the kind (home, building, farm, pen, mine) from what is there. Use this when the player says "this is home", "this is the farm" or "this is the mine".',
         params: {
             'name': { type: 'string', description: 'The name of the area, for example "home".' },
             'type': { type: 'string', description: 'home, building, farm, pen or mine.', default: 'building' }
@@ -1219,7 +1219,7 @@ export const actionsList = [
     },
     {
         name: '!allowChanges',
-        description: 'Allow yourself to break and place blocks in a protected area for some minutes. ONLY when the player tells you to build, repair or break something there.',
+        description: 'Allow yourself to break and place blocks in a protected area for some minutes, only when the player asks you to build, repair or break something there.',
         params: {
             'name': { type: 'string', description: 'The name of the area.' },
             'minutes': { type: 'int', description: 'For how many minutes, at most 60.', domain: [1, 60, '[]'], default: 10 }
@@ -1599,7 +1599,7 @@ export const actionsList = [
     },
     {
         name: '!getTool',
-        description: 'Make sure you have a tool. You take it from a chest you know or craft it, with everything that needs.',
+        description: 'Get a tool: from a chest you know, or crafted with everything it needs.',
         params: {
             'kind': { type: 'string', description: 'The tool: pickaxe, axe, shovel, hoe or sword.' },
             'material': { type: 'string', description: 'wooden, stone, iron or diamond; empty: the best you can make, up to stone.', default: '' }
@@ -1625,7 +1625,7 @@ export const actionsList = [
     },
     {
         name: '!mineOre',
-        description: 'Mine an ore and come back. Without a known mine you first ask the player. Use this when the player asks for an ore or for mining.',
+        description: 'Mine an ore and come back. Without a known mine you first ask the player. Use this when the player asks for an ore.',
         params: {
             'ore': { type: 'string', description: 'The ore: coal, copper, iron, lapis, gold, redstone or diamond.' },
             'num': { type: 'int', description: 'The number of ore items to bring.', domain: [1, Number.MAX_SAFE_INTEGER], default: 8 },
