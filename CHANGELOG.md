@@ -6,6 +6,39 @@ This fork is based on [Mindcraft](https://github.com/mindcraft-bots/mindcraft) `
 
 Each release lists new settings and feature flags with their default value.
 
+## [0.1.4.12] - unreleased
+
+"Understanding and watching": a watch server for a Claude session, learning by watching, smelting,
+the scans underground, the small items, two bots.
+
+### Added
+
+- **The watch server** (`watch_server`, `watch_port` 8090): a small server inside the bot's process on 127.0.0.1, speaking the MCP protocol over HTTP with a token from the environment (`MC_WATCH_TOKEN`, from your secret vault through the launch script). Six tools: `state`, `inventory`, `chat`, `places`, `events`, `say` (one chat line, handled as a line you type; never a server command). Nine events, kept 200 deep and pushed to a listening session: an explosion within 16 blocks of a saved area, health fallen by 4, animals missing from a saved pen against its record, a night without sleep, a job without progress for 10 minutes, the same failure text 5 times, the bot farther than 100 blocks from home, a death, a start. `node scripts/watch.js <tool>` is the client. A pilot: the testing routine stays as it is.
+- **Learning by watching** (`watch_and_learn`): "watch me" → `!watchMe` follows you within 16 blocks and records every block you place or break (no call of the model); "continue like this, 7 by 10" → `!continueLike("7 by 10")` says what it understood: `I understood: a fence 7 x 10 from (x, y, z) eastwards, the gate where you placed it; 26 oak_fence more, I carry 12 oak_fence. Say yes to build it.`; "yes" → `!buildWatched` builds or digs the rest with every safety rule and fetches the material from a known chest. Patterns: a line of one block, a rectangle of fences with a gate, the first steps of a tunnel. Nothing is placed or dug before your yes.
+- **Smelting** (`smelting`): `!smeltItem` of the storage pack: the nearest furnace within 16 blocks, else within 64, that the area guard allows, walked to without digging; a furnace from the bag placed only where the guard lets the bot place; fuel in the order coal, charcoal, planks, logs, as much as the batch needs; a batch of up to 64; the output read from the furnace, never assumed: `I smelted 3 raw_iron into 3 iron_ingot in the furnace at (400, 41, -2) with 2 oak_planks.` A step `smelt` in the plan of a job, and `!mineOre` as a step: "make me an iron pickaxe" mines, smelts and crafts (W105: 101 s).
+- **Two bots** (`other_bots`, `bot_role`): a bot never answers chat from the bots named in `other_bots`, nor a command echo (`*x used y*`) or a result of a bot from anyone; `bot_role` puts one sentence into the prompt (`You are the farmer. gpt is the miner.`) and a question to all gets one line from each.
+
+### Changed
+
+- **The scans underground**: a place bordered by natural rock is a tunnel or a cave, never a storage or a building, and the water in the rock is not counted. The sense says `I am in a tunnel 2 wide and 23 long, heading west, of the mine "mine".` once per tunnel of a known mine, and nothing in a cave or a tunnel it does not know; it never asks for a name underground. `!rememberArea` there answers `I am in a tunnel; a tunnel is saved with "this is the mine" or "dig here".` or `I am in a cave; a cave is nothing I save.` A scan reads each cell once and the bot stands still while it scans; over 2 s it says `The scan took 3 s.`
+- **The small items**: `bot.wake()` of mineflayer sends "leave bed" by name on 1.21.6 and later (a patch; the workaround of the home pack is gone); the bot sends `player_loaded` after every spawn, so the server takes its first actions at once (the tests wait 0.5 s instead of 3.5); the path search centres the point behind a door it opens; `!useOn` on a door, gate or trapdoor reads the state first: `I opened the door at (x, y, z).`, `The door at (x, y, z) was open already.`; `!endConversation` answers in plain words; `!goToPlayer` for a player it does not see: `I see no player "Steve". The players I see: MartyByrde2.`
+- **The job**: a plan step whose check the bag already meets is skipped; a plan step that repeats the job's own command is dropped.
+- **The prompt**: the descriptions of `!rememberArea`, `!rememberRule`, `!setMode`, `!getTool`, `!allowChanges` and `!mineOre` are shorter; with every switch on and no role the prompt is 16,983 characters. A role adds its sentence plus 50 characters: keep it short.
+- **The launch scripts** take `MC_WATCH_TOKEN` from the vault (`MindcraftWatchToken`) when it is there.
+
+### Settings
+
+| Key | Default |
+|---|---|
+| `watch_server` | `false` |
+| `watch_port` | `8090` |
+| `watch_and_learn` | `false` |
+| `smelting` | `false` |
+| `other_bots` | `[]` |
+| `bot_role` | `""` |
+
+The scans underground, the small items, the job changes and the prompt are corrections without a switch.
+
 ## [0.1.4.11] - 2026-10-03
 
 "Navigation and words": every failure text names the cause and the next step, a shaft from inside the
