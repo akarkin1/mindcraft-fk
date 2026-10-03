@@ -284,6 +284,31 @@ export function bestHoe(items) {
     return HOES.find(h => names.has(h)) ?? null;
 }
 
+/**
+ * The cells of a field that a planting sows: farmland with air above, then, with a hoe, the
+ * tillable ground with air above. Cells are objects with block names `ground` and `above`.
+ * @param {{ground: string, above: string}[]} cells
+ * @param {boolean} hoe
+ * @returns {object[]} the same cell objects in a new array, farmland first
+ */
+export function plantTargets(cells, hoe) {
+    const valid = Array.isArray(cells) ? cells.filter(c => c !== null && typeof c === 'object' && isAirName(c.above)) : [];
+    const free = valid.filter(c => baseName(c.ground) === 'farmland');
+    const tillable = hoe ? valid.filter(c => TILLABLE.includes(baseName(c.ground))) : [];
+    return free.concat(tillable);
+}
+
+/**
+ * How many seeds of the field's crop the farm cycle keeps when it stores: the base amount plus
+ * the seeds the planting of the same cycle needs (one per empty cell).
+ * @param {number} base the seeds kept anyway, e.g. 32
+ * @param {number} empty the cells the planting will sow
+ * @returns {number}
+ */
+export function seedsToKeep(base, empty) {
+    return amount(base) + amount(empty);
+}
+
 function amount(value) {
     if (value === true) {
         return 1;

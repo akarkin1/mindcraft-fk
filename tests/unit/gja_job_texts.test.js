@@ -98,7 +98,27 @@ describe('the texts beyond I3', () => {
         assert.equal(X.statusText(mining()), 'Job: the mining, 6 of 16 iron.');
         assert.equal(X.statusText(farming()), 'Job: the farming.');
         assert.equal(X.statusText({ ...farming(), state: 'paused' }), 'Job: the farming, paused.');
-        assert.equal(X.statusText({ ...farming(), state: 'done' }), '');
+        assert.equal(X.statusText({ ...farming(), state: 'done' }), 'Last job: the farming, done.');
         assert.equal(X.statusText(null), '');
+    });
+
+    // F27 (v0.1.4.11): the knowledge line keeps the last job that is done or left.
+    test('lastJobText and statusText for a done or left job', () => {
+        const chop = { ...L.jobOf('!chopTrees', [128, 'oak']), got: 99, state: 'done' };
+        const line = X.statusText(chop);
+        assert.match(line, /^Last job: the [a-z ]+, done, 99 oak logs\.$/);
+        assert.equal(X.lastJobText(chop), line);
+        assert.equal(X.statusText({ ...mining(16), state: 'done' }), 'Last job: the mining, done, 16 iron.');
+        assert.equal(X.statusText({ ...mining(), state: 'left' }), 'Last job: the mining, left.');
+        assert.equal(X.statusText({ ...farming(), state: 'left' }), 'Last job: the farming, left.');
+        assert.equal(X.lastJobText(mining()), '');
+        assert.equal(X.lastJobText({ ...farming(), state: 'paused' }), '');
+        assert.equal(X.lastJobText(null), '');
+        const long = { ...mining(16), state: 'done', words: 'the '.repeat(40) + 'mining' };
+        assert.ok(X.statusText(long).length < 100);
+        for (const job of [chop, { ...farming(), state: 'left' }, { ...mining(16), state: 'done' }]) {
+            assert.ok(X.statusText(job).length < 100);
+            assert.ok(!X.statusText(job).includes('\n'));
+        }
     });
 });

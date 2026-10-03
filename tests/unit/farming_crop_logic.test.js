@@ -3,7 +3,7 @@ import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
     COMPOSTABLE, CROPS, FLOWERS, TILLABLE, bestHoe, cellPlan, chooseCompostItem, compostSource, cropOf, harvestTarget,
-    isAirName, isCompostable, isCropBlock, isRipe, seedFor, visitOrder,
+    isAirName, isCompostable, isCropBlock, isRipe, plantTargets, seedFor, seedsToKeep, visitOrder,
 } from '../../src/agent/packs/farming/crop_logic.js';
 
 describe('CROPS and cropOf', () => {
@@ -325,5 +325,32 @@ describe('visitOrder', () => {
         assert.deepEqual(visitOrder(null, null), []);
         assert.equal(visitOrder(field(2, 2), null).length, 4, 'without a start: from the lowest corner');
         assert.deepEqual(visitOrder(field(2, 2), null)[0], { x: 0, y: 63, z: 0 });
+    });
+});
+
+// F23 (v0.1.4.11): the store step of the farm cycle keeps the seeds that its planting needs.
+describe('plantTargets and seedsToKeep', () => {
+    const cells = [
+        { x: 0, z: 0, ground: 'farmland', above: 'air' },
+        { x: 1, z: 0, ground: 'grass_block', above: 'air' },
+        { x: 2, z: 0, ground: 'farmland', above: 'wheat' },
+        { x: 3, z: 0, ground: 'minecraft:farmland', above: 'cave_air' },
+        { x: 4, z: 0, ground: 'stone', above: 'air' },
+        { x: 5, z: 0, ground: 'dirt', above: 'tall_grass' },
+    ];
+
+    test('farmland with air above, then tillable ground with a hoe', () => {
+        assert.deepEqual(plantTargets(cells, false).map(c => c.x), [0, 3]);
+        assert.deepEqual(plantTargets(cells, true).map(c => c.x), [0, 3, 1]);
+        assert.deepEqual(plantTargets(null, true), []);
+        assert.deepEqual(plantTargets([null, 5, { ground: 'farmland' }], true), []);
+    });
+
+    test('33 seeds after the harvest and 6 empty cells: 38 are kept, none is stored', () => {
+        assert.equal(seedsToKeep(32, 6), 38);
+        assert.ok(33 <= seedsToKeep(32, 6));
+        assert.equal(seedsToKeep(32, 0), 32);
+        assert.equal(seedsToKeep(32, -3), 32);
+        assert.equal(seedsToKeep(32, NaN), 32);
     });
 });

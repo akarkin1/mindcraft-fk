@@ -77,9 +77,9 @@ describe('the api of the model and its key', () => {
 describe('the steps', () => {
     test('the sentences of W80 and W84 in plain words, in the order of the journeys', () => {
         assert.deepEqual(P.STEPS.map((s) => s.say), ['this is home', 'follow me', 'remember the path here', 'come here', 'go to the basement', 'follow me', 'this is the mine', 'find some iron']);
-        assert.deepEqual(P.STEPS.map((s) => s.expect), ['!rememberArea', '!followPlayer', '!rememberRoute', '!goToPlayer', '!goToRememberedPlace', '!followPlayer', '!rememberMine', '!mineOre']);
+        assert.deepEqual(P.STEPS.map((s) => s.expect), ['!rememberArea', '!followPlayer', '!rememberRoute', '!goToPlayer', '!goToRememberedPlace', '!followPlayer', ['!rememberMine', '!rememberArea'], '!mineOre']);
         for (const s of P.STEPS) {
-            assert.equal(P.commandIn(s.fake), s.expect, `the fake answer of "${s.say}" is its command`);
+            assert.ok([].concat(s.expect).includes(P.commandIn(s.fake)), `the fake answer of "${s.say}" is its command`);
             assert.ok(s.ms >= 30000 && s.fact.length > 0);
         }
     });
@@ -103,7 +103,7 @@ describe('the table', () => {
             '|---|---|---|---|---|---|',
             '| "this is home" | !rememberArea | !rememberArea | an area holds the middle of the house: "home" | pass | $0.012, 2 calls |',
             '| "follow me" | none | !followPlayer | the bot followed down the ladder into the basement: (1.0, 2.0, 3.0) | FAIL | $0.001, 1 call |',
-            '| "this is the mine" | none | !rememberMine | mines.json has a mine of the player: the bot did not follow into the mine | not run | $0.000, 0 calls |',
+            '| "this is the mine" | none | !rememberMine or !rememberArea | mines.json has a mine of the player: the bot did not follow into the mine | not run | $0.000, 0 calls |',
             '',
             '1 of 3 facts hold. The model: gpt-6-luna.',
             'Cost: session $0.01, 3 calls.',

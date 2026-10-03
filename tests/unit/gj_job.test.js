@@ -320,7 +320,9 @@ describe('I4: the job on the agent', () => {
             assert.equal(again.get().state, 'running');
             assert.equal(again.status(), 'Job: the mining, 6 of 16 iron.');
             env.job.onCommand('!stop', [], 'player', '!stop');
-            assert.equal(env.job.status(), '', 'no line without a job');
+            // F27 (v0.1.4.11): a left job stays in the knowledge block as the last job
+            assert.equal(env.job.status(), 'Last job: the mining, left.');
+            assert.equal(env.job.describe(), 'Last job: the mining, left.');
         } finally {
             cap.restore();
         }

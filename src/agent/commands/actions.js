@@ -548,6 +548,28 @@ function orderPlayerYaw(agent) {
     }
 }
 
+// v0.1.4.11 (F28): "this is the mine" may come as !rememberArea(name, "mine"). With the mine routes on, after the area is
+// saved the mine of the player is recorded as !rememberMine(name) does, when no mine of the player holds the bot yet.
+// Returns the sentence of !rememberMine, or null: off, a mine here already, or the record failed. Never throws.
+async function rememberMineToo(agent, name) {
+    try {
+        const pack = settings.mining_pack ? agent.work_packs?.mining : null;
+        if (!mineRoutesOn() || !pack || typeof pack.rememberMine !== 'function')
+            return null;
+        const ctx = agent.packContext();
+        const p = agent.bot?.entity?.position;
+        const mines = typeof ctx?.mines?.list === 'function' ? ctx.mines.list(agent.bot.game?.dimension) : [];
+        const own = (Array.isArray(mines) ? mines : []).filter(m => m?.source === 'player');
+        if (p && typeof pack.mineAt === 'function' && pack.mineAt(own, { x: Math.floor(p.x), y: Math.floor(p.y + 0.01), z: Math.floor(p.z) }))
+            return null;
+        const r = await pack.rememberMine(agent.bot, ctx, name, { playerYaw: orderPlayerYaw(agent) });
+        return r?.ok === true && typeof r.text === 'string' && r.text.length > 0 ? r.text : null;
+    } catch (error) {
+        console.warn('Could not remember the mine with the area:', error);
+        return null;
+    }
+}
+
 // v0.1.4.9 (F2, decision of the tech lead): !goToRememberedPlace with routes_pack walks a way that the player showed
 // FIRST when ctx.routes.routeFor finds one for the place (one end within 4 blocks of the place, the other within 32
 // of the bot); the path search only does the rest (the path search alone stood on the closed trapdoor until the
@@ -1021,6 +1043,11 @@ export const actionsList = [
                     return areaErrorText(new TypeError('bad name'), name);
                 // P1: the same name again with another type changes the kind of the saved area; its box stays
                 const known = untyped || type === 'mine' ? null : store.get(name);
+                // F28: a saved area of type mine also records the mine of the player (rememberMineToo)
+                const withMine = async (text) => {
+                    const more = await rememberMineToo(agent, name);
+                    return more ? `${text} ${more}` : text;
+                };
                 if (known && (known.kind ?? known.type) !== type) {
                     const area = store.set({ ...known, type, kind: type });
                     return kindChangedText(area.name, type);
@@ -1055,7 +1082,7 @@ export const actionsList = [
                     if (same)
                         return sameBoxText(same.name);
                     const area = store.set({ name, type, min: scan.min, max: scan.max, dimension, entrances: scan.entrances ?? [], source: 'scan' });
-                    return `${areaSavedText(area)} Tell me if that is wrong.`;
+                    return withMine(`${areaSavedText(area)} Tell me if that is wrong.`);
                 }
                 // a mine or a home where no building is found: a box as v0.1.4.10
                 // no building found: a box around the bot, 12 blocks in x and z, 4 below and 8 above
@@ -1066,7 +1093,7 @@ export const actionsList = [
                     return sameBoxText(same.name);
                 const area = store.set({ name, type, min: box.min, max: box.max, dimension, entrances: [], source: 'radius' });
                 if (type === 'mine')
-                    return `I saved a box of ${sizeText(area)} around this place as the mine "${area.name}". Use !setArea to correct it.`;
+                    return withMine(`I saved a box of ${sizeText(area)} around this place as the mine "${area.name}". Use !setArea to correct it.`);
                 return `I found no building here. I saved a box of ${sizeText(area)} around this place as "${area.name}". Use !setArea to correct it.`;
             } catch (error) {
                 return areaErrorText(error, name);

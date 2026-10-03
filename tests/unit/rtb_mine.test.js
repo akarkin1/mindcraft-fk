@@ -796,3 +796,28 @@ describe('fix round F31: the supplies stay with the bot, torches in the dug tunn
         assert.equal(P.torchDue((x, y, z) => (z === 5 && y === 35 ? 'wall_torch' : 'air'), { x: 0, y: 34, z: 12 }, 'south'), false, 'a wall torch counts');
     });
 });
+
+// v0.1.4.11, fix round F28 (engineer E6): "this is the mine" as !rememberArea(name, "mine") saves an area of type mine
+// around the tunnel and records the mine. The trip then digs on in that area (the guard lets the bot break its natural
+// blocks); an area of another type there still stops it.
+describe('mineOre in an area of type mine (F28)', () => {
+    const box = { min: { x: 9, y: 30, z: 1 }, max: { x: 33, y: 42, z: 25 } };
+
+    test('the tunnel is dug on inside the area of type mine', async () => {
+        const s = await known();
+        s.ctx.areas = [{ name: 'mine', type: 'mine', ...box }];
+        s.world.set(21, 34, 15, 'iron_ore').set(21, 35, 16, 'iron_ore');
+        const r = await P.mineOre(s.bot, s.ctx, 'iron', 2, s.opts);
+        assert.equal(r.ok, true, r.text);
+        assert.equal(count(s.bot, 'raw_iron'), 2);
+    });
+
+    test('an area of type building there stops the trip as before', async () => {
+        const s = await known();
+        s.ctx.areas = [{ name: 'store', type: 'building', ...box }];
+        s.world.set(21, 34, 15, 'iron_ore').set(21, 35, 16, 'iron_ore');
+        const r = await P.mineOre(s.bot, s.ctx, 'iron', 2, s.opts);
+        assert.equal(r.reason, 'area', r.text);
+        assert.equal(count(s.bot, 'raw_iron'), 0);
+    });
+});

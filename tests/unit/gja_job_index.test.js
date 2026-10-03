@@ -115,7 +115,7 @@ describe('W85: the job comes back after an errand', () => {
         assert.ok(w.said.includes('I go back to the mining, 6 of 16 iron.'), w.said.join(' | '));
         assert.equal(w.said.at(-1), 'The mining is done: 16 iron.');
         assert.equal(w.job.get().state, 'done');
-        assert.equal(w.job.status(), '');
+        assert.equal(w.job.status(), 'Last job: the mining, done, 16 iron.'); // F27 (v0.1.4.11)
         assert.equal(w.prompts.length, 0, 'no call of the model');
     });
 

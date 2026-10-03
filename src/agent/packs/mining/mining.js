@@ -123,9 +123,11 @@ function newStats() {
     return { dug: 0, ladders: 0, torches: 0, patches: 0, stairs: 0, moves: 0 };
 }
 
+// The protected areas the digging keeps away from. v0.1.4.11 (F28): an area of type mine is where the owner wants the
+// mining (the guard lets the bot break its natural blocks), so the trip digs in it; its built blocks stay guarded.
 function areasOf(bot, ctx) {
     try {
-        return listAreas(ctx, dimensionOf(bot));
+        return listAreas(ctx, dimensionOf(bot)).filter(a => a?.type !== 'mine');
     } catch {
         return [];
     }

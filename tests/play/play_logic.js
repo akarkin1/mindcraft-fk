@@ -98,6 +98,9 @@ export function keyCheck(profile, env) {
 
 // The steps: what the player says, where he goes, the command of the journeys (the fake answers with it) and the
 // world fact that must hold, checked on the server and the files of the bot. `fact` names the check of play.js.
+// `expect` is a command or a list of commands that do the step; the fact decides the pass. v0.1.4.11 (F28): "this is
+// the mine" may be !rememberMine or !rememberArea(name, "mine"), which records the mine too; the fake answers with the
+// second, the command the model chose in the owner's play.
 export const STEPS = Object.freeze([
     { id: 'home', say: 'this is home', expect: '!rememberArea', fake: '!rememberArea("home", "home")', fact: 'an area holds the middle of the house', ms: 60000 },
     { id: 'follow_down', say: 'follow me', expect: '!followPlayer', fake: `!followPlayer("${PLAYER}", 3)`, fact: 'the bot followed down the ladder into the basement', ms: 60000 },
@@ -105,7 +108,7 @@ export const STEPS = Object.freeze([
     { id: 'come_up', say: 'come here', expect: '!goToPlayer', fake: `!goToPlayer("${PLAYER}", 3)`, fact: 'the bot came up into the house', ms: 60000 },
     { id: 'basement', say: 'go to the basement', expect: '!goToRememberedPlace', fake: '!goToRememberedPlace("basement")', fact: 'the bot is in the basement', ms: 60000 },
     { id: 'follow_mine', say: 'follow me', expect: '!followPlayer', fake: `!followPlayer("${PLAYER}", 4)`, fact: 'the bot followed out, down both ladders and into the tunnel', ms: 60000 },
-    { id: 'mine', say: 'this is the mine', expect: '!rememberMine', fake: '!rememberMine("mine")', fact: 'mines.json has a mine of the player', ms: 30000 },
+    { id: 'mine', say: 'this is the mine', expect: Object.freeze(['!rememberMine', '!rememberArea']), fake: '!rememberArea("mine", "mine")', fact: 'mines.json has a mine of the player', ms: 30000 },
     { id: 'iron', say: 'find some iron', expect: '!mineOre', fake: '!mineOre("iron", 4)', fact: 'the bot carries 4 raw_iron', ms: 300000 },
 ]);
 
@@ -142,7 +145,7 @@ export function formatTable(rows, { fake = false, model = '?', costLine = null }
         const result = r.pass === null ? 'not run' : r.pass ? 'pass' : 'FAIL';
         const calls = r.calls ?? 0;
         const cost = `$${(r.dollars ?? 0).toFixed(3)}, ${calls} call${calls === 1 ? '' : 's'}`;
-        out.push(`| "${cell(r.say)}" | ${cell(r.chose ?? 'none')} | ${cell(r.expect)} | ${cell(r.fact)}${r.detail ? `: ${cell(r.detail)}` : ''} | ${result} | ${cost} |`);
+        out.push(`| "${cell(r.say)}" | ${cell(r.chose ?? 'none')} | ${cell([].concat(r.expect).join(' or '))} | ${cell(r.fact)}${r.detail ? `: ${cell(r.detail)}` : ''} | ${result} | ${cost} |`);
     }
     const passed = rows.filter((r) => r.pass === true).length;
     out.push('');
