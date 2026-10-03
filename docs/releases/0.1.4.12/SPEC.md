@@ -5,7 +5,7 @@ between the parts are `HANDOFF.md`; where they disagree with this spec, they win
 tests find, with the decisions, are `DECISIONS.md`.
 
 Tech lead: Fable. Base: `origin/main` after the merge of `hotfix/navigation` (the tag `v0.1.4.11`, 73b7a8e).
-Branch: `hotfix/watching`. Work folder: the checkout `/home/user/mc-goals`, shared. Node 22.
+Branch: `release/v0.1.4.12-rc` (renamed from `hotfix/watching` on the owner's rule of 2026-10-03). Work folder: the checkout `/home/user/mc-goals`, shared. Node 22.
 
 ## 0. Rules for every engineer
 
