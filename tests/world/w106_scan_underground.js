@@ -25,7 +25,7 @@ import { loadDump } from './owner_region.js';
 import { startJourney, partTeachMine, spots, saidLines, RELEASE_SETTINGS, onSurface } from './journey.js';
 
 const NAME = 'w_under';
-const KIT = [['stone_pickaxe', 1], ['torch', 16], ['bread', 8]];
+const KIT = [['stone_pickaxe', 1], ['torch', 16], ['bread', 8], ['ladder', 8]]; // ladders as the owner's bot carries them (T3-2: shaft 2 ends above the room floor)
 const TUNNEL_SAID = /I am in a tunnel 1 wide and (\d+) long, heading (north|south), of the mine "mine"\./;
 const NEVER = /\bstorage\b|Tell me its name/;
 const SENSE = /I am in a (tunnel|cave)\b|\bstorage\b|Tell me its name/;
