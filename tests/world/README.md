@@ -483,7 +483,9 @@ A log cut in the middle counts what it holds: the calls of the cost meter are th
 ### The dump of the owner's region
 
 `scripts/dump_region.js` reads the blocks around home in the owner's world into `tests/world/owner_region.json`.
-The owner runs it once, on his machine, while his world is open (the bot of the tests never connects to it):
+The owner runs it once, on his machine, while his world is open (the bot of the tests never connects to it). The
+file is not committed (16 MB at radius 48; `.gitignore` lists it): the owner sends it as an upload, and a session
+in the cloud copies it to that path before the world tests.
 
 ```
 fnm exec --using=v20.20.2 -- node scripts/dump_region.js --host 127.0.0.1 --port 55916 --name region_dump --center <x> <y> <z> --radius 24 --out tests/world/owner_region.json

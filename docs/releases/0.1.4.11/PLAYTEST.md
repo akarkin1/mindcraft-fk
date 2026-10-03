@@ -69,7 +69,26 @@ Name a pen while its animals are inside: an empty fence is a yard, which the bot
 | 16 | Stand behind a wall and say "come here". | `I find no way to you from here without digging. Come closer or tell me to dig.` No block broken. |
 | 17 | "Come here" from the house to the mine room and back. | It walks, opens the doors on its way, climbs the ladders, places a missing ladder when it carries one. |
 
-## 7. What I would like to know
+## 7. From your two plays of v0.1.4.10
+
+| Step | What you do | What should happen |
+|---|---|---|
+| 18 | "Come here" from the tunnel while you stand on your cobblestone stairs, and "follow me" up and down them. | It walks the stairs. No block dug beside them, none placed on them. |
+| 19 | Stay in the basement until night with the bot. | No "I cannot get into the shelter". The bot stays; `!goToShelter` answers `I am in the shelter "basement".` |
+| 20 | Stand in the pen and say "this is the pen". Then stand in the wheat field and say "this is the pen". | `I saved "pen": a pen, fenced, ... chickens.` In the field it says a farm, since it concludes the kind from the scan; say the name you want. |
+| 21 | Give a job ("get me 2 stacks of oak logs"), sleep, and ask "what about the logs?" in the morning. | The answer is from the record: `Last job: the chopping, done, 128 oak_log.` is in its knowledge; no "I haven't started". |
+
+## 8. Two bots
+
+Two bots in one world answered each other's command echoes and results and ran away with it. Until the two-bot mode of v0.1.4.12, each bot listens to you only. In the `settings.js` of each bot:
+
+```js
+"only_chat_with": ["MartyByrde2"],
+```
+
+The second bot needs its own mindserver port: start it with `$env:MINDSERVER_PORT = "8081"` before its launch script (the first keeps 8080). Without it the second one dies at the start with `EADDRINUSE ::1:8080`.
+
+## 9. What I would like to know
 
 - The log and the scorecard (`node scripts/scorecard.js <log>`): the new line `Failure texts` says which text the model hit most.
 - Any answer that does not name its cause.

@@ -91,3 +91,34 @@ the column with the player 2.2 blocks away, within the follow distance, so the p
 met and held it on the ladder for 35 s; now a follow that hangs in an open trapdoor for 1 s with the player above
 jumps and walks out (at most 3 times). The door service never closes a trapdoor over a column while the bot
 climbs up in it. W84 and W88 pass after the change; alone at 69de4d1 both had passed too (a race).
+
+The set in the fresh clone at b91df2f: 18 of 20 journeys (W84 and W88, both fixed by E4 at 68f96a8: F21, F22),
+the door scenarios pass, `farm_cycle` fails once (F23).
+
+| Id | Finding | Where | Decision | Owner |
+|---|---|---|---|---|
+| F21 | W88: `approachWithoutDigging` said the N2 text after a round that timed out without progress, while the player stood reachable 6 blocks away. | ladders_native | A round that times out with no progress gets one more search before the N2 text. | N (E4), done |
+| F22 | W84 B3: the bot wedged in the open trapdoor cell at the top of ladder 2 and `climbOutToward` gave up there. | ten_minutes | A bot wedged at the column top walks to the free cell beside it; `passDown` refuses only without a floor within 3 blocks below the bottom rung, or over lava. | N (E4), done |
+| F23 | `farm_cycle`: the store step kept 32 seeds and put 1 in the chest, then the planting took 6 of the 32: the bot carried 26 seeds, the chest 1, and the text said `I stored 7 wheat, 1 wheat_seeds`. | farm_cycle | The store step keeps 32 seeds plus the seeds the empty cells of the field need; the text and the order of F2 stay. | fix round (E6) |
+
+## Found in the owner's plays of v0.1.4.10, 2026-10-03
+
+Two sessions of the owner (gpt 84 min, $0.39; claude 29 + 21 min, $1.27), the logs, the memories and the game log
+read by the lead. What v0.1.4.11 already fixes: the remembered path walked by the letter (routes start from the
+nearest waypoint, `routes_by_search`), `!goToRememberedPlace("basement")` ending at the ladder foot (F11), the
+argument text of `!consume("wheat", 10)` (W5), doors and trapdoors left open after a hop (F12), digging and
+placing toward the player (N2), a pen saved from one sentence with its kind concluded from the scan (P). The rest:
+
+| Id | Finding | Where | Decision | Owner |
+|---|---|---|---|---|
+| F24 | The owner's cobblestone staircase to the tunnel is no way for the path search: P4 of v0.1.4.10 made bottom stairs and bottom slabs no standing places, so `!goToPlayer` and the follow dug beside the stairs or placed blocks on them ("you're literally standing on the stairs"). Mining failed on it. | the plays | Bottom stairs and bottom slabs are standing places again, as in the pathfinder before P4; a move still never breaks them (`mayBreakOnPath`). The no-stand list of hollow blocks and containers stays. A unit test walks a path over a staircase of bottom stairs and one over bottom slabs. | fix round (E5) |
+| F25 | The night reflex fired in the basement (a saved area of type `building`, walls, roof, lit) and in the mine room and said "I cannot get into the shelter "home"" (the way out was the ladder column); the owner had to add rules that the basement and the mine entrance are safe. | the plays | A bot inside the walls of a saved area of type `home` or `building` is in shelter: the reflex does not go, and `!goToShelter` from there answers that it is in the shelter "<name>". In the mine (`whereAmI().mine`, or underground) the reflex waits, as A7 says; the depth is read under a built floor too. A scan with a roof and an opening of kind trapdoor or ladder and no door is a `building`, not a `yard`. | fix round (E5) |
+| F26 | Two bots of the owner (gpt and claude) in one world answered each other's command echoes and results as chat and became uncontrollable; `!stfu` held for a moment. The second bot crashed at the start with `EADDRINUSE ::1:8080`, the port of the first mindserver. | the plays | No code: `only_chat_with` with the owner's name in each bot's `settings.js` makes a bot answer the owner only, and `MINDSERVER_PORT` of the launch script gives the second bot its own mindserver. The play guide gets a section "Two bots" with both. A two-bot mode with roles is v0.1.4.12. | lead, PLAYTEST |
+| F27 | After the night the model said "I haven't started cutting for that task. I'm carrying 139 oak logs right now." The chop of 128 logs was done (the job store had it done; `farmCycle` was the job after it, left for the night), but the knowledge block says nothing about a finished or left job, so the model answered from its own memory. | the plays | The knowledge line keeps the last job that is done or left: `Last job: the chopping, done, 99 oak_log.`, `Last job: the farming, left.`; a running or paused job as before. One line. | fix round (E6) |
+| F28 | `npm run test:play` 6 of 8: "this is the mine" answered `!rememberArea("mine", "mine")`, and the play expects a mine in `mines.json` (`!rememberMine`). "find some iron" failed after it, since no mine was known. | test:play | `!rememberArea(name, "mine")` with the mining pack on also records the mine of the player at the bot's position, as `!rememberMine(name)` does, and appends its sentence; the play accepts both commands and checks the fact. The play runs with `--fake` in the cloud before the merge. | fix round (E6) |
+| F29 | The owner dumped his region (629,988 blocks, center (9, 38, 33), radius 48, version 1, complete). | the plays | The dump is not committed (16 MB); `tests/world/owner_region.json` is ignored by git, the cloud session copies it from the upload, and the README says so. W59 and the journeys run on it before the merge. | lead |
+| F30 | Chickens escaped: claude placed blocks inside the pen (unstuck and bridge moves) and picked items up in it; the pen was saved as rules only. gpt refused `!rememberArea("pen", "pen")` on the farmland ("it is a farm") and used `!setArea`. | the plays | Part P covers both: the kind is concluded from the scan, and a saved pen is keep-out for placing, bridging and item collection (R1). A journey check: W89 pen_gate_safe asserts no block placed inside the pen. No further code. | lead |
+
+Not in this release: the watch MCP for the owner's machine (the bot's position, inventory, chat and action read
+from here while the owner plays, never a connection to port 55916 from the cloud) and the two-bot mode go to
+v0.1.4.12 "Understanding and watching".
