@@ -49,7 +49,7 @@ describe('start-gpt.ps1', () => {
     test('loads both keys by the names of the vault, with the same lines as start-claude.ps1', () => {
         const load = lines(claude).filter((l) => /Get-Secret/.test(l));
         const remove = lines(claude).filter((l) => /Remove-Item Env:/.test(l));
-        assert.equal(load.length, 2);
+        assert.equal(load.length, 3); // the two keys and the token of the watch server (v0.1.4.12)
         for (const line of [...load, ...remove]) assert.ok(lines(text).includes(line), line.trim());
         assert.match(text, /Get-Secret -Name OpenaiApiKey -AsPlainText/);
         assert.match(text, /Get-Secret -Name AnthropicsApiKey -AsPlainText/);
