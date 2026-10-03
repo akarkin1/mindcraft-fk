@@ -112,3 +112,16 @@ W102 passed on the real server (the line built in 6.1 s, nothing else placed wit
 Texts: `I am in a tunnel; a tunnel is saved with "this is the mine" or "dig here".`, `I am in a cave; a cave is nothing I save.`, `I am in a tunnel 2 wide and 23 long, heading west, of the mine "mine".`, `... of no mine I know.`, `I am in a cave at (x, y, z), 6 wide and open on 3 sides.`, `The scan took 3 s.`; beyond the spec `of my mine`, `open on 1 side`, `closed on every side`.
 
 Decisions accepted: rock places are `found: false` (the command saves nothing without an edit); the stricter roof rule (a pit under the sky, a stone house with a thin roof and a cellar under planks are not rock; a dug house in a hill with a thick natural roof is a cave); a tunnel that opens into a room is measured away from the room; the mine room is a cave, not a storage; the cave sentence exists as `caveText` but is never said (F3 keeps the sense quiet in a cave); with `area_sense` off or the mining pack not loaded a tunnel is answered as a cave. W106: steps 1 to 3 pass (`I am in a tunnel 1 wide and 12 long, heading south, of the mine "mine".`, silence in the cave, the cave refusal); step 0 needed ladders in the kit (T3-2), added by the lead.
+
+## From part D (two bots, E6), done in round 2
+
+| File | What |
+|---|---|
+| `src/agent/bots_logic.js` | `shouldAnswer({ from, text, self, otherBots, onlyChatWith })` → `{ answer, why }` in the order self, other_bot (case-insensitive), command_echo (`COMMAND_ECHO`), bot_result (`BOT_RESULT`), not_listened; `isOtherBot`; `roleLine(role)` (`${role} A question to all of us gets one line from you.`); `insertRoleLine(prompt, role)`: after the line that starts with `A rule about a place names ` (`ROLE_ANCHOR`), else before the line that starts with `Summarized memory:` (`MEMORY_MARKER`), else unchanged; an empty role or the line already there: byte-identical |
+| `src/agent/agent.js` | `respondFunc` asks `shouldAnswer` first; a dropped line is one console line with `verbose_commands` only; the chat handler keeps the `getNumOtherAgents() > 0` early return |
+| `src/agent/conversation.js` | `isOtherAgent` true for `other_bots` too (case-insensitive; the mindserver names exact) |
+| `src/models/prompter.js` | `promptConvo` calls `insertRoleLine(prompt, settings.bot_role)` after `replaceStrings` |
+| `settings.js`, `settings_spec.json` | `other_bots` (array, `[]`), `bot_role` (string, `""`), after `watch_and_learn` |
+| `profiles/defaults/_default.json` | one example: the role line as a system turn, `mine 4 iron` answered `That is gpt's job. I farm.` |
+
+Decisions accepted: the text is trimmed before the echo and result patterns; a role of blanks gives no line; the anchors count only at the start of a line. Known: a bot with a role adds the role plus 50 characters to the prompt (16,983 with every switch on and no role), so a 60-character role passes 17,000; the limit is measured without a role, the play guide says to keep the role to one short sentence. `other_bots` names count as mindserver bots for `!startConversation` and `routeResponse`, whose messages go nowhere with separate mindservers (as the spec asked). W108 passes: `I am at the farm.` / `I am in the mine.` once each, `That is w_miner's job. I farm.`, the miner's `!mineOre`.
