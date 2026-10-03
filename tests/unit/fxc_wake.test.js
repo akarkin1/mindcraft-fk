@@ -43,7 +43,8 @@ function sleeper({ answerFrom = 1, afterMs = 10, stringMapper = true } = {}) {
             }
         },
     };
-    bot.wake = async () => { bot.calls.push(['wake']); }; // mineflayer 4.33 on 1.21.8: the wrong action, the bot stays in bed
+    // v0.1.4.12 (G1): bot.wake() of the patched mineflayer sends leave_bed by name on 1.21.6 and later; wakeUp calls it
+    bot.wake = async () => { bot.calls.push(['wake']); bot._client.write('entity_action', { entityId: 1, actionId: bot.supportFeature('entityActionUsesStringMapper') ? 'leave_bed' : 2, jumpBoost: 0 }); };
     return bot;
 }
 
@@ -58,7 +59,7 @@ describe('X5: wakeUp of the home pack', () => {
         assert.deepEqual(res, { ok: true, woke: true, reason: null, text: 'I got up.' });
         assert.equal(bot.isSleeping, false);
         assert.deepEqual(bot.writes, [['entity_action', { entityId: 1, actionId: 'leave_bed', jumpBoost: 0 }]]);
-        assert.equal(bot.calls.filter((c) => c[0] === 'wake').length, 0, 'not bot.wake() of mineflayer, which sends action 2');
+        assert.equal(bot.calls.filter((c) => c[0] === 'wake').length, 1, 'through bot.wake() of the patched mineflayer (G1)');
     });
 
     test('a bot that stays in bed: 3 s, one more try, then the text says so', async () => {
@@ -181,6 +182,7 @@ describe('X5: skills.goToBed (home_pack off) gets up when it is stopped', () => 
         bot.writes = [];
         bot.supportFeature = (name) => name === 'entityActionUsesStringMapper';
         bot._client = { write(name, params) { bot.writes.push([name, params.actionId]); setTimeout(() => { bot.isSleeping = false; }, 10); } };
+        bot.wake = async () => { bot._client.write('entity_action', { entityId: 1, actionId: 'leave_bed', jumpBoost: 0 }); }; // G1
         bot.sleep = async () => { bot.isSleeping = true; };
         setTimeout(() => { bot.interrupt_code = true; }, 100);
         assert.equal(await skills.goToBed(bot), true);

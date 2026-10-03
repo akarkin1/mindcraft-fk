@@ -1,8 +1,8 @@
-// Getting out of bed (v0.1.4.8, fix round X5). mineflayer 4.33 leaves the bed with the packet
-// entity_action and the action id 2. Since Minecraft 1.21.6 that id means "stop sprinting" (leave_bed is
-// 0 now, the ids are names in minecraft-data: feature entityActionUsesStringMapper), so bot.wake() sent the
-// wrong action and the bot stayed in bed while the skill said that it got up. wakeUp sends the right
-// action and waits until bot.isSleeping is false. Imports only the clock of context.js.
+// Getting out of bed (v0.1.4.8, fix round X5; v0.1.4.12, G1). mineflayer 4.33 left the bed with the
+// packet entity_action and the action id 2. Since Minecraft 1.21.6 that id means "stop sprinting" (leave_bed
+// is 0 now, the ids are names in minecraft-data: feature entityActionUsesStringMapper). The patch of
+// mineflayer (patches/mineflayer+4.33.0.patch) makes bot.wake() send 'leave_bed' there, so wakeUp calls
+// bot.wake() only and waits until bot.isSleeping is false. Imports only the clock of context.js.
 import { clockOf } from './context.js';
 
 /** How long one try waits for the server to take the bot out of the bed. */
@@ -10,14 +10,8 @@ export const WAKE_WAIT_MS = 3000;
 /** Tries in all: the first and one more. */
 export const WAKE_TRIES = 2;
 
-// Sends "leave bed" in the form of the version of the bot: the name for 1.21.6 and later, else
-// bot.wake() of mineflayer.
+// Sends "leave bed" through bot.wake() of mineflayer (patched for 1.21.6 and later, G1).
 async function sendLeaveBed(bot) {
-    const named = typeof bot.supportFeature === 'function' && bot.supportFeature('entityActionUsesStringMapper') === true;
-    if (named && typeof bot._client?.write === 'function' && bot.entity) {
-        bot._client.write('entity_action', { entityId: bot.entity.id, actionId: 'leave_bed', jumpBoost: 0 });
-        return;
-    }
     if (typeof bot.wake === 'function') {
         await bot.wake();
     }

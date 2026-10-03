@@ -188,9 +188,9 @@ export async function startAgent(name, overrides = {}, options = {}) {
     }
     // The 1.21.8 server ignores every action of a player (dig, place, use) until the client reports
     // that it has loaded the world (packet player_loaded, new in 1.21.4) or 60 ticks have passed.
-    // mineflayer 4.33 never sends that packet: a dig in the first 3 s after the spawn is dropped
-    // without an answer (seen on the test server). Wait until the server accepts actions.
-    await sleep(3500);
+    // mineflayer 4.33 never sends that packet; since v0.1.4.12 (G2) the agent sends it at every spawn,
+    // so the server takes actions at once. A short wait remains for the spawn handler to settle.
+    await sleep(500);
     const { chat, code } = started;
     const routes = [];
     started.route = (re, reply) => { routes.push({ re, reply }); };

@@ -141,6 +141,26 @@ function reportCostAtExit(meter) {
     }
 }
 
+/**
+ * v0.1.4.12 (G2): tells the server that the client has loaded the world (packet player_loaded, new in
+ * 1.21.4), so the server takes the bot's actions from the first second after a spawn. mineflayer 4.33
+ * never sends it. Written only when the protocol of the bot's version has the packet. One console line.
+ * Never throws. Returns true when the packet was written.
+ */
+export function sendPlayerLoaded(bot) {
+    try {
+        const has = Boolean(bot?.registry?.protocol?.play?.toServer?.types?.packet_player_loaded);
+        if (!has || typeof bot?._client?.write !== 'function')
+            return false;
+        bot._client.write('player_loaded', {});
+        console.log('Sent player_loaded after the spawn.');
+        return true;
+    } catch (error) {
+        console.warn('Could not send player_loaded:', error?.message ?? error);
+        return false;
+    }
+}
+
 export class Agent {
     async start(load_mem=false, init_message=null, count_id=0, is_restart=false) {
         // lock down the realm before any component or the bot is created
@@ -391,6 +411,9 @@ export class Agent {
             log(this.name, msg);
             process.exit(1);
         }, spawnTimeoutDuration * 1000);
+        // v0.1.4.12 (G2): player_loaded at every spawn, first of the listeners; mineflayer emits 'spawn' again
+        // after a death and a change of dimension (the respawn packet), and the server waits for it again then.
+        this.bot.on('spawn', () => sendPlayerLoaded(this.bot));
         this.bot.once('spawn', async () => {
             try {
                 clearTimeout(spawnTimeout);
@@ -439,6 +462,18 @@ export class Agent {
                 process.exit(0);
             }
         });
+
+        // v0.1.4.12 (C): the watch server with watch_server, on 127.0.0.1:watch_port; the token is read once here and
+        // never printed. Without it the text says so once and the agent goes on.
+        try {
+            const watch = settings.watch_server ? await import('./watch/server.js') : null;
+            this.watch = watch ? await watch.startWatchServer(this, { port: settings.watch_port, token: process.env.MC_WATCH_TOKEN }) : null;
+            if (this.watch?.text)
+                console.log(this.watch.text);
+        } catch (error) {
+            this.watch = null;
+            console.warn('Could not start the watch server:', error?.message ?? error);
+        }
     }
 
     _archiveMemory() {
@@ -883,6 +918,15 @@ export class Agent {
                 packs.routes = await (loaders.routes ? loaders.routes() : import('./packs/routes/index.js'));
             } catch (error) {
                 failed('routes', error);
+            }
+        }
+        // v0.1.4.12 (part B): the watching pack (learning by watching), with watch_and_learn; start() loads the work
+        // packs while one of their switches is on, so the test names them too
+        if (settings.watch_and_learn && (settings.storage_pack || settings.farming_pack || settings.wood_pack || settings.mining_pack || settings.routes_pack)) {
+            try {
+                packs.watch = await (loaders.watch ? loaders.watch() : import('./packs/watch/index.js'));
+            } catch (error) {
+                failed('watch', error);
             }
         }
         return packs;
@@ -1595,6 +1639,7 @@ export class Agent {
         try { this.bot.chat(code > 1 ? 'Restarting.': 'Exiting.'); } catch (_) { /* no bot */ }
         try { this.history.save(); } catch (_) { /* no history */ }
         try { this._atExit(msg); } catch (_) { /* a fake agent of a test */ }
+        try { this.watch?.close?.(); } catch (_) { /* v0.1.4.12 (C): no watch server */ }
         reportCostAtExit(this.cost_meter);
         process.exit(code);
     }

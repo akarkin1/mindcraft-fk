@@ -2583,6 +2583,13 @@ function caveWatch(bot, playerPos) {
     return watch;
 }
 
+// v0.1.4.12 (G5): the text for a player without an entity after the wait, with the other players of the list.
+function noPlayerText(bot, username) {
+    const others = Object.keys(bot.players ?? {}).filter((name) => name && name !== bot.username);
+    const seen = others.length > 0 ? `The players I see: ${others.join(', ')}.` : 'I see no other player.';
+    return `I see no player "${username}". ${seen}`;
+}
+
 async function playerEntity(bot, username, waitMs) {
     const end = Date.now() + waitMs;
     for (;;) {
@@ -2619,7 +2626,8 @@ export async function goToPlayer(bot, username, distance=3) {
     // moment and "come here" answered "Could not find" at once. The entity is awaited for up to 2 s.
     let player = await playerEntity(bot, username, PLAYER_WAIT_MS);
     if (!player) {
-        log(bot, `Could not find ${username}.`);
+        if (!bot.interrupt_code)
+            log(bot, noPlayerText(bot, username)); // v0.1.4.12 (G5)
         return false;
     }
 
@@ -3807,6 +3815,11 @@ export async function useToolOn(bot, toolName, targetName) {
      * @returns {Promise<boolean>} true if action succeeded
      */
 
+    const openable = openableKind(block);
+    if (openable?.iron) {
+        log(bot, `The ${openable.label} at ${openableCell(block)} does not open by hand.`); // v0.1.4.12 (G4)
+        return false;
+    }
     const distance = toolName === 'water_bucket' && block.name !== 'lava' ? 1.5 : 2;
     await goToPosition(bot, block.position.x, block.position.y, block.position.z, distance);
     await bot.lookAt(block.position.offset(0.5, 0.5, 0.5));
@@ -3839,6 +3852,25 @@ export async function useToolOn(bot, toolName, targetName) {
         log(bot, `Could not equip ${toolName}.`);
         return false;
     }
+    if (openable && !toolName.includes('bucket')) {
+        // v0.1.4.12 (G4): a door, a gate or a trapdoor: the state is read before and after the click, and the
+        // text says which way it went
+        const before = isOpen(bot.blockAt(block.position) ?? block);
+        await bot.activateBlock(block);
+        let after = before;
+        for (let i = 0; i < OPENABLE_WAIT_MS / 50 && after === before && !bot.interrupt_code; i++) {
+            await new Promise(resolve => setTimeout(resolve, 50));
+            after = isOpen(bot.blockAt(block.position));
+        }
+        const at = openableCell(block);
+        if (after !== before)
+            log(bot, after ? `I opened the ${openable.label} at ${at}.` : `I closed the ${openable.label} at ${at}.`);
+        else if (before)
+            log(bot, `The ${openable.label} at ${at} was open already.`);
+        else
+            log(bot, `The ${openable.label} at ${at} did not open.`);
+        return after !== before;
+    }
     if (toolName.includes('bucket')) {
         await bot.activateItem();
     }
@@ -3848,3 +3880,27 @@ export async function useToolOn(bot, toolName, targetName) {
     log(bot, `Used ${toolName} on ${block.name}.`);
     return true;
  }
+
+// v0.1.4.12 (G4): a door, a fence gate or a trapdoor, with the word for it; iron ones do not open by hand.
+const OPENABLE_WAIT_MS = 1000;
+function openableKind(block) {
+    const name = typeof block?.name === 'string' ? block.name : '';
+    if (!name.includes('door') && !name.includes('fence_gate'))
+        return null;
+    const kind = name.includes('trapdoor') ? 'trapdoor' : name.includes('fence_gate') ? 'gate' : 'door';
+    const iron = name.startsWith('iron_');
+    return { kind, iron, label: iron ? `iron ${kind}` : kind };
+}
+
+function isOpen(block) {
+    const props = typeof block?.getProperties === 'function' ? block.getProperties() : block?._properties;
+    return props?.open === true || props?.open === 'true';
+}
+
+// The cell of the text: the lower half of a door, so both halves give the same place.
+function openableCell(block) {
+    const p = block.position;
+    const props = typeof block.getProperties === 'function' ? block.getProperties() : block._properties;
+    const y = block.name.endsWith('_door') && props?.half === 'upper' ? p.y - 1 : p.y;
+    return `(${p.x}, ${y}, ${p.z})`;
+}
