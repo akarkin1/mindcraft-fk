@@ -98,3 +98,17 @@ Decisions accepted: the door toggles (the three texts of the spec fit only with 
 | The lead: the commands are hidden when the switch is off or the pack is missing (`blocked_actions`), the packs load with `watch_and_learn` alone, the routing list knows the part, four descriptions of other commands were shortened for the prompt limit (`!rememberArea`, `!rememberRule`, `!setMode`, the material of `!getTool`): 16,770 characters with every switch on | the prompt at 17,000 |
 
 W102 passed on the real server (the line built in 6.1 s, nothing else placed within 3 blocks).
+
+## From part F (the scans underground, E5), done in round 2
+
+| File | What |
+|---|---|
+| `src/agent/areas/area_scan.js` | in mode `auto` a place under a natural roof (the first solid block above the head natural, 3 solid blocks above it) whose ground no made border closes is rock: a tunnel when the measure of the mining pack accepts the origin and 2/3 or more of its walls are natural, else a cave when 2/3 or more of the bounding columns are natural; returned with `found: false`, `border: 'rock'`, the refusal as `text`, `tunnel { start, end, dir, length, width, level }` or `cave { at, width, sides }`; one read cache per scan; `ms` and `took` over 2 s, the took text appended; `useTunnelMeasure(fn)` registers the measure at run time (no import: the module stays import-free); `tookText`, `ROCK_SHARE`, `TUNNEL_MIN_LENGTH`, `SCAN_SLOW_MS`; `ENCLOSURE_BORDERS` holds `rock` |
+| `src/agent/areas/area_kind.js` | `kindOf` gives `tunnel` or `cave` for a rock border; `ROCK_KINDS`, `tunnelText`, `caveText`, `rockText`; `savedText` appends the took text |
+| `src/agent/areas/area_sense.js` | `countContents(bot, box, { border })` skips water in rock; `unsavedEnclosure` returns rock places; `senseTick` clears the controls before a scan, says the tunnel sentence once per tunnel per start only for a tunnel of a known mine (`input.whereAmI`, `input.tunnelAt`), nothing in a cave, in a tunnel of no mine or anywhere underground (depth 8 or more); `standStill`, `isUndergroundHere`, `UNDERGROUND_SENSE_DEPTH` |
+| `src/agent/knowledge/knowledge_text.js` | underground the line names only a tunnel of a known mine: `You stand in a tunnel ... of the mine "mine".` |
+| `src/agent/modes.js` | the `area_sense` mode gives `senseTick` `whereAmI` and `tunnelAt` of the mining pack (the mode has no ctx) |
+
+Texts: `I am in a tunnel; a tunnel is saved with "this is the mine" or "dig here".`, `I am in a cave; a cave is nothing I save.`, `I am in a tunnel 2 wide and 23 long, heading west, of the mine "mine".`, `... of no mine I know.`, `I am in a cave at (x, y, z), 6 wide and open on 3 sides.`, `The scan took 3 s.`; beyond the spec `of my mine`, `open on 1 side`, `closed on every side`.
+
+Decisions accepted: rock places are `found: false` (the command saves nothing without an edit); the stricter roof rule (a pit under the sky, a stone house with a thin roof and a cellar under planks are not rock; a dug house in a hill with a thick natural roof is a cave); a tunnel that opens into a room is measured away from the room; the mine room is a cave, not a storage; the cave sentence exists as `caveText` but is never said (F3 keeps the sense quiet in a cave); with `area_sense` off or the mining pack not loaded a tunnel is answered as a cave. W106: steps 1 to 3 pass (`I am in a tunnel 1 wide and 12 long, heading south, of the mine "mine".`, silence in the cave, the cave refusal); step 0 needed ladders in the kit (T3-2), added by the lead.
