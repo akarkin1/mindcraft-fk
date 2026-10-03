@@ -70,6 +70,12 @@ Decided on 2026-10-02 from the two play sessions of that day (Luna and Haiku on 
 
 ## 0.1.4.12 Understanding and watching
 
+Scope decided by the owner on 2026-10-03, the release after the plays of v0.1.4.11: it is not an easy one, so it starts early and
+runs in rounds, each round shippable on its own. In order: part C (the watch server, a pilot), part B (watching, a pilot, learning
+from the owner and from a scripted teacher on the test server), part E (smelting), part F (the scans underground), part G (the
+small items), part D (two bots). Part A (the local embedding model) waits for 0.1.4.13: its trial proved the speed, not that the
+chat model chooses better, and that is measured first with the routing check.
+
 ### Part A: the bot picks better examples
 
 Before each call of the model the bot puts 2 of its examples into the prompt. Two steps of this part were released with 0.1.4.8: examples for the commands that had none, and the choice by the last request of the player (`examples_by_last_request`).
@@ -96,6 +102,10 @@ The player shows the start of a job, the bot does the rest. Watching writes no n
 
 Patterns of this release: a line of placed blocks, a rectangle of fences with a gate, the first steps of a tunnel. Setting `watch_and_learn`.
 
+A pilot as part C is: the recorder learns from any player, so the test server gets a scripted teacher (a second bot of the harness
+that places the fences and digs the first steps, as the trial did) and every pattern has a journey that needs no owner; the owner
+teaches the same patterns in his world and says where the bot misread him.
+
 Result of the trial on a real 1.21.8 server: 40 of 40 placed blocks and 60 of 60 broken blocks recorded with the right place and name; with two players who build in the same space, 320 of 320 blocks credited to the right player. Limits: the player of the trial was a second bot; crediting needs 16 blocks or less; the bot never sees crafting, the content of a chest that the player uses, or the inventory of the player.
 
 ### Part C: watching the play from the cloud
@@ -107,6 +117,34 @@ From the plays of 2026-10-03: the owner cannot judge a test without the geometry
 The server pushes events, so that the supervisor sleeps between them: an explosion near a saved area, a drop of health, animals missing from a pen against its record, a night without sleep, a job stalled for 10 minutes, the same failure text 5 times, the bot farther than 100 blocks from home. The supervisor answers an event with an order, a job or a rule; the predictable cases (sleep every night, the creeper by the pen) stay in the reflexes. A goal the skills do not know ("find a village") goes to the supervisor, which plans the legs and gives the orders. Without the supervisor the bot finishes its job, works the standing list and sleeps, as today.
 
 Two small items beside it, from the same talk: the night reflex lies down in the bed for a moment when it reaches it and nobody else sleeps, which resets the phantom clock without passing the night (the server's statistic "time since rest" proves it in a world test), then goes on with its night work; and a scan whose border is natural rock is a cave, not a storage (T3-6 of v0.1.4.11: the corridor above the staircase counted 207 water blocks of the rock).
+
+### Part E: smelting
+
+Today `!smeltItem` is the command of the original project: it puts 1 coal into the nearest furnace within 16 blocks (or places
+one on the nearest free cell, inside the house or the pen too), smelts one item at a time and waits; the blocker steps of a job
+may call it, but no plan was ever tested on ore, so the bot cannot make iron tools from ore by itself. The part, one round of an
+engineer: a furnace of the storage pack (the furnace of the room or the house, placed only in a saved area of type storage,
+building or mine, never in a pen or a farm), fuel in the order coal, charcoal, planks, logs, with the count the batch needs, a
+batch of up to 64 in one go, the texts (`I smelted 8 raw_iron into 8 iron_ingot in the furnace at (x, y, z) with 1 coal.`, `I have
+no fuel: no coal, charcoal, planks or logs.`), a step `smelt` in the plan of a job (no iron pickaxe: mine 3 iron, smelt 3, craft)
+and `!getTool("iron_pickaxe")` leading through it. A journey: "make me an iron pickaxe" with ore in the tunnel, coal in the chest.
+
+### Part F: the scans underground
+
+From T3-6 of v0.1.4.11 and the owner's plays: the enclosure scan in a corridor of rock called it a storage and counted the water
+pockets of the rock; "scanning not always smooth". The part: a border of natural rock makes a cave or a tunnel, never a storage
+or a building; the scan of a tunnel is the measurement of the mining pack (width, length, direction, open sides) and says so
+(`I am in a tunnel 2 wide and 23 long, heading west, of the mine "mine".`); the area sense underground names a tunnel it knows
+and stays quiet in one it does not; the scan runs in one pass and the bot stands still while it scans.
+
+### Part G: the small items
+
+Fixed in this release, each with a unit test, the library ones as files under `patches/` (no pinned version changes): `bot.wake()`
+of mineflayer sends the wrong action since Minecraft 1.21.6 (the home pack's workaround goes); the path search centres the points
+of a path behind a door it opens; the bot sends `player_loaded` after each spawn, so it hears the first 3 seconds; `!useOn` reads
+the state of a door before it toggles it; `!endConversation` and `!goToPlayer` for an unknown player answer in plain words. The
+deleted-message bookkeeping of the network library is left alone until it bites: it is deep in the chat session code and has not
+cost a play yet.
 
 ### Part D: two bots
 
