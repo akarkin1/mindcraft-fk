@@ -72,3 +72,9 @@ the scan stay (`SCAN_READ_LIMIT` 131,072 reads, `FLOOD_MAX_CELLS` 4,096, `ROCK_B
 nothing is said; a tunnel longer than 46 says nothing). Decision: F10 is an intermittent defect of the creeper action's
 keep-away loop that predates this release; it goes to v0.1.4.13 with a profiling run inside the agent process (E5's
 suggestion), and the release ships with it noted in the changelog.
+
+## The last gate in the fresh clone at 217e29b, 2026-10-03
+
+Unit 7730 of 7731 (1 skipped). End-to-end 17 of 17. The scenarios around the capped scan and the creeper: W47 twice,
+first_minutes, pen_gate_safe, two_floors, place_from_sentence, owner_region, watch_fence, scan_underground: 8 of 8 (653 s).
+The release ships from 2e362bd with F10 noted.
