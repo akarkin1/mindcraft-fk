@@ -344,7 +344,7 @@ describe('the fixes of W75', () => {
             const t2 = Date.now();
             assert.equal(await skills.goToPlayer(s.bot, PLAYER, 3), false);
             assert.ok(Date.now() - t2 >= 1900 && Date.now() - t2 < 4000, `gave up after ${Date.now() - t2} ms`);
-            assert.ok(s.bot.output.includes(`Could not find ${PLAYER}.`), s.bot.output);
+            assert.ok(s.bot.output.includes(`I see no player "${PLAYER}".`), s.bot.output); // v0.1.4.12 (G5)
         } finally {
             s.stop();
         }

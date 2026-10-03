@@ -542,6 +542,9 @@ export function blockerOf(result) {
             return { kind: 'no_pickaxe', item: pickaxe ? `${pickaxe[1]}_pickaxe` : 'pickaxe' };
         }
         const named = text.match(/\bI (?:have|carry) no ([a-z_]+)/);
+        if (r.reason === 'no_iron') {
+            return { kind: 'no_iron', item: 'iron_ingot' }; // v0.1.4.12 (E): an iron tool without iron: mine, smelt, craft
+        }
         if (r.reason === 'no_tool') {
             const tool = named && TOOL_KINDS.some(kind => named[1] === kind || named[1].endsWith(`_${kind}`)) ? named[1] : null;
             return { kind: 'no_tool', item: tool };

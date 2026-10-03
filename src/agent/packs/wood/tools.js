@@ -13,10 +13,10 @@ import { goals, gotoGoal, makeMovements, walkNear } from '../home/motion.js';
 import { EXEC_REACH, digBlock, eyeOfBot, feetOf, isAirLike, nameAt } from './actions.js';
 import { countItems, inventoryOf, itemCounts } from './inventory.js';
 import { chopTrees } from './wood.js';
-import { craftFailedText, craftedToolsText, haveToolText, madeSuppliesText, needText, notCraftableText, supplyWords, unknownMaterialText,
-    unknownSupplyText, unknownToolText, withArticle } from './texts.js';
-import { bestTool, chooseMaterial, craftSteps, isWoodItem, logKindFor, missingIngredient, normaliseSupply, normaliseToolRequest, parseTool,
-    supplySteps, toolName, toolsOf, usesLeft } from './tool_logic.js';
+import { craftFailedText, craftedToolsText, haveToolText, madeSuppliesText, needText, noIronText, notCraftableText, supplyWords,
+    unknownMaterialText, unknownSupplyText, unknownToolText, withArticle } from './texts.js';
+import { RECIPES, bestTool, chooseMaterial, craftSteps, isWoodItem, logKindFor, missingIngredient, normaliseSupply, normaliseToolRequest,
+    parseTool, supplySteps, toolName, toolsOf, usesLeft } from './tool_logic.js';
 import { WOOD_KINDS, inReach, planksOf } from './tree_logic.js';
 
 /** Stone is broken for cobblestone within this distance. */
@@ -308,6 +308,56 @@ async function settledInventory(bot, clock, ms = 2000) {
     return inventoryOf(bot);
 }
 
+/**
+ * v0.1.4.12 (part E, 4.2): before an iron tool is crafted with the setting `smelting` on. Iron ingots that
+ * the bot carries or a known chest holds count first; for the rest raw iron is fetched from a known chest
+ * (ctx.storage.fetchItem) and smelted through ctx.storage.smeltItem (optional: without the binding nothing
+ * is smelted and the craft says what it lacks). Without any iron, carried or in a known chest:
+ * `{ ok: false, reason: 'no_iron', text: noIronText }`. Some iron but not enough: ok, the craft names what
+ * is short. Never throws.
+ * @param {object} bot
+ * @param {object} ctx
+ * @param {string} kind pickaxe, axe, shovel, hoe or sword
+ * @param {string} name the tool, `iron_pickaxe`
+ * @returns {Promise<{ok: boolean, reason: string|null, text: string}>} text: the text of the smelt, '' without one
+ */
+export async function smeltIronFor(bot, ctx, kind, name) {
+    try {
+        const need = RECIPES[kind]?.material ?? 0;
+        const chests = chestCounts(bot, ctx);
+        const ingots = countItems(bot, 'iron_ingot') + (chests.iron_ingot ?? 0);
+        if (ingots >= need) {
+            return { ok: true, reason: null, text: '' };
+        }
+        let raw = countItems(bot, 'raw_iron');
+        const rawInChests = chests.raw_iron ?? 0;
+        if (raw + rawInChests === 0) {
+            return ingots === 0 ? { ok: false, reason: 'no_iron', text: noIronText(name, need) } : { ok: true, reason: null, text: '' };
+        }
+        const short = need - ingots;
+        if (raw < short && rawInChests > 0 && typeof ctx.storage?.fetchItem === 'function') {
+            await ctx.storage.fetchItem(bot, ctx, 'raw_iron', Math.min(short - raw, rawInChests));
+            raw = countItems(bot, 'raw_iron');
+        }
+        const n = Math.min(short, raw);
+        if (bot.interrupt_code) {
+            return { ok: false, reason: 'interrupted', text: 'I was interrupted.' };
+        }
+        if (n <= 0 || typeof ctx.storage?.smeltItem !== 'function') {
+            return { ok: true, reason: null, text: '' };
+        }
+        const res = await ctx.storage.smeltItem(bot, ctx, 'raw_iron', n);
+        const text = typeof res?.text === 'string' ? res.text : '';
+        if (res?.reason === 'interrupted') {
+            return { ok: false, reason: 'interrupted', text };
+        }
+        return { ok: true, reason: null, text };
+    } catch (err) {
+        console.warn('Wood pack: smelting iron failed:', err?.message ?? err);
+        return { ok: true, reason: null, text: '' };
+    }
+}
+
 /** Tries of one craft step; between two tries the inventory settles (fix round F24, item 2). */
 export const CRAFT_TRIES = 4;
 /** The wait before another try of a craft step that made nothing, in ms. */
@@ -426,8 +476,11 @@ async function runSteps(bot, ctx, steps, clock) {
  * least minMaterial (empty: wooden; golden counts as wooden, netherite is never crafted). What is
  * missing it looks for in chests (ctx.storage.fetchItem), then gets by itself where that is
  * simple: logs through ctx.wood.chopTrees, cobblestone by breaking stone within 16 blocks outside
- * of protected areas (with a wooden pickaxe it crafts first). It does not smelt and does not mine
- * for iron or diamonds: `I need 3 iron_ingot for an iron_pickaxe and have 1.` Texts:
+ * of protected areas (with a wooden pickaxe it crafts first). It does not mine for iron or diamonds:
+ * `I need 3 iron_ingot for an iron_pickaxe and have 1.` Since v0.1.4.12 (part E), for an iron tool with
+ * the setting `smelting` on, it smelts raw iron first (smeltIronFor), and without any iron it answers
+ * `I have no iron for an iron_pickaxe: 3 iron_ingot or 3 raw_iron are needed. Say "mine 3 iron" first.`
+ * (reason no_iron). Texts:
  * `I crafted a stone_pickaxe.`, `I crafted a wooden_pickaxe and a stone_pickaxe.` Never throws.
  * Since v0.1.4.8 (E3): the material is chosen from what the bot carries and what the known chests
  * hold, and an empty material chooses the best material up to stone.
@@ -440,7 +493,7 @@ async function runSteps(bot, ctx, steps, clock) {
  *   the bot wants (default 1), for a second pickaxe on a long trip; collect: false asks only the
  *   chests, it cuts no tree and breaks no stone (the axe of chopTrees)
  * @returns {Promise<{ok: boolean, reason: string|null, tool: string|null, crafted: string[], text: string}>}
- *   reasons: unknown_kind, unknown_material, not_craftable, missing, craft_failed, interrupted, error
+ *   reasons: unknown_kind, unknown_material, not_craftable, missing, craft_failed, interrupted, error, no_iron
  */
 export async function ensureTool(bot, ctx = {}, kind = '', minMaterial = '', options = {}) {
     const request = normaliseToolRequest(kind, minMaterial);
@@ -467,21 +520,31 @@ export async function ensureTool(bot, ctx = {}, kind = '', minMaterial = '', opt
         const open = (typeof minMaterial !== 'string' || minMaterial.trim() === '') && !parseTool(word);
         const target = chooseMaterial(request.kind, open ? '' : request.material, inventoryOf(bot), { table: tableNear(bot), chests: chestCounts(bot, ctx) });
         const name = toolName(request.kind, target);
+        // v0.1.4.12 (part E): an iron tool with smelting on smelts its raw iron first
+        let smelt = '';
+        if (target === 'iron' && ctx?.settings?.smelting === true) {
+            const s = await smeltIronFor(bot, ctx, request.kind, name);
+            if (!s.ok) {
+                return toolResult(false, s.reason, null, crafted, s.text);
+            }
+            smelt = s.text;
+        }
+        const withSmelt = text => (smelt ? `${smelt} ${text}` : text);
         const planFn = () => craftSteps(request.kind, target, inventoryOf(bot), { table: tableNear(bot) });
         const got = await gather(bot, ctx, planFn, withArticle(name), { depth, crafted, options });
         if (!got.ok) {
-            return toolResult(false, got.reason, null, crafted, got.nested ? got.text : withCrafted(crafted, got.text));
+            return toolResult(false, got.reason, null, crafted, withSmelt(got.nested ? got.text : withCrafted(crafted, got.text)));
         }
         const made = await runSteps(bot, ctx, got.plan.steps, clockOf(ctx, options));
         if (!made.ok) {
-            return toolResult(false, made.reason, null, crafted, withCrafted(crafted, made.text));
+            return toolResult(false, made.reason, null, crafted, withSmelt(withCrafted(crafted, made.text)));
         }
         crafted.push(name);
         const text = craftedToolsText(crafted);
         if (depth === 0) {
             logTo(ctx, text);
         }
-        return toolResult(true, null, name, crafted, text);
+        return toolResult(true, null, name, crafted, withSmelt(text));
     } catch (err) {
         console.warn('Wood pack: getting a tool failed:', err?.message ?? err);
         return toolResult(false, 'error', null, crafted, `I could not get ${withArticle(request.kind)}: ${err?.message ?? err}`);

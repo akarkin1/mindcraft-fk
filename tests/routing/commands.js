@@ -36,6 +36,8 @@ export const SPEC_SETTINGS = {
     mine_routes: 'boolean',
     ore_sense_range: 'number',
     skills_over_code: 'boolean',
+    // v0.1.4.12, section 2 of its spec
+    watch_and_learn: 'boolean',
 };
 
 // The switches of the parts whose commands are hidden while the switch is off.
@@ -56,18 +58,25 @@ export const PART_COMMANDS = {
     // v0.1.4.9: the commands of the routes pack and of the mine routes (I10 of its spec)
     routes_pack: ['!rememberRoute', '!routes', '!forgetRoute'],
     mine_routes: ['!rememberMine', '!rememberTunnel', '!collectPassedOre'],
+    // v0.1.4.12 (part B): learning by watching
+    watch_and_learn: ['!watchMe', '!continueLike', '!buildWatched'],
 };
 
 // Commands of this release, from the spec. `params` in order; `default` where the spec gives one.
 // `assumed` marks what the spec leaves open.
 export const SPEC_COMMANDS = [
+    // v0.1.4.12 (part B, SPEC 4.4): learning by watching
+    { name: '!watchMe', section: '4.4', part: 'watch_and_learn', params: [], description: 'Watch what I do and learn the pattern.' },
+    { name: '!continueLike', section: '4.4', part: 'watch_and_learn', params: [{ name: 'size', type: 'string' }],
+        description: 'Continue the pattern you watched, for a size.' },
+    { name: '!buildWatched', section: '4.4', part: 'watch_and_learn', params: [], description: 'Build or dig what you understood, after I said yes.' },
     { name: '!rememberRule', section: 'R3', part: 'player_rules', params: [{ name: 'text', type: 'string' }],
-        description: 'Save a lasting rule from the player. Use this when the player tells you to always or never do something, or says "remember", "do not forget" or "from now on". Write the rule as one short sentence.' },
+        description: 'Save a lasting rule from the player: "always", "never", "remember", "do not forget", "from now on". One short sentence.' },
     { name: '!forgetRule', section: 'R3', part: 'player_rules', params: [{ name: 'number', type: 'int' }] },
     { name: '!rules', section: 'R3', part: 'player_rules', params: [] },
     { name: '!rememberArea', section: '6', part: 'protected_areas',
         params: [{ name: 'name', type: 'string' }, { name: 'type', type: 'string', default: 'building' }],
-        description: 'Save the place you stand in as a protected area: home (the house), building, farm (only plant and harvest), pen (animals) or mine (only natural blocks). Use this when the player says "this is home", "this is the farm" or "this is the mine".' },
+        description: 'Save the place you stand in as a protected area; without a type you conclude the kind (home, building, farm, pen, mine) from what is there. Use this when the player says "this is home", "this is the farm" or "this is the mine".' },
     { name: '!setArea', section: '6', part: 'protected_areas', assumed: 'types of the coordinates (float, as in actions.js)',
         params: [{ name: 'name', type: 'string' }, { name: 'type', type: 'string' },
             ...['x1', 'y1', 'z1', 'x2', 'y2', 'z2'].map((name) => ({ name, type: 'float' }))] },
@@ -75,7 +84,7 @@ export const SPEC_COMMANDS = [
     { name: '!areas', section: '6', part: 'protected_areas', params: [] },
     { name: '!allowChanges', section: '6', part: 'protected_areas',
         params: [{ name: 'name', type: 'string' }, { name: 'minutes', type: 'int', default: 10 }],
-        description: 'Allow yourself to break and place blocks in a protected area for some minutes. ONLY when the player tells you to build, repair or break something there.' },
+        description: 'Allow yourself to break and place blocks in a protected area for some minutes, only when the player asks you to build, repair or break something there.' },
     { name: '!goToShelter', section: 'H7', part: 'home_pack', params: [],
         description: 'Go into your home and close the door. Use this when night comes, when monsters are near, when the player says "get to shelter", "go home" or "go inside".' },
     { name: '!eat', section: 'H7', part: 'home_pack', params: [],
@@ -102,11 +111,11 @@ export const SPEC_COMMANDS = [
     { name: '!chopTrees', section: 'T5', part: 'wood_pack', params: [{ name: 'num', type: 'IntOrString', default: 8 }, { name: 'kind', type: 'string', default: '' }],
         description: 'Cut whole trees and pick up the logs until you have that many, with an axe if you can get one. Only real trees. Use this when the player asks for wood.' },
     { name: '!getTool', section: 'T5', part: 'wood_pack', params: [{ name: 'kind', type: 'string' }, { name: 'material', type: 'string', default: '' }],
-        description: 'Make sure you have a tool. You take it from a chest you know or craft it, with everything that needs.' },
+        description: 'Get a tool: from a chest you know, or crafted with everything it needs.' },
     { name: '!craftSupplies', section: 'T5', part: 'wood_pack', params: [{ name: 'item', type: 'string' }, { name: 'num', type: 'int', default: 1 }],
         description: 'Craft torches, ladders, a chest or a crafting table, and collect the wood for it.' },
     { name: '!mineOre', section: 'M5', part: 'mining_pack', params: [{ name: 'ore', type: 'string' }, { name: 'num', type: 'int', default: 8 }, { name: 'new_mine', type: 'boolean', default: false }],
-        description: 'Mine an ore and come back. Without a known mine you first ask the player. Use this when the player asks for an ore or for mining.' },
+        description: 'Mine an ore and come back. Without a known mine you first ask the player. Use this when the player asks for an ore.' },
     // v0.1.4.11 (part W, engineer E1): the descriptions of !goToMine and !leaveMine are shorter, so that the prompt with
     // the two lines of W6 and the description of !goToSurface (W4) stays at 17,000 characters
     { name: '!goToMine', section: 'M5', part: 'mining_pack', params: [{ name: 'ore', type: 'string', default: '' }],

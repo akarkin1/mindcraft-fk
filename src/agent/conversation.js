@@ -1,6 +1,7 @@
 import settings from './settings.js';
 import { containsCommand } from './commands/index.js';
 import { sendBotChatToServer } from './mindserver_proxy.js';
+import { isOtherBot } from './bots_logic.js';
 
 let agent;
 let agent_names = [];
@@ -202,7 +203,8 @@ class ConversationManager {
     }
 
     isOtherAgent(name) {
-        return agent_names.some((n) => n === name);
+        // v0.1.4.12, D2: the owner's other bots of settings.other_bots count as bots too (case-insensitive)
+        return agent_names.some((n) => n === name) || isOtherBot(name, settings.other_bots);
     }
 
     otherAgentInGame(name) {

@@ -186,6 +186,20 @@ export function enclosureLine(enclosure) {
     return `You stand in ${article} ${word} enclosure${size}${list ? ` with ${list}` : ''} that is not saved.`;
 }
 
+// v0.1.4.12 (F3): the knowledge line underground names the tunnel of a known mine, as the area sense says it (F2,
+// areas/area_kind.js tunnelText): `You stand in a tunnel 2 wide and 23 long, heading west, of the mine "mine".`; ''
+// for a tunnel of no mine, a cave, and any other place underground.
+const HEADINGS = ['north', 'east', 'south', 'west'];
+
+function undergroundLine(enclosure, mine) {
+    const t = enclosure?.border === 'rock' && enclosure.saved === false ? enclosure.tunnel : null;
+    if (!t || !mine || !isFiniteNumber(t.width) || !isFiniteNumber(t.length) || !HEADINGS.includes(t.dir)) {
+        return '';
+    }
+    const of = typeof mine.name === 'string' && mine.name !== '' ? `the mine "${mine.name}"` : 'my mine';
+    return `You stand in a tunnel ${Math.round(t.width)} wide and ${Math.round(t.length)} long, heading ${t.dir}, of ${of}.`;
+}
+
 /**
  * The line of where the bot is: `You are in the area "farm" (farm), on the surface.`, under the
  * ground `You are in the area "mine" (mine), 26 blocks under the ground.`; without an area
@@ -195,6 +209,9 @@ export function enclosureLine(enclosure) {
  * or `You are in the mine "mine", on its way in, 12 blocks under the ground.`
  * v0.1.4.11 (I6): with `where.enclosure` (an enclosure that no saved area holds) the line goes on with enclosureLine:
  * `You are on the surface. You stand in a fenced enclosure 9 x 7 with 6 chickens and 1 gate that is not saved.`
+ * v0.1.4.12 (F3): underground (where.underground, a depth of 8 or more, or a place in rock) the line names only the
+ * tunnel of a known mine (where.mine): `... You stand in a tunnel 1 wide and 12 long, heading south, of the mine
+ * "mine".`; nothing else of the enclosure.
  * @param {{area?: {name: string, type?: string|null}|null, depth?: number, underground?: boolean,
  *   mine?: {name: string|null, tunnel: number|null, level?: number}|null, enclosure?: object|null}|null} where
  * @returns {string}
@@ -217,7 +234,9 @@ export function whereLine(where) {
         parts.push(...mineParts(mine));
     }
     parts.push(level);
-    const enclosure = enclosureLine(where.enclosure);
+    const rock = where.enclosure?.border === 'rock';
+    const under = rock || where.underground === true || mine !== null || (isFiniteNumber(where.depth) && where.depth >= 8);
+    const enclosure = under ? undergroundLine(where.enclosure, mine) : enclosureLine(where.enclosure);
     return `You are ${parts.join(', ')}.${enclosure ? ` ${enclosure}` : ''}`;
 }
 

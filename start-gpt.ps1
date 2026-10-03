@@ -17,6 +17,8 @@ try {
     # The code model of profiles/gpt.json is a Claude model (claude-sonnet-5): the bot makes it
     # at the start and does not start without the Anthropic key.
     $env:ANTHROPIC_API_KEY = Get-Secret -Name AnthropicsApiKey -AsPlainText -ErrorAction Stop
+    # v0.1.4.12: the token of the watch server (settings watch_server), from the vault when it is there; without it the server does not start
+    $env:MC_WATCH_TOKEN = Get-Secret -Name MindcraftWatchToken -AsPlainText -ErrorAction SilentlyContinue
     if ($Log) {
         $dir = New-Item -ItemType Directory -Force "$env:LOCALAPPDATA\Mindcraft\logs"
         $file = Join-Path $dir ("gpt-{0:yyyyMMdd-HHmmss}.log" -f (Get-Date))
@@ -30,5 +32,6 @@ try {
 finally {
     Remove-Item Env:OPENAI_API_KEY -ErrorAction SilentlyContinue
     Remove-Item Env:ANTHROPIC_API_KEY -ErrorAction SilentlyContinue
+    Remove-Item Env:MC_WATCH_TOKEN -ErrorAction SilentlyContinue
     Pop-Location
 }

@@ -94,6 +94,12 @@ const settings = {
     "mine_from_inside": false, // with mining_pack: a new shaft may start from the room or a tunnel of a known mine (a second level), not only from the surface
     "routes_by_search": false, // with routes_pack: a route is walked by the path search from waypoint to waypoint, from the nearest one, after a dry scan; off: leg by leg
     "area_sense": false, // with protected_areas: the bot scans an unsaved enclosure it enters and says what it thinks it is (a pen, a farm, a home ...)
+    "smelting": false, // !smeltItem of the storage pack (a furnace in a saved room, the fuel it needs, the result read from the furnace) and the step smelt in a plan; off: !smeltItem of the original project
+    "watch_server": false, // the watch server for a Claude session (MCP over HTTP) on 127.0.0.1:watch_port; it starts only with MC_WATCH_TOKEN in the environment
+    "watch_port": 8090, // with watch_server: the port of the watch server, on 127.0.0.1 only
+    "watch_and_learn": false, // !watchMe, !continueLike, !buildWatched: the bot watches the blocks you place or break, says the pattern it understood and builds the rest after your yes
+    "other_bots": [], // the names of your other bots: the bot never answers their chat; a command echo (*x used y*) or a result of a bot is never answered, whoever sent it
+    "bot_role": "", // one sentence in the prompt, e.g. "You are the farmer. gpt is the miner."; empty: no role line
     "allow_vision": false, // allows vision model to interpret screenshots as inputs
     "blocked_actions" : ["!checkBlueprint", "!checkBlueprintLevel", "!getBlueprint", "!getBlueprintLevel", "!restart"] , // commands to disable and remove from docs. Ex: ["!setMode"]
     "code_timeout_mins": -1, // minutes code is allowed to run. -1 for no timeout

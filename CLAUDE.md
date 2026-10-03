@@ -16,7 +16,7 @@ This is a fork of [Mindcraft](https://github.com/mindcraft-bots/mindcraft) for M
 
 - `main` is the release line of the fork. Releases are tagged `v0.1.4.N`.
 - `develop` and `stable` are mirrors of the original project. Do not commit to them.
-- A release is built on a branch `hotfix/<topic>` and merged with a pull request. Create such a branch with `git checkout -b hotfix/<topic> origin/main --no-track`, so that a push never goes to `main`.
+- A release is built on a branch `release/v0.1.4.N-rc` (the release candidate) and merged with a pull request; after the merge the lead deletes the branch. A fix on top of a release goes on `release/v0.1.4.N-fix1`, `-fix2`, and so on. Create such a branch with `git checkout -b release/v0.1.4.N-rc origin/main --no-track`, so that a push never goes to `main`. Branches carry the version number, not a topic name: the owner reads numbers better than words.
 - The owner edits `settings.js` and `profiles/claude.json` in their checkout. Unit tests never assert the values of settings; they check their validity.
 
 ## Node and line endings

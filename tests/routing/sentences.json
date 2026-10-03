@@ -173,5 +173,9 @@
     { "say": "how many mines do we have", "expect": ["!mines"], "part": "mining_pack" },
     { "say": "forget the mine called old_mine", "expect": ["!forgetMine"], "part": "mining_pack" },
     { "say": "the mine by the river caved in, forget it", "expect": ["!forgetMine", "!mines"], "part": "mining_pack" },
-    { "say": "that mine is gone, delete it from your list", "expect": ["!forgetMine", "!mines"], "part": "mining_pack" }
+    { "say": "that mine is gone, delete it from your list", "expect": ["!forgetMine", "!mines"], "part": "mining_pack" },
+
+    { "say": "watch me", "expect": ["!watchMe"], "part": "watch_and_learn" },
+    { "say": "continue like this, 7 by 10", "expect": ["!continueLike"], "part": "watch_and_learn" },
+    { "say": "yes, build it", "expect": ["!buildWatched"], "part": "watch_and_learn" }
 ]

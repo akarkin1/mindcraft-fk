@@ -1,5 +1,5 @@
 diff --git a/node_modules/mineflayer-pathfinder/index.js b/node_modules/mineflayer-pathfinder/index.js
-index b38bd30..2efecd4 100644
+index b38bd30..3154ab9 100644
 --- a/node_modules/mineflayer-pathfinder/index.js
 +++ b/node_modules/mineflayer-pathfinder/index.js
 @@ -12,8 +12,11 @@ const Physics = require('./lib/physics')
@@ -66,7 +66,7 @@ index b38bd30..2efecd4 100644
      if (stopPathing) return stop()
    }
  
-@@ -165,12 +182,47 @@ function inject (bot) {
+@@ -165,17 +182,70 @@ function inject (bot) {
  
    bot.on('physicsTick', monitorMovement)
  
@@ -91,6 +91,7 @@ index b38bd30..2efecd4 100644
 +  }
 +
    function postProcessPath (path) {
++    let afterOpened = false // G3 of v0.1.4.12: the point before was a door, a gate or a trapdoor the bot opens
      for (let i = 0; i < path.length; i++) {
        const curPoint = path[i]
 -      if (curPoint.toBreak.length > 0 || curPoint.toPlace.length > 0) break
@@ -100,11 +101,16 @@ index b38bd30..2efecd4 100644
        const b = bot.blockAt(new Vec3(curPoint.x, curPoint.y, curPoint.z))
 -      if (b && (b.type === waterType || ((b.type === ladderId || b.type === vineId) && i + 1 < path.length && path[i + 1].y < curPoint.y))) {
 +      curPoint.tolerance = toleranceAt(b)
++      const behindDoor = afterOpened
++      afterOpened = false
 +
 +      // openned doors have small Collision box
 +      // that may stop the bot from moving forward
 +      // P3: every door point of the path, not only the first, and the gates and trapdoors
 +      if (isDoorLike(b)) {
++        // not after a trapdoor: the point behind a trapdoor over a ladder is the ladder's own (F8 of v0.1.4.12: the
++        // centring pulled the bot off the top rung)
++        afterOpened = curPoint.toPlace.some(p => p.useOne) && !b.name.includes('trapdoor')
 +        curPoint.x = Math.floor(curPoint.x) + 0.5
 +        curPoint.y = Math.floor(curPoint.y)
 +        curPoint.z = Math.floor(curPoint.z) + 0.5
@@ -116,7 +122,24 @@ index b38bd30..2efecd4 100644
          curPoint.x = Math.floor(curPoint.x) + 0.5
          curPoint.y = Math.floor(curPoint.y)
          curPoint.z = Math.floor(curPoint.z) + 0.5
-@@ -329,6 +381,7 @@ function inject (bot) {
+         continue
+       }
++      // G3: the first point behind a door the bot opens, on the far side of the frame, is the centre of its cell
++      // too (its height as below), so the bot does not clip the frame
++      if (behindDoor) {
++        const cx = Math.floor(curPoint.x) + 0.5
++        const cz = Math.floor(curPoint.z) + 0.5
++        const np = getPositionOnTopOf(b) ?? getPositionOnTopOf(bot.blockAt(new Vec3(curPoint.x, curPoint.y - 1, curPoint.z)))
++        curPoint.y = np ? np.y : curPoint.y - 1
++        curPoint.x = cx
++        curPoint.z = cz
++        continue
++      }
++
+       let np = getPositionOnTopOf(b)
+       if (np === null) np = getPositionOnTopOf(bot.blockAt(new Vec3(curPoint.x, curPoint.y - 1, curPoint.z)))
+       if (np) {
+@@ -329,6 +399,7 @@ function inject (bot) {
     */
    function fullStop () {
      bot.clearControlStates()
@@ -124,7 +147,7 @@ index b38bd30..2efecd4 100644
  
      // Force horizontal velocity to 0 (otherwise inertia can move us too far)
      // Kind of cheaty, but the server will not tell the difference
-@@ -397,7 +450,9 @@ function inject (bot) {
+@@ -397,7 +468,9 @@ function inject (bot) {
  
    bot.on('blockUpdate', (oldBlock, newBlock) => {
      if (!oldBlock || !newBlock) return
@@ -135,7 +158,7 @@ index b38bd30..2efecd4 100644
        resetPath('block_updated', false)
      }
    })
-@@ -417,6 +472,11 @@ function inject (bot) {
+@@ -417,6 +490,11 @@ function inject (bot) {
    })
  
    function monitorMovement () {
@@ -147,7 +170,7 @@ index b38bd30..2efecd4 100644
      // Test freemotion
      if (stateMovements && stateMovements.allowFreeMotion && stateGoal && stateGoal.entity) {
        const target = stateGoal.entity
-@@ -456,7 +516,7 @@ function inject (bot) {
+@@ -456,7 +534,7 @@ function inject (bot) {
      if (path.length === 0) {
        lastNodeTime = performance.now()
        if (stateGoal && stateMovements) {
@@ -156,7 +179,7 @@ index b38bd30..2efecd4 100644
            if (!dynamicGoal) {
              bot.emit('goal_reached', stateGoal)
              stateGoal = null
-@@ -521,9 +581,24 @@ function inject (bot) {
+@@ -521,9 +599,24 @@ function inject (bot) {
        // Open gates or doors
        if (placingBlock?.useOne) {
          if (!lockUseBlock.tryAcquire()) return
@@ -182,7 +205,7 @@ index b38bd30..2efecd4 100644
          }, err => {
            console.error(err)
            lockUseBlock.release()
-@@ -550,6 +625,7 @@ function inject (bot) {
+@@ -550,6 +643,7 @@ function inject (bot) {
              lockEquipItem.release()
              const refBlock = bot.blockAt(new Vec3(placingBlock.x, placingBlock.y, placingBlock.z), false)
              if (!lockPlaceBlock.tryAcquire()) return
@@ -190,7 +213,7 @@ index b38bd30..2efecd4 100644
              if (interactableBlocks.includes(refBlock.name)) {
                bot.setControlState('sneak', true)
              }
-@@ -557,6 +633,7 @@ function inject (bot) {
+@@ -557,6 +651,7 @@ function inject (bot) {
                .then(function () {
                  // Dont release Sneak if the block placement was not successful
                  bot.setControlState('sneak', false)
@@ -198,7 +221,7 @@ index b38bd30..2efecd4 100644
                  if (bot.pathfinder.LOSWhenPlacingBlocks && placingBlock.returnPos) returningPos = placingBlock.returnPos.clone()
                })
                .catch(_ignoreError => {
-@@ -576,7 +653,8 @@ function inject (bot) {
+@@ -576,7 +671,8 @@ function inject (bot) {
      let dx = nextPoint.x - p.x
      const dy = nextPoint.y - p.y
      let dz = nextPoint.z - p.z
@@ -208,7 +231,7 @@ index b38bd30..2efecd4 100644
        // arrived at next point
        lastNodeTime = performance.now()
        if (stopPathing) {
-@@ -587,9 +665,11 @@ function inject (bot) {
+@@ -587,9 +683,11 @@ function inject (bot) {
        if (path.length === 0) { // done
          // If the block the bot is standing on is not a full block only checking for the floored position can fail as
          // the distance to the goal can get greater then 0 when the vector is floored.
@@ -221,7 +244,7 @@ index b38bd30..2efecd4 100644
          }
          fullStop()
          return
-@@ -604,6 +684,24 @@ function inject (bot) {
+@@ -604,6 +702,24 @@ function inject (bot) {
        dz = nextPoint.z - p.z
      }
  
@@ -246,7 +269,7 @@ index b38bd30..2efecd4 100644
      bot.look(Math.atan2(-dx, -dz), 0)
      bot.setControlState('forward', true)
      bot.setControlState('jump', false)
-@@ -611,6 +709,9 @@ function inject (bot) {
+@@ -611,6 +727,9 @@ function inject (bot) {
      if (bot.entity.isInWater) {
        bot.setControlState('jump', true)
        bot.setControlState('sprint', false)
@@ -256,7 +279,7 @@ index b38bd30..2efecd4 100644
      } else if (stateMovements.allowSprinting && physics.canStraightLine(path, true)) {
        bot.setControlState('jump', false)
        bot.setControlState('sprint', true)
-@@ -628,12 +729,193 @@ function inject (bot) {
+@@ -628,12 +747,193 @@ function inject (bot) {
        bot.setControlState('sprint', false)
      }
  

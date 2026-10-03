@@ -1,9 +1,12 @@
 // The area sense (spec v0.1.4.11, I5, I6, P2): what an enclosure around the bot holds, and the reflex that says what
 // an unsaved enclosure seems to be. countContents and the scans read the world of the bot; senseStep is pure.
 // Nothing here throws: a failed read is a place without an enclosure.
+// v0.1.4.12 (F1 to F4): underground the sense names only a tunnel of a known mine (rockText), says nothing in a tunnel
+// of no mine, in a cave or in any other place, and never asks for a name; it never touches the controls of the bot (F9).
 import { Vec3 } from 'vec3';
-import { scanEnclosure } from './area_scan.js';
-import { kindOf, senseText } from './area_kind.js';
+import { scanEnclosure, useTunnelMeasure } from './area_scan.js';
+import { kindOf, senseText, rockText } from './area_kind.js';
+import { whereAmI as whereAmIOf } from '../reflex/where_am_i.js';
 
 /** The timing of the area sense (P2). */
 export const SENSE_RULES = Object.freeze({
@@ -17,6 +20,9 @@ export const ENCLOSURE_KNOWLEDGE_MS = 10000;
 
 /** The largest box whose blocks countContents reads (the largest area, 64 x 48 x 64). */
 const MAX_COUNT_VOLUME = 64 * 48 * 64;
+
+/** F3: the bot is underground at this depth or more, or when whereAmI says so. */
+export const UNDERGROUND_SENSE_DEPTH = 8;
 
 // Passive animals a player keeps behind a fence. Any entity of the type 'animal' counts too.
 const ANIMALS = new Set(['chicken', 'cow', 'pig', 'sheep', 'rabbit', 'horse', 'donkey', 'mule', 'llama', 'trader_llama', 'goat',
@@ -77,12 +83,15 @@ export function emptyContents() {
  * name, and any entity of the type 'animal'). Blocks: crops by kind (an attached stem is a stem), beds (the head
  * block; a bed without its parts counts as half), chests and barrels (a double chest once), furnaces, blast
  * furnaces and smokers, crafting tables, ladders, water sources. Never throws: what cannot be read is not counted.
+ * v0.1.4.12 (F1): with `options.border` 'rock' the water is not counted (the pockets of water of the rock).
  * @param {object} bot a mineflayer bot (entities, blockAt)
  * @param {{min: {x, y, z}, max: {x, y, z}}} box
+ * @param {{border?: string|null}} [options] border: the border of the enclosure of the box
  * @returns {object}
  */
-export function countContents(bot, box) {
+export function countContents(bot, box, options = {}) {
     const contents = emptyContents();
+    const water = options?.border !== 'rock';
     if (!isBox(box)) {
         return contents;
     }
@@ -129,7 +138,7 @@ export function countContents(bot, box) {
                         contents.tables++;
                     } else if (name === 'ladder') {
                         contents.ladders++;
-                    } else if (name === 'water') {
+                    } else if (name === 'water' && water) {
                         const level = Number(propertiesOf(block).level ?? 0);
                         if (!(level > 0)) contents.water++;
                     }
@@ -181,10 +190,43 @@ export function heldBySaved(areas, box, pos, dimension) {
 }
 
 /**
+ * F4: the bot stands still from the start of a scan to its end: its controls are cleared before the scan (the scan
+ * itself never walks). A walk of the path finder is left alone when `keepWalk` is true. Never throws. F9: only for a
+ * scan that runs as its own action (the typed !rememberArea); the sense and the knowledge line never call it.
+ * @param {object} bot
+ * @param {{keepWalk?: boolean}} [options]
+ */
+export function standStill(bot, options = {}) {
+    try {
+        if (options?.keepWalk === true && bot?.pathfinder?.isMoving?.() === true) {
+            return;
+        }
+        if (typeof bot?.clearControlStates === 'function') {
+            bot.clearControlStates();
+        }
+    } catch {
+        // a bot that cannot stop is scanned all the same
+    }
+}
+
+/**
+ * A place in rock (F1) that the bot stands in: the result of scanEnclosure with border 'rock' and a box that holds pos.
+ * @param {object} enclosure
+ * @param {{x: number, y: number, z: number}} pos
+ * @returns {boolean}
+ */
+function isRockHere(enclosure, pos) {
+    return enclosure?.border === 'rock' && isBox(enclosure.box) && inBox(enclosure.box, pos);
+}
+
+/**
  * The enclosure the bot stands in when no saved area holds it, else null (I6). Never throws.
+ * v0.1.4.12 (F1): also a tunnel or a cave in rock (kind 'tunnel' or 'cave', the water not counted), whatever area holds
+ * it. The controls of the bot are never touched here (F9).
  * @param {object} bot
  * @param {object[]} areas the saved areas
- * @param {{floors?: boolean}} [options] floors: the setting area_floors
+ * @param {{floors?: boolean, tunnelAt?: Function}} [options] floors: the setting area_floors; tunnelAt: the measure of
+ *   a tunnel (tunnelAt of the mining pack), else the one registered with useTunnelMeasure
  * @returns {{enclosure: object, contents: object, kind: string, box: {min: object, max: object}}|null}
  */
 export function unsavedEnclosure(bot, areas, options = {}) {
@@ -193,7 +235,15 @@ export function unsavedEnclosure(bot, areas, options = {}) {
         if (!pos) {
             return null;
         }
-        const enclosure = scanEnclosure(blockNamesOf(bot), pos, { floors: options?.floors === true });
+        const scanOptions = { floors: options?.floors === true };
+        if (typeof options?.tunnelAt === 'function') {
+            scanOptions.tunnelAt = options.tunnelAt; // else the measure the sense registered (useTunnelMeasure)
+        }
+        const enclosure = scanEnclosure(blockNamesOf(bot), pos, scanOptions);
+        if (isRockHere(enclosure, pos)) {
+            const contents = countContents(bot, enclosure.box, { border: 'rock' });
+            return { enclosure, contents, kind: kindOf(enclosure, contents), box: enclosure.box };
+        }
         if (!enclosure.found || !inBox(enclosure.box, pos) || heldBySaved(areas, enclosure.box, pos, bot.game?.dimension)) {
             return null;
         }
@@ -206,7 +256,8 @@ export function unsavedEnclosure(bot, areas, options = {}) {
 
 /**
  * The input of the knowledge line (I6) for whereLine: `{ saved: false, border, size: { x, z }, contents, openings,
- * roof }`, or null.
+ * roof }`, or null. v0.1.4.12 (F3): a place in rock is `{ saved: false, border: 'rock', kind: 'tunnel'|'cave', size,
+ * tunnel: { width, length, dir }|null }`.
  * @param {{enclosure: object, contents: object, box: object}|null} found the result of unsavedEnclosure
  * @returns {object|null}
  */
@@ -215,6 +266,17 @@ export function enclosureKnowledge(found) {
         return null;
     }
     const box = orderedBox(found.box);
+    if (found.enclosure.border === 'rock') {
+        // v0.1.4.12 (F3): a tunnel or a cave; the knowledge line names only a tunnel of a known mine
+        const tunnel = found.enclosure.tunnel;
+        return {
+            saved: false,
+            border: 'rock',
+            kind: tunnel ? 'tunnel' : 'cave',
+            size: { x: box.max.x - box.min.x + 1, z: box.max.z - box.min.z + 1 },
+            tunnel: tunnel ? { width: tunnel.width, length: tunnel.length, dir: tunnel.dir } : null,
+        };
+    }
     return {
         saved: false,
         border: found.enclosure.border ?? null,
@@ -266,16 +328,63 @@ export function senseStep(state, input) {
 }
 
 /**
+ * Where the bot is for the sense (F3): `input.whereAmI()` (agent.whereAmI of the glue: the area, the depth, underground
+ * and the mine), else whereAmI of reflex/where_am_i.js for the bot (without the mine). null when it cannot be read.
+ * @param {object} bot
+ * @param {{whereAmI?: Function, now?: number}} input
+ * @returns {{depth?: number, underground?: boolean, mine?: object|null}|null}
+ */
+function whereOf(bot, input) {
+    try {
+        const where = typeof input?.whereAmI === 'function' ? input.whereAmI() : whereAmIOf(bot, input?.now ?? Date.now());
+        return where && typeof where === 'object' ? where : null;
+    } catch {
+        return null;
+    }
+}
+
+/**
+ * True when the bot is underground for the sense (F3): whereAmI().underground, or a depth of 8 or more.
+ * @param {{depth?: number, underground?: boolean}|null} where
+ * @returns {boolean}
+ */
+export function isUndergroundHere(where) {
+    return where?.underground === true || (Number.isFinite(where?.depth) && where.depth >= UNDERGROUND_SENSE_DEPTH);
+}
+
+/**
+ * The mine of a tunnel for the sense (F3): whereAmI().mine when the bot is in a known mine, else null.
+ * @param {{mine?: object|null}|null} where
+ * @returns {object|null}
+ */
+function knownMine(where) {
+    const mine = where?.mine;
+    return mine && typeof mine === 'object' ? mine : null;
+}
+
+/**
  * One tick of the reflex area_sense (P2): scans at most every 2 s while the bot is outside the last enclosure it
  * found (the same enclosure is not scanned again while the bot stays in its box), applies senseStep, and returns the
  * line to say or null. Never throws.
+ * v0.1.4.12 (F1 to F4): the sense never touches the controls of the bot (F9: a mode ticks while an action climbs; a
+ * scan is synchronous reads, so the bot does not move during it). A tunnel in rock of a known mine (whereAmI().mine) gets
+ * the sentence of F2 once per tunnel per start; a tunnel of no mine and a cave get nothing. Underground (whereAmI()
+ * .underground or a depth of 8 or more) the sense never asks for a name: it says nothing but that sentence. A scan
+ * over 2 s adds `The scan took 3 s.` to the line it found.
  * @param {object} state newSenseState() with the fields this function adds
  * @param {object} bot
- * @param {{now: number, idle: boolean, areas: object[], floors?: boolean}} input
+ * @param {{now: number, idle: boolean, areas: object[], floors?: boolean, whereAmI?: Function, tunnelAt?: Function}} input
+ *   whereAmI: agent.whereAmI of the glue (optional); tunnelAt: tunnelAt of the mining pack when it is loaded (optional,
+ *   registered with useTunnelMeasure for every scan; without it a tunnel is a cave)
  * @returns {string|null}
  */
 export function senseTick(state, bot, input) {
     try {
+        // F1: the measure of a tunnel is tunnelAt of the mining pack, given by the glue (never imported: packs are
+        // reached at run time); kept by area_scan.js for every scan of a place
+        if (typeof input?.tunnelAt === 'function') {
+            useTunnelMeasure(input.tunnelAt);
+        }
         const pos = bot?.entity?.position;
         const now = input.now;
         if (!input.idle || !pos) {
@@ -290,18 +399,37 @@ export function senseTick(state, bot, input) {
             state.scannedAt = now;
             state.found = null;
             const enclosure = scanEnclosure(blockNamesOf(bot), pos, { floors: input.floors === true });
-            if (enclosure.found && inBox(enclosure.box, pos)) {
-                state.found = { enclosure, box: enclosure.box };
+            if ((enclosure.found && inBox(enclosure.box, pos)) || isRockHere(enclosure, pos)) {
+                state.found = { enclosure, box: enclosure.box, rock: enclosure.border === 'rock' };
             }
         }
         const found = state.found;
-        const held = found ? heldBySaved(input.areas, found.box, pos, bot.game?.dimension) : false;
-        const key = found && !held ? boxKey(found.box) : null;
+        let key = null;
+        let line = null;
+        if (found) {
+            const where = whereOf(bot, input);
+            if (found.rock) {
+                const mine = found.enclosure.tunnel ? knownMine(where) : null;
+                if (mine) {
+                    key = `tunnel:${boxKey(found.box)}`;
+                    line = () => rockText(found.enclosure, mine);
+                }
+            } else if (!isUndergroundHere(where) && !heldBySaved(input.areas, found.box, pos, bot.game?.dimension)) {
+                key = boxKey(found.box);
+                line = () => {
+                    const contents = countContents(bot, found.box);
+                    return senseText(kindOf(found.enclosure, contents), found.enclosure, contents, found.box);
+                };
+            }
+        }
         if (!senseStep(state, { now, idle: true, key })) {
             return null;
         }
-        const contents = countContents(bot, found.box);
-        return senseText(kindOf(found.enclosure, contents), found.enclosure, contents, found.box);
+        const text = line();
+        if (!text) {
+            return null;
+        }
+        return found.enclosure.took ? `${text} ${found.enclosure.took}` : text;
     } catch {
         return null;
     }

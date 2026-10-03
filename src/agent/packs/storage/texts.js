@@ -8,6 +8,29 @@ export const TEXTS = Object.freeze({
     noChests: 'I know no chests in this world.',
     chestsHeader: 'Chests I know in this world:',
     noItemName: 'Tell me which item to fetch.',
+    // v0.1.4.12 (4.2): smelting, word for word
+    noFuel: 'I have no fuel: no coal, charcoal, planks or logs.',
+    /** `I know no furnace within 64 blocks and carry none.` (v0.1.4.12, F1: the range searched) */
+    noFurnace: (range = 16) => `I know no furnace within ${range} blocks and carry none.`,
+    /** `I smelted 8 raw_iron into 8 iron_ingot in the furnace at (x, y, z) with 1 coal.` */
+    smelted: (count, item, product, pos, fuelCount, fuelName) => `I smelted ${count} ${item} into ${count} ${product} in the furnace at ${posText(pos)} with ${fuelCount} ${fuelName}.`,
+    /** `I carry no raw_iron.` */
+    noItem: (item) => `I carry no ${item}.`,
+    /** `I stopped after 3 of 8 raw_iron.` */
+    stopped: (done, count, item) => `I stopped after ${done} of ${count} ${item}.`,
+    /** `raw_cobblestone is not something a furnace changes.` */
+    notSmeltable: (item) => `${item} is not something a furnace changes.`,
+    // v0.1.4.12: smelting texts the spec does not give (decision of engineer E2)
+    /** `I ran out of time after 3 of 8 raw_iron.` */
+    smeltTimeout: (done, count, item) => `I ran out of time after ${done} of ${count} ${item}.`,
+    /** `I carried only 3 raw_iron.` */
+    smeltOnly: (have, item) => `I carried only ${have} ${item}.`,
+    /** `I had fuel for 3 only.` */
+    smeltLittleFuel: (covers) => `I had fuel for ${covers} only.`,
+    /** `The furnace stopped after 3 of 8 raw_iron.` */
+    smeltStalled: (done, count, item) => `The furnace stopped after ${done} of ${count} ${item}.`,
+    /** `I could not smelt raw_iron: <error>` */
+    smeltError: (item, message) => `I could not smelt ${item}: ${message}`,
 });
 
 /** Most kinds of items a list names before ` and <n> more kinds`. */

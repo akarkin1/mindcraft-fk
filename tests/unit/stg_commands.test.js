@@ -534,7 +534,7 @@ describe('the descriptions: what each command does now (section 11, item 9)', ()
         };
         for (const [name, pattern] of Object.entries(words)) assert.match(command(name).description, pattern, name);
         for (const name of ['!makeBoneMeal', '!getTool']) assert.ok(!/shears/.test(command(name).description), `${name}: no shears`);
-        assert.match(command('!getTool').params.material.description, /Empty: the best you can make, up to stone\./);
+        assert.match(command('!getTool').params.material.description, /empty: the best you can make, up to stone\./i); // v0.1.4.12: shorter for the prompt
         assert.match(command('!mineOre').params.new_mine.description, /player said yes/);
     });
 

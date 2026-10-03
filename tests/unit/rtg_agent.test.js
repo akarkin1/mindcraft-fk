@@ -131,7 +131,7 @@ describe('_loadWorkPacks: the routes pack only with routes_pack', () => {
         assert.ok(at > 0);
         const before = SOURCE.slice(SOURCE.lastIndexOf('if (settings.routes_pack) {', at), at);
         assert.match(before, /^if \(settings\.routes_pack\) \{\n\s+try \{\n\s+packs\.routes = await \(loaders\.routes \? loaders\.routes\(\) : $/);
-        assert.ok(SOURCE.includes('if (settings.storage_pack || settings.farming_pack || settings.wood_pack || settings.mining_pack || settings.routes_pack) {\n            this.work_packs = await this._loadWorkPacks();'));
+        assert.ok(SOURCE.includes('if (settings.storage_pack || settings.farming_pack || settings.wood_pack || settings.mining_pack || settings.routes_pack || settings.watch_and_learn) {\n            this.work_packs = await this._loadWorkPacks();')); // v0.1.4.12: the watching pack loads for its switch alone too
     });
 });
 

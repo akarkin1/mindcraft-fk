@@ -248,3 +248,14 @@ export function unknownSupplyText(item) {
 export function notCraftableText(name) {
     return `I cannot craft ${withArticle(name)}. It is made at a smithing table, which I do not use.`;
 }
+
+/**
+ * v0.1.4.12 (part E, 4.2): an iron tool with smelting on and no iron at all:
+ * `I have no iron for an iron_pickaxe: 3 iron_ingot or 3 raw_iron are needed. Say "mine 3 iron" first.`
+ * @param {string} name the tool, `iron_pickaxe`
+ * @param {number} count the iron ingots its recipe takes
+ * @returns {string}
+ */
+export function noIronText(name, count) {
+    return `I have no iron for ${withArticle(name)}: ${count} iron_ingot or ${count} raw_iron are needed. Say "mine ${count} iron" first.`;
+}

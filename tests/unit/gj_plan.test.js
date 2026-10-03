@@ -8,10 +8,10 @@ import { loadSrc } from '../helpers/load.js';
 const P = await loadSrc('src/agent/job/plan_logic.js');
 const J = await loadSrc('src/agent/job/job_logic.js');
 
-const ALLOWED = ['!chopTrees', '!craftSupplies', '!craftRecipe', '!getTool', '!fetchItem', '!collectBlocks', '!smeltItem'];
+const ALLOWED = ['!chopTrees', '!craftSupplies', '!craftRecipe', '!getTool', '!fetchItem', '!collectBlocks', '!smeltItem', '!mineOre']; // v0.1.4.12 (E): !mineOre is a step of a plan
 
 describe('section 5: the commands of a plan', () => {
-    test('exactly the seven commands of the wood, storage and crafting kind', () => {
+    test('exactly the eight commands of the wood, storage, crafting and mining kind', () => {
         assert.deepEqual([...P.PLAN_COMMAND_NAMES].sort(), [...ALLOWED].sort());
     });
 });
@@ -37,7 +37,7 @@ describe('I2: parsePlan', () => {
     });
 
     test('a command outside the list: no plan', () => {
-        for (const other of ['!mineOre("iron", 4)', '!goToPlayer("player", 3)', '!newAction("make torches")', '!farmCycle("farm")', '!followPlayer("player", 3)']) {
+        for (const other of ['!goToPlayer("player", 3)', '!newAction("make torches")', '!farmCycle("farm")', '!followPlayer("player", 3)']) {
             assert.equal(P.parsePlan(`!chopTrees(2)\n${other}\n!craftSupplies("torch", 16)`), null, other);
         }
     });

@@ -25,7 +25,7 @@ describe('planPrompt', () => {
     });
 
     test('the commands of the wood, storage and crafting kind only', () => {
-        assert.deepEqual([...P.PLAN_COMMAND_NAMES], ['!chopTrees', '!craftSupplies', '!craftRecipe', '!getTool', '!fetchItem', '!collectBlocks', '!smeltItem']);
+        assert.deepEqual([...P.PLAN_COMMAND_NAMES], ['!chopTrees', '!craftSupplies', '!craftRecipe', '!getTool', '!fetchItem', '!collectBlocks', '!smeltItem', '!mineOre']); // v0.1.4.12 (E)
     });
 
     test('an empty inventory and a list of names', () => {
@@ -55,12 +55,12 @@ describe('parsePlan', () => {
     test('the checks of the other commands', () => {
         const steps = P.parsePlan('!craftRecipe("furnace")\n!collectBlocks("stone", 8)\n!smeltItem("raw_iron", 3)\n!getTool("axe")', P.PLAN_COMMAND_NAMES);
         assert.deepEqual(steps.map(s => s.check), [
-            { item: 'furnace', count: null }, { item: 'cobblestone', count: 8 }, { item: 'raw_iron', count: null }, { item: 'axe', count: null },
+            { item: 'furnace', count: null }, { item: 'cobblestone', count: 8 }, { item: 'iron_ingot', count: 3 }, { item: 'axe', count: null }, // v0.1.4.12 (E): the product of the smelt
         ]);
     });
 
     test('a command outside the list refuses the plan', () => {
-        assert.equal(P.parsePlan('!chopTrees(4)\n!mineOre("iron", 8)', P.PLAN_COMMAND_NAMES), null);
+        assert.equal(P.parsePlan('!chopTrees(4)\n!farmCycle("farm")', P.PLAN_COMMAND_NAMES), null);
         assert.equal(P.parsePlan('!craftSupplies("torch", 16)\n!goToPlayer("Steve")', P.PLAN_COMMAND_NAMES), null);
         assert.equal(P.parsePlan('!chopTrees(4)', ['!craftSupplies']), null);
     });

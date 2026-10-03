@@ -14,6 +14,7 @@ import { extractTask } from '../agent/skills/skill_review.js';
 import { withPurpose } from '../agent/cost/usage_context.js';
 import { buildRulesSection } from '../agent/rules/rule_prompt.js';
 import { visibleExamples } from '../agent/rules/example_filter.js';
+import { insertRoleLine } from '../agent/bots_logic.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -275,6 +276,9 @@ export class Prompter {
             // v0.1.4.8: a profile without $KNOWLEDGE (the profile of the owner) gets the block like the rules
             const knowledge_placeholder = typeof prompt === 'string' && prompt.includes('$KNOWLEDGE');
             prompt = await this.replaceStrings(prompt, messages, this.convo_examples);
+            // v0.1.4.12 (D3, DECISIONS F2, F2b): the line of bot_role after the W6 sentence of the rules of places, else
+            // before "Summarized memory:", else nowhere; an empty role: the prompt unchanged
+            prompt = insertRoleLine(prompt, settings.bot_role);
             if (this.agent?.skill_manager) {
                 try {
                     prompt = insertSection(prompt, this.agent.skill_manager.conversingSection());

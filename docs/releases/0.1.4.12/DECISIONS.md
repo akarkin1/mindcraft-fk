@@ -1,0 +1,80 @@
+# Decisions v0.1.4.12
+
+Every defect the tests found, with the decision and the owner of the correction. The tests of T3 were
+written from the plan before the build; the engineers' parts came in while they were run.
+
+## Found by the journeys of T3, written before the build
+
+| Id | Finding | Where | Decision | Owner |
+|---|---|---|---|---|
+| T3-1 | W105: the job planner said "I could not plan the steps for the iron ingot": the plan commands have no way to get raw iron (`!mineOre` is not a plan command). | iron_pickaxe | `!mineOre(ore, num)` becomes a plan command when the mining pack is on and a mine is known; `missingSupplies` for iron proposes mine, smelt, tool. | E (E2) |
+| T3-2 | W106: `!leaveMine` from the tunnel of the base said `the ladder at (x, z) has a gap of 1 at y 42. I need 1 ladder to go on.`: shaft 2 of the owner variant ends 2 blocks above the room floor. `!goToMine` and the typed walk still reach the tunnel; the walk to the cave used destructive movements (`!goToCoordinates` of the original project). | scan_underground | The base keeps its gap (it is the owner's); the scenario goes on. `!goToCoordinates` digging is the original project's command and not of this release. | none |
+| T3-3 | W107 cannot tell v0.1.4.11 from v0.1.4.12: a dig ordered 1 s after the spawn is dropped once and done at 3 s (within the 10 s window); the workaround of the home pack already gets the bot out of bed in 0.5 s. | spawn_and_bed | Kept as it is: the scenario proves the behaviour, not the difference; the unit tests of G1 and G2 prove the packets. A 2 s window would be a race. | lead |
+| T3-4 | W108: with `only_chat_with` the bots whisper only to the player, so "neither answers the other" holds on the old code too. | two_bots | The sharp checks are the role line in every prompt, the farmer running no `!mineOre`, the miner running it. | lead |
+
+Decisions of T3 accepted: the teacher is the player of the order channel; W105 teaches the mine first and puts the ore beyond the tunnel's end (the way W81 and W86 prove); W106 accepts `I am in a cave` or `I am in a tunnel` with nothing saved; W103 checks the understood text by its parts; the second bot of W108 runs as a second node process of the same file (the settings are one module per process).
+
+## State at the plan limit, 2026-10-03 (6900267)
+
+Parts C, E, G and B are done and committed with their journeys passing (W100, W101, W102, W107). Parts F (E5) and D
+(E6) were stopped mid-work by the session limit of the plan (it resets at 06:00 UTC); their files are in the wip commit
+as they stood. T1 has not started. Open items, in the order of the next session:
+
+| Id | Finding | Where | Decision | Owner |
+|---|---|---|---|---|
+| F1 | W105: the plan runs now (4 raw iron mined), but `!smeltItem` in the tunnel says `I know no furnace within 16 blocks and carry none.`: the furnace of the room is 20 to 30 blocks from the tunnel's end. | iron_pickaxe | `smeltItem` looks for a furnace within 16 blocks first, then within 64 among the loaded blocks the guard allows, and walks to it with the pack's walk (no digging); the text names the range it searched. | E (E2), done: W105 passes in 188 s (mine 44 s, smelt 42 s, the tool 2 s; `I smelted 3 raw_iron into 3 iron_ingot in the furnace at (400, 41, -2) with 2 oak_planks.`) |
+| F2 | D3 as written needs a placeholder in both profiles, which breaks rule 17 (`profiles/claude.json` unchanged) and the four tests of W6 of v0.1.4.11. | two_bots | No placeholder: the prompter inserts the role line after the W6 sentence "A rule about a place names a saved place..." when `bot_role` is set; both profiles go back to their text. | D (E6) |
+| F3 | The source test of `_loadWorkPacks` (tests/unit/rtg_agent.test.js, "the packs are loaded for routes_pack alone too") reads the `if` line of `start()`, which now names `watch_and_learn` too. | the lead's glue | The test accepts the longer condition. | T1 |
+| F4 | `tests/unit/stg_commands.test.js` ("the words of the new behaviour") wants `home.*building.*farm.*pen.*mine` in the description of `!rememberArea`, which the lead shortened for the prompt limit. | the lead's glue | The description names the kinds in short: `...; without a type you conclude the kind (home, building, farm, pen, mine) from what is there.`, the test stays. | lead |
+| F5 | `scripts/routing_check.js --dry-run --all-parts` fails ("every part is on"): the dry run's list of parts does not switch `watch_and_learn` on. | routing | `--all-parts` switches every key of PART_COMMANDS on. | T1 |
+| F6 | E5's static import of `tunnelAt` from the mining pack in `area_sense.js` (the rule: packs through ctx). | scan_underground | Through the context, or a pure copy in areas if small; E5 was told. | F (E5) |
+
+## Found by the unit tests of T1 (from the spec, 171 tests)
+
+| Id | Finding | Where | Decision | Owner |
+|---|---|---|---|---|
+| T1-1 | `!rememberArea` and the knowledge line scan without the measure of the mining pack (only the sense registered it, on its first tick), so a tunnel 2 wide and 23 long came out as a cave. | the scans underground | The measure is registered with `useTunnelMeasure` when the mining pack loads (`_loadWorkPacks`); the test registers it the same way. | lead, done |
+| T1-2 | The state tool measured the distance to home from the exact position to the corner of the home block: `(12, 67, 52)` and `Home: (10, 67, 52), 3 blocks away.` | the watch server | The distance between the two cells printed. | lead, done |
+
+W103 (the fence) and W104 (the tunnel) ran for the first time on the finished code and pass (40.7 s, 31.0 s); W106 passes with ladders in the kit (148 s); W108 passes with the role line fallback (56.5 s). Every journey of this release has passed at least once.
+
+## The gate in the fresh clone at ff9682f, 2026-10-03
+
+Unit 7720 of 7722 (1 skipped; the launch-script test counted two secrets, now three: the token). End-to-end 17 of 17. The
+30 journeys: 28 of 30.
+
+| Id | Finding | Where | Decision | Owner |
+|---|---|---|---|---|
+| F7 | W90: "this is the basement" in the basement of the base (dug into the stone under the house, torches, a bed, a chest, a trapdoor above) answered `I am in a cave; a cave is nothing I save.`: the rock rule of F1 took a dug room for a cave. The owner's basement and his mine room are such rooms. | two_floors | A place in rock is a cave only when it shows no use: no door or trapdoor on its border and no bed, chest, furnace, crafting table or ladder inside; otherwise the building scan decides as before. The tunnel rule stays first; a bare cave stays a cave; the sense stays quiet underground (F3). | F (E5), done: `I saved "basement": a building, walled, 9 x 8 with a roof, 1 trapdoor, 1 bed, 5 ladders.` |
+| F8 | W88: the climb up ladder 1 under the house trapdoor ended with two reversals of 0.3 blocks at the top: G3 centred the point behind the trapdoor the bot opened, which pulled it off the top rung. | ladders_native | G3 applies to doors and gates only; the point behind a trapdoor is the ladder's own. | lead, done |
+| F9 | W88 fails twice after F8 too: the climb up ladder 1 stalls and reverses at the top, and the ladder step says `I could not climb up the ladder at (403, 52, -2): it took too long.`; it passed before part F. The sense's "stand still" (F4) calls `clearControlStates()` before each scan, and the sense ticks while the bot climbs, which drops the controls of the path search and the ladder step mid-climb. | ladders_native | The sense never touches the controls; a scan is synchronous reads and the bot does not move during it. | F (E5), done: W88, W90, W106 pass in one run |
+
+## The gate in the fresh clone at c8d9146, 2026-10-03
+
+`/home/user/mc-verify12` (a fresh clone of the branch, the pathfinder package installed again for the changed patch).
+Unit 7725 of 7726 (1 skipped, Windows only). End-to-end 17 of 17. The 30 journeys: 30 of 30 (51 minutes). The old set
+follows below.
+
+The old set in the fresh clone at c8d9146: the first half (37 scenarios, 2642 s) 52 of 52 lines; the second half found:
+
+| Id | Finding | Where | Decision | Owner |
+|---|---|---|---|---|
+| F10 | W47 creeper_in_sight (the bot in the tunnel of a saved mine area) died twice of `JavaScript heap out of memory` after 220 s; run 1 passed in 12 s; the scenario passed in every set before part F. The flood of the rock scan runs out through the natural caves of the world without a bound. | creeper_in_sight | A hard cap on the flood and the cache (cells and box); at the cap the place is open: found false, no rock place, nothing said. | F (E5) |
+
+The old set at c8d9146, both halves: 73 scenarios, 87 of 88 lines passed (2642 s and 3807 s); the one failure is W47 of F10
+(1 of 3 runs). The fix of F10, the creeper runs and a last gate follow before the merge.
+
+F10, bisected by E5 (56 runs): the heap crash is not of part F. With part F fully reverted W47 crashed 1 time in 30; with
+part F and the caps 2 in 26; the crash comes right after `executing code...` of the creeper_safety mode, the bot at the
+landing after the explosion at health 1.2, and the creeper action never finishes (`waiting for code to finish
+executing...`). The same crash is in the full set of 2026-10-01 (v0.1.4.10, `verify_world3.txt`: one SIGABRT). The caps of
+the scan stay (`SCAN_READ_LIMIT` 131,072 reads, `FLOOD_MAX_CELLS` 4,096, `ROCK_BOX_MAX` 48 x 24: a larger place is open and
+nothing is said; a tunnel longer than 46 says nothing). Decision: F10 is an intermittent defect of the creeper action's
+keep-away loop that predates this release; it goes to v0.1.4.13 with a profiling run inside the agent process (E5's
+suggestion), and the release ships with it noted in the changelog.
+
+## The last gate in the fresh clone at 217e29b, 2026-10-03
+
+Unit 7730 of 7731 (1 skipped). End-to-end 17 of 17. The scenarios around the capped scan and the creeper: W47 twice,
+first_minutes, pen_gate_safe, two_floors, place_from_sentence, owner_region, watch_fence, scan_underground: 8 of 8 (653 s).
+The release ships from 2e362bd with F10 noted.

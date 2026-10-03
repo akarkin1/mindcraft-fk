@@ -18,6 +18,7 @@ Rules that hold for every release:
 | 0.1.4.10 | Goals | Released |
 | 0.1.4.11 | Navigation and words | Released |
 | 0.1.4.12 | Understanding and watching | Planned, both trials passed |
+| 0.1.4.13 | Routines | Planned: routines first, then the local embedding model |
 | Later | See the backlog | Not decided |
 
 ## 0.1.4.9 The mine, the routes of the player, and the model comparison
@@ -149,6 +150,21 @@ cost a play yet.
 ### Part D: two bots
 
 Two bots of the owner in one world answered each other's command echoes and results (2026-10-03). Until this part, `only_chat_with` names the owner in each bot's settings and `MINDSERVER_PORT` gives the second bot its own port. The part: a bot recognises the other bots of the owner by name (the launch script passes them), never answers their echoes or results, and a role per bot ("you farm, you mine") in the settings; a question to both ("where are you?") gets one line from each.
+
+## 0.1.4.13 Routines
+
+Decided by the owner on 2026-10-03, during the gate of v0.1.4.12: "something like maintain the base cannot be expressed as a function, but can easily be described with words". A rule is a constraint; a routine is a procedure in the owner's words, kept per world like the rules, that the bot works through when the owner names it.
+
+| Step | Content |
+|---|---|
+| The store | `!rememberRoutine("maintain the base", "Farm the wheat and store it. Feed the chickens if any are missing. Keep 32 torches. At night mine iron in the mine. Stay within 100 blocks of home.")`, `!routines`, `!forgetRoutine`, in `bots/<name>/routines.json`; at most 20, one paragraph each. |
+| Running one | `!doRoutine("maintain the base")`, or the name in a sentence: the text becomes the goal of a job of v0.1.4.10; the model turns the sentences into steps (commands only, never code), code checks each step, errands do not end it, it survives a restart, a routine that maintains runs again when its steps are done until "stop". One line per step done; the knowledge block names the running routine and its step. |
+| The supervisor's lever | A routine is what the watch server's `say` hands the bot when the owner is away: `say "maintain the base"`. |
+| What it is not | No new commands, no code written, no rule changed: a library of well-written prompts, each with a name. |
+
+Setting `routines` (off). After it, part A of v0.1.4.12 (the local embedding model), measured by the routing check first.
+
+Also in 0.1.4.13: the keep-away loop of the creeper reflex, which about once in 30 runs after an explosion that leaves the bot near death runs on until the process is out of memory (W47, seen 2026-10-01 and 2026-10-03; not of a part of 0.1.4.12, bisected). A profiling run inside the agent process finds the loop; the fix gets a repeated W47.
 
 ## Backlog
 

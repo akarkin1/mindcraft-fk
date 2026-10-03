@@ -152,6 +152,17 @@ const SCENARIOS = [
     ['words', 'w98_words.js', 1500, false, 'base'],
     // the owner's region from his dump (MCW_OWNER_DUMP): his staircase (F24) and his basement as a shelter (F25)
     ['owner_region', 'w99_owner_region.js', 2400, false, 'base'],
+    // v0.1.4.12 "Understanding and watching" (tester T3): the watch server, its events, learning by watching (the teacher),
+    // the iron pickaxe, the scans underground, the first second and the bed, two bots
+    ['watch_server', 'w100_watch_server.js', 600, false, 'base'],
+    ['watch_events', 'w101_watch_events.js', 600, false, 'base'],
+    ['watch_line', 'w102_watch_line.js', 600, false, 'base'],
+    ['watch_fence', 'w103_watch_fence.js', 900, false, 'base'],
+    ['watch_tunnel', 'w104_watch_tunnel.js', 900, false, 'base'],
+    ['iron_pickaxe', 'w105_iron_pickaxe.js', 1500, false, 'base'],
+    ['scan_underground', 'w106_scan_underground.js', 1500, false, 'base'],
+    ['spawn_and_bed', 'w107_spawn_and_bed.js', 600, false, 'base'],
+    ['two_bots', 'w108_two_bots.js', 600, false, 'base'],
 ];
 
 // Words that select a group of scenarios (spec v0.1.4.8, W30: the work scenarios of v0.1.4.7, which run
@@ -168,6 +179,8 @@ const GROUPS = {
         'job_comes_back', 'blocker_steps', 'idle_list', 'ladders_native', 'pen_gate_safe', 'two_floors',
         'tunnel_where_you_stand', 'shaft_from_room', 'open_sky', 'place_from_sentence', 'route_joined', 'dry_scan',
         'no_digging_to_player', 'words', 'owner_region',
+        'watch_server', 'watch_events', 'watch_line', 'watch_fence', 'watch_tunnel', 'iron_pickaxe', 'scan_underground', 'spawn_and_bed',
+        'two_bots',
     ],
 };
 

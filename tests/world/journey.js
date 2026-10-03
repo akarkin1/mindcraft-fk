@@ -8,9 +8,13 @@
 //
 // The memory of the bot is empty at the start: every scenario runs in a fresh working directory with an empty
 // bots/ folder (run.js), and a journey saves no place, area or route itself (no saveHomePlace).
+import http from 'node:http';
+import net from 'node:net';
+import path from 'node:path';
+import { spawn } from 'node:child_process';
 import {
     check, note, startAgent, settings0149, resetBot, orderChannel, commands, placeBot, waitFor, entityPos, sleep, tp, fmt,
-    setTrapdoor, startTrace, printTrace, readWorldFile, giveItems, recordMoves,
+    setTrapdoor, startTrace, printTrace, readWorldFile, giveItems, recordMoves, ROOT,
 } from './helpers.js';
 import { inBox, isOpen, dist, setOpen, chestItems, findBlocks, blockNames } from './world.js';
 
@@ -633,6 +637,109 @@ export function wayOutOfMine(b, from) {
 // The surface: feet at y g+1 or higher, outside the mine box and the basement.
 export function onSurface(b, a) {
     return Boolean(a) && a.y >= b.g + 1 - 0.01 && !inBox(a, b.mineBox) && !inBasement(b, a);
+}
+
+// ------------------------------------------------------------------ v0.1.4.12 "Understanding and watching" (W100 to W108)
+
+// The owner's switches of v0.1.4.11 (JOURNEY_SETTINGS with job_memory and area_floors, as W97 and W99) and `extra`: the
+// switches of v0.1.4.12 that a journey needs (watch_server and watch_port, watch_and_learn, smelting, other_bots,
+// bot_role). A key the code does not know yet is ignored, so the journeys run on v0.1.4.11 and fail there for the right
+// reason.
+export const RELEASE_SETTINGS = (extra = {}) => ({ ...JOURNEY_SETTINGS(), job_memory: true, area_floors: true, ...extra });
+
+// A free TCP port on 127.0.0.1 in from..to (the watch server of a scenario gets its own), or null.
+export async function freePort(from = 8090, to = 8190) {
+    const start = from + Math.floor(Math.random() * (to - from + 1));
+    for (let k = 0; k <= to - from; k++) {
+        const port = from + ((start - from + k) % (to - from + 1));
+        const free = await new Promise((resolve) => {
+            const srv = net.createServer();
+            srv.once('error', () => resolve(false));
+            srv.listen(port, '127.0.0.1', () => srv.close(() => resolve(true)));
+        });
+        if (free) return port;
+    }
+    return null;
+}
+
+// The client of the watch server (part C, PLAN.md 1.4): `node scripts/watch.js <tool> [json args]`.
+export const WATCH_CLIENT = path.join(ROOT, 'scripts', 'watch.js');
+
+// Replaces every occurrence of a secret in a text (the token never reaches a note or a check).
+export const redact = (text, secret) => (secret ? String(text ?? '').split(secret).join('<token>') : String(text ?? ''));
+
+// Runs the client as a child process with MC_WATCH_URL and MC_WATCH_TOKEN in its environment. `token` null leaves the
+// token out of the environment. Resolves with { code, out, err, ms }; a client that does not end within `ms` is killed
+// (by its process id: the scenario started it).
+export function runWatchClient(args, { url, token, ms = 30000 } = {}) {
+    return new Promise((resolve) => {
+        const childEnv = { ...process.env, MC_WATCH_URL: url };
+        delete childEnv.MC_WATCH_TOKEN;
+        if (token !== null && token !== undefined) childEnv.MC_WATCH_TOKEN = token;
+        const t0 = Date.now();
+        let out = '', err = '';
+        let child;
+        try {
+            child = spawn(process.execPath, [WATCH_CLIENT, ...args], { cwd: ROOT, env: childEnv, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+        } catch (e) {
+            resolve({ code: null, out: '', err: String(e?.message ?? e), ms: 0 });
+            return;
+        }
+        child.stdout.setEncoding('utf8');
+        child.stderr.setEncoding('utf8');
+        child.stdout.on('data', (c) => { out += c; });
+        child.stderr.on('data', (c) => { err += c; });
+        const timer = setTimeout(() => { try { child.kill(); } catch { /* gone */ } }, ms);
+        child.on('error', (e) => { err += String(e?.message ?? e); });
+        child.on('close', (code) => { clearTimeout(timer); resolve({ code, out, err, ms: Date.now() - t0 }); });
+    });
+}
+
+// `node scripts/watch.js events --follow` as a child process: { lines (the text printed so far), stop() } where stop
+// kills the client by its process id and resolves when it ended.
+export function followWatchEvents({ url, token }) {
+    const childEnv = { ...process.env, MC_WATCH_URL: url, MC_WATCH_TOKEN: token };
+    const s = { text: '', err: '', exited: false };
+    const child = spawn(process.execPath, [WATCH_CLIENT, 'events', '--follow'], { cwd: ROOT, env: childEnv, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+    child.stdout.setEncoding('utf8');
+    child.stderr.setEncoding('utf8');
+    child.stdout.on('data', (c) => { s.text += c; });
+    child.stderr.on('data', (c) => { s.err += c; });
+    child.on('error', (e) => { s.err += String(e?.message ?? e); });
+    const ended = new Promise((resolve) => child.on('close', (code) => { s.exited = true; s.code = code; resolve(); }));
+    s.stop = async () => {
+        if (!s.exited) { try { child.kill(); } catch { /* gone */ } }
+        await Promise.race([ended, sleep(5000)]);
+        return s;
+    };
+    return s;
+}
+
+// One POST of a JSON-RPC body to the watch server, without the client (the protocol of SPEC 4.1): `token` null sends
+// no Authorization header. Resolves with { status, text, json }.
+export function rawMcp(url, body, { token = null, ms = 10000 } = {}) {
+    return new Promise((resolve) => {
+        const u = new URL(url);
+        const data = JSON.stringify(body);
+        const headers = { 'content-type': 'application/json', accept: 'application/json, text/event-stream', 'content-length': Buffer.byteLength(data) };
+        if (token) headers.authorization = `Bearer ${token}`;
+        const req = http.request({ host: u.hostname, port: Number(u.port), path: u.pathname, method: 'POST', headers, agent: false }, (res) => {
+            let text = '';
+            res.setEncoding('utf8');
+            res.on('data', (c) => { text += c; });
+            res.on('end', () => {
+                let json = null;
+                try { json = JSON.parse(text); } catch {
+                    const m = /^data: (.*)$/m.exec(text); // an answer as server-sent events
+                    if (m) { try { json = JSON.parse(m[1]); } catch { /* not JSON */ } }
+                }
+                resolve({ status: res.statusCode, text, json });
+            });
+        });
+        req.setTimeout(ms, () => req.destroy(new Error('no answer')));
+        req.on('error', (e) => resolve({ status: null, text: String(e?.message ?? e), json: null }));
+        req.end(data);
+    });
 }
 
 // Samples the action of the agent every `every` ms: resolves stop() with the runs of the same label

@@ -117,6 +117,10 @@ const NEW_EXAMPLES = [
     ['we are in the aviary', '!rememberArea'],
     ["it's a pen, chickens live here", '!rememberArea'],
     ['this is the farmland', '!rememberArea'],
+    // v0.1.4.12, part B: learning by watching
+    ['watch me', '!watchMe'],
+    ['continue like this, 7 by 10', '!continueLike'],
+    ['yes, build it', '!buildWatched'],
 ];
 
 const exampleOf = (sentence) => PROFILE.conversation_examples.find((example) => example.some((t) => t.role === 'user' && t.content.endsWith(': ' + sentence)));
@@ -301,7 +305,7 @@ describe('no example with a hidden command reaches the prompt', () => {
 
     test('with every part on, all examples remain', () => {
         const hidden = new Set(T.hiddenPartCommands({ player_rules: true, protected_areas: true, world_memory: true, home_pack: true, cost_meter: true,
-            storage_pack: true, farming_pack: true, wood_pack: true, mining_pack: true, routes_pack: true, mine_routes: true }));
+            storage_pack: true, farming_pack: true, wood_pack: true, mining_pack: true, routes_pack: true, mine_routes: true, watch_and_learn: true }));
         assert.equal(hidden.size, 0);
         assert.equal(F.visibleExamples(PROFILE.conversation_examples, (n) => hidden.has(n)).length, PROFILE.conversation_examples.length);
     });
