@@ -37,3 +37,13 @@ as they stood. T1 has not started. Open items, in the order of the next session:
 | T1-2 | The state tool measured the distance to home from the exact position to the corner of the home block: `(12, 67, 52)` and `Home: (10, 67, 52), 3 blocks away.` | the watch server | The distance between the two cells printed. | lead, done |
 
 W103 (the fence) and W104 (the tunnel) ran for the first time on the finished code and pass (40.7 s, 31.0 s); W106 passes with ladders in the kit (148 s); W108 passes with the role line fallback (56.5 s). Every journey of this release has passed at least once.
+
+## The gate in the fresh clone at ff9682f, 2026-10-03
+
+Unit 7720 of 7722 (1 skipped; the launch-script test counted two secrets, now three: the token). End-to-end 17 of 17. The
+30 journeys: 28 of 30.
+
+| Id | Finding | Where | Decision | Owner |
+|---|---|---|---|---|
+| F7 | W90: "this is the basement" in the basement of the base (dug into the stone under the house, torches, a bed, a chest, a trapdoor above) answered `I am in a cave; a cave is nothing I save.`: the rock rule of F1 took a dug room for a cave. The owner's basement and his mine room are such rooms. | two_floors | A place in rock is a cave only when it shows no use: no door or trapdoor on its border and no bed, chest, furnace, crafting table or ladder inside; otherwise the building scan decides as before. The tunnel rule stays first; a bare cave stays a cave; the sense stays quiet underground (F3). | F (E5) |
+| F8 | W88: the climb up ladder 1 under the house trapdoor ended with two reversals of 0.3 blocks at the top: G3 centred the point behind the trapdoor the bot opened, which pulled it off the top rung. | ladders_native | G3 applies to doors and gates only; the point behind a trapdoor is the ladder's own. | lead, done |
