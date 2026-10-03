@@ -10,7 +10,8 @@
 //      front of the farm gate; typed !rememberArea("farm", "farm") ("this is the farm"). None of them is a job.
 //   1. Then no order at all. Within 60 to 150 s after the last answer the farm cycle runs (the action of the agent),
 //      without a call of the model.
-//   2. After it the torches are made: within 10 minutes of the last order the bot carries 8 torches or more (server),
+//   2. After it the torches are made: within 10 minutes of the last order the bot carries 8 torches or more (server,
+//      a torch its reflex placed counted),
 //      and the farm cycle worked: leaf litter left the chest of the house or wheat was harvested.
 // Throughout: no order after step 0, the process lives, no request reached a real model.
 import { scenarioMain, check, note, exitSoon, stopRealAgent, env, entityPos, fmt, waitFor, walkTyped } from './helpers.js';
@@ -62,6 +63,9 @@ await scenarioMain({
             const litter0 = (await chestItems(c))?.leaf_litter || 0;
             note(`0: the last order answered; the bot carries ${itemsText(await inventoryOf(NAME))}; wheat ${wheat0}; the chest of the house holds ${litter0} leaf_litter; crop ages ${JSON.stringify(ages0.reduce((m, a) => ({ ...m, [a]: (m[a] || 0) + 1 }), {}))}`);
             runs = actionRuns(agent, 500);
+            // the torch reflex may place one of the new torches at dusk (the gate run of 2026-10-03: 8 made, 7 carried)
+            const logsAt = s.logs.length;
+            const placedTorches = () => s.logs.slice(logsAt).filter((l) => /Placed torch at/.test(l)).length;
 
             // ---------------------------------------------------------- 1. the farm cycle by itself
             const farm = await waitFor(() => runs.runs.find((x) => /farmCycle/.test(x.label)) ?? null, { ms: 150000, every: 500 });
@@ -72,7 +76,7 @@ await scenarioMain({
             // ---------------------------------------------------------- 2. then the torches
             const torches = await waitFor(async () => {
                 const inv = await inventoryOf(NAME);
-                return (inv.torch || 0) >= 8 && !runs.runs.some((x) => /farmCycle/.test(x.label) && x === runs.runs[runs.runs.length - 1]) ? inv : null;
+                return (inv.torch || 0) + placedTorches() >= 8 && !runs.runs.some((x) => /farmCycle/.test(x.label) && x === runs.runs[runs.runs.length - 1]) ? inv : null;
             }, { ms: Math.max(10000, 600000 - (Date.now() - tLast)), every: 2000 });
             const inv = torches.value ?? await inventoryOf(NAME);
             const all = runs.stop();
@@ -86,7 +90,8 @@ await scenarioMain({
             note(`2: the bot carries ${itemsText(inv)}; wheat ${wheat0} -> ${wheat1}; leaf_litter in the chest ${litter0} -> ${litter1}; crop ages ${JSON.stringify(ages1.reduce((m, a) => ({ ...m, [a]: (m[a] || 0) + 1 }), {}))}`);
             note(`2: the bot said ${JSON.stringify(saidLines(s, tLast).slice(0, 20))}`);
             check(Boolean(firstCraft) && Boolean(firstFarm) && firstCraft.from > firstFarm.from, '2: the torches are made after the farm cycle (the order of the list)', JSON.stringify({ farm: firstFarm?.from - tLast, craft: firstCraft?.from - tLast }));
-            check((inv.torch || 0) >= 8, '2: within 10 minutes without an order the bot carries 8 torches or more (server)', `${inv.torch || 0} torches`);
+            const placed = placedTorches();
+            check((inv.torch || 0) + placed >= 8, '2: within 10 minutes without an order the bot carries 8 torches or more (server), the ones its torch reflex placed counted', `${inv.torch || 0} torches, ${placed} placed`);
             check(litter1 < litter0 || wheat1 > wheat0, '2: the farm cycle worked: leaf litter left the chest of the house or wheat was harvested', `leaf_litter ${litter0} -> ${litter1}, wheat ${wheat0} -> ${wheat1}`);
             check(s.messages.length === orderCount, 'no order was given after step 0', `${s.messages.length - orderCount} messages`);
             const calls = s.chat.requests.slice(callsBefore);

@@ -143,3 +143,12 @@ builds in 16 s (90,135 commands).
 |---|---|---|
 | T3-5 | In the basement (0 doors, 2 trapdoors) `!goToShelter` says `The door is closed.` after closing the floor trapdoor. | Kept: "the door" names the openable the bot closed, as in the hatch text of v0.1.4.8 (`I went down the ladder ... The door is closed.`); the claim was checked. |
 | T3-6 | The area sense in the corridor above the staircase said `I am in a walled storage 13 x 26 with a roof, 1 chest, 1 crafting table, 7 ladders, 207 water blocks, 2 doors and 3 gaps ...`: the scan of a corridor in rock counts the water pockets of the rock. | Known; a corridor is no enclosure to name. The sense says it once per place. For v0.1.4.12: a scan whose border is natural rock is a cave, not a storage. |
+
+## The gate in the fresh clone at 3cd69ab, 2026-10-03
+
+`/home/user/mc-verify11`, the pathfinder package removed and installed again (over the patched package of v0.1.4.10
+the new patch does not apply; `npm install` ends fine and says so only in its output: the play guide has the step).
+Unit 7194 of 7195 (1 skipped, Windows only). End-to-end 17 of 17. World: the 21 journeys (W99 on the owner's dump),
+`farm_cycle`, `farm_cycle_whole` and the seven shelter scenarios: 29 of 30; `idle_list` failed on its own check (the bot
+made 8 torches and its torch reflex placed one at dusk: 7 carried), the check counts the placed torch now and the
+scenario passes again (7 torches, 1 placed). The play test with the fake model: 8 of 8.
