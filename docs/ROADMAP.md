@@ -100,9 +100,13 @@ Result of the trial on a real 1.21.8 server: 40 of 40 placed blocks and 60 of 60
 
 ### Part C: watching the play from the cloud
 
+A pilot of the idea, decided by the owner on 2026-10-03: the testing routine (unit, end-to-end, the journeys on the real server, the play test) stays as it is; this part adds a way to watch and to step in. The long goal behind it is an autonomous mind over the bot that controls it while the owner is away; the first step is observation and the `say` tool, nothing more.
+
 From the plays of 2026-10-03: the owner cannot judge a test without the geometry, and the tech lead reads the logs only after the session. A small MCP server on the owner's machine, started by the launch script next to the bot, exposes what the bot knows: its position and the block it stands on, its inventory, the last 10 chat lines, the running command and the job, the areas and mines it saved, and one tool `say` that types a chat line as the owner would. The session in the cloud connects to that server over the owner's tunnel, never to the game port 55916, and watches while the owner plays; the owner's words stay the orders. Setting `watch_server` (off), a token in the environment, read-only but for `say`.
 
 The server pushes events, so that the supervisor sleeps between them: an explosion near a saved area, a drop of health, animals missing from a pen against its record, a night without sleep, a job stalled for 10 minutes, the same failure text 5 times, the bot farther than 100 blocks from home. The supervisor answers an event with an order, a job or a rule; the predictable cases (sleep every night, the creeper by the pen) stay in the reflexes. A goal the skills do not know ("find a village") goes to the supervisor, which plans the legs and gives the orders. Without the supervisor the bot finishes its job, works the standing list and sleeps, as today.
+
+Two small items beside it, from the same talk: the night reflex lies down in the bed for a moment when it reaches it and nobody else sleeps, which resets the phantom clock without passing the night (the server's statistic "time since rest" proves it in a world test), then goes on with its night work; and a scan whose border is natural rock is a cave, not a storage (T3-6 of v0.1.4.11: the corridor above the staircase counted 207 water blocks of the rock).
 
 ### Part D: two bots
 
