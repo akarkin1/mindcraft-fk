@@ -17,7 +17,7 @@ Rules that hold for every release:
 | 0.1.4.9 | The mine, the routes of the player, and the model comparison | Released |
 | 0.1.4.10 | Goals | Released |
 | 0.1.4.11 | Navigation and words | Released |
-| 0.1.4.12 | Understanding and watching | Planned, both trials passed |
+| 0.1.4.12 | Understanding and watching | Released |
 | 0.1.4.13 | Routines | Planned: routines first, then the local embedding model |
 | Later | See the backlog | Not decided |
 

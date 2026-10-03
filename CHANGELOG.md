@@ -6,7 +6,7 @@ This fork is based on [Mindcraft](https://github.com/mindcraft-bots/mindcraft) `
 
 Each release lists new settings and feature flags with their default value.
 
-## [0.1.4.12] - unreleased
+## [0.1.4.12] - 2026-10-03
 
 "Understanding and watching": a watch server for a Claude session, learning by watching, smelting,
 the scans underground, the small items, two bots.
