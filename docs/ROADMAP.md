@@ -98,6 +98,14 @@ Patterns of this release: a line of placed blocks, a rectangle of fences with a 
 
 Result of the trial on a real 1.21.8 server: 40 of 40 placed blocks and 60 of 60 broken blocks recorded with the right place and name; with two players who build in the same space, 320 of 320 blocks credited to the right player. Limits: the player of the trial was a second bot; crediting needs 16 blocks or less; the bot never sees crafting, the content of a chest that the player uses, or the inventory of the player.
 
+### Part C: watching the play from the cloud
+
+From the plays of 2026-10-03: the owner cannot judge a test without the geometry, and the tech lead reads the logs only after the session. A small MCP server on the owner's machine, started by the launch script next to the bot, exposes what the bot knows: its position and the block it stands on, its inventory, the last 10 chat lines, the running command and the job, the areas and mines it saved, and one tool `say` that types a chat line as the owner would. The session in the cloud connects to that server over the owner's tunnel, never to the game port 55916, and watches while the owner plays; the owner's words stay the orders. Setting `watch_server` (off), a token in the environment, read-only but for `say`.
+
+### Part D: two bots
+
+Two bots of the owner in one world answered each other's command echoes and results (2026-10-03). Until this part, `only_chat_with` names the owner in each bot's settings and `MINDSERVER_PORT` gives the second bot its own port. The part: a bot recognises the other bots of the owner by name (the launch script passes them), never answers their echoes or results, and a role per bot ("you farm, you mine") in the settings; a question to both ("where are you?") gets one line from each.
+
 ## Backlog
 
 Ordered by recommendation. Nothing here is decided.
