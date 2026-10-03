@@ -1338,14 +1338,27 @@ export const actionsList = [
             'item_name': { type: 'ItemName', description: 'The item to smelt.' },
             'num': { type: 'int', description: 'How many times to smelt it.', domain: [1, Number.MAX_SAFE_INTEGER] }
         },
-        perform: runAsAction(async (agent, item_name, num) => {
-            let success = await skills.smeltItem(agent.bot, item_name, num);
-            if (success) {
-                setTimeout(() => {
-                    agent.cleanKill('Safely restarting to update inventory.');
-                }, 500);
+        // v0.1.4.12 (part E): with smelting on and the storage pack loaded (it loads with any of the four packs), the
+        // skill of the storage pack through runPack; otherwise the command of the original project, run as
+        // runAsAction runs it (runAsAction finds its label by the perform it returned, so the label is given here)
+        perform: async function (agent, item_name, num) {
+            if (settings.smelting && (settings.storage_pack || settings.farming_pack || settings.wood_pack || settings.mining_pack)
+                && typeof agent.work_packs?.storage?.smeltItem === 'function')
+                return await runPack(agent, 'smeltItem', agent.work_packs.storage, 'storage', (pack, bot, ctx) => pack.smeltItem(bot, ctx, item_name, num));
+            const code_return = await agent.actions.runAction('action:smeltItem', async () => {
+                let success = await skills.smeltItem(agent.bot, item_name, num);
+                if (success) {
+                    setTimeout(() => {
+                        agent.cleanKill('Safely restarting to update inventory.');
+                    }, 500);
+                }
+            }, { timeout: -1, resume: false });
+            if (code_return.interrupted && !code_return.timedout) {
+                reportStopped(agent, 'smeltItem', code_return);
+                return;
             }
-        })
+            return code_return.message;
+        }
     },
     {
         name: '!clearFurnace',

@@ -16,10 +16,10 @@ export { GOLDEN, MATERIALS, OPEN_MATERIAL_MAX, RECIPES, SUPPLY_NAMES, TOOL_KINDS
     isWoodItem, materialLevel, missingIngredient, normaliseSupply, normaliseToolRequest, parseTool, stepIngredients, supplySteps, toolName,
     toolsOf, usesLeft, woodOfInventory } from './tool_logic.js';
 export { TREE_RANGE, chopStoppedText, chopText, countList, craftFailedText, craftedSupplyText, craftedToolsText, haveToolText, needText,
-    noTreeText, notCraftableText, unknownMaterialText, unknownSupplyText, unknownToolText, unknownWoodText, withArticle } from './texts.js';
+    noIronText, noTreeText, notCraftableText, unknownMaterialText, unknownSupplyText, unknownToolText, unknownWoodText, withArticle } from './texts.js';
 export { countItems, findItem, inventoryOf, itemCounts, itemUsesLeft } from './inventory.js';
 export { CHOP_LIMIT_MS, DROP_PICKUP_MS, DROP_RADIUS, NO_DIG_NEAR_AREA, SAPLING_WAIT_MS, TREE_LIMIT_MS, chopArgs, chopTrees } from './wood.js';
-export { NO_STONE_TEXT, STONE_LIMIT_MS, STONE_RANGE, chestCounts, collectCobblestone, craftSupplies, ensureTool, tableNear } from './tools.js';
+export { NO_STONE_TEXT, STONE_LIMIT_MS, STONE_RANGE, chestCounts, collectCobblestone, craftSupplies, ensureTool, smeltIronFor, tableNear } from './tools.js';
 
 /** `ctx.tools` of packContext (spec section 2). */
 export const TOOLS_API = Object.freeze({ ensureTool, craftSupplies });

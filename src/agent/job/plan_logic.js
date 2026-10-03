@@ -21,9 +21,48 @@ export const PLAN_COMMANDS = Object.freeze([
         params: Object.freeze([{ type: 'string' }, { type: 'int', default: 1 }]) }),
     Object.freeze({ name: '!collectBlocks', usage: '!collectBlocks(type, num)', description: 'Mine num blocks of a type near you.',
         params: Object.freeze([{ type: 'string' }, { type: 'int', default: 1 }]) }),
-    Object.freeze({ name: '!smeltItem', usage: '!smeltItem(item_name, num)', description: 'Smelt an item num times in a furnace near you.',
+    Object.freeze({ name: '!smeltItem', usage: '!smeltItem(item_name, num)', description: 'Smelt num of an item in a furnace: raw_iron to iron_ingot, raw_copper, raw_gold, sand to glass, logs to charcoal.',
         params: Object.freeze([{ type: 'string' }, { type: 'int' }]) }),
 ]);
+
+/**
+ * What a furnace makes of an item, for the check of a step !smeltItem (spec v0.1.4.12, 4.2). The same table as
+ * SMELT_PRODUCTS of the storage pack (smelt_logic.js), which the job module may not import (no pack here); a
+ * unit test keeps the two equal.
+ */
+export const SMELT_PRODUCTS = Object.freeze({
+    raw_iron: 'iron_ingot', raw_copper: 'copper_ingot', raw_gold: 'gold_ingot',
+    iron_ore: 'iron_ingot', deepslate_iron_ore: 'iron_ingot', copper_ore: 'copper_ingot', deepslate_copper_ore: 'copper_ingot',
+    gold_ore: 'gold_ingot', deepslate_gold_ore: 'gold_ingot',
+    sand: 'glass', red_sand: 'glass', cobblestone: 'stone', clay_ball: 'brick',
+    beef: 'cooked_beef', porkchop: 'cooked_porkchop', chicken: 'cooked_chicken', mutton: 'cooked_mutton', rabbit: 'cooked_rabbit',
+    cod: 'cooked_cod', salmon: 'cooked_salmon', potato: 'baked_potato', kelp: 'dried_kelp', netherrack: 'nether_brick', cactus: 'green_dye',
+});
+
+/**
+ * The product of smelting an item: SMELT_PRODUCTS, a log or wood that burns gives charcoal; null for anything
+ * else. `minecraft:` and case do not matter.
+ * @param {string} item
+ * @returns {string|null}
+ */
+export function productOf(item) {
+    const n = typeof item === 'string' ? item.trim().toLowerCase().replace(/^minecraft:/, '') : '';
+    if (n === '') {
+        return null;
+    }
+    if (Object.hasOwn(SMELT_PRODUCTS, n)) {
+        return SMELT_PRODUCTS[n];
+    }
+    return /^[a-z_]+_(log|wood)$/.test(n) && !/^(stripped_)?(crimson|warped)_/.test(n) ? 'charcoal' : null;
+}
+
+/**
+ * The supplies a plan makes with !smeltItem (spec v0.1.4.12, 4.2): the product and the item smelted for it.
+ */
+export const SMELT_SUPPLIES = Object.freeze({ iron_ingot: 'raw_iron', copper_ingot: 'raw_copper', gold_ingot: 'raw_gold' });
+
+/** The iron ingots an iron tool takes (the recipes of the wood pack). */
+export const IRON_TOOL_INGOTS = Object.freeze({ pickaxe: 3, axe: 3, sword: 2, shovel: 1, hoe: 2 });
 
 /** The names of PLAN_COMMANDS. */
 export const PLAN_COMMAND_NAMES = Object.freeze(PLAN_COMMANDS.map(c => c.name));
@@ -106,8 +145,8 @@ function supplyItem(name) {
 
 /**
  * The check of a step from its command (I1): the item and the count the command names; count null for a
- * command without a count of items (`!getTool`, `!craftRecipe`, `!smeltItem`), which is done when it
- * returns ok.
+ * command without a count of items (`!getTool`, `!craftRecipe`), which is done when it returns ok. Since
+ * v0.1.4.12 (4.2) `!smeltItem` checks its product (productOf): the step is done when the ingots are there.
  * @param {string} name the command with `!`
  * @param {Array} args the full args (defaults filled in)
  * @returns {{item: string|null, count: number|null}}
@@ -128,7 +167,7 @@ export function checkOf(name, args) {
         case '!collectBlocks':
             return { item: dropOf(a[0]), count: a[1] };
         case '!smeltItem':
-            return { item: a[0], count: null };
+            return { item: productOf(a[0]), count: a[1] ?? null };
         default:
             return { item: null, count: null };
     }
@@ -163,6 +202,9 @@ function allowedNames(commands) {
 /**
  * Every missing supply of a blocker (T3-1): the blocker itself, and for a mining job the other supply the
  * trip needs and the bot does not carry: a pickaxe, torches. Each kind once, the blocker first.
+ * Since v0.1.4.12 (4.2) a supply that a furnace makes has `smelt`, the step that makes it: iron_ingot
+ * `!smeltItem("raw_iron", n)`; an iron tool (or `no_iron`) also needs its iron_ingot, with the count of
+ * the tool: `{ kind: 'no_item', item: 'iron_ingot', smelt: '!smeltItem("raw_iron", 3)' }` for a pickaxe.
  * @param {object} job the job record (I1)
  * @param {{kind: string, item: string|null}} blocker
  * @param {object|Array} inventory { name: count } or [{ name, count }]
@@ -171,6 +213,20 @@ function allowedNames(commands) {
 export function missingSupplies(job, blocker, inventory) {
     const b = isPlainObject(blocker) ? blocker : {};
     const out = [{ kind: typeof b.kind === 'string' ? b.kind : 'unknown', item: typeof b.item === 'string' ? b.item : null }];
+    try {
+        const first = out[0];
+        const item = first.item === 'iron' || first.item === 'raw_iron' ? 'iron_ingot' : first.item;
+        if (item !== null && Object.hasOwn(SMELT_SUPPLIES, item)) {
+            first.smelt = `!smeltItem("${SMELT_SUPPLIES[item]}", n)`;
+        }
+        const tool = typeof first.item === 'string' ? first.item.match(/^iron_(pickaxe|axe|sword|shovel|hoe)$/) : null;
+        if (tool || first.kind === 'no_iron') {
+            const n = tool ? IRON_TOOL_INGOTS[tool[1]] : 'n';
+            out.push({ kind: 'no_item', item: 'iron_ingot', smelt: `!smeltItem("raw_iron", ${n})` });
+        }
+    } catch {
+        // the blocker alone
+    }
     try {
         if (isPlainObject(job) && job.kind === 'mineOre') {
             const counts = inventoryCounts(inventory);
@@ -244,7 +300,7 @@ export function planPrompt(job, blocker, inventory, commands, context = {}) {
     const c = isPlainObject(context) ? context : {};
     const count = isFiniteNumber(j.wanted) ? `, ${isFiniteNumber(j.got) ? j.got : 0} of ${j.wanted} done` : '';
     const b = isPlainObject(blocker) ? blocker : {};
-    const problem = missingSupplies(j, b, inventory).map(m => `${m.kind}${m.item ? ` (${m.item})` : ''}`);
+    const problem = missingSupplies(j, b, inventory).map(m => `${m.kind}${m.item ? ` (${m.item}${m.smelt ? `, made by ${m.smelt}` : ''})` : ''}`);
     if (typeof b.text === 'string' && b.text.trim().length > 0) {
         problem.push(`the skill said: "${b.text.trim()}"`);
     }

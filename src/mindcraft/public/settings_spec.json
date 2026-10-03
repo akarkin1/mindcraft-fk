@@ -388,6 +388,21 @@
         "description": "Whether the bot scans an unsaved enclosure it enters and says what it thinks it is (a pen, a farm, a home), once per enclosure. Needs protected_areas",
         "default": false
     },
+    "smelting": {
+        "type": "boolean",
+        "description": "Whether !smeltItem uses the storage pack: a furnace in a saved room, the fuel it needs, a batch of up to 64, the result read from the furnace; and whether a plan may smelt raw iron for an iron tool. Off: !smeltItem of the original project",
+        "default": false
+    },
+    "watch_server": {
+        "type": "boolean",
+        "description": "Whether the watch server runs: a Claude session reads the state, the inventory, the chat, the places and the events of the bot and can say a line, over MCP on 127.0.0.1:watch_port. Starts only with MC_WATCH_TOKEN in the environment",
+        "default": false
+    },
+    "watch_port": {
+        "type": "number",
+        "description": "The port of the watch server, on 127.0.0.1 only. Needs watch_server",
+        "default": 8090
+    },
     "code_timeout_mins": {
         "type": "number",
         "description": "Number of minutes to allow code execution. -1 for no timeout",

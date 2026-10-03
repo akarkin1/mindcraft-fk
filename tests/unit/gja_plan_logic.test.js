@@ -55,7 +55,7 @@ describe('parsePlan', () => {
     test('the checks of the other commands', () => {
         const steps = P.parsePlan('!craftRecipe("furnace")\n!collectBlocks("stone", 8)\n!smeltItem("raw_iron", 3)\n!getTool("axe")', P.PLAN_COMMAND_NAMES);
         assert.deepEqual(steps.map(s => s.check), [
-            { item: 'furnace', count: null }, { item: 'cobblestone', count: 8 }, { item: 'raw_iron', count: null }, { item: 'axe', count: null },
+            { item: 'furnace', count: null }, { item: 'cobblestone', count: 8 }, { item: 'iron_ingot', count: 3 }, { item: 'axe', count: null }, // v0.1.4.12 (E): the product of the smelt
         ]);
     });
 

@@ -30,9 +30,9 @@ describe('section 2: the settings in settings.js', () => {
 
     test('each key is written in the style of area_floors: a quoted key, false, a comment', () => {
         const source = fs.readFileSync(repoPath('settings.js'), 'utf8');
-        assert.match(source, /^\s*"area_floors":\s*false,\s*\/\/ \S/m, 'the reference line of area_floors');
+        assert.match(source, /^\s*"area_floors":\s*(true|false),\s*\/\/ \S/m, 'the reference line of area_floors'); // the value is the owner's
         for (const [key] of ROWS) {
-            assert.match(source, new RegExp(`^\\s*"${key}":\\s*false,\\s*// \\S`, 'm'), `${key} as "key": false, // ...`);
+            assert.match(source, new RegExp(`^\\s*"${key}":\\s*(true|false),\\s*// \\S`, 'm'), `${key} as "key": true|false, // ...`);
         }
     });
 
