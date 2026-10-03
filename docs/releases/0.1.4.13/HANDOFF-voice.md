@@ -1,7 +1,8 @@
 # Handoff: speaking live with the bot through the browser (v0.1.4.13, the voice demo)
 
 For a Claude Code session on the owner's machine. Written by the tech lead in the cloud on 2026-10-03, after the
-release of v0.1.4.12. Read `CLAUDE.md` first; its rules hold here word for word.
+release of v0.1.4.12. Read `CLAUDE.md` first; its rules hold here word for word. The demo's own docs are beside this
+file: `demo/HANDOFF.md` and `demo/README.md` (copies of 2026-10-04); where they and this handoff disagree, they win.
 
 ## The ask, in the owner's words
 
@@ -30,36 +31,73 @@ Who speaks to the bot: the page sends `from`; the bot answers the owner only whe
 owner's settings: `["MartyByrde2"]` for two bots). The live voice must speak as the owner: `from` = the first name of
 `only_chat_with`, else a name the page asks once and keeps in `localStorage`.
 
+## The demo, as its own HANDOFF.md and README.md describe it (2026-10-04)
+
+The demo is plain JavaScript (ESM), `express` + `socket.io`, Node 20: the same stack as this fork. Nothing of it is
+Python. It is not a git repository; nothing is committed. Its own docs win over this handoff where they disagree.
+
+```
+browser: mic → Silero VAD v5 (onnxruntime-web WASM) → Float32 16 kHz utterance ─socket.io─┐
+server:  whisper-server.exe (CUDA, a child process on port 8178) → text → LLM stream → sentences
+         → TTS per sentence → Float32 PCM chunks ─socket.io─→ browser gapless playback ◀────┘
+```
+
+| Part of the demo | What it is | Into the fork |
+|---|---|---|
+| `src/stt.js` | spawns and warms up `whisper-server.exe` (whisper.cpp b5130, cublas 12.4, model `large-v3-turbo-q5_0`), encodes WAV, filters hallucinations | as it is, into `src/mindcraft/voice/stt.js` |
+| `src/tts.js`, `src/vendor/supertonic/helper.js` | Supertonic 3 on the GPU through DirectML (device 0 is the RTX), 10 voices, 44.1 kHz; Kokoro on the CPU; `synthesize(text, { voice, speed })`, one job at a time | as they are, into `src/mindcraft/voice/`; the owner chose Supertonic: load Kokoro only when its voice is asked for (the demo's next step 1), default voice `supertonic:F1` |
+| `src/llm.js`, the echo bot | OpenAI streaming or an offline echo | not needed: the bot is the LLM. Keep the echo only inside the smoke test |
+| `src/session.js` | one conversation per socket: turns, history, cancellation, timings, voice preview | the turn model changes (below); keep the cancellation, the timings and the preview |
+| `src/server.js` | express + socket.io, loads the engines, serves `public/` and `/vendor/{vad,ort}` from node_modules (no CDN) | folds into `src/mindcraft/mindserver.js`: the same server, the same port 8080, the vendor routes added |
+| `public/app.js` and the page | VAD, the playback queue, ducking and interrupt, the voice dropdown, "Interrupt by voice", the Talk / Live button | the design the owner wants; merged with the fork's page (below) |
+| `scripts/setup.js` | downloads the whisper binary and model, Supertonic (pinned HF revision) and Kokoro, about 1.6 GB, into `bin/` and `models/` | `scripts/voice_setup.js`, `npm run voice:setup`; `bin/` and `models/` in `.gitignore` as in the demo |
+| `scripts/smoke-test.js` | `npm run smoke`: TTS to STT round trips without a mic or an LLM, whisper on port 8179 so it runs beside the app | `scripts/voice_smoke.js`, `npm run voice:smoke` |
+| `start.ps1`, `.env.example` | the key from the SecretStore, Node 20 via fnm; every option as an env variable | no separate start script: the mindserver starts whisper itself when `voice_ui` is on; the options become settings (below) or stay env variables with the demo's names |
+
+Dependencies the demo adds, pinned: `@ricky0123/vad-web` 0.0.31, `onnxruntime-web`, `onnxruntime-node` 1.21.0 (pinned to
+match `@huggingface/transformers`), `kokoro-js` (optional). They go into `package.json` pinned; a new dependency is not a
+bump of a pinned one, but it needs the owner's play test like one.
+
+Decisions of the demo that stay (its HANDOFF says "don't redo these"): plain JS; audio in the browser, not in Node; the
+prebuilt whisper-server, not a binding; Kokoro at 6 threads, fp32, CPU only; Supertonic on DirectML device 0; the
+warm-ups at startup (whisper's first run about 45 s on an RTX 50xx, cached by the driver); "Interrupt by voice" as a
+checkbox. Its socket protocol (`utterance`, `settings`, `interrupt`, `reset`, `preview_voice`; `hello`, `status`,
+`transcript`, `assistant_delta`, `audio`, `turn_done`, `error_msg`) is kept word for word where it still applies.
+
 ## What to build
 
-1. **The page, in the demo's design.** One page that keeps every control of today (nothing lost: start, stop, restart,
-   the settings modal, create agent, the inventory, disconnect all, shutdown) but puts the conversation first: the
-   chat of one bot (the owner's lines and the bot's lines, `bot-output`), the text input, and the live button beside
-   it. The agent cards and the rest fold away behind one control. Keep it one file as today, or split into
-   `index.html`, `app.js`, `style.css` under `src/mindcraft/public/` (the mindserver serves the folder; check
-   `express.static` in `mindserver.js`). No build step, no framework, no CDN: the page must open without the internet.
-2. **The live button.** Push to talk or a toggle, as the demo does it. The browser records the microphone
-   (MediaRecorder or the demo's way), the audio goes to the mindserver over the socket or an HTTP route, the
-   mindserver hands it to the STT service, the text comes back and goes down the existing `send-message` path with the
-   owner's name, so the bot answers as to a typed line. Show the recognised text in the chat as the owner's line.
-3. **The bot's voice.** Every `bot-output` line of the chosen bot goes to the TTS service and plays in the page.
-   While the live mode is on, the system voice must not speak the same line twice: the agent's `speak()` of
-   `src/agent/speak.js` learns a `speak_model` value `"browser"` (the line is sent to the mindserver and played by
-   the page) or the page tells the mindserver to mute the system voice while it is open. Decide from the demo; say
-   which in the notes. A line that starts with `!` (a command echo) is never spoken.
-4. **The services: Supertonic (TTS) and whisper (STT) on the GPU.** Take the demo's way of running them (the
-   processes, the ports, the audio format, the model files). Into the repo go only the glue: a small service module or
-   the demo's server file if it is small, a pinned `requirements.txt` or the equivalent, and a launch script
-   `start-voice.ps1` that starts both and prints their ports. The models, the weights, CUDA and the DLLs stay outside
-   the repo (a sibling folder or `%LOCALAPPDATA%\Mindcraft\voice`); `.gitignore` names them. The mindserver reaches
-   the services by URL from `settings.js`.
+1. **The page, in the demo's design.** The demo's page and the fork's page become one, under `src/mindcraft/public/`,
+   served by the mindserver on 8080 as today, no build step, no CDN (the VAD and ORT files from node_modules as the
+   demo serves them). The conversation first: the chat of one bot (the owner's lines, the recognised speech as the
+   owner's line, the bot's lines from `bot-output`), the text input, the Talk / Live button beside it, the voice
+   dropdown and "Interrupt by voice" as the demo has them. Every control of the fork's page stays reachable (start,
+   stop, restart, the settings modal over `settings_spec.json`, create agent with the profile upload, the inventory,
+   disconnect all, full shutdown), folded behind one control. One file or three (`index.html`, `app.js`, `style.css`),
+   your choice.
+2. **The turn.** The demo streams an LLM; the bot answers through its own chat pipeline. So: `utterance` → `stt.js` →
+   `transcript` to the page and the text down the fork's `send-message { from, message }` path with the owner's name,
+   exactly as a typed line (the bot cannot tell the difference). `status` goes `transcribing` → `thinking`; the bot's
+   next `bot-output` lines of that bot are the answer: each line through the sentence splitter and `tts.js` to `audio`
+   chunks as the demo does, `status: speaking`, then `idle` and `turn_done` with the timings when the bot has said
+   nothing for 2 s. A line that starts with `!` or `*` (a command echo), or a line of a result block (`Action output:`,
+   `Found non-destructive path.`, `You have reached`), is shown but not spoken. A new utterance interrupts the
+   playback as in the demo; the bot's own processing cannot be aborted, which the notes say.
+3. **The system voice.** With `voice_ui` on the page speaks and the agent's `speak()` of `src/agent/speak.js` returns
+   at once, so no line is spoken twice; with `voice_ui` off nothing changes (`settings.speak` and `speak_model` as
+   today). The profiles stay as they are.
+4. **Starting and stopping.** With `voice_ui` on the mindserver starts `whisper-server.exe` as the demo's `stt.js` does
+   when the first page connects (or at its own start; your choice, say which), warms up whisper and Supertonic, and
+   stops the child on shutdown. If the binaries or the models are missing, the page says so with the setup command,
+   and the bot plays on without voice. If whisper's port is busy, the error names the port and never kills anything.
 5. **Settings, off by default**, in `settings.js` and `src/mindcraft/public/settings_spec.json`, after `bot_role`:
-   `voice_ui` (the live button and the bot's voice in the page), `voice_stt_url`, `voice_tts_url`. With `voice_ui` off
-   the page shows no live button and plays no audio; the bot behaves as before. The look of the page is not bot
-   behaviour and needs no switch.
-6. **Texts** in the page, short and plain: "Listening...", "Heard: ...", "The voice service is not running: start it
-   with start-voice.ps1." Never a claim the code did not check (a service that answered 200 is "running"; one that
-   did not is "not running", with its URL).
+   `voice_ui` (false), `voice_voice` (`"supertonic:F1"`), `voice_language` (`"en"`; whisper takes `auto` or `ru`,
+   Supertonic speaks 31 languages, Kokoro English only). The rest of the demo's options stay env variables with the
+   demo's names, documented in the README of the tests or `docs/releases/0.1.4.13/VOICE.md`. With `voice_ui` off the
+   page shows no live button, loads no engine and starts no child; the bot behaves as before. The look of the page is
+   not bot behaviour and needs no switch.
+6. **Texts** in the page, short and plain, with numbers where there are any: "Listening...", "Heard: ...",
+   "Thinking...", "The voice is off: set voice_ui in settings.js.", "whisper is not installed: run npm run voice:setup
+   (about 1.6 GB).", "whisper's port 8178 is busy." Never a claim the code did not check.
 
 ## What not to change
 
@@ -76,9 +114,10 @@ The owner asked for little testing: the demo was tested by him and by Opus 5.5. 
 - `npm test` stays green (it has source checks: the settings style, `glue2_flags_off`, the prompt size). New pure
   logic (the routing of a recognised line to `send-message`, the mute rule, the `!` rule, the URL settings) gets unit
   tests in `tests/unit/vo_*.test.js`, node:test, no network, no audio.
-- A manual list in `docs/releases/0.1.4.13/VOICE.md`: open the page, start a bot, type a line, press live, say a
-  line, hear the answer, the system voice silent meanwhile, the settings modal still works, create agent still works,
-  `voice_ui` off hides the button.
+- `npm run voice:smoke` (the demo's round trips, TTS to STT, without a mic or the bot) passes on the owner's machine.
+- A manual list in `docs/releases/0.1.4.13/VOICE.md`: open the page, start a bot, type a line, press Talk / Live, say a
+  line, see "Heard: ...", hear the answer, the system voice silent meanwhile, interrupt the bot by talking, the settings
+  modal still works, create agent still works, `voice_ui` off hides the button and starts no child.
 
 ## Handing back
 
@@ -89,7 +128,8 @@ The owner asked for little testing: the demo was tested by him and by Opus 5.5. 
 
 ## Open questions for the demo
 
-Read the demo before writing code and answer these in `VOICE.md`: how Supertonic and whisper are started (one process
-or two, Python or Node, GPU selection), the audio formats in and out, the latency the owner saw, whether the demo
-streams the bot's voice by sentence or waits for the whole line, and what in the demo's design the owner liked
-(screenshots or the demo's files; keep its layout, colours and type).
+The demo's docs answer most of them (the numbers: whisper 100 to 270 ms per clip, Supertonic 0.55 to 0.7 s per sentence,
+end of speech to first audio about 1.35 s plus the bot's time). Left for `VOICE.md`: where `bin/` and `models/` live in
+the fork's checkout (the demo keeps them in the project, ignored by git; the same here, or `%LOCALAPPDATA%\\Mindcraft\\voice`
+with a path setting), whether whisper starts with the mindserver or with the first page, how the two-bot case picks the
+bot that speaks (the chat of one bot at a time; the dropdown of agents), and what of the demo's page was dropped.
