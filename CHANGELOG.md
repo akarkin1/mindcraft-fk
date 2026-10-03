@@ -39,6 +39,11 @@ the scans underground, the small items, two bots.
 
 The scans underground, the small items, the job changes and the prompt are corrections without a switch.
 
+### Known limitations
+
+- The creeper reflex's keep-away loop can, about once in 30 runs after an explosion that leaves the bot near death, run on without end until the process runs out of memory (seen on 2026-10-01 too, before this release). The bot process dies and the launch script ends; start it again. v0.1.4.13 profiles the loop.
+- A place in rock larger than 48 x 48 x 24 blocks, or a tunnel longer than 46, gets no sentence of the sense.
+
 ## [0.1.4.11] - 2026-10-03
 
 "Navigation and words": every failure text names the cause and the next step, a shaft from inside the

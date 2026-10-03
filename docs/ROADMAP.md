@@ -164,6 +164,8 @@ Decided by the owner on 2026-10-03, during the gate of v0.1.4.12: "something lik
 
 Setting `routines` (off). After it, part A of v0.1.4.12 (the local embedding model), measured by the routing check first.
 
+Also in 0.1.4.13: the keep-away loop of the creeper reflex, which about once in 30 runs after an explosion that leaves the bot near death runs on until the process is out of memory (W47, seen 2026-10-01 and 2026-10-03; not of a part of 0.1.4.12, bisected). A profiling run inside the agent process finds the loop; the fix gets a repeated W47.
+
 ## Backlog
 
 Ordered by recommendation. Nothing here is decided.
