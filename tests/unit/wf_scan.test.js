@@ -54,7 +54,7 @@ function cave6x3x6() {
 
 // The owner's corridor of rock (13 x 26 x 5: x 0..12, y 49..53, z 0..25): a corridor 2 wide along z (x 5..6, z 1..24),
 // a cross corridor along x (z 12..13, x 1..11), pockets of water in its east wall (x 7..8, z 3..8, at the feet) and
-// in its floor (x 5..6, z 20..22), a chest and a torch.
+// in its floor (x 5..6, z 20..22), a torch (a torch shows no use, F7).
 const CORRIDOR_BOX = { min: { x: 0, y: 49, z: 0 }, max: { x: 12, y: 53, z: 25 } };
 function corridor13x26() {
     const world = rock();
@@ -62,8 +62,31 @@ function corridor13x26() {
     world.fill(1, FEET, 12, 11, FEET + 1, 13, 'air');
     world.fill(7, FEET, 3, 8, FEET, 8, 'water');
     world.fill(5, FEET - 1, 20, 6, FEET - 1, 22, 'water');
-    world.set(6, FEET, 24, 'chest');
     world.set(5, FEET, 10, 'torch');
+    return world;
+}
+
+// F7: a basement dug into the stone under a house (x -3..3, z -2..3, 3 high), stone walls and a ceiling 3 thick, the
+// floor of the house of planks above it, a trapdoor in the ceiling with a ladder under it, torches, a bed and a chest.
+function basement() {
+    const world = rock();
+    world.fill(-3, FEET, -2, 3, FEET + 2, 3, 'air');
+    world.fill(-5, FEET + 6, -5, 5, FEET + 6, 5, 'oak_planks');
+    world.fill(-5, FEET + 7, -5, 5, 125, 5, 'air');
+    world.fill(3, FEET + 4, -2, 3, FEET + 5, -2, 'air'); // the shaft up to the floor of the house
+    world.set(3, FEET + 3, -2, 'oak_trapdoor');
+    world.fill(3, FEET, -2, 3, FEET + 2, -2, 'ladder');
+    world.set(-3, FEET + 1, 0, 'wall_torch');
+    world.set(-3, FEET, 3, 'red_bed', { part: 'foot' });
+    world.set(-2, FEET, 3, 'chest');
+    return world;
+}
+
+// F7: a bare cave dug into rock (6 x 3 x 6, x 0..5, z 0..5), open to a passage 2 high one block up, nothing inside.
+function bareCave() {
+    const world = rock();
+    world.fill(0, FEET, 0, 5, FEET + 2, 5, 'air');
+    world.fill(2, FEET + 1, -1, 2, FEET + 2, -6, 'air');
     return world;
 }
 
@@ -149,6 +172,47 @@ describe('F1: a border of rock is a tunnel or a cave', () => {
         assert.equal(r.found, true);
         assert.equal(r.border, 'fence');
         assert.equal(K.kindOf(r, A.emptyContents()), 'yard');
+    });
+});
+
+describe('F7: a place in rock that is used is no cave', () => {
+    test('the basement with a trapdoor, a ladder, a bed and a chest: not rock, the old way (a building)', () => {
+        const r = scan(basement(), at(0, 0));
+        assert.notEqual(r.border, 'rock');
+        assert.notEqual(r.reason, 'cave');
+        assert.equal(r.found, true, 'the building scan finds it, so "this is the basement" saves it');
+    });
+
+    test('the same basement without the bed, the chest, the ladder and the trapdoor: a cave', () => {
+        const world = basement();
+        for (const [x, y, z] of [[-3, FEET, 3], [-2, FEET, 3], [3, FEET + 3, -2], [3, FEET, -2], [3, FEET + 1, -2], [3, FEET + 2, -2]]) {
+            world.set(x, y, z, x === 3 && y === FEET + 3 ? 'stone' : 'air');
+        }
+        const r = scan(world, at(0, 0));
+        assert.equal(r.border, 'rock');
+        assert.equal(K.kindOf(r, null), 'cave');
+    });
+
+    test('a bare cave stays a cave; one chest in it makes it a used place', () => {
+        const r = scan(bareCave(), at(2, 3));
+        assert.equal(r.border, 'rock');
+        assert.equal(K.kindOf(r, null), 'cave');
+        assert.equal(r.text, CAVE_REFUSAL);
+        assert.equal(K.rockText(r), 'I am in a cave at (2, 50, 3), 6 wide and open on 1 side.');
+        for (const name of ['chest', 'crafting_table', 'furnace', 'ladder', 'white_bed', 'barrel']) {
+            const world = bareCave();
+            world.set(5, FEET, 5, name);
+            assert.notEqual(scan(world, at(2, 3)).border, 'rock', name);
+        }
+        const torch = bareCave();
+        torch.set(5, FEET, 5, 'torch');
+        assert.equal(scan(torch, at(2, 3)).border, 'rock', 'a torch shows no use');
+    });
+
+    test('a tunnel stays a tunnel with a chest in the room at its end (the tunnel rule comes first)', () => {
+        const world = tunnel2x23();
+        world.set(27, FEET, 3, 'chest');
+        assert.equal(K.kindOf(scan(world, at(11, 0)), null), 'tunnel');
     });
 });
 

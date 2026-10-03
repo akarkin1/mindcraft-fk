@@ -2,7 +2,7 @@
 // an unsaved enclosure seems to be. countContents and the scans read the world of the bot; senseStep is pure.
 // Nothing here throws: a failed read is a place without an enclosure.
 // v0.1.4.12 (F1 to F4): underground the sense names only a tunnel of a known mine (rockText), says nothing in a tunnel
-// of no mine, in a cave or in any other place, and never asks for a name; the bot stands still while it scans.
+// of no mine, in a cave or in any other place, and never asks for a name; it never touches the controls of the bot (F9).
 import { Vec3 } from 'vec3';
 import { scanEnclosure, useTunnelMeasure } from './area_scan.js';
 import { kindOf, senseText, rockText } from './area_kind.js';
@@ -191,7 +191,8 @@ export function heldBySaved(areas, box, pos, dimension) {
 
 /**
  * F4: the bot stands still from the start of a scan to its end: its controls are cleared before the scan (the scan
- * itself never walks). A walk of the path finder is left alone when `keepWalk` is true. Never throws.
+ * itself never walks). A walk of the path finder is left alone when `keepWalk` is true. Never throws. F9: only for a
+ * scan that runs as its own action (the typed !rememberArea); the sense and the knowledge line never call it.
  * @param {object} bot
  * @param {{keepWalk?: boolean}} [options]
  */
@@ -221,7 +222,7 @@ function isRockHere(enclosure, pos) {
 /**
  * The enclosure the bot stands in when no saved area holds it, else null (I6). Never throws.
  * v0.1.4.12 (F1): also a tunnel or a cave in rock (kind 'tunnel' or 'cave', the water not counted), whatever area holds
- * it; the bot stands still while it scans unless the path finder walks (F4).
+ * it. The controls of the bot are never touched here (F9).
  * @param {object} bot
  * @param {object[]} areas the saved areas
  * @param {{floors?: boolean, tunnelAt?: Function}} [options] floors: the setting area_floors; tunnelAt: the measure of
@@ -234,7 +235,6 @@ export function unsavedEnclosure(bot, areas, options = {}) {
         if (!pos) {
             return null;
         }
-        standStill(bot, { keepWalk: true });
         const scanOptions = { floors: options?.floors === true };
         if (typeof options?.tunnelAt === 'function') {
             scanOptions.tunnelAt = options.tunnelAt; // else the measure the sense registered (useTunnelMeasure)
@@ -366,7 +366,8 @@ function knownMine(where) {
  * One tick of the reflex area_sense (P2): scans at most every 2 s while the bot is outside the last enclosure it
  * found (the same enclosure is not scanned again while the bot stays in its box), applies senseStep, and returns the
  * line to say or null. Never throws.
- * v0.1.4.12 (F1 to F4): the bot stands still while it scans. A tunnel in rock of a known mine (whereAmI().mine) gets
+ * v0.1.4.12 (F1 to F4): the sense never touches the controls of the bot (F9: a mode ticks while an action climbs; a
+ * scan is synchronous reads, so the bot does not move during it). A tunnel in rock of a known mine (whereAmI().mine) gets
  * the sentence of F2 once per tunnel per start; a tunnel of no mine and a cave get nothing. Underground (whereAmI()
  * .underground or a depth of 8 or more) the sense never asks for a name: it says nothing but that sentence. A scan
  * over 2 s adds `The scan took 3 s.` to the line it found.
@@ -397,7 +398,6 @@ export function senseTick(state, bot, input) {
             }
             state.scannedAt = now;
             state.found = null;
-            standStill(bot); // F4: idle, so nothing walks that a scan could stop
             const enclosure = scanEnclosure(blockNamesOf(bot), pos, { floors: input.floors === true });
             if ((enclosure.found && inBox(enclosure.box, pos)) || isRockHere(enclosure, pos)) {
                 state.found = { enclosure, box: enclosure.box, rock: enclosure.border === 'rock' };

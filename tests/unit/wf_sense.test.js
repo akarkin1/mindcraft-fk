@@ -1,7 +1,7 @@
 // Release v0.1.4.12, part F (engineer E5): the area sense and the knowledge line underground (SPEC 4.5, F2, F3, F4).
 //   - senseTick of src/agent/areas/area_sense.js: in a tunnel of a known mine the sentence of F2 once per tunnel per
-//     start; silent in a tunnel of no mine, in a cave, and in any place underground (it never asks for a name); the bot
-//     stands still for a scan (clearControlStates);
+//     start; silent in a tunnel of no mine, in a cave, and in any place underground (it never asks for a name); it never
+//     touches the controls of the bot (F9: no clearControlStates while an action climbs a ladder);
 //   - unsavedEnclosure and enclosureKnowledge for a place in rock; whereLine of src/agent/knowledge/knowledge_text.js
 //     names the known tunnel or nothing underground.
 import { describe, test } from 'node:test';
@@ -70,7 +70,7 @@ describe('F3: the sense underground', () => {
         assert.deepEqual(run(state, bot, { whereAmI: DEEP(MINE) }, 3000, 0), [TUNNEL_LINE]);
         bot.entity.position = vec(3.5, FEET, 1.5); // further in the same tunnel
         assert.deepEqual(run(state, bot, { whereAmI: DEEP(MINE) }, 4000, 200000), [], 'once per tunnel');
-        assert.ok(bot.stops >= 1, 'the bot stands still for the scan');
+        assert.equal(bot.stops, 0, 'F9: the sense never touches the controls (a mode ticks while an action climbs)');
     });
 
     test('in a tunnel of no mine: nothing, also when the mine becomes known it is said then', () => {
@@ -111,7 +111,9 @@ describe('F3: the knowledge line underground', () => {
     test('a tunnel: kind tunnel, the water not counted; the line names the tunnel of a known mine, else nothing', () => {
         const world = tunnelWorld();
         world.set(5, FEET - 1, 0, 'water');
-        const found = A.unsavedEnclosure(rockBot(world, 11, 0), [], { tunnelAt: M.tunnelAt });
+        const bot = rockBot(world, 11, 0);
+        const found = A.unsavedEnclosure(bot, [], { tunnelAt: M.tunnelAt });
+        assert.equal(bot.stops, 0, 'F9: the knowledge line never touches the controls');
         assert.equal(found.kind, 'tunnel');
         assert.equal(found.contents.water, 0);
         const enclosure = A.enclosureKnowledge(found);

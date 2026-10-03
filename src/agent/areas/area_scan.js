@@ -1485,7 +1485,8 @@ function rockFound(kind, box, facts) {
 }
 
 // The place in rock at the origin, or null (F1): a tunnel that the measure accepts and whose walls are natural for 2
-// of 3 or more; else, when the columns that bound the ground of the flood are natural for 2 of 3 or more, a cave. A
+// of 3 or more; else, when the columns that bound the ground of the flood are natural for 2 of 3 or more and the box of
+// the cave shows no use (F7: no door, trapdoor, bed, chest, barrel, furnace, crafting table or ladder), a cave. A
 // corridor whose walls a player built is no tunnel and no cave.
 function rockPlace(read, origin, bounds, measure) {
     const tunnel = tunnelHere(read, origin, measure);
@@ -1501,7 +1502,32 @@ function rockPlace(read, origin, bounds, measure) {
         return null;
     }
     const cave = cavePlace(read, origin);
+    if (showsUse(read, cave.box)) {
+        return null; // v0.1.4.12 (F7): a dug room that is lived in (a basement, the room of a mine) goes the old way
+    }
     return rockFound('cave', cave.box, { at: cave.at, width: cave.width, sides: cave.sides });
+}
+
+// v0.1.4.12 (F7): the blocks that show that a place in rock is used: a door or a trapdoor in its border or roof, a
+// bed, a chest or a barrel, a furnace (blast furnace, smoker), a crafting table, a ladder. Torches do not count.
+const USE_NAMES = new Set(['chest', 'trapped_chest', 'barrel', 'furnace', 'blast_furnace', 'smoker', 'crafting_table', 'ladder']);
+
+function isUseName(name) {
+    return name !== null && (USE_NAMES.has(name) || name.endsWith('_bed') || isDoorName(name) || isTrapdoorName(name));
+}
+
+// True when a block of use lies in the box of a cave (its walls, floor and roof included).
+function showsUse(read, box) {
+    for (let x = box.min.x; x <= box.max.x; x++) {
+        for (let y = box.min.y; y <= box.max.y; y++) {
+            for (let z = box.min.z; z <= box.max.z; z++) {
+                if (isUseName(read(x, y, z))) {
+                    return true;
+                }
+            }
+        }
+    }
+    return false;
 }
 
 /**
@@ -1527,7 +1553,8 @@ function rockPlace(read, origin, bounds, measure) {
  * above it) and no made border closes the ground, the place is rock: a tunnel when the measure of a tunnel (tunnelAt of
  * the mining pack, `options.tunnelAt` or useTunnelMeasure) accepts the origin, 1 or 2 wide and 4 long or more, and its
  * walls are natural for 2 of 3 or more; else a cave when the columns that bound the ground of the flood are natural for
- * 2 of 3 or more. Such a place has `found: false`, `border: 'rock'`, `reason` 'tunnel' or 'cave', `source` 'rock', the
+ * 2 of 3 or more and its box holds no door, trapdoor, bed, chest, barrel, furnace, crafting table or ladder (F7: a
+ * basement or the room of a mine goes the old way). Such a place has `found: false`, `border: 'rock'`, `reason` 'tunnel' or 'cave', `source` 'rock', the
  * text of the refusal of !rememberArea without a type, its box (the tunnel or the cave, from the floor to the roof),
  * and `tunnel` ({ start, end, dir, length, width, level }) or `cave` ({ at, width, sides }).
  * F4: every cell is read once per scan; a scan over 2 s gets `ms`, `took` (`The scan took 3 s.`) and the took text
