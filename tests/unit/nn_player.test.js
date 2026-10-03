@@ -414,11 +414,12 @@ describe('F15: the time of the search is no time stuck, and at most 20 s of sear
 });
 
 describe('F20 (W88): a follow that hangs in the open trapdoor under the player climbs out', () => {
-    test('the follow goal met while hanging: after 1 s it jumps out toward the player, the follow goal stays', { timeout: 20000 }, async () => {
+    // the house floor at y 60, an open oak trapdoor at (2, 60, -2) over ladders facing south; the bot hangs in it
+    function hanging({ pos, player }) {
         const world = makeWorld({ groundY: 60 });
         world.fill(2, 53, -2, 2, 59, -2, 'ladder', { facing: 'south' });
         world.set(2, 60, -2, 'oak_trapdoor', { facing: 'south', half: 'top', open: true });
-        const bot = scene({ world, pos: [2.5, 60.7, -1.5], player: [4.5, 61, -1.5], status: 'success' });
+        const bot = scene({ world, pos, player, status: 'success' });
         bot.entity.onGround = false;
         const goals = [];
         const setGoal = bot.pathfinder.setGoal.bind(bot.pathfinder);
@@ -426,21 +427,109 @@ describe('F20 (W88): a follow that hangs in the open trapdoor under the player c
             goals.push(goal?.constructor?.name ?? null);
             return setGoal(goal, dynamic);
         };
-        const set = bot.setControlState;
-        let jumped = false;
-        bot.setControlState = (k, val) => {
-            if (k === 'jump' && val && bot.controls.forward) {
-                jumped = true;
-                bot.entity.position = v(3.5, 61, -1.5); // out beside the trapdoor
-                bot.entity.onGround = true;
-            }
-            return set(k, val);
+        const walks = [];
+        bot.pathfinder.goto = async (goal) => {
+            walks.push([goal.x, goal.y, goal.z, goal.constructor?.name]);
+            bot.entity.position = v(goal.x + 0.5, goal.y, goal.z + 0.5);
+            bot.entity.onGround = true;
         };
+        return { bot, goals, walks };
+    }
+
+    test('the follow goal met while hanging: after 1 s it walks out to the free cell toward the player, then follows again', { timeout: 20000 }, async () => {
+        const { bot, goals, walks } = hanging({ pos: [2.5, 60.7, -1.5], player: [4.5, 61, -1.5] });
         setTimeout(() => { bot.interrupt_code = true; }, 3000);
         await skills.followPlayer(bot, PLAYER, 4);
-        assert.equal(jumped, true);
+        assert.deepEqual(walks, [[3, 61, -2, 'GoalBlock']], 'beside the top of the column, toward the player');
         assert.equal(Math.floor(bot.entity.position.y), 61);
-        assert.deepEqual(goals, ['GoalFollow'], 'no reset of the path search');
+        // F22: the follow is stopped for the walk out and set again after it
+        assert.equal(goals[0], 'GoalFollow');
+        assert.equal(goals[goals.length - 1], 'GoalFollow');
+        assert.ok(goals.includes(null));
     });
 
+    test('F22: wedged against the side toward the player: out to another side, never that one', { timeout: 20000 }, async () => {
+        // the middle of the bot 0.21 south of the middle of the cell (pressed into the floor edge toward the player)
+        const { bot, walks } = hanging({ pos: [2.5, 60.72, -1.29], player: [2.5, 61, 1.5] });
+        setTimeout(() => { bot.interrupt_code = true; }, 3000);
+        await skills.followPlayer(bot, PLAYER, 4);
+        assert.equal(walks.length, 1);
+        assert.notDeepEqual(walks[0].slice(0, 3), [2, 61, -1], 'not the side it is wedged against');
+        assert.equal(walks[0][1], 61);
+        assert.equal(Math.floor(bot.entity.position.y), 61);
+    });
+});
+
+describe('F21 (W84, D): a search that runs out of time with no progress is no proof that there is no way', () => {
+    // the house floor at y 60 (grass), a closed oak trapdoor at (2, 60, -2) over ladders facing south at (2, 43..59, -2)
+    // whose lowest rung is 2 blocks above the floor of the room (y 41, floor y 40); the bot stands on the trapdoor, the
+    // player in the room 20 blocks below. The path search of the fake runs out of time with no node nearer to the player
+    // while the bot is up (its best node is where the bot stands), and finds the whole way once the bot is down.
+    function trapdoorUnder({ ladders = 4, open = () => true } = {}) {
+        const world = makeWorld({ groundY: 60 });
+        world.fill(0, 41, -2, 4, 43, 2, 'air');
+        world.fill(2, 44, -2, 2, 59, -2, 'air');
+        world.fill(2, 43, -2, 2, 59, -2, 'ladder', { facing: 'south' });
+        world.set(2, 60, -2, 'oak_trapdoor', { facing: 'south', half: 'top', open: false });
+        const solid = world.solid;
+        world.solid = (x, y, z) => (world.nameAt(x, y, z).endsWith('_trapdoor') && world.propsAt(x, y, z).open === true ? false : solid(x, y, z));
+        const bot = scene({ world, pos: [2.5, 61, -1.5], player: [2.5, 41, 0.5] });
+        if (ladders > 0) give(bot, 'ladder', ladders);
+        bot.activateBlock = async (block) => {
+            const p = block.position;
+            bot.calls.push(['activate', p.x, p.y, p.z]);
+            if (open())
+                world.set(p.x, p.y, p.z, world.nameAt(p.x, p.y, p.z), { ...world.propsAt(p.x, p.y, p.z), open: world.propsAt(p.x, p.y, p.z).open !== true });
+        };
+        bot.findBlocks = ({ matching, maxDistance = 16, point }) => {
+            const c = point ?? bot.entity.position;
+            const out = [];
+            const r = Math.ceil(maxDistance);
+            for (let x = Math.floor(c.x) - r; x <= Math.floor(c.x) + r; x++)
+                for (let y = Math.floor(c.y) - r; y <= Math.floor(c.y) + r; y++)
+                    for (let z = Math.floor(c.z) - r; z <= Math.floor(c.z) + r; z++)
+                        if (matching(world.block(x, y, z)) && Math.hypot(x + 0.5 - c.x, y + 0.5 - c.y, z + 0.5 - c.z) <= maxDistance) out.push(v(x, y, z));
+            return out;
+        };
+        bot.pathfinder.getPathFromTo = function* (movements, start, goal) {
+            bot.searches.push({ canDig: movements.canDig, y: start.y });
+            yield { result: { status: 'partial', path: [] } };
+            yield { result: start.y < 50 ? { status: 'success', path: [] } : { status: 'timeout', path: [{ x: 2, y: 61, z: -2 }] } };
+        };
+        const goto = bot.pathfinder.goto.bind(bot.pathfinder);
+        bot.pathfinder.goto = async (goal) => {
+            if (goal?.entity || goal?.inner?.entity) {
+                bot.entity.position = v(2.5, 41, -0.5);
+                return;
+            }
+            return goto(goal);
+        };
+        const timer = setInterval(() => tick(bot), 50);
+        return { world, bot, stop: () => clearInterval(timer) };
+    }
+
+    test('the trapdoor under the bot opened from above, down the column, the search again: it arrives, no text', { timeout: 60000 }, async () => {
+        const { bot, stop } = trapdoorUnder();
+        try {
+            await skills.goToPlayer(bot, PLAYER, 3);
+        } finally {
+            stop();
+        }
+        assert.ok(!bot.output.includes(NO_WAY), bot.output);
+        assert.ok(bot.calls.some(c => c[0] === 'activate' && c[1] === 2 && c[2] === 60 && c[3] === -2), 'the trapdoor clicked');
+        assert.ok(bot.searches.length >= 2 && bot.searches[bot.searches.length - 1].y < 50, 'searched again from below');
+        assert.ok(bot.searches.every(q => q.canDig === false));
+        assert.ok(bot.output.trim().endsWith(`You have reached ${PLAYER}.`), bot.output);
+        assert.equal(bot.calls.filter(c => c[0] === 'dig').length, 0);
+    });
+
+    test('nothing to open and no column: one search more, then the text', async () => {
+        const bot = scene({ status: 'timeout' });
+        bot.pathfinder.goto = async (goal) => { bot.gotos.push(goal); };
+        const r = await skills.goToPlayer(bot, PLAYER, 3);
+        assert.equal(r, false);
+        assert.equal(bot.output, `${NO_WAY}\n`);
+        assert.equal(bot.searches.length, 2, 'a search that ran out of time is asked once more');
+        assert.deepEqual(bot.gotos, []);
+    });
 });

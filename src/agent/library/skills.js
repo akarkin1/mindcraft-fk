@@ -2233,16 +2233,53 @@ function hangsInColumn(bot) {
 
 // F20: out of the open trapdoor at the top of a column toward a point: look at it, jump and walk forward for at most
 // 1.2 s, until the bot stands on the ground out of the trapdoor. Never throws.
-async function climbOutToward(bot, point) {
+// F22 (W88, C2, two runs): the path search took the bot out of the trapdoor toward the player and wedged it there,
+// the feet at 60.7 to 60.8 under the floor at 61 and the body 0.02 into the floor block beside: no control moved it
+// for 2.7 s (the jump toward the player of F20, and a climb against the ladder wall, did nothing) and the follow
+// stood for 13 s, until the path search planned a way out to another side; that way took the bot out at once. Now
+// the bot walks (the path search, `movements` without digging, at most 3 s) to the free cell beside the top of the
+// column nearest to the point: feet and head free, a solid block under it, never the side the bot is wedged
+// against (its middle 0.15 or more off the middle of the cell toward it). Without such a cell, the jump of F20.
+// The caller stops the follow before and sets it again after.
+const CLIMB_OUT = { outMs: 1200, walkMs: 3000, lean: 0.15 };
+const SIDES = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+
+function exitCellsOf(bot, cell, point) {
+    const p = bot.entity.position;
+    const free = (x, y, z) => bot.blockAt(new Vec3(x, y, z))?.boundingBox === 'empty';
+    const out = [];
+    for (const [dx, dz] of SIDES) {
+        const lean = dx !== 0 ? (p.x - (cell.x + 0.5)) * dx : (p.z - (cell.z + 0.5)) * dz;
+        if (lean >= CLIMB_OUT.lean)
+            continue; // the side the bot is wedged against
+        const x = cell.x + dx, y = cell.y + 1, z = cell.z + dz;
+        if (free(x, y, z) && free(x, y + 1, z) && bot.blockAt(new Vec3(x, y - 1, z))?.boundingBox === 'block')
+            out.push({ x, y, z });
+    }
+    return out.sort((a, b) => Math.hypot(a.x + 0.5 - point.x, a.z + 0.5 - point.z) - Math.hypot(b.x + 0.5 - point.x, b.z + 0.5 - point.z));
+}
+
+async function climbOutToward(bot, point, movements = null) {
+    const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms));
     try {
+        const exit = exitCellsOf(bot, bot.entity.position.floored(), point)[0];
+        if (exit) {
+            try {
+                await walkWith(bot, new pf.goals.GoalBlock(exit.x, exit.y, exit.z), movements ?? noDigMovements(bot), CLIMB_OUT.walkMs);
+            } catch (err) {
+                // measured below
+            }
+            if (bot.interrupt_code || !hangsInColumn(bot))
+                return;
+        }
         const p = bot.entity.position;
-        await bot.lookAt(new Vec3(point.x, p.y + 1.6, point.z), true);
         bot.setControlState('sneak', false);
+        await bot.lookAt(new Vec3(point.x, p.y + 1.6, point.z), true);
         bot.setControlState('forward', true);
         bot.setControlState('jump', true);
-        const end = Date.now() + 1200;
+        const end = Date.now() + CLIMB_OUT.outMs;
         while (Date.now() < end && !bot.interrupt_code) {
-            await new Promise(resolve => setTimeout(resolve, 50));
+            await wait(50);
             if (bot.entity.onGround && !hangsInColumn(bot) && bot.blockAt(bot.entity.position.floored())?.name?.endsWith('_trapdoor') !== true)
                 break;
         }
@@ -2390,6 +2427,7 @@ async function ladderTowardPlayer(bot, player, ladder) {
 async function approachWithoutDigging(bot, player, distance, cave = null, first = null, ladder = null, budget = null) {
     const opened = new Set(); // F5: the openables opened in this order
     const spend = budget ?? { leftMs: PLAYER_SEARCH.totalMs };
+    let retried = false; // F21: the one search more after a timeout without progress
     for (let round = 0; round < PLAYER_SEARCH.rounds; round++) {
         if (bot.interrupt_code || cave?.at)
             return 'stopped';
@@ -2427,6 +2465,12 @@ async function approachWithoutDigging(bot, player, distance, cave = null, first 
                 continue;
             if (bot.interrupt_code || cave?.at)
                 return 'stopped';
+            // F21 (W84, D): a search that ran out of time with no node nearer to the player is no proof; it is asked
+            // once more with what is left of the 20 s of search before the text
+            if (r.status === 'timeout' && !nearer && !retried) {
+                retried = true;
+                continue;
+            }
             return 'none';
         }
     }
@@ -2766,11 +2810,19 @@ export async function followPlayer(bot, username, distance=4) {
             if (hang_since === null)
                 hang_since = Date.now();
             else if (Date.now() - hang_since >= 1000 && hang_tries < 3) {
-                // out of the trapdoor toward the player as a player does: look at him, jump and walk forward (no new
-                // goal: a reset of the path search lets the bot slide down the ladder first)
+                // out of the trapdoor toward the player as a player does. F22: the path search is stopped for it (it
+                // set its controls back every tick; its stop holds the bot on the ladder) and set again after it
                 hang_tries++;
-                await climbOutToward(bot, player.position);
+                bot.pathfinder.setGoal(null);
+                await climbOutToward(bot, player.position, move);
+                if (bot.interrupt_code)
+                    break;
+                bot.pathfinder.setMovements(move);
+                bot.pathfinder.setGoal(new pf.goals.GoalFollow(player, distance), true);
                 hang_since = null;
+                still_cell = feetCellOf(bot);
+                still_gap = ladderGap(bot, player.position);
+                still_since = Date.now();
             }
         }
         else {
