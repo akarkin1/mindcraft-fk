@@ -56,14 +56,14 @@ describe('the setting watch_and_learn', () => {
 });
 
 describe('the three commands', () => {
-    // the descriptions are shorter than in SPEC 4.4 on the lead's order: the prompt with every switch on (17,000 characters)
-    test('names, descriptions and params (shortened on the lead\'s order)', () => {
-        assert.equal(command('!watchMe').description, 'Watch me build.');
+    // the descriptions of SPEC 4.4 (the lead made room in the prompt elsewhere); !continueLike's is one sentence
+    test('names, descriptions and params', () => {
+        assert.equal(command('!watchMe').description, 'Watch what I do and learn the pattern.');
         assert.equal(command('!watchMe').params, undefined);
-        assert.equal(command('!continueLike').description, 'Say the pattern you watched.');
+        assert.equal(command('!continueLike').description, 'Continue the pattern you watched, for a size.');
         assert.deepEqual(Object.keys(command('!continueLike').params), ['size']);
         assert.equal(command('!continueLike').params.size.type, 'string');
-        assert.equal(command('!buildWatched').description, 'Build or dig it after my yes.');
+        assert.equal(command('!buildWatched').description, 'Build or dig what you understood, after I said yes.');
         assert.equal(command('!buildWatched').params, undefined);
         assert.equal(command('!stopWatching'), undefined, 'not a command: any order ends the watching');
     });
@@ -169,7 +169,7 @@ describe('_loadWorkPacks', () => {
 
     test('source: import() of ./packs/watch/index.js behind watch_and_learn and inside try', () => {
         const source = fs.readFileSync(repoPath('src/agent/agent.js'), 'utf8').replace(/\r\n/g, '\n');
-        assert.match(source, /if \(settings\.watch_and_learn && \(settings\.storage_pack \|\| settings\.farming_pack \|\| settings\.wood_pack \|\| settings\.mining_pack \|\| settings\.routes_pack\)\) \{\n\s+try \{\n\s+packs\.watch = await \(loaders\.watch \? loaders\.watch\(\) : import\('\.\/packs\/watch\/index\.js'\)\);/);
+        assert.match(source, /if \(settings\.watch_and_learn\) \{\n\s+try \{\n\s+packs\.watch = await \(loaders\.watch \? loaders\.watch\(\) : import\('\.\/packs\/watch\/index\.js'\)\);/);
         assert.equal(source.match(/packs\/watch\//g).length, 1);
     });
 });
