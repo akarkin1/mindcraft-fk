@@ -5,14 +5,15 @@
 //
 // The owner variant of the base (the dump of the owner's region when tests/world/owner_region.json exists): the furnace of
 // the room; the chest of the room holds 8 coal besides its cobblestone and torches. The owner's switches of v0.1.4.11
-// with smelting on, the modes of his profile, an empty memory, a kit of a stone pickaxe and 4 oak_planks (the wood of 2
-// sticks: the pickaxe needs them; the spec names only the pickaxe). The bot is never moved by the control.
+// with smelting on, the modes of his profile, an empty memory, a kit of a stone pickaxe, 4 oak_planks (the wood of the
+// sticks and the fuel; the spec names only the pickaxe) and 8 ladders (as W84 and W86: the owner's bot carries them; ladder
+// 2 of the base ends 2 blocks above the room floor and the climb out needs one). The bot is never moved by the control.
 //   0. The player teaches the mine (journey.js partTeachMine: "follow me" into the house, down both ladders to the end of
 //      the tunnel, "this is the mine"): a mine to take the ore from (as W86). 6 iron ore in the line of the tunnel beyond
 //      its end (at 2, 4 and 6 blocks, feet and head).
 //   1. The player says "make me an iron pickaxe"; the fake model answers !getTool("pickaxe", "iron"). A plan prompt of the
-//      job is answered with the steps the owner's model would give: !mineOre("iron", 3), !fetchItem("coal", 2),
-//      !smeltItem("raw_iron", 3), !getTool("pickaxe", "iron").
+//      job is answered with the steps the prompt proposes: !mineOre("iron", 3), !smeltItem("raw_iron", 3),
+//      !getTool("pickaxe", "iron").
 //   2. Within 8 minutes the bot carries an iron_pickaxe (server); the furnace of the room stands where it was; no furnace
 //      stands in the pen or the farm; the bot said (or its history holds) `I smelted N raw_iron into N iron_ingot in the
 //      furnace at (x, y, z) with M <fuel>.` with N 3 or more.
@@ -29,11 +30,13 @@ import { startJourney, partTeachMine, PLAYER, spots, oreBeyondTunnel, saidLines,
 const SELF = fileURLToPath(import.meta.url);
 const NAME = 'w_iron';
 const NAME_OFF = 'w_iron_off';
-const KIT = [['stone_pickaxe', 1], ['oak_planks', 4]];
+const KIT = [['stone_pickaxe', 1], ['oak_planks', 4], ['ladder', 8]];
 const SENTENCE = 'make me an iron pickaxe';
 const PLAN_PROMPT = /You plan the steps/;
 const SMELTED = /I smelted (\d+) raw_iron into (\d+) iron_ingot in the furnace at \((-?\d+), (-?\d+), (-?\d+)\) with (\d+) (\w+)\./;
-const STEPS = ['!mineOre("iron", 3)', '!fetchItem("coal", 2)', '!smeltItem("raw_iron", 3)', '!getTool("pickaxe", "iron")'];
+// the steps the plan prompt itself proposes (the bot carries planks as fuel); no !fetchItem: the chest index knows no chest
+// in this scenario (nobody looked into the room chest), so a fetch of coal answers `I know no chest with coal.`
+const STEPS = ['!mineOre("iron", 3)', '!smeltItem("raw_iron", 3)', '!getTool("pickaxe", "iron")'];
 
 // The base of the scenario (both phases): the owner variant, coal in the chest of the room.
 function plan() {

@@ -226,9 +226,13 @@ export function createJob(agent, store, options = {}) {
             if (!job || job.started !== started || job.state !== 'running') {
                 return result(false, 'changed', ''); // a new order came while the model planned
             }
-            // v0.1.4.12 (T3-1): a step that repeats the command of the job itself is no plan (the job would loop)
-            if (Array.isArray(steps) && typeof job.kind === 'string' && steps.some(step => String(step?.command ?? '').match(/^!\w+/)?.[0] === `!${job.kind}`)) {
-                steps = null;
+            // v0.1.4.12 (T3-1): a step that repeats the command of the job itself is dropped (the job resumes with its own
+            // command after the steps); a plan of nothing else is no plan
+            if (Array.isArray(steps) && typeof job.kind === 'string') {
+                steps = steps.filter(step => String(step?.command ?? '').match(/^!\w+/)?.[0] !== `!${job.kind}`);
+                if (steps.length === 0) {
+                    steps = null;
+                }
             }
             if (steps === null) {
                 return result(false, 'no_plan', pause(job, noPlanText(b)));
