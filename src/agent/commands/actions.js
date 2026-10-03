@@ -4,12 +4,14 @@ import settings from '../settings.js';
 import convoManager from '../conversation.js';
 import { Vec3 } from 'vec3';
 import { normalizeBox, contains, boxSize } from '../areas/area_geometry.js';
-import { scanBuilding, scanWithoutType, findFencedGroundNear } from '../areas/area_scan.js';
+import { scanBuilding, scanWithoutType, findFencedGroundNear, scanEnclosure, scanText } from '../areas/area_scan.js';
+import { kindOf, typeOfKind, savedText, kindChangedText } from '../areas/area_kind.js';
+import { countContents } from '../areas/area_sense.js';
 import { AREA_TYPES, normalizeAreaName, replaceRefusal, sameBox, sameBoxText } from '../areas/area_store.js';
 import { goToShelter, sleepInBed, eatBestFood, enterBuilding, passThrough, closeNear } from '../packs/home/index.js';
 import { REMEMBER_RULE_DESCRIPTION, rememberRuleReply, forgetRuleReply } from '../rules/rule_commands.js';
 import { areaFlagOf } from '../rules/rule_logic.js';
-import { isDiggingRequest, digRefusalText } from '../dig_request_logic.js';
+import { isDiggingRequest, digRefusalText, oreOfRequest } from '../dig_request_logic.js';
 import { oreInSight, sightRange } from '../library/ore_sight_logic.js';
 
 
@@ -546,6 +548,28 @@ function orderPlayerYaw(agent) {
     }
 }
 
+// v0.1.4.11 (F28): "this is the mine" may come as !rememberArea(name, "mine"). With the mine routes on, after the area is
+// saved the mine of the player is recorded as !rememberMine(name) does, when no mine of the player holds the bot yet.
+// Returns the sentence of !rememberMine, or null: off, a mine here already, or the record failed. Never throws.
+async function rememberMineToo(agent, name) {
+    try {
+        const pack = settings.mining_pack ? agent.work_packs?.mining : null;
+        if (!mineRoutesOn() || !pack || typeof pack.rememberMine !== 'function')
+            return null;
+        const ctx = agent.packContext();
+        const p = agent.bot?.entity?.position;
+        const mines = typeof ctx?.mines?.list === 'function' ? ctx.mines.list(agent.bot.game?.dimension) : [];
+        const own = (Array.isArray(mines) ? mines : []).filter(m => m?.source === 'player');
+        if (p && typeof pack.mineAt === 'function' && pack.mineAt(own, { x: Math.floor(p.x), y: Math.floor(p.y + 0.01), z: Math.floor(p.z) }))
+            return null;
+        const r = await pack.rememberMine(agent.bot, ctx, name, { playerYaw: orderPlayerYaw(agent) });
+        return r?.ok === true && typeof r.text === 'string' && r.text.length > 0 ? r.text : null;
+    } catch (error) {
+        console.warn('Could not remember the mine with the area:', error);
+        return null;
+    }
+}
+
 // v0.1.4.9 (F2, decision of the tech lead): !goToRememberedPlace with routes_pack walks a way that the player showed
 // FIRST when ctx.routes.routeFor finds one for the place (one end within 4 blocks of the place, the other within 32
 // of the bot); the path search only does the rest (the path search alone stood on the closed trapdoor until the
@@ -593,6 +617,21 @@ async function walkRememberedWay(agent, pos) {
     }
 }
 
+// v0.1.4.11 (W4): what goToSurface gets: with the mining pack on, the pack context and the mining pack for its way out
+// of a mine (climbToSurface); else the home context (whereAmI, the areas). null without one. Never throws.
+function surfaceContext(agent) {
+    try {
+        if (settings.mining_pack && agent.work_packs?.mining) {
+            const ctx = agent.packContext();
+            return ctx && typeof ctx === 'object' ? { ...ctx, mining: agent.work_packs.mining } : null;
+        }
+        return typeof agent?.homeContext === 'function' ? agent.homeContext() ?? null : null;
+    } catch (error) {
+        console.warn('Could not build the context of !goToSurface:', error);
+        return null;
+    }
+}
+
 // v0.1.4.9 (I8): the digging commands that are on, for digRefusalText: !mineOre with mining_pack, !rememberTunnel
 // with the mine routes, !collectBlocks always; none that settings.blocked_actions or the agent hides.
 function diggingCommands(agent) {
@@ -625,11 +664,53 @@ function digCodeRefusal(agent, prompt) {
     try {
         if (typedByPlayer(agent, '!newAction'))
             return null;
-        if (!isDiggingRequest(prompt).digging && !isDiggingRequest(lastPlayerMessage(agent)).digging)
+        const last = lastPlayerMessage(agent);
+        if (!isDiggingRequest(prompt).digging && !isDiggingRequest(last).digging)
             return null;
-        return digRefusalText(diggingCommands(agent));
+        return digRefusalText(diggingCommands(agent), digPlace(agent, prompt, last));
     } catch (error) {
         console.warn('Could not check the code request for digging:', error);
+        return null;
+    }
+}
+
+// v0.1.4.11 (W7, I2): where the bot stands, for the one call that the refusal names: inMine and inTunnel from the
+// mine of whereAmI() (mineAt of the mining pack, with mine_routes), underground from whereAmI(), fromInside the
+// setting mine_from_inside, the ore of the request (of the prompt, else of the player's last message), else iron.
+// null when whereAmI() cannot be read: the text of v0.1.4.9. Never throws.
+function digPlace(agent, prompt, last) {
+    try {
+        if (typeof agent?.whereAmI !== 'function')
+            return null;
+        const where = agent.whereAmI();
+        if (!where || typeof where !== 'object')
+            return null;
+        let mine = where.mine ?? null;
+        if (mine === null) {
+            // F17 (the full set, dig_code_refused): whereAmI().mine is null without mine_routes, but the mine store
+            // knows the mine; a bot in the tunnel of a known mine must be told !mineOre, never "leave the mine"
+            try {
+                const pack = settings.mining_pack ? agent.work_packs?.mining : null;
+                const mines = agent._workStores?.()?.mines;
+                const pos = agent.bot?.entity?.position;
+                if (typeof pack?.mineAt === 'function' && mines && pos) {
+                    const at = pack.mineAt(mines.list(agent.bot.game?.dimension), { x: pos.x, y: pos.y, z: pos.z });
+                    if (at?.mine)
+                        mine = { name: at.mine.name ?? null, tunnel: Number.isInteger(at.tunnel) ? at.tunnel : null };
+                }
+            } catch (error) {
+                console.warn('Could not read the mine store for the refusal:', error);
+            }
+        }
+        return {
+            inMine: mine !== null,
+            inTunnel: mine !== null && mine.tunnel !== null && mine.tunnel !== undefined,
+            underground: where.underground === true,
+            fromInside: settings.mine_from_inside === true,
+            ore: oreOfRequest(prompt) ?? oreOfRequest(last) ?? 'iron',
+        };
+    } catch (error) {
+        console.warn('Could not ask where the bot is for the refusal:', error);
         return null;
     }
 }
@@ -680,6 +761,7 @@ async function fetchToGive(agent, item_name, num) {
 // v0.1.4.8 (D5, P5): !rememberArea for a farm or a pen: the fenced ground at or near the bot. From
 // outside the fence the ground behind the gate is saved, and with the home pack the bot walks in through
 // the gate with passThrough. Returns the reply.
+// v0.1.4.11 (P1): the type is the kind; the area gets the contents and the border, and the answer is that of P1.
 async function rememberFenced(agent, store, name, type) {
     if (!store)
         return AREAS_OFF;
@@ -687,8 +769,12 @@ async function rememberFenced(agent, store, name, type) {
     const scan = findFencedGroundNear(blockNameOf(bot), bot.entity.position, 6, { type });
     if (!scan?.found)
         return scan?.text || `I found no fenced ground here. Stand inside the fence and try again.`;
-    const area = store.set({ name, type, min: scan.min, max: scan.max, dimension: bot.game?.dimension, entrances: scan.entrances ?? [], source: 'scan' });
-    const saved = `${areaSavedText(area)} Tell me if that is wrong.`;
+    const facts = scanEnclosure(blockNameOf(bot), scan.inside ? bot.entity.position : (scan.start ?? bot.entity.position), { mode: 'ground', type });
+    const enclosure = facts.found ? facts : { border: 'fence', openings: scan.entrances ?? [], roof: false };
+    const contents = countContents(bot, scan);
+    const area = store.set({ name, type, kind: type, min: scan.min, max: scan.max, dimension: bot.game?.dimension, entrances: scan.entrances ?? [], source: 'scan',
+        contents, border: enclosure.border });
+    const saved = savedText(area.name, type, enclosure, contents, area);
     if (scan.inside)
         return saved;
     // outside, on the fence or in the gate: the ground behind it is saved; then in through the gate
@@ -706,9 +792,9 @@ async function rememberFenced(agent, store, name, type) {
 export const actionsList = [
     {
         name: '!newAction',
-        description: 'Perform new and unknown custom behaviors that are not available as a command.', 
+        description: 'Write code for what no command does.', // v0.1.4.11, W: shorter, the prompt stays at 17,000
         params: {
-            'prompt': { type: 'string', description: 'A natural language prompt to guide code generation. Make a detailed step-by-step plan.' }
+            'prompt': { type: 'string', description: 'A step-by-step plan.' }
         },
         perform: async function(agent, prompt) {
             // just ignore prompt - it is now in context in chat history
@@ -949,26 +1035,56 @@ export const actionsList = [
             if (!AREA_TYPES.includes(type))
                 return AREA_TYPE_TEXT;
             try {
+                // v0.1.4.11 (P1): the parser fills in "building" for a missing type, so "building" is no type: the kind
+                // is what the scan of the enclosure finds (kindOf). A type is the owner's word for the kind.
+                const untyped = type === 'building';
+                const clean = normalizeAreaName(name) ?? '';
+                if (clean.length < 1 || clean.length > 64)
+                    return areaErrorText(new TypeError('bad name'), name);
+                // P1: the same name again with another type changes the kind of the saved area; its box stays
+                const known = untyped || type === 'mine' ? null : store.get(name);
+                // F28: a saved area of type mine also records the mine of the player (rememberMineToo)
+                const withMine = async (text) => {
+                    const more = await rememberMineToo(agent, name);
+                    return more ? `${text} ${more}` : text;
+                };
+                if (known && (known.kind ?? known.type) !== type) {
+                    const area = store.set({ ...known, type, kind: type });
+                    return kindChangedText(area.name, type);
+                }
                 // v0.1.4.8 (D5): a farm or a pen is the fenced ground at or near the bot, also from outside the gate
                 if (type === 'farm' || type === 'pen')
                     return await rememberFenced(agent, store, name, type);
                 const bot = agent.bot;
                 const origin = bot.entity.position;
                 const dimension = bot.game?.dimension;
-                // v0.1.4.10 (R3): with area_floors the scan stops at a floor. T3-6: without a type (the parser
-                // fills in "building", so the command cannot tell it from a typed "building") the scan starts with
-                // the pen around the bot: inside a fence the pen is saved, not a building beyond the fence
-                const untyped = type === 'building';
-                const scan = untyped ? scanWithoutType(blockNameOf(bot), origin, scanOptions()) : scanBuilding(blockNameOf(bot), origin, scanOptions());
+                if (type === 'home' || untyped) {
+                    // v0.1.4.10 (R3): with area_floors the scan stops at a floor. v0.1.4.11 (I5): without a type the one
+                    // scan of the enclosure (a fence, a wall, a hedge, water); "home" is the scan of a building
+                    const scan = scanEnclosure(blockNameOf(bot), origin, { ...(scanOptions() ?? {}), mode: untyped ? 'auto' : 'building' });
+                    if (scan.found) {
+                        const same = sameAreaAs(store, name, scan, dimension); // v0.1.4.10 (R3): no second area of one box
+                        if (same)
+                            return sameBoxText(same.name);
+                        const contents = countContents(bot, scan.box);
+                        const kind = untyped ? kindOf(scan, contents) : type;
+                        const area = store.set({ name, kind, type: typeOfKind(kind), min: scan.min, max: scan.max, dimension, entrances: scan.entrances,
+                            source: 'scan', contents, border: scan.border });
+                        return savedText(area.name, kind, scan, contents, area);
+                    }
+                    if (untyped)
+                        return scan.text || scanText('no_border'); // P1: nothing is saved
+                }
+                // the mine: as v0.1.4.10
+                const scan = type === 'mine' ? scanBuilding(blockNameOf(bot), origin, scanOptions()) : null;
                 if (scan?.found) {
-                    const same = sameAreaAs(store, name, scan, dimension); // v0.1.4.10 (R3): no second area of one box
+                    const same = sameAreaAs(store, name, scan, dimension);
                     if (same)
                         return sameBoxText(same.name);
-                    const pen = untyped && scan.kind === 'pen';
-                    const area = store.set({ name, type: pen ? 'pen' : type, min: scan.min, max: scan.max, dimension, entrances: scan.entrances ?? [], source: 'scan' });
-                    const saved = `${areaSavedText(area)} Tell me if that is wrong.`;
-                    return pen ? `I stand inside a fence, so I saved the pen. ${saved}` : saved;
+                    const area = store.set({ name, type, min: scan.min, max: scan.max, dimension, entrances: scan.entrances ?? [], source: 'scan' });
+                    return withMine(`${areaSavedText(area)} Tell me if that is wrong.`);
                 }
+                // a mine or a home where no building is found: a box as v0.1.4.10
                 // no building found: a box around the bot, 12 blocks in x and z, 4 below and 8 above
                 const x = Math.floor(origin.x), y = Math.floor(origin.y), z = Math.floor(origin.z);
                 const box = normalizeBox({ x: x - 12, y: y - 4, z: z - 12 }, { x: x + 12, y: y + 8, z: z + 12 });
@@ -977,7 +1093,7 @@ export const actionsList = [
                     return sameBoxText(same.name);
                 const area = store.set({ name, type, min: box.min, max: box.max, dimension, entrances: [], source: 'radius' });
                 if (type === 'mine')
-                    return `I saved a box of ${sizeText(area)} around this place as the mine "${area.name}". Use !setArea to correct it.`;
+                    return withMine(`I saved a box of ${sizeText(area)} around this place as the mine "${area.name}". Use !setArea to correct it.`);
                 return `I found no building here. I saved a box of ${sizeText(area)} around this place as "${area.name}". Use !setArea to correct it.`;
             } catch (error) {
                 return areaErrorText(error, name);
@@ -1453,8 +1569,8 @@ export const actionsList = [
     },
     {
         name: '!goToMine',
-        description: 'Go down into your mine.',
-        params: {'ore': { type: 'string', description: 'The ore of the mine, empty for the nearest mine.', default: '' }},
+        description: 'Go into your mine.',
+        params: {'ore': { type: 'string', description: 'The ore, empty for the nearest mine.', default: '' }},
         perform: async function (agent, ore) {
             if (!settings.mining_pack)
                 return MINING_OFF;
@@ -1463,7 +1579,7 @@ export const actionsList = [
     },
     {
         name: '!leaveMine',
-        description: 'Come up from the mine to the surface.',
+        description: 'Climb out of the mine.',
         perform: async function (agent) {
             if (!settings.mining_pack)
                 return MINING_OFF;
@@ -1535,13 +1651,15 @@ export const actionsList = [
     },
     {
         name: '!rememberTunnel',
-        description: 'Measure the tunnel you stand in, to dig on at its end later. Use this when the player says "dig here".',
-        params: {'name': { type: 'string', description: 'The mine, empty for the one here.', default: '' }},
+        description: 'Measure the tunnel here. Use this when the player says "dig here".',
+        params: {'name': { type: 'string', description: 'The mine, empty for this one.', default: '' }},
         perform: async function (agent, name) {
             if (!mineRoutesOn())
                 return MINE_ROUTES_OFF;
             const playerYaw = orderPlayerYaw(agent);
-            return await runPlain(agent, agent.work_packs?.mining, 'mining', (pack) => pack.rememberTunnel(agent.bot, agent.packContext(), name, { playerYaw }));
+            // v0.1.4.11 I3: the player's position too, so that the tunnel is measured from where the player stands
+            const playerPos = agent.bot?.players?.[agent?.last_order?.by]?.entity?.position ?? null;
+            return await runPlain(agent, agent.work_packs?.mining, 'mining', (pack) => pack.rememberTunnel(agent.bot, agent.packContext(), name, { playerYaw, playerPos }));
         }
     },
     {
@@ -1709,10 +1827,10 @@ export const actionsList = [
     },
     {
         name: '!goToSurface',
-        description: 'Go up to the highest block above you, usually the surface.',
+        description: 'Go out under the open sky: out of a building through its door, up from a mine. Use this when the player says "get to the surface" or "get out".',
         params: {},
         perform: runAsAction(async (agent) => {
-            await skills.goToSurface(agent.bot);
+            await skills.goToSurface(agent.bot, surfaceContext(agent));
         })
     },
     {

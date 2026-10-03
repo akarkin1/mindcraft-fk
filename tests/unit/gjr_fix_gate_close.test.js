@@ -116,7 +116,7 @@ describe('T3-9: DoorWatch, a gate seen closed in the middle of the pass', () => 
     test('the bot stops 1.4 past the gate opened again: not closed while it still walks, closed once it stands', () => {
         const w = missedPass();
         assert.deepEqual(look(w, 6900, at(611.5, 3.5), { ...GATE, gated: true, open: true }, { moving: true }), [], 'walking, no pass seen');
-        assert.equal(w.noted(GATE)?.why, 'gate', 'noted again by coming near');
+        assert.equal(w.noted(GATE)?.why, 'opened', 'noted again: the click set the gate seen closed (F2), the opening is "opened"');
         const out = look(w, 8500, at(611.5, 3.5), { ...GATE, gated: true, open: true }, { moving: false });
         assert.equal(out.length, 1);
         assert.deepEqual({ x: out[0].x, z: out[0].z }, { x: 612, z: 4 });
@@ -146,6 +146,25 @@ describe('T3-9: DoorWatch, a gate seen closed in the middle of the pass', () => 
         const w = walkOut(DOOR);
         look(w, 6600, at(612.5, 4.5), { ...DOOR, open: true });
         assert.deepEqual(look(w, 8500, at(611.5, 3.5), { ...DOOR, open: true }, { moving: false }), []);
+    });
+
+    // F2 of v0.1.4.11 (W94): after the service's own click the bot's path search opened the gate again and the bot
+    // walked on to the farm; the next look saw the gate open with `before` true (the click did not update `_seen`),
+    // so nothing was noted and the gate stood open behind the bot. Now a click sets `_seen` to closed, the opening
+    // is noted as "opened", and a gate of a pen the bot opened while walking is closed 2 blocks past it, pass or not.
+    test('F2: after the click the opening again is noted; the bot walks on, 2 blocks past the gate it is closed', () => {
+        const w = missedPass();
+        look(w, 6900, at(612.5, 4.8), { ...GATE, gated: true, open: true }); // open again, the bot in the cell, walking
+        assert.equal(w.noted(GATE)?.why, 'opened');
+        assert.deepEqual(look(w, 7100, at(612.5, 3.6), { ...GATE, gated: true, open: true }), [], '0.9 past it, walking');
+        assert.equal(look(w, 7300, at(612.5, 2.4), { ...GATE, gated: true, open: true }).length, 1, '2.1 past it');
+    });
+
+    test('F2: a gate of no pen the bot opened and did not pass keeps the rule of F21 (never closed while walking)', () => {
+        const w = new L.DoorWatch();
+        look(w, 6000, at(612.5, 2.5), { ...GATE, open: false });
+        look(w, 6300, at(612.5, 2.5), { ...GATE, open: true });
+        assert.deepEqual(look(w, 6600, at(612.5, 0.4), { ...GATE, open: true }), [], 'not gated: 4 blocks away, nothing');
     });
 
     test('another player within 2 blocks still holds the gate the bot stands beside', () => {
@@ -180,9 +199,62 @@ describe('T3-5: the bot itself never holds a gate open', () => {
         assert.equal(D.somebodyNear(s.bot, s.gate), true);
     });
 
+    // F2 of v0.1.4.11 (W94): six chickens in the pen, one beside the gate: the closing was held for ever
+    test('F2: a chicken beside the gate does not hold its closing; one in the gate cell does; a door keeps the 1 block', () => {
+        const s = scene([611.5, 61, 3.5]);
+        addMob(s.bot, 'chicken', [613.5, 61, 5.5], { type: 'animal' });
+        assert.equal(D.occupiedBy(s.bot, s.gate), false, 'beside the gate');
+        assert.equal(D.occupiedBy(s.bot, { ...s.gate, kind: 'door' }), true, 'a door: within 1 block holds');
+        addMob(s.bot, 'chicken', [612.5, 61, 4.5], { type: 'animal' });
+        assert.equal(D.occupiedBy(s.bot, s.gate), true, 'in the gate cell');
+    });
+
     test('another player with the name of no bot is somebody', () => {
         const s = scene([611.5, 61, 3.5]);
         s.bot.entities[50] = { id: 50, type: 'player', username: 'w_player', name: 'player', position: v(612.5, 61, 4.5), height: 1.8 };
         assert.equal(D.somebodyInDoor(s.bot, s.gate), true);
+    });
+});
+
+// v0.1.4.11, F18 (W89 in the fresh clone): the door service was made with the area store of that moment (ctx.areas);
+// the store of the world is made anew when the world is known, so the pen saved later was not in it, the gate was no
+// gate of a pen, and a pass the service did not see (the bot fast through the gate between two looks) left it open.
+describe('F18: the gate of a pen saved after the service was made', () => {
+    function scene() {
+        const world = makeWorld();
+        world.set(612, 61, 4, 'oak_fence_gate', { facing: 'south', open: true });
+        const bot = makeFakeBot({ world, pos: [612.5, 61, 8.5] });
+        // the guard of the areas reads the store of now: the pen x 608..616, z 4..12
+        bot.areaGuard = { areaAt: p => (p.x >= 608 && p.x <= 617 && p.z >= 4 && p.z <= 13 ? { name: 'pen', type: 'pen' } : null) };
+        let t = 1_000_000;
+        const clock = { now: () => t, wait: async (ms) => { t += Math.max(ms, 1); await Promise.resolve(); } };
+        const service = D.createDoorService(bot, { areas: [], settings: { home_pack: true }, now: clock.now, log: () => {} },
+            { now: clock.now, wait: clock.wait, checkMs: 40 });
+        const step = async (pos, ms = 250) => {
+            if (pos) bot.entity.position = v(...pos);
+            t += ms;
+            service.tick();
+            await new Promise(r => setTimeout(r, 5));
+        };
+        return { world, bot, step, isOpen: () => world.propsAt(612, 61, 4).open === true };
+    }
+
+    test('the bot out through the open gate, stopped 1.4 blocks past it: the gate is closed by the areas of now', async () => {
+        const s = scene();
+        await s.step(); // 4 blocks inside, out of the side range of the gate
+        await s.step([612.5, 61, 4.5]); // in the gate
+        await s.step([611.5, 61, 3.5]); // stopped beside it, outside
+        for (let i = 0; i < 20 && s.isOpen(); i++) await s.step();
+        assert.equal(s.isOpen(), false);
+    });
+
+    test('without a pen there (the guard knows no area): the gate the bot only walked through, unseen, stays as before', async () => {
+        const s = scene();
+        s.bot.areaGuard = { areaAt: () => null };
+        await s.step();
+        await s.step([612.5, 61, 4.5]);
+        await s.step([611.5, 61, 3.5]);
+        for (let i = 0; i < 20; i++) await s.step();
+        assert.equal(s.isOpen(), true, 'no rule of before closes a gate of no pen whose pass was not seen');
     });
 });

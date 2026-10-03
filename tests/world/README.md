@@ -446,6 +446,15 @@ waits for the bot (`waitBot`), and the parts A (W80) and B (W81) that W84 chains
 | `ladders_native` | w88 | W80, W82 and the follow of W75 with the fallback counted: no `I go down the ladder` line, the climbs smooth |
 | `pen_gate_safe` | w89 | fences dropped in the pen: the gate stays closed, `I leave the oak_fence in the pen "pen". I do not open its gate.`; the same with a rule |
 | `two_floors` | w90 | `area_floors`: home is the house floor, the basement a second area, `!goToBed` sleeps below, `That is the area "home" already.` |
+| `tunnel_where_you_stand` | w91 | the room tunnel of `base_world.js` (8 blocks west of the room), the mine learned in the room: "dig here" `!rememberTunnel` with the bot in the room and the owner at the rock face (`I measured the tunnel from where you stand: ...`), with the bot 3 behind him, with the bot at the rock face: the start, west, the end, 8 blocks; no `I stand in no tunnel`; `!mineOre("iron", 2)` digs the tunnel 2 longer |
+| `shaft_from_room` | w92 | `mine_from_inside`, the mine learned in the room, diamond ore at y -59 and -58: `!mineOre("diamond", 1, true)` says `I dig a shaft down from here to level ...`, a column of ladders down from the room floor, the bot back through the room with a diamond; `!mines` lists `bot:<level> (from the mine "mine")`; `!goToMine("diamond")` to the bottom, `!leaveMine` from there to the surface |
+| `open_sky` | w93 | `!goToSurface` in the house: `I went out through the door at ...`, outside at the ground, no block above, nothing of the house dug, the door closed after; from the mine room (the mine learned there): the ground under the open sky |
+| `place_from_sentence` | w94 | `!rememberArea` without a type in the pen (6 chickens, 1 cow), the farm and the house: the answers of P1 with the kind and the counts, the boxes; fences dropped in the aviary: the gate stays closed, `I leave the oak_fence in the pen "aviary"`; `!rememberArea("aviary", "farm")`: `"aviary" is a farm now.` |
+| `route_joined` | w95 | `routes_by_search`, the mine learned, `!leaveMine`; "follow me" down ladder 1 and `!goToMine` while the bot is on the ladder: the room without going back up, no `I could not follow`; `!leaveMine` to the surface; every door closed after |
+| `dry_scan` | w96 | the mine learned, the bot in the house, the trapdoor of the house over ladder 1 iron (closed): `!goToMine` answers `I find no way from ... to the trapdoor at ...: it is closed and I cannot open it.` and the bot does not move; the oak trapdoor back: it reaches the room |
+| `no_digging_to_player` | w97 | the owner in the sealed stone box of `base_world.js`: `!goToPlayer` answers `I find no way to you from here without digging. Come closer or tell me to dig.`, no block broken, no destructive walk; the box opened: the bot reaches him |
+| `words` | w98 | `!goToMine` with no mine, and with the house trapdoor iron (closed): `I find no way from ... to the trapdoor at ...: it is closed and I cannot open it.`, the bot does not move, no `Show me the way again`; the model's `!newAction("dig a tunnel")` on the surface, in the tunnel, in the room: `From here: !mineOre("iron", 8, true).`, `!mineOre("iron", 8).`, `!mineOre("iron", 8, true).`; `!rememberRoute("a", "b")`: `!rememberRoute takes 1 argument (name): !rememberRoute("name").`; `Gave 4 wheat to w_player.` |
+| `owner_region` | w99 | `MCW_OWNER_DUMP` names the owner's region dump (radius 48, center (9, 38, 33); skipped without it), built at the owner's y with x and z shifted: "come here" `!goToPlayer("w_player", 2)` up and down his cobblestone staircase (F24): the bot within 2 blocks within 90 s, no block of the staircase broken, none placed on it, no destructive walk; the basement saved with `!setArea("basement", "building", ...)` and night (F25): no `I cannot get into the shelter`, no `It is getting dark. I go to the shelter.`, the bot stays in the basement 30 s, `!goToShelter` answers `I am in the shelter "basement"` |
 ## Tools of v0.1.4.10
 
 ### The scorecard of a play log
@@ -475,7 +484,9 @@ A log cut in the middle counts what it holds: the calls of the cost meter are th
 ### The dump of the owner's region
 
 `scripts/dump_region.js` reads the blocks around home in the owner's world into `tests/world/owner_region.json`.
-The owner runs it once, on his machine, while his world is open (the bot of the tests never connects to it):
+The owner runs it once, on his machine, while his world is open (the bot of the tests never connects to it). The
+file is not committed (16 MB at radius 48; `.gitignore` lists it): the owner sends it as an upload, and a session
+in the cloud copies it to that path before the world tests.
 
 ```
 fnm exec --using=v20.20.2 -- node scripts/dump_region.js --host 127.0.0.1 --port 55916 --name region_dump --center <x> <y> <z> --radius 24 --out tests/world/owner_region.json

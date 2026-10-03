@@ -142,7 +142,7 @@ describe('the six commands of I10: names, parameters and defaults', () => {
         const cases = [['!rememberMine', ['mine']], ['!rememberMine("north_mine")', ['north_mine']], ['!rememberTunnel', ['']],
             ['!collectPassedOre("coal")', ['coal', 8]], ['!collectPassedOre("gold", 2)', ['gold', 2]], ['!routes', []], ['!rememberRoute("bed")', ['bed']]];
         for (const [call, args] of cases) assert.deepEqual(M.index.parseCommandMessage(call).args, args, call);
-        assert.match(M.index.parseCommandMessage('!forgetRoute'), /was given 0 args/);
+        assert.equal(M.index.parseCommandMessage('!forgetRoute'), '!forgetRoute takes 1 argument (name): !forgetRoute("name").', 'v0.1.4.11, W5');
     });
 
     test('the descriptions: short, plain, at most two sentences; the ones that learn say when to use them', () => {
@@ -330,7 +330,7 @@ describe('the mine of the player: !rememberMine, !rememberTunnel, !collectPassed
         const [mine, tunnel, ore] = agent.calls;
         assert.deepEqual(mine.slice(2), [{ marker: 'ctx' }, 'mine', { playerYaw: undefined }]);
         assert.equal(mine[1], agent.bot);
-        assert.deepEqual(tunnel.slice(2), [{ marker: 'ctx' }, '', { playerYaw: undefined }]);
+        assert.deepEqual(tunnel.slice(2), [{ marker: 'ctx' }, '', { playerYaw: undefined, playerPos: null }]); // v0.1.4.11 I3: the position too
         assert.deepEqual(ore.slice(2), [{ marker: 'ctx' }, 'coal', 8, 0]);
         assert.deepEqual(agent.runs.map((r) => r.label), ['action:collectPassedOre'], 'only the command that walks is an action');
         assert.deepEqual(agent.pauses, ['unstuck'], 'it pauses unstuck');
@@ -351,7 +351,9 @@ describe('the mine of the player: !rememberMine, !rememberTunnel, !collectPassed
             agent.work_packs = { mining: miningPack(agent) };
             await command('!rememberTunnel').perform(agent, '');
             await command('!rememberMine').perform(agent, 'mine');
-            assert.deepEqual(agent.calls.map((c) => c[4]), [{ playerYaw: yaw }, { playerYaw: yaw }], JSON.stringify({ order, players }));
+            // v0.1.4.11 I3: !rememberTunnel passes the player's position too (null without an entity)
+            const pos = players?.[order?.by]?.entity?.position ?? null;
+            assert.deepEqual(agent.calls.map((c) => c[4]), [{ playerYaw: yaw, playerPos: pos }, { playerYaw: yaw }], JSON.stringify({ order, players }));
         }
     });
 

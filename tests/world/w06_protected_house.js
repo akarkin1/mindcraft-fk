@@ -38,7 +38,8 @@ await scenarioMain({
             await resetBot(NAME);
             await placeBot(agent, h.inside, 0);
             const saved = await command_(agent, '!rememberArea("home", "building")', 30000);
-            check(/Area "home" \(building\) saved:/.test(saved), 'precondition: !rememberArea saved the house as "home"', JSON.stringify(saved.slice(0, 200)));
+            // v0.1.4.11 (P1): `I saved "home": a <kind>, ...`
+            check(/I saved "home": an? \w+, /.test(saved), 'precondition: !rememberArea saved the house as "home" (the answer of P1)', JSON.stringify(saved.slice(0, 200)));
             snap = await snapshotBox(h.box);
 
             // ---------------------------------------------------------- 1. logs from the tree, not from the house

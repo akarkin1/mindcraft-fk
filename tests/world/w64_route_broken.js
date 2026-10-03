@@ -7,9 +7,10 @@
 // learns the route "bed" as in W62 (the place "storage" in the room at y 41, the walk up the ladder, through the
 // trapdoor to the bed, !rememberRoute("bed")). Then 7 ladders in the middle of the shaft are taken away (y 46 to
 // 52). From the bed the player types !goToRememberedPlace("storage"):
-//   - the answer holds the text of I3, "I could not follow the route "bed" at step S of T, at (x, y, z). Show me
-//     the way again.", with S the ladder leg of the route walked backwards (routes.json), T its legs, and (x, y, z)
-//     where the bot stands (server);
+//   - the answer holds the text of W1 of v0.1.4.11 (the cause of the failed leg; "Show me the way again." is gone),
+//     "I could not follow the route "bed" at step S of T: the ladder at (x, z) has a gap of 7 at y 46. I need 7
+//     ladders to go on.", with S the ladder leg of the route walked backwards (routes.json), T its legs, (x, z) the
+//     column of the shaft;
 //   - nothing in the house, the shaft and the room was dug or placed (the trapdoor may be open);
 //   - the bot lives: it is in the house, not in the shaft, never hurt, the process did not end.
 // The place "home" is not saved, as in W62.
@@ -27,7 +28,8 @@ import { basePlan, buildBase, BASE_RADIUS } from './base_world.js';
 const NAME = 'w_rbroken';
 const PLAYER = 'w_player';
 const GAP = { from: 46, to: 52 };
-const FAILED = /I could not follow the route "bed" at step (\d+) of (\d+), at \((-?\d+), (-?\d+), (-?\d+)\)\. Show me the way again\./;
+// v0.1.4.11 (W1): the cause of the failed leg, here the ladder with its gap; "Show me the way again." is gone
+const FAILED = /I could not follow the route "bed" at step (\d+) of (\d+): the ladder at \((-?\d+), (-?\d+)\) has a gap of (\d+) at y (-?\d+)\. I need (\d+) ladders? to go on\./;
 
 await scenarioMain({
     async main() {
@@ -76,12 +78,13 @@ await scenarioMain({
             note(`!goToRememberedPlace("storage") answered after ${((Date.now() - t0) / 1000).toFixed(1)} s: ${JSON.stringify(info.reply)}`);
             const end = await entityPos(NAME);
             const m = FAILED.exec(info.reply);
-            check(Boolean(m), 'the answer holds the text of I3: "I could not follow the route "bed" at step S of T, at (x, y, z). Show me the way again."', JSON.stringify(info.reply));
+            check(Boolean(m), 'the answer holds the text of W1 (v0.1.4.11) with the ladder: "I could not follow the route "bed" at step S of T: the ladder at (x, z) has a gap of N at y Y. I need N ladders to go on."', JSON.stringify(info.reply));
+            check(!/Show me the way again/.test(info.reply), 'the answer holds no "Show me the way again" (W1)', JSON.stringify(info.reply));
             if (m) {
                 check(Number(m[1]) === ladderStep && Number(m[2]) === back.length, 'the step is the ladder of the route walked backwards, of all its legs', `step ${m[1]} of ${m[2]}, expected ${ladderStep} of ${back.length}`);
-                const at = { x: Number(m[3]), y: Number(m[4]), z: Number(m[5]) };
-                check(end && Math.abs(at.x - Math.floor(end.x)) <= 1 && Math.abs(at.y - Math.floor(end.y + 0.01)) <= 1 && Math.abs(at.z - Math.floor(end.z)) <= 1,
-                    'the position in the text is where the bot stands (server)', `text (${at.x}, ${at.y}, ${at.z}), server ${fmt(end)}`);
+                const gap = GAP.to - GAP.from + 1;
+                check(Number(m[3]) === col.x && Number(m[4]) === col.z && Number(m[5]) === gap && Number(m[6]) === GAP.from && Number(m[7]) === gap,
+                    `the text names the column of the shaft (${col.x}, ${col.z}), the gap of ${gap} ladders at y ${GAP.from} and the ${gap} ladders it needs`, JSON.stringify(m.slice(3)));
             }
             const cmp = await compareSnapshot(snap);
             check(cmp.same, 'nothing in the house, the shaft and the room was dug or placed (the trapdoor and the door may be open or closed)', describeDifferences(cmp.differences));

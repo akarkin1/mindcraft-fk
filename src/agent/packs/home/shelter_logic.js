@@ -40,7 +40,8 @@ export function sameDimension(a, b) {
 
 /**
  * True for an area with a valid box that is a building with walls: type `home` (v0.1.4.8), `building`,
- * or not given. Only a `home` is a shelter (see isShelterArea).
+ * or not given. Only a `home` is a shelter to go to (see isShelterArea); inside the walls of a building the bot is in
+ * shelter too (v0.1.4.11, F25, see isSafeArea).
  * @param {object} area
  * @returns {boolean}
  */
@@ -61,9 +62,37 @@ export function isInsideArea(area, pos) {
 }
 
 /**
+ * True for an area that is safe to be in at night (v0.1.4.11, F25): an area of type `home`, or a building with walls
+ * (isBuildingArea: type `building` or none) that was not concluded to be a `yard` (no roof). Being inside its walls is
+ * being in shelter; it is never a shelter to go to (see chooseShelter).
+ * @param {object} area
+ * @returns {boolean}
+ */
+export function isSafeArea(area) {
+    return isShelterArea(area) || (isBuildingArea(area) && area.kind !== 'yard');
+}
+
+/**
+ * The saved area whose walls hold the position and that is safe at night (isSafeArea, v0.1.4.11, F25): an area of
+ * type `home` first, else a building; null when none holds it. Areas of another dimension are left out.
+ * @param {object[]} areas
+ * @param {{x,y,z}} pos
+ * @param {string|null} [dimension]
+ * @returns {object|null}
+ */
+export function shelterHere(areas, pos, dimension = null) {
+    if (!isPoint(pos) || !Array.isArray(areas)) {
+        return null;
+    }
+    const inside = areas.filter(area => isSafeArea(area) && sameDimension(area.dimension, dimension) && isInsideArea(area, pos));
+    return inside.find(isShelterArea) ?? inside[0] ?? null;
+}
+
+/**
  * The shelter of the bot (v0.1.4.8, C4): 1. the area of type `home` that holds the place `home`,
  * 2. the nearest area of type `home` within 96 blocks, 3. the place `home`. Never another type: a
- * building, a pen or a mine is no shelter. Areas and the place of another dimension are left out.
+ * building, a pen or a mine is no shelter to go to. A building is only a place where the bot already is safe
+ * (v0.1.4.11, F25, see shelterHere). Areas and the place of another dimension are left out.
  * Without any of them the kind is `emergency` (why `nothing`): the bot knows no home.
  * @param {{areas: object[], home: {x,y,z,dimension}|null, botPos: {x,y,z}, dimension: string, maxDistance?: number}} input
  * @returns {{kind: 'area'|'place'|'emergency', area?: object, place?: object, why: string}}

@@ -410,10 +410,10 @@ describe('P3: doors and the arrival tolerance', () => {
     });
 });
 
-describe('P4: no stand on hollow and half blocks, the pit', () => {
-    test('a bottom slab, bottom stairs, a cauldron, a composter, a hopper, a chest are no floor; a top slab and top stairs are', () => {
+describe('P4: no stand on hollow blocks, the pit (half blocks are floor again since v0.1.4.11, F24)', () => {
+    test('a cauldron, a composter, a hopper, a chest are no floor; slabs and stairs of both halves are; no move breaks them', () => {
         const world = flatWorld();
-        const cases = [['oak_slab', { type: 'bottom' }, false], ['oak_stairs', { half: 'bottom' }, false], ['cauldron', {}, false],
+        const cases = [['oak_slab', { type: 'bottom' }, true], ['oak_stairs', { half: 'bottom' }, true], ['cauldron', {}, false],
             ['composter', {}, false], ['hopper', {}, false], ['chest', {}, false], ['oak_slab', { type: 'top' }, true],
             ['oak_slab', { type: 'double' }, true], ['oak_stairs', { half: 'top' }, true], ['stone', {}, true]];
         cases.forEach(([name, props], i) => world.set(i * 2, 61, 5, name, props));
@@ -421,22 +421,35 @@ describe('P4: no stand on hollow and half blocks, the pit', () => {
         cases.forEach(([name, props, floor], i) => {
             const b = m.getBlock(new Vec3(i * 2, 61, 5), 0, 0, 0);
             assert.equal(b.physical, floor, `${name} ${JSON.stringify(props)}`);
-            if (!floor) {
-                assert.equal(b.safe, false, `${name}: not walked through either`);
-                assert.equal(m.mayBreakOnPath(b), false, `${name}: never broken by a move`);
-            }
+            if (!floor) assert.equal(b.safe, false, `${name}: not walked through either`);
+            if (name !== 'stone') assert.equal(m.mayBreakOnPath(b), false, `${name}: never broken by a move`);
         });
     });
 
-    test('no move ends on a bottom slab; the walk goes around a floor of slabs', { timeout: 30000 }, async () => {
+    test('a floor of bottom slabs is walked over, half a block low, without a dig or a place', { timeout: 30000 }, async () => {
         const world = flatWorld();
         world.fill(3, 60, -1, 6, 60, 1, 'oak_slab', { type: 'bottom' });
         const bot = simBot(world, [0.5, 61, 0.5]);
         const m = movementsOf(bot);
-        assert.equal(m.getNeighbors(node(2, 61, 0)).some((n) => n.x === 3 && n.z === 0), false);
+        assert.equal(m.getNeighbors(node(2, 61, 0)).some((n) => n.x === 3 && n.z === 0), true, 'a move onto the slab');
         const r = await walk(bot, new pf.goals.GoalBlock(9, 61, 0));
         assert.equal(r.done, 'ok');
-        assert.equal(bot.log.some((e) => e.y < 60.99), false, 'never half a block low');
+        assert.deepEqual(bot.digs, []);
+        assert.ok(bot.log.some((e) => Math.abs(e.y - 60.5) < 0.01), 'stood on the slabs');
+    });
+
+    test('a staircase of bottom stairs rising 3 blocks is walked up with the physics of the game, no dig', { timeout: 30000 }, async () => {
+        const world = flatWorld();
+        for (let i = 0; i < 3; i++) {
+            if (i > 0) world.fill(3 + i, 61, 0, 3 + i, 60 + i, 0, 'stone');
+            world.set(3 + i, 61 + i, 0, 'cobblestone_stairs', { half: 'bottom', facing: 'east' });
+        }
+        world.fill(6, 61, 0, 8, 63, 0, 'stone');
+        const bot = simBot(world, [0.5, 61, 0.5]);
+        const r = await walk(bot, new pf.goals.GoalBlock(8, 64, 0));
+        assert.equal(r.done, 'ok');
+        assert.deepEqual(bot.digs, []);
+        assert.ok(Math.abs(bot.entity.position.y - 64) < 0.01, `on the landing: y ${bot.entity.position.y}`);
     });
 
     test('a move down into a one-wide pit whose way out needs a jump of 2 costs 50 more; into a wide one not', () => {

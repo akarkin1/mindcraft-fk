@@ -181,14 +181,19 @@ const BUILDING_DEFAULTS = Object.freeze({ radius: 24, height: 16, gap: 2, minBlo
  * @throws {TypeError} when getBlockName is not a function or the origin has no finite x, y, z
  */
 export function scanBuilding(getBlockName, origin, options = {}) {
-    checkArgs(getBlockName, origin, 'scanBuilding');
+    // v0.1.4.11 (I5): the building case of the one scan; the result is that of v0.1.4.10
+    return scanEnclosure(getBlockName, origin, { ...(options ?? {}), mode: 'building', fn: 'scanBuilding' }).scan;
+}
+
+// The scan of a building of v0.1.4.10 (scanBuilding before v0.1.4.11), after checkArgs.
+function findBuilding(getBlockName, origin, options = {}) {
     const opts = options ?? {};
     if (opts.floors === true) {
         const floor = scanFloor(getBlockName, origin, opts);
         if (floor.found) {
             return floor;
         }
-        return { ...scanBuilding(getBlockName, origin, { ...opts, floors: false }), floor: false };
+        return { ...findBuilding(getBlockName, origin, { ...opts, floors: false }), floor: false };
     }
     const radius = Math.min(positiveInt(opts.radius, BUILDING_DEFAULTS.radius), 64);
     const height = Math.min(positiveInt(opts.height, BUILDING_DEFAULTS.height), 64);
@@ -642,13 +647,16 @@ const SCAN_TEXTS = Object.freeze({
     not_closed: () => 'The fence near me is not closed. Close the gap in it and try again.',
     too_big: () => 'The fenced ground is too big for one area. An area has at most 64 x 48 x 64 blocks. '
         + 'Use !setArea to save a part of it.',
+    // v0.1.4.11 (P1): scanEnclosure found nothing that bounds the place
+    no_border: (i) => `I find no border around me: no fence, wall, hedge or water within ${i.radius} blocks. `
+        + 'Stand inside the place and say it again.',
 });
 
 /**
  * The text for the reason of a failed scan (v0.1.4.8, D5): what went wrong and what to do.
  * Reasons: no_built_blocks, too_few_blocks (scanBuilding); not_loaded, no_ground, not_enclosed,
  * no_fence, no_crops, roofed, farmland (scanFarm, scanPen); no_fence_near, not_closed, too_big
- * (findFencedGroundNear). An unknown reason gives ''.
+ * (findFencedGroundNear); no_border (scanEnclosure, v0.1.4.11). An unknown reason gives ''.
  * @param {string} reason
  * @param {{range?: number, radius?: number, count?: number, minBlocks?: number, what?: string}} [info]
  *   range: the reach of findFencedGroundNear (6) or the start radius of scanBuilding; radius: of
@@ -668,7 +676,10 @@ export function scanText(reason, info = {}) {
 // [x, z, surface], the gates, how many columns bound the ground and how many of them are a fence, a
 // fence gate or a wall block, every column it looked at, and a reason when it stopped: not_loaded,
 // no_ground or not_enclosed (more than `radius` blocks from the origin, or wider than `maxSpan` in x or z).
-function floodFenced(read, origin, radius, maxSpan) {
+// v0.1.4.11 (I5): also the columns that bound the ground, as [x, z, surface of the cell beside it] in
+// `bounds`; with `water: true` a cell whose ground is water bounds the ground too (a pond, a moat).
+function floodFenced(read, origin, radius, maxSpan, options = {}) {
+    const water = options?.water === true;
     const ox = Math.floor(origin.x);
     const oz = Math.floor(origin.z);
     const feetY = Math.floor(origin.y);
@@ -676,7 +687,7 @@ function floodFenced(read, origin, radius, maxSpan) {
     const groundY = feet !== null && !isPassable(feet) ? feetY : feetY - 1;
     const levelY = groundY + 1;
     const flood = { reason: null, cells: [], gates: new Map(), fences: 0, barriers: 0, visited: new Set([`${ox},${oz}`]),
-        barrier: null, minX: ox, maxX: ox, minZ: oz, maxZ: oz };
+        barrier: null, minX: ox, maxX: ox, minZ: oz, maxZ: oz, bounds: [] };
 
     function column(x, z) {
         for (const y of [levelY, levelY - 1]) {
@@ -695,6 +706,9 @@ function floodFenced(read, origin, radius, maxSpan) {
                 return { kind: 'unloaded' };
             }
             if (!isPassable(name) && isPassable(above)) {
+                if (water && name === 'water') {
+                    return { kind: 'barrier', fence: false, gate: null };
+                }
                 return { kind: 'cell', surface: y };
             }
             above = name;
@@ -711,7 +725,7 @@ function floodFenced(read, origin, radius, maxSpan) {
     const queue = flood.cells;
     queue.push([ox, oz, start.surface]);
     for (let head = 0; head < queue.length; head++) {
-        const [x, z] = queue[head];
+        const [x, z, surface] = queue[head];
         for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
             const nx = x + dx;
             const nz = z + dz;
@@ -726,6 +740,7 @@ function floodFenced(read, origin, radius, maxSpan) {
                 return flood;
             }
             if (state.kind === 'barrier') {
+                flood.bounds.push([nx, nz, surface]);
                 flood.barriers++;
                 if (state.fence) {
                     flood.fences++;
@@ -826,21 +841,21 @@ function fencedNotFound(reason, cells, info) {
     return { found: false, reason, text: scanText(reason, info), min: null, max: null, cells, entrances: [] };
 }
 
-function scanFenced(getBlockName, origin, options, type, fn) {
-    checkArgs(getBlockName, origin, fn);
+// The scan of fenced ground of v0.1.4.10 (scanFarm, scanPen), after checkArgs: the result of v0.1.4.10 as
+// `scan`, and the flood when it closed.
+function fencedScan(read, origin, options, type) {
     const radius = positiveInt((options ?? {}).radius, FARM_DEFAULTS.radius);
-    const read = reader(getBlockName);
     const info = { radius, what: whatOf(type) };
     const flood = floodFenced(read, origin, radius, Infinity);
     if (flood.reason) {
-        return fencedNotFound(flood.reason, flood.cells.length, info);
+        return { scan: fencedNotFound(flood.reason, flood.cells.length, info), flood: null };
     }
     const stats = groundStats(read, flood.cells);
     const failure = typeFailure(flood, stats, type);
     if (failure) {
-        return fencedNotFound(failure, flood.cells.length, info);
+        return { scan: fencedNotFound(failure, flood.cells.length, info), flood: null };
     }
-    return fencedFound(flood, stats);
+    return { scan: fencedFound(flood, stats), flood };
 }
 
 /**
@@ -872,7 +887,8 @@ function scanFenced(getBlockName, origin, options, type, fn) {
  * @throws {TypeError} when getBlockName is not a function or the origin has no finite x, y, z
  */
 export function scanFarm(getBlockName, origin, options = {}) {
-    return scanFenced(getBlockName, origin, options, 'farm', 'scanFarm');
+    // v0.1.4.11 (I5): the fenced case of the one scan; the result is that of v0.1.4.10
+    return scanEnclosure(getBlockName, origin, { ...(options ?? {}), mode: 'ground', type: 'farm', fn: 'scanFarm' }).scan;
 }
 
 /**
@@ -886,7 +902,8 @@ export function scanFarm(getBlockName, origin, options = {}) {
  * @throws {TypeError} when getBlockName is not a function or the origin has no finite x, y, z
  */
 export function scanPen(getBlockName, origin, options = {}) {
-    return scanFenced(getBlockName, origin, options, 'pen', 'scanPen');
+    // v0.1.4.11 (I5): the fenced case of the one scan; the result is that of v0.1.4.10
+    return scanEnclosure(getBlockName, origin, { ...(options ?? {}), mode: 'ground', type: 'pen', fn: 'scanPen' }).scan;
 }
 
 /**
@@ -907,6 +924,406 @@ export function scanWithoutType(getBlockName, origin, options = {}) {
         return { ...pen, kind: 'pen' };
     }
     return { ...scanBuilding(getBlockName, origin, options ?? {}), kind: 'building' };
+}
+
+// --- the enclosure: one scan for every place (v0.1.4.11, I5) --------------------------------
+
+/** The kinds of the border of an enclosure; null when nothing made bounds it. */
+export const ENCLOSURE_BORDERS = Object.freeze(['fence', 'wall', 'glass', 'hedge', 'water', 'mixed']);
+
+/** The kinds of an opening of an enclosure. A gap is a doorway without a door in the wall of a building. */
+export const OPENING_KINDS = Object.freeze(['door', 'gate', 'trapdoor', 'gap']);
+
+/** The kinds of the floor of an enclosure. */
+export const FLOOR_KINDS = Object.freeze(['tilled', 'built', 'ground', 'mixed']);
+
+// The kinds that a player builds a border of. 'natural' (rock, dirt of a hill) and 'drop' (a hole, a cliff)
+// bound ground too, but they make no enclosure on their own.
+const MADE_BORDERS = ['fence', 'wall', 'glass', 'hedge', 'water'];
+
+// A cell has a roof when a block that is not passable lies 1 to this many blocks above its ground.
+const ENCLOSURE_ROOF = 8;
+
+// The border is of one kind when that kind holds at least 2 of 3 of the made border columns.
+const BORDER_SHARE = 2 / 3;
+
+// The floor is tilled when at least 1 of 3 of its cells is farmland (paths and water between the rows).
+const TILLED_SHARE = 1 / 3;
+
+function isLeaves(name) {
+    return name.endsWith('_leaves');
+}
+
+function isGlass(name) {
+    return name.includes('glass');
+}
+
+function isDoorName(name) {
+    return name.endsWith('_door');
+}
+
+// What bounds the ground at the column x, z beside a cell whose feet are at `feet`: { kind, opening }.
+// kind: fence, wall, glass, hedge, water, natural or drop; opening: a gate, a door or a trapdoor, else null.
+function boundOf(read, x, z, feet) {
+    const below = read(x, feet - 1, z);
+    const at = read(x, feet, z);
+    const head = read(x, feet + 1, z);
+    for (const [name, y] of [[at, feet], [below, feet - 1]]) {
+        if (name !== null && name.endsWith('_fence_gate')) {
+            return { kind: 'fence', opening: { x, y, z, kind: 'gate' } };
+        }
+    }
+    if ((at !== null && isFenceLike(at)) || (below !== null && isFenceLike(below))) {
+        return { kind: 'fence', opening: null };
+    }
+    if (at !== null && isDoorName(at)) {
+        return { kind: 'wall', opening: { x, y: below === at ? feet - 1 : feet, z, kind: 'door' } };
+    }
+    if (head !== null && isDoorName(head)) {
+        return { kind: 'wall', opening: { x, y: feet + 1, z, kind: 'door' } };
+    }
+    for (const [name, y] of [[at, feet], [head, feet + 1]]) {
+        if (name !== null && isTrapdoorName(name)) {
+            return { kind: 'wall', opening: { x, y, z, kind: 'trapdoor' } };
+        }
+    }
+    // the block at the feet decides; the block at the head when the feet are open (a window over a wall counts as wall)
+    const main = at !== null && !isPassable(at) ? at : head;
+    if (main !== null && isLeaves(main)) {
+        return { kind: 'hedge', opening: null };
+    }
+    if (main !== null && isGlass(main)) {
+        return { kind: 'glass', opening: null };
+    }
+    if (at === 'water' || below === 'water') {
+        return { kind: 'water', opening: null };
+    }
+    const solid = [at, head].find(name => name === null || !isPassable(name));
+    if (solid !== undefined) {
+        return { kind: solid !== null && (isBuiltBlock(solid) || isLogBlock(solid)) ? 'wall' : 'natural', opening: null };
+    }
+    return { kind: 'drop', opening: null };
+}
+
+// The border of the counts of bounding columns: the made kind of 2 of 3 of the made columns, else 'mixed';
+// null when no made column bounds the ground or the made ones are fewer than half of all.
+function borderOf(counts) {
+    let made = 0;
+    let total = 0;
+    let best = null;
+    for (const [kind, n] of Object.entries(counts)) {
+        total += n;
+        if (MADE_BORDERS.includes(kind)) {
+            made += n;
+            if (best === null || n > counts[best]) {
+                best = kind;
+            }
+        }
+    }
+    if (made === 0 || made * 2 < total) {
+        return null;
+    }
+    return counts[best] >= made * BORDER_SHARE ? best : 'mixed';
+}
+
+function floorOf(tilled, built, cells) {
+    if (cells <= 0) {
+        return 'mixed';
+    }
+    if (tilled >= cells * TILLED_SHARE) {
+        return 'tilled';
+    }
+    if (built * 2 > cells) {
+        return 'built';
+    }
+    return (cells - tilled - built) * 2 > cells ? 'ground' : 'mixed';
+}
+
+// The class of the block a cell stands on, for floorOf.
+function floorClass(name) {
+    if (name === 'farmland') {
+        return 'tilled';
+    }
+    return name !== null && isBuiltBlock(name) ? 'built' : 'ground';
+}
+
+function hasRoof(read, x, ground, z) {
+    for (let y = ground + 1; y <= ground + ENCLOSURE_ROOF; y++) {
+        const name = read(x, y, z);
+        if (name !== null && !isPassable(name)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+function openingKey(o) {
+    return `${o.x},${o.y},${o.z}`;
+}
+
+// The openings sorted by x, z, y, each once.
+function sortedOpenings(list) {
+    const seen = new Map();
+    for (const o of list) {
+        if (!seen.has(openingKey(o))) {
+            seen.set(openingKey(o), { x: o.x, y: o.y, z: o.z, kind: o.kind });
+        }
+    }
+    return [...seen.values()].sort(compareEntrances);
+}
+
+// The facts of ground that a flood closed: the border, the openings, the roof, the floor.
+function groundFacts(read, flood) {
+    const counts = {};
+    const openings = [];
+    for (const [x, z, surface] of flood.bounds) {
+        const bound = boundOf(read, x, z, surface + 1);
+        counts[bound.kind] = (counts[bound.kind] ?? 0) + 1;
+        if (bound.opening) {
+            openings.push(bound.opening);
+        }
+    }
+    let tilled = 0;
+    let built = 0;
+    let roofed = 0;
+    for (const [x, z, surface] of flood.cells) {
+        const kind = floorClass(read(x, surface, z));
+        if (kind === 'tilled') tilled++;
+        else if (kind === 'built') built++;
+        if (hasRoof(read, x, surface, z)) roofed++;
+    }
+    const cells = flood.cells.length;
+    return { border: borderOf(counts), openings: sortedOpenings(openings), roof: cells > 0 && roofed * 2 >= cells,
+        floor: floorOf(tilled, built, cells), fences: counts.fence ?? 0 };
+}
+
+// The cells of the ring of a box at `offset` blocks inside its sides, as [x, z].
+function ringOf(box, offset) {
+    const x0 = box.min.x + offset;
+    const x1 = box.max.x - offset;
+    const z0 = box.min.z + offset;
+    const z1 = box.max.z - offset;
+    const ring = [];
+    if (x1 < x0 || z1 < z0) {
+        return ring;
+    }
+    for (let x = x0; x <= x1; x++) {
+        ring.push([x, z0]);
+        if (z1 !== z0) ring.push([x, z1]);
+    }
+    for (let z = z0 + 1; z <= z1 - 1; z++) {
+        ring.push([x0, z]);
+        if (x1 !== x0) ring.push([x1, z]);
+    }
+    return ring;
+}
+
+// The facts of a building that the scan of a building found: its walls are the ring of its box (the box of the
+// building is grown by 1, that of a floor holds the walls) that has more solid blocks at the feet of the origin.
+// An open cell of the walls, feet and head, is a gap; open cells side by side are one gap.
+function buildingFacts(read, scan, origin) {
+    const feet = Math.floor(origin.y);
+    const box = { min: scan.min, max: scan.max };
+    const solidAt = ([x, z]) => {
+        const name = read(x, feet, z);
+        return name === null || !isPassable(name);
+    };
+    const rings = [ringOf(box, 0), ringOf(box, 1)];
+    const ring = rings[1].filter(solidAt).length > rings[0].filter(solidAt).length ? rings[1] : rings[0];
+    const counts = {};
+    const gapCells = new Set();
+    for (const [x, z] of ring) {
+        const bound = boundOf(read, x, z, feet);
+        if (bound.kind === 'drop') {
+            const at = read(x, feet, z);
+            const head = read(x, feet + 1, z);
+            if (at !== null && head !== null && isOpenCell(at) && isOpenCell(head)) {
+                gapCells.add(`${x},${z}`);
+            }
+            continue;
+        }
+        // a building of dirt or stone is walled too
+        const kind = bound.kind === 'natural' ? 'wall' : bound.kind;
+        counts[kind] = (counts[kind] ?? 0) + 1;
+    }
+    const gaps = [];
+    const done = new Set();
+    for (const [x, z] of ring) {
+        const start = `${x},${z}`;
+        if (!gapCells.has(start) || done.has(start)) {
+            continue;
+        }
+        gaps.push({ x, y: feet, z, kind: 'gap' });
+        const stack = [[x, z]];
+        done.add(start);
+        while (stack.length > 0) {
+            const [cx, cz] = stack.pop();
+            for (const [dx, dz] of SIDES) {
+                const k = `${cx + dx},${cz + dz}`;
+                if (gapCells.has(k) && !done.has(k)) {
+                    done.add(k);
+                    stack.push([cx + dx, cz + dz]);
+                }
+            }
+        }
+    }
+    let cells = 0;
+    let tilled = 0;
+    let built = 0;
+    let roofed = 0;
+    for (let x = box.min.x + 1; x <= box.max.x - 1; x++) {
+        for (let z = box.min.z + 1; z <= box.max.z - 1; z++) {
+            const at = read(x, feet, z);
+            if (at === null || !isPassable(at)) {
+                continue;
+            }
+            cells++;
+            const kind = floorClass(read(x, feet - 1, z));
+            if (kind === 'tilled') tilled++;
+            else if (kind === 'built') built++;
+            if (hasRoof(read, x, feet - 1, z)) roofed++;
+        }
+    }
+    return {
+        border: borderOf(counts) ?? 'wall',
+        openings: sortedOpenings([...(scan.entrances ?? []), ...gaps]),
+        roof: cells > 0 ? roofed * 2 >= cells : hasRoof(read, Math.floor(origin.x), feet - 1, Math.floor(origin.z)),
+        floor: floorOf(tilled, built, cells),
+    };
+}
+
+function enclosureFound(min, max, facts, source, scan) {
+    const openings = facts.openings;
+    return {
+        found: true,
+        box: { min: { ...min }, max: { ...max } },
+        border: facts.border,
+        openings,
+        roof: facts.roof,
+        floor: facts.floor,
+        reason: null,
+        text: '',
+        min: { ...min },
+        max: { ...max },
+        entrances: openings.filter(o => o.kind !== 'gap').map(o => ({ ...o })),
+        source,
+        scan,
+    };
+}
+
+function enclosureNotFound(reason, text, scan) {
+    return { found: false, box: null, border: null, openings: [], roof: false, floor: 'mixed', reason, text,
+        min: null, max: null, entrances: [], source: null, scan };
+}
+
+// The ground of a flood that closed, as an enclosure, or null when nothing made bounds it.
+function groundEnclosure(read, flood) {
+    const facts = groundFacts(read, flood);
+    if (facts.border === null) {
+        return null;
+    }
+    const scan = fencedFound(flood, groundStats(read, flood.cells));
+    return enclosureFound(scan.min, scan.max, facts, 'ground', scan);
+}
+
+function buildingEnclosure(getBlockName, read, origin, opts) {
+    const scan = findBuilding(getBlockName, origin, opts);
+    if (!scan.found) {
+        return enclosureNotFound(scan.reason, scan.text, scan);
+    }
+    return enclosureFound(scan.min, scan.max, buildingFacts(read, scan, origin), 'building', scan);
+}
+
+/**
+ * The enclosure around a position (v0.1.4.11, I5): the one scan of a place, whatever bounds it: a fence, a wall,
+ * glass, a hedge, water, or a mix of them. Pure, like the other scans.
+ *
+ * Mode 'auto' (the default): first the ground around the origin as scanPen floods it (the ground at the height of the
+ * origin, one block up or down, to the four sides). When that ground is closed, made blocks bound at least half of
+ * it (fences, gates and walls, built blocks, glass, leaves, water; not rock or dirt of a hill, not a hole), and fewer
+ * than half of its cells have a roof, it is the enclosure (source 'ground', the box of scanPen). When it leaks, it is
+ * flooded again with water as a border (a pond, a moat). Ground with a roof over half of it, or an origin under a
+ * roof when the ground leaks, is a building: the scan of scanBuilding (with `floors`, the floor of the origin), its
+ * walls classified (source 'building'). Mode 'ground': the scan of scanPen or scanFarm (`type` 'pen', 'farm' or
+ * none); mode 'building': the scan of scanBuilding. In these two modes `scan` is the result of v0.1.4.10.
+ *
+ * The border: the kind of 2 of 3 of the made columns that bound the ground (a wall of a building of dirt or stone is
+ * a wall too), else 'mixed'. The openings: fence gates, doors (the lower block) and trapdoors in the border, and for
+ * a building the trapdoors of its floor scan and its gaps (open doorways). The roof: half or more of the cells have a
+ * block 1 to 8 above their ground. The floor: 'tilled' when 1 of 3 of the cells or more is farmland, else 'built' or
+ * 'ground' for more than half, else 'mixed'.
+ *
+ * @param {(x: number, y: number, z: number) => string|null} getBlockName
+ * @param {{x: number, y: number, z: number}} origin usually the position of the bot
+ * @param {{mode?: 'auto'|'ground'|'building', radius?: number, floors?: boolean, type?: 'pen'|'farm'}} [options]
+ *   radius 24 for the ground; floors and the other options of scanBuilding for a building
+ * @returns {{found: boolean, box: {min: object, max: object}|null, border: string|null,
+ *   openings: {x: number, y: number, z: number, kind: 'door'|'gate'|'trapdoor'|'gap'}[], roof: boolean,
+ *   floor: 'tilled'|'built'|'ground'|'mixed', reason: string|null, text: string, min: object|null, max: object|null,
+ *   entrances: object[], source: 'ground'|'building'|null, scan: object|null}}
+ *   reason when not found: not_loaded, no_ground, not_enclosed (a fence that does not close), no_border (nothing made
+ *   bounds the place), or a reason of scanBuilding, scanPen, scanFarm in their modes; text: scanText of it. min, max:
+ *   the box again; entrances: the openings without the gaps, for the area store; scan: the result of the scan below.
+ * @throws {TypeError} when getBlockName is not a function or the origin has no finite x, y, z
+ */
+export function scanEnclosure(getBlockName, origin, options = {}) {
+    const opts = options ?? {};
+    checkArgs(getBlockName, origin, typeof opts.fn === 'string' ? opts.fn : 'scanEnclosure');
+    const read = reader(getBlockName);
+    if (opts.mode === 'building') {
+        return buildingEnclosure(getBlockName, read, origin, opts);
+    }
+    if (opts.mode === 'ground') {
+        const type = opts.type === 'pen' || opts.type === 'farm' ? opts.type : null;
+        const { scan, flood } = fencedScan(read, origin, opts, type);
+        if (!flood) {
+            return enclosureNotFound(scan.reason, scan.text, scan);
+        }
+        const facts = groundFacts(read, flood);
+        return enclosureFound(scan.min, scan.max, { ...facts, border: facts.border ?? 'mixed' }, 'ground', scan);
+    }
+    const radius = positiveInt(opts.radius, FARM_DEFAULTS.radius);
+    const info = { radius };
+    let fences = 0;
+    let unloaded = false;
+    let roofed = null;
+    const first = floodFenced(read, origin, radius, Infinity);
+    if (first.reason === null) {
+        const ground = groundEnclosure(read, first);
+        if (ground && !ground.roof) {
+            return ground;
+        }
+        roofed = ground;
+    } else if (first.reason === 'not_enclosed') {
+        fences = first.fences;
+        const second = floodFenced(read, origin, radius, Infinity, { water: true });
+        if (second.reason === null) {
+            const ground = groundEnclosure(read, second);
+            if (ground && !ground.roof) {
+                return ground;
+            }
+            roofed = ground;
+        }
+        unloaded = second.reason === 'not_loaded';
+    } else if (first.reason === 'no_ground') {
+        return enclosureNotFound('no_ground', scanText('no_ground', info), null);
+    } else {
+        unloaded = true;
+    }
+    const ox = Math.floor(origin.x);
+    const oz = Math.floor(origin.z);
+    const feet = Math.floor(origin.y);
+    if (roofed || hasRoof(read, ox, feet - 1, oz)) {
+        const building = buildingEnclosure(getBlockName, read, origin, opts);
+        if (building.found) {
+            return building;
+        }
+    }
+    if (roofed) {
+        return roofed; // a roof over most of it, but no building: the ground all the same
+    }
+    const reason = unloaded ? 'not_loaded' : (fences > 0 ? 'not_enclosed' : 'no_border');
+    return enclosureNotFound(reason, scanText(reason, info), null);
 }
 
 // A fence, fence gate or wall block within `reach` blocks in x and z, 2 below the feet to 1 above.

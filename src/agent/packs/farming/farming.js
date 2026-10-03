@@ -19,7 +19,7 @@ import { closeDoor, passThrough } from '../home/doors.js';
 import { goals, gotoGoal, isNear, makeMovements } from '../home/motion.js';
 import {
     CROPS, FLOWERS, TILLABLE, bestHoe, boneMealWant, cellPlan, chestsHold, chooseCompostItem, compostInChests, compostSource, compostSources,
-    cropOf, isAirName, isCompostable, isCropBlock, isRipe, seedFor, visitOrder,
+    cropOf, isAirName, isCompostable, isCropBlock, isRipe, plantTargets, seedFor, seedsToKeep, visitOrder,
 } from './crop_logic.js';
 import {
     PICK_RANGE, chooseComposter, chooseFarmArea, farmMiddle, fieldBox, fieldCells, findGates, goalAvoiding, insideBox, isInField, isNoStandBlock,
@@ -987,9 +987,8 @@ function harvestSummary(s, r) {
 async function plantWork(s, seed) {
     const bot = s.bot;
     const hoe = Boolean(bestHoe(items(bot)));
-    const free = s.cells.filter(c => c.ground === 'farmland' && isAirName(c.above));
     const tillable = s.cells.filter(c => TILLABLE.includes(c.ground) && isAirName(c.above));
-    const targets = hoe ? free.concat(tillable) : free;
+    const targets = plantTargets(s.cells, hoe);
     const r = { planted: 0, tilled: 0, emptyNoSeeds: 0, emptyUnreached: 0, noHoe: !hoe && tillable.length > 0, targets: targets.length, noSeeds: false, gateFail: null,
         chestWalk: false };
     if (targets.length === 0 || stopped(s)) {
@@ -1278,18 +1277,28 @@ function mainSeed(cells) {
     return best;
 }
 
-// What the cycle stores: the harvest and the seeds beyond 32 of the crops of the field.
-function storePlan(bot, r, fieldSeed) {
+// What the cycle stores: the harvest and the seeds beyond 32 of the crops of the field. Of the seed of
+// the field it also keeps one for each cell that the planting of this cycle sows (F23).
+function storePlan(bot, r, fieldSeed, empty = 0) {
+    const fieldKeep = seedsToKeep(FARM_LIMITS.keepSeeds, empty);
     const rows = Object.keys(r.byCrop).map(cropOf).filter(Boolean);
-    if (rows.length === 0 && countOf(bot, fieldSeed) > FARM_LIMITS.keepSeeds) {
+    if (rows.length === 0 && countOf(bot, fieldSeed) > fieldKeep) {
         rows.push(cropOf(fieldSeed));
     }
     if (rows.length === 0) {
         return null;
     }
     const only = [...new Set(rows.flatMap(row => [row.harvest, row.seed]))];
-    const keep = Object.fromEntries(rows.map(row => [row.seed, FARM_LIMITS.keepSeeds]));
+    const keep = Object.fromEntries(rows.map(row => [row.seed, row.seed === fieldSeed ? fieldKeep : FARM_LIMITS.keepSeeds]));
     return { only, keep };
+}
+
+// The cells the plant step of the cycle will sow, read before the store step. Ground to till counts
+// when the bot has a hoe or may get one.
+function emptyCells(s) {
+    readField(s);
+    const hoe = Boolean(bestHoe(items(s.bot))) || typeof s.ctx.tools?.ensureTool === 'function';
+    return plantTargets(s.cells, hoe).length;
 }
 
 // The sum of harvests. Since v0.1.4.8 (X14) it is made after the pick-up at the end of the cycle,
@@ -1468,7 +1477,7 @@ export async function farmCycle(bot, ctx = {}, areaName = '', options = {}) {
         const again = [];
         // 2. store the harvest
         let stored = null;
-        const plan = storePlan(bot, h, seed);
+        const plan = storePlan(bot, h, seed, stopped(s) ? 0 : emptyCells(s));
         if (plan && !stopped(s) && typeof s.ctx.storage?.storeItems === 'function') {
             const left = await leaveField(s);
             if (left.ok && !stopped(s)) {

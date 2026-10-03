@@ -303,10 +303,11 @@ describe('F22 on the fake bot: down with the drop, up with a jump onto the ladde
         assert.deepEqual(into, { ok: false, reason: 'no_ladder', missing: [{ x: 2, y: 42, z: -2 }] });
         assert.ok(s.clock.now() - t0 < 8000, `${s.clock.now() - t0} ms`);
         const r = await P.walkRoute(s.bot, {}, { name: 'mine', legs: [leg] }, { clock: s.clock });
-        assert.equal(r.text, 'I could not follow the route "mine" at step 1 of 1, at (2, 41, -2). Show me the way again. I need 1 ladder at (2, 42, -2) to climb out.');
+        // v0.1.4.11, W1: the cause of I1 names the gap in the column instead of "Show me the way again." and the cells
+        assert.equal(r.text, 'I could not follow the route "mine" at step 1 of 1: the ladder at (2, -2) has a gap of 1 at y 42. I need 1 ladder to go on.');
         const two = shaft(44, [3.5, 41, 0.5]);
         const r2 = await P.walkRoute(two.bot, {}, { name: 'mine', legs: [{ ...leg, bottom: 44 }] }, { clock: two.clock });
-        assert.ok(r2.text.endsWith(' I need 2 ladders at (2, 42, -2) and (2, 43, -2) to climb out.'), r2.text);
+        assert.ok(r2.text.endsWith(': the ladder at (2, -2) has a gap of 2 at y 42. I need 2 ladders to go on.'), r2.text); // v0.1.4.11, W1
         assert.equal(s.bot.calls.filter(c => c[0] === 'dig').length, 0);
     });
 });

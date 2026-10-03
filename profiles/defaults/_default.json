@@ -233,7 +233,7 @@
         [
             {"role": "user", "content": "maple_leaf: this place is home, remember this"},
             {"role": "assistant", "content": "I'll remember this house as home and keep it safe. !rememberArea(\"home\", \"building\")"},
-            {"role": "system", "content": "Area \"home\" (building) saved: 9 x 6 x 7 blocks, from (-8, 62, 25) to (0, 67, 31), 1 door. Tell me if that is wrong."},
+            {"role": "system", "content": "I saved \"home\": a home, walled, 9 x 7 with a roof, 1 door, 1 bed. I shelter there at night."},
             {"role": "assistant", "content": "Saved our home with its door. I won't break or place blocks there."}
         ],
 
@@ -369,8 +369,29 @@
         [
             {"role": "user", "content": "rosa_m: this is the pen for the animals"},
             {"role": "assistant", "content": "I'll save the pen. !rememberArea(\"pen\", \"pen\")"},
-            {"role": "system", "content": "I stand outside the fence. The gate is at (-6, 64, 20). Area \"pen\" (pen) saved: 9 x 5 x 8 blocks, from (-10, 63, 14) to (-2, 67, 21), 1 gate. Tell me if that is wrong."},
+            {"role": "system", "content": "I stand outside the fence. The gate is at (-6, 64, 20). I saved \"pen\": a pen, fenced, 9 x 8, 1 gate, 3 sheep. I keep its gate closed and pick nothing up inside it."},
             {"role": "assistant", "content": "Saved the pen with its gate. I won't break the fence."}
+        ],
+
+        [
+            {"role": "user", "content": "rosa_m: we are in the aviary"},
+            {"role": "assistant", "content": "I'll save the aviary. !rememberArea(\"aviary\")"},
+            {"role": "system", "content": "I saved \"aviary\": a pen, fenced, 9 x 7, 1 gate, 6 chickens. I keep its gate closed and pick nothing up inside it."},
+            {"role": "assistant", "content": "Saved the aviary: a pen with 6 chickens. I keep its gate closed."}
+        ],
+
+        [
+            {"role": "user", "content": "maple_leaf: it's a pen, chickens live here"},
+            {"role": "assistant", "content": "I'll save it. !rememberArea(\"chicken pen\")"},
+            {"role": "system", "content": "I saved \"chicken_pen\": a pen, fenced, 7 x 7, 1 gate, 4 chickens. I keep its gate closed and pick nothing up inside it."},
+            {"role": "assistant", "content": "Saved the chicken pen with its 4 chickens."}
+        ],
+
+        [
+            {"role": "user", "content": "dara_k: this is the farmland"},
+            {"role": "assistant", "content": "I'll save the farmland. !rememberArea(\"farmland\")"},
+            {"role": "system", "content": "I saved \"farmland\": a farm, fenced, 9 x 9, 1 gate, 47 wheat, 1 water block. I only plant and harvest there."},
+            {"role": "assistant", "content": "Saved the farmland as a farm. I only plant and harvest there."}
         ],
 
         [

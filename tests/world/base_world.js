@@ -92,6 +92,15 @@ export const OWNER_SHAFT2 = Object.freeze({ dx: 3, dz: -2, bottom: 43 }); // fro
 export const OWNER_DOORS = Object.freeze([{ dx: 4, dz: -1, hinge: 'right' }, { dx: 4, dz: 0, hinge: 'left' }]); // facing west
 export const OWNER_ROOM_TORCH = Object.freeze({ dx: 1, dz: -2 });
 
+// v0.1.4.11 (tester T3, the journeys W91 to W98). Neither part is built by buildBase: a scenario builds it with its
+// own function, so every scenario before keeps its base.
+//   room tunnel  a tunnel 1 wide and 2 high, 8 blocks long, straight out of the west wall of the room: feet y 41,
+//                x -1 to -8, z 0 (the tunnel the owner dug from his mine room; "dig here" at its rock face).
+//   stone box    a sealed box of stone, 3 x 4 x 3 blocks outside (x 7..9, y g..g+3, z -15..-13), one cell of air 2
+//                high inside (8, g+1..g+2, -14), north of the house under the open sky: the owner stands in it.
+export const ROOM_TUNNEL = Object.freeze({ dz: 0, x0: -1, length: 8 }); // from x -1 westwards, at the feet of the room
+export const STONE_BOX = Object.freeze({ dx: 8, dz: -14 }); // the inner cell
+
 // ------------------------------------------------------------------ the plan
 
 // The coordinates of every part in the region r of region() (absolute). `crops(i, j)` chooses the cells of
@@ -459,6 +468,54 @@ export async function buildBase(b, { parts = ['house', 'mine', 'farm', 'pen'], c
         if (chests && parts.includes('house')) await buildChest(b.house.chest, HOUSE_CHEST_ITEMS, { facing: 'west' });
     }
     return b;
+}
+
+// ------------------------------------------------------------------ v0.1.4.11: the room tunnel and the stone box
+
+// The tunnel out of the west wall of the room (ROOM_TUNNEL): { cells, start, end, dir, box, beyond(k) } with the cells
+// from the room outwards; beyond(k) is the feet cell k blocks past the end, in its line.
+export function roomTunnelPlan(b) {
+    const y = b.room.box.min.y;
+    const z = b.oz + ROOM_TUNNEL.dz;
+    const cells = [];
+    for (let k = 0; k < ROOM_TUNNEL.length; k++) cells.push({ x: b.ox + ROOM_TUNNEL.x0 - k, y, z });
+    const end = cells[cells.length - 1];
+    return {
+        cells, start: cells[0], end, dir: 'west', level: y, length: cells.length,
+        box: { min: { x: end.x, y, z }, max: { x: cells[0].x, y: y + 1, z } },
+        beyond: (k) => ({ x: end.x - k, y, z }),
+    };
+}
+
+// Cuts the room tunnel into the rock (air at the feet and the head of every cell). Resolves with its plan.
+export async function buildRoomTunnel(b) {
+    const t = roomTunnelPlan(b);
+    await run([`fill ${P(t.box.min)} ${P(t.box.max)} minecraft:air`], 'the room tunnel');
+    return t;
+}
+
+// The sealed stone box (STONE_BOX): { inner, head, box, shell, door } where `door` is the two cells of its north wall
+// that the owner removes to open it.
+export function stoneBoxPlan(b) {
+    const g = b.g;
+    const inner = { x: b.ox + STONE_BOX.dx, y: g + 1, z: b.oz + STONE_BOX.dz };
+    const box = { min: { x: inner.x - 1, y: g, z: inner.z - 1 }, max: { x: inner.x + 1, y: g + 3, z: inner.z + 1 } };
+    const shell = boxPositions(box).filter((p) => !(p.x === inner.x && p.z === inner.z && (p.y === g + 1 || p.y === g + 2)));
+    return {
+        inner, head: { ...inner, y: g + 2 }, box, shell,
+        door: [{ x: inner.x, y: g + 1, z: inner.z - 1 }, { x: inner.x, y: g + 2, z: inner.z - 1 }],
+        outside: { x: inner.x, y: g + 1, z: inner.z - 4 }, // 3 blocks north of the north wall
+    };
+}
+
+// Builds the stone box (sealed). Resolves with its plan.
+export async function buildStoneBox(b) {
+    const s = stoneBoxPlan(b);
+    await run([
+        `fill ${P(s.box.min)} ${P(s.box.max)} minecraft:stone`,
+        `fill ${P(s.inner)} ${P(s.head)} minecraft:air`,
+    ], 'the stone box');
+    return s;
 }
 
 // ------------------------------------------------------------------ memory of the bot

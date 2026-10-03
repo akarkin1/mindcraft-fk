@@ -4,6 +4,7 @@
 // of an old file (a building named "mine" becomes a mine, a box thinner than 2 blocks is dropped).
 import { readJsonSafe, writeJsonAtomic } from '../../utils/safe_json.js';
 import { normalizeBox, boxSize, contains, distanceToBox, horizontalDistanceToBox } from './area_geometry.js';
+import { PLACE_KINDS, KIND_TYPES, CONTENT_KEYS } from './area_kind.js';
 
 const FILE_VERSION = 1;
 const NAME_MAX = 64;
@@ -44,6 +45,11 @@ export const ENTRANCE_KINDS = Object.freeze(['door', 'gate', 'trapdoor']);
  * reflexes treat it like a pen.
  */
 export const AREA_FLAG_NAMES = Object.freeze(['no_enter']);
+
+/**
+ * The kinds of the border of an area (v0.1.4.11, I5), as scanEnclosure of area_scan.js gives them.
+ */
+export const AREA_BORDERS = Object.freeze(['fence', 'wall', 'glass', 'hedge', 'water', 'mixed']);
 
 /** Largest box of an area, in blocks. */
 export const MAX_AREA_SIZE = Object.freeze({ x: 64, y: 48, z: 64 });
@@ -218,6 +224,34 @@ function cleanFlags(value) {
     return Object.keys(flags).length > 0 ? flags : null;
 }
 
+// v0.1.4.11 (I5): the counts of countContents as scanned: animals and crops by name (whole numbers above 0), the
+// other keys of CONTENT_KEYS as whole numbers of 0 or more. null for anything that is not an object.
+function cleanContents(value) {
+    if (!isPlainObject(value)) {
+        return null;
+    }
+    const byName = (map) => {
+        const out = {};
+        if (isPlainObject(map)) {
+            for (const [name, n] of Object.entries(map)) {
+                if (name !== '' && isFiniteNumber(n) && Math.floor(n) > 0) {
+                    out[name] = Math.floor(n);
+                }
+            }
+        }
+        return out;
+    };
+    const contents = { animals: byName(value.animals), crops: byName(value.crops) };
+    for (const key of CONTENT_KEYS) {
+        contents[key] = isFiniteNumber(value[key]) && value[key] > 0 ? Math.floor(value[key]) : 0;
+    }
+    return contents;
+}
+
+function copyContents(contents) {
+    return { ...contents, animals: { ...contents.animals }, crops: { ...contents.crops } };
+}
+
 function copyArea(area) {
     const copy = {
         ...area,
@@ -227,6 +261,9 @@ function copyArea(area) {
     };
     if (area.flags) {
         copy.flags = { ...area.flags };
+    }
+    if (area.contents) {
+        copy.contents = copyContents(area.contents);
     }
     return copy;
 }
@@ -250,7 +287,10 @@ function validateArea(area, nowIso) {
     if (name.length < 1 || name.length > NAME_MAX) {
         throw new TypeError(`Area name must have 1 to ${NAME_MAX} characters`);
     }
-    if (!AREA_TYPES.includes(area.type)) {
+    // v0.1.4.11 (I5): an area with a kind has the type of its kind
+    const kind = PLACE_KINDS.includes(area.kind) ? area.kind : null;
+    const type = kind ? KIND_TYPES[kind] : area.type;
+    if (!AREA_TYPES.includes(type)) {
         throw new TypeError(`Area type must be one of ${AREA_TYPES.join(', ')}`);
     }
     const box = normalizeBox(area.min, area.max);
@@ -260,7 +300,7 @@ function validateArea(area, nowIso) {
     }
     const clean = {
         name,
-        type: area.type,
+        type,
         min: box.min,
         max: box.max,
         dimension: normalizeDimension(area.dimension),
@@ -272,6 +312,17 @@ function validateArea(area, nowIso) {
     const flags = cleanFlags(area.flags);
     if (flags) {
         clean.flags = flags; // v0.1.4.10 (R2); an area without flags has no field, as before
+    }
+    // v0.1.4.11 (I5): what the bot concluded and found; an area without them has no fields, as before
+    if (kind) {
+        clean.kind = kind;
+    }
+    const contents = cleanContents(area.contents);
+    if (contents) {
+        clean.contents = contents;
+    }
+    if (AREA_BORDERS.includes(area.border)) {
+        clean.border = area.border;
     }
     return clean;
 }
@@ -471,7 +522,10 @@ export class AreaStore {
      * size limit; canReplace decides what the model may save.
      * @param {{name: string, type: 'home'|'building'|'farm'|'pen'|'mine', min: object, max: object, dimension?: string,
      *   entrances?: {x: number, y: number, z: number, kind: 'door'|'gate'|'trapdoor'}[], source?: string,
-     *   flags?: {no_enter?: boolean}}} area
+     *   flags?: {no_enter?: boolean}, kind?: string, contents?: object, border?: string}} area
+     *   v0.1.4.11 (I5): kind (pen, farm, home, storage, building, yard; the type is then that of the kind: storage and
+     *   yard are a building), contents (the counts of countContents), border (of scanEnclosure). A new box of the same
+     *   type keeps them when the call gives no kind.
      * @returns {object} a copy of the saved area
      * @throws {TypeError} for a name that is not 1 to 64 characters after normalising, an unknown type or bad corners
      * @throws {RangeError} for a box larger than 64 blocks in x or z, or 48 in y
@@ -485,6 +539,16 @@ export class AreaStore {
             // v0.1.4.10 (R2): a new box for the area keeps its flags unless the call gives flags
             if (!isPlainObject(area.flags) && previous.flags) {
                 clean.flags = { ...previous.flags };
+            }
+            // v0.1.4.11 (I5): a new box of the same type keeps what the bot concluded unless the call gives a kind
+            if (!clean.kind && previous.kind && clean.type === previous.type) {
+                clean.kind = previous.kind;
+                if (previous.contents && !clean.contents) {
+                    clean.contents = copyContents(previous.contents);
+                }
+                if (previous.border && !clean.border) {
+                    clean.border = previous.border;
+                }
             }
         }
         this._areas.set(clean.name, clean);

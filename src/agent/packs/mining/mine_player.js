@@ -4,16 +4,22 @@
 // ctx.routes (I4: ctx.routes.trail.list(), ctx.routes.logic.skyStart and routeFromSteps), which is
 // never imported. Executing: every function returns { ok, reason, text, ... } and never throws.
 // v0.1.4.10 (R4): forgetMine and minesText, for the commands !forgetMine and !mines.
+// v0.1.4.11 (I3): the tunnel is measured with tunnelAt (1 or 2 wide, the rock face, the checks of W2) at the
+// bot's cell, then at the player's cell; (I4) !mines lists a mine of a second level under its parent and
+// !forgetMine of a parent forgets its children.
 import { containsPos } from '../home/box_math.js';
 import { botPos, dimensionOf, listAreas, logTo } from '../home/context.js';
 import { blockAt, nameReader } from './dig.js';
-import { cellOf, corridorDirections, isCorridor, measureTunnel, mineAt, posKey, tunnelDirection, tunnelsOf } from './mine_logic.js';
-import { NEAREST_RANGE, cleanMineName } from './mine_store.js';
+import { addTunnel, cellOf, mineAt, tunnelAt, tunnelsOf } from './mine_logic.js';
+import { NEAREST_RANGE, cleanMineName, mineId } from './mine_store.js';
 import { climbToSurface, descendToLevel, takePassedOre } from './mining.js';
 import { walksRoute, wayIn } from './mine_way.js';
 import { oreOf } from './ore_table.js';
 import { TEXTS, collectPassedText, forgetMineText, mineEntryText, minesListText, noEntranceText, rememberMineText, rememberTunnelText,
     unknownOreText } from './texts.js';
+// v0.1.4.11: the texts of W2 that part W adds to texts.js are reached at run time (noCorridorText); a named
+// import of a name that does not exist yet would break the loading of the pack
+import * as TX from './texts.js';
 
 /** The room of a mine: these blocks within this many blocks of the bot or of a step of the way in (spec B2). */
 export const ROOM_RANGE = 6;
@@ -135,20 +141,73 @@ function mineAreaName(bot, ctx, feet) {
     }
 }
 
-// The tunnel measured at the feet in `dir` when it is a corridor (every cell at most 2 open
-// neighbours at the feet level: no room) of 4 cells or more (fix round F7), else null.
-function corridorTunnel(get, feet, dir) {
-    const m = dir ? measureTunnel(get, feet, dir) : null;
-    return m && m.length >= MIN_TUNNEL_CELLS && isCorridor(get, m)
-        ? { start: m.start, dir: m.dir, end: m.end, level: m.level, length: m.length, branches: [] } : null;
+// The record of a measured tunnel as the store keeps it (the width is said, not stored).
+function tunnelRecord(t) {
+    return { start: t.start, dir: t.dir, end: t.end, level: t.level, length: t.length, branches: [] };
+}
+
+// The feet cell of a position of the player, or null.
+function playerCell(pos) {
+    const ok = pos && [pos.x, pos.y, pos.z].every(v => typeof v === 'number' && Number.isFinite(v));
+    return ok ? { x: Math.floor(pos.x), y: Math.floor(pos.y + 0.01), z: Math.floor(pos.z) } : null;
+}
+
+/**
+ * The tunnel of "dig here" (v0.1.4.11, I3): tunnelAt at the bot's cell (1 or 2 wide, the rock face, 4
+ * cells or more, fix round F7), else at the cell of the player (`playerPos`, with the player's yaw).
+ * `fromPlayer` when the player's cell gave it; `cause` the first check that failed at the bot's cell.
+ * @returns {{tunnel: object|null, width: number, fromPlayer: boolean, cause: object|null}}
+ */
+function corridorTunnel(get, feet, options = {}) {
+    const look = { yaw: options.yaw, anchor: options.anchor, minCells: MIN_TUNNEL_CELLS };
+    const first = tunnelAt(get, feet, look);
+    if (first.ok) {
+        return { tunnel: tunnelRecord(first.tunnel), width: first.tunnel.width, fromPlayer: false, cause: null };
+    }
+    const p = playerCell(options.playerPos);
+    if (p && !(p.x === feet.x && p.y === feet.y && p.z === feet.z)) {
+        const second = tunnelAt(get, p, look);
+        if (second.ok) {
+            return { tunnel: tunnelRecord(second.tunnel), width: second.tunnel.width, fromPlayer: true, cause: null };
+        }
+    }
+    return { tunnel: null, width: 0, fromPlayer: false, cause: first.cause };
+}
+
+// The text of a measured tunnel (W2): rememberTunnelText of part W with the width and the cell; until it
+// knows them, the same words built here.
+function measuredText(tunnel, width, fromPlayer) {
+    const t = { ...tunnel, width, fromPlayer };
+    const text = rememberTunnelText(t);
+    const knows = (width !== 2 || text.includes(', 2 wide.')) && (!fromPlayer || text.includes(' from where you stand:'));
+    if (knows) {
+        return text;
+    }
+    let out = rememberTunnelText(tunnel);
+    if (width === 2) {
+        out = out.replace(/(, at level -?\d+)\. I dig on/, '$1, 2 wide. I dig on');
+    }
+    return fromPlayer ? out.replace(/^I measured the tunnel:/, 'I measured the tunnel from where you stand:') : out;
+}
+
+// The text of no tunnel (W2) by its first failed check, through noCorridorText of part W.
+function noCorridorWords(cause) {
+    try {
+        const text = typeof TX.noCorridorText === 'function' ? TX.noCorridorText(cause) : null;
+        if (typeof text === 'string' && text.length > 0) {
+            return text;
+        }
+    } catch {
+        // the text of v0.1.4.10
+    }
+    return TEXTS.noCorridor;
 }
 
 // The tunnel at the feet for rememberMine: a corridor open 4 blocks or more ahead, measured away
-// from the room (or the entrance). null without one.
+// from the room (or the entrance). null without one. v0.1.4.11 (I3): by tunnelAt, 1 or 2 wide.
 function tunnelHere(bot, feet, anchor, yaw) {
-    const get = nameReader(bot);
-    const dirs = corridorDirections(get, feet).filter(d => d.length >= MIN_TUNNEL_AHEAD);
-    return corridorTunnel(get, feet, tunnelDirection(dirs, feet, { anchor, yaw }));
+    const r = tunnelAt(nameReader(bot), feet, { anchor, yaw, minAhead: MIN_TUNNEL_AHEAD, minCells: MIN_TUNNEL_CELLS });
+    return r.ok ? tunnelRecord(r.tunnel) : null;
 }
 
 function near(a, b, range) {
@@ -229,10 +288,14 @@ function rememberMineNow(bot, ctx, name, options) {
  * fix round F6). The tunnel is a corridor of 4 cells or more by the rule of rememberMine (fix
  * round F7), else the text of no corridor. A tunnel whose start is within 2 blocks of the start of
  * a known one replaces it (its branches are kept when the direction is the same).
+ * v0.1.4.11 (I3): the tunnel is measured by tunnelAt: 1 or 2 wide (the text says `2 wide`), at the rock
+ * face away from the room; when the bot's cell is no tunnel, the cell of the player (`options.playerPos`,
+ * with `options.playerYaw`) is measured (`from where you stand`); else the text names the first check
+ * that failed at the bot's cell (W2), reason no_corridor.
  * @param {object} bot
  * @param {object} ctx
  * @param {string} [name] the name of the mine, '' for the mine here
- * @param {{playerYaw?: number}} [options]
+ * @param {{playerYaw?: number, playerPos?: {x: number, y: number, z: number}}} [options]
  * @returns {Promise<{ok: boolean, reason: string|null, text: string, mine: object|null, tunnel: object|null}>}
  */
 export function rememberTunnel(bot, ctx = {}, name = '', options = {}) {
@@ -253,31 +316,16 @@ function rememberTunnelNow(bot, ctx, name, options) {
             return { ok: false, reason: 'no_mine', text: TEXTS.noMineHere, mine: null, tunnel: null };
         }
         const get = nameReader(bot);
-        const dirs = corridorDirections(get, feet);
         const anchor = mine.room?.center ?? mine.base ?? mine.entrance;
-        const tunnel = corridorTunnel(get, feet, tunnelDirection(dirs, feet, { yaw: options?.playerYaw, anchor }));
-        if (!tunnel) {
-            return { ok: false, reason: 'no_corridor', text: TEXTS.noCorridor, mine, tunnel: null };
+        const found = corridorTunnel(get, feet, { yaw: options?.playerYaw, anchor, playerPos: options?.playerPos });
+        if (!found.tunnel) {
+            return { ok: false, reason: 'no_corridor', text: noCorridorWords(found.cause), mine, tunnel: null };
         }
-        mine = JSON.parse(JSON.stringify(mine));
-        const list = tunnelsOf(mine);
-        const same = list.findIndex(t => near(t.start, tunnel.start, SAME_TUNNEL));
-        if (same >= 0) {
-            tunnel.branches = list[same].dir === tunnel.dir ? list[same].branches ?? [] : [];
-            list[same] = tunnel;
-        } else {
-            list.push(tunnel);
-        }
-        mine.tunnels = list;
-        if (same === 0 && mine.source !== 'player' && mine.direction) {
-            // the tunnel of a mine of the bot: its fields of v0.1.4.7 follow the measure
-            mine.direction = tunnel.dir;
-            mine.end = tunnel.end;
-            mine.tunnel = [tunnel.start, tunnel.end].filter((p, i, a) => i === 0 || posKey(p) !== posKey(a[0]));
-            mine.length = Math.max(0, tunnel.length - 1);
-        }
-        const saved = store.set(mine);
-        const text = rememberTunnelText(tunnel);
+        // a start within 2 blocks of a known one replaces that tunnel (addTunnel, the rule of v0.1.4.9)
+        const changed = addTunnel(mine, found.tunnel, SAME_TUNNEL);
+        const tunnel = (changed.tunnels ?? []).find(t => near(t.start, found.tunnel.start, 0) && t.dir === found.tunnel.dir) ?? found.tunnel;
+        const saved = store.set(changed);
+        const text = measuredText(found.tunnel, found.width, found.fromPlayer);
         logTo(ctx, text);
         return { ok: true, reason: null, text, mine: saved, tunnel };
     } catch (err) {
@@ -358,6 +406,27 @@ export async function collectPassedOre(bot, ctx = {}, ore = '', count = 8, optio
     }
 }
 
+// The mines dug from inside a mine and from inside those (I4), at most 4 levels deep.
+function childrenOf(store, mine, depth = 0) {
+    if (typeof store?.children !== 'function' || depth >= 4) {
+        return [];
+    }
+    return store.children(mine).flatMap(c => [c, ...childrenOf(store, c, depth + 1)]);
+}
+
+// One mine of a second level in the text of !mines (I4): `bot:-58 (from the mine "mine")`.
+function childEntryText(mine) {
+    try {
+        const text = typeof TX.childMineEntryText === 'function' ? TX.childMineEntryText(mine) : null;
+        if (typeof text === 'string' && text.length > 0) {
+            return text;
+        }
+    } catch {
+        // the words of the spec
+    }
+    return `${mineId(mine)} (from the mine "${mine.parent}")`;
+}
+
 /**
  * Forgets a mine (spec I6, R4): the mine of that name, else for "16" or "bot:16" the mine of the bot at
  * that level, else the mine of the bot for an ore (MineStore.remove). In every dimension.
@@ -374,8 +443,13 @@ export function forgetMine(ctx = {}, name = '') {
         }
         const asked = typeof name === 'string' ? name.trim() : String(name ?? '').trim();
         const mine = typeof store.find === 'function' ? store.find(name) : store.byName?.(name) ?? null;
+        // v0.1.4.11 (I4): the mines dug from inside it go with it
+        const children = mine ? childrenOf(store, mine) : [];
         if (!mine || typeof store.remove !== 'function' || !store.remove(name)) {
             return { ok: false, reason: 'no_mine', text: forgetMineText(asked, false) };
+        }
+        for (const child of children) {
+            store.remove(mineId(child), child.dimension);
         }
         const text = forgetMineText(mine.name ?? asked, true);
         logTo(ctx, text);
@@ -390,7 +464,9 @@ export function forgetMine(ctx = {}, name = '') {
  * The mines the bot knows in a dimension (spec I6, R4), the mines with a name first, then the mines of
  * the bot, the highest level first:
  * `I know 2 mines: "mine", entrance (9, 67, 52), 2 tunnels at levels 30 and 25; the mine at (9, 67, 58) that I dug, level 16.`
- * or `I know no mines.` Without a store the text of rememberMine without one. Never throws: an error gives
+ * or `I know no mines.` v0.1.4.11 (I4): a mine of a second level follows its parent:
+ * `"mine", entrance (9, 67, 52), 1 tunnel at level 30; bot:-58 (from the mine "mine")`.
+ * Without a store the text of rememberMine without one. Never throws: an error gives
  * `I could not read the mines: <error>`.
  * @param {object} ctx with mines, the MineStore of the world
  * @param {string} [dimension] all dimensions without one
@@ -403,9 +479,20 @@ export function minesText(ctx = {}, dimension = undefined) {
             return NO_STORE;
         }
         const mines = store.list(dimension ?? undefined);
-        const named = mines.filter(m => typeof m.name === 'string' && m.name.length > 0);
-        const others = mines.filter(m => !named.includes(m));
-        return minesListText([...named, ...others].map(m => mineEntryText(m, tunnelsOf(m))));
+        // I4: a mine whose parent is in the list is listed under it, not on its own
+        const parentIn = m => typeof m.parent === 'string' && mines.some(p => p !== m && p.dimension === m.dimension && mineId(p) === m.parent);
+        const top = mines.filter(m => !parentIn(m));
+        const named = top.filter(m => typeof m.name === 'string' && m.name.length > 0);
+        const others = top.filter(m => !named.includes(m));
+        const entries = [];
+        const add = (m, depth) => {
+            entries.push(depth === 0 ? mineEntryText(m, tunnelsOf(m)) : childEntryText(m));
+            if (depth < 4) {
+                mines.filter(c => c !== m && c.parent === mineId(m) && c.dimension === m.dimension).forEach(c => add(c, depth + 1));
+            }
+        };
+        [...named, ...others].forEach(m => add(m, 0));
+        return minesListText(entries);
     } catch (err) {
         console.warn('Mining pack: listing the mines failed:', err?.stack ?? err);
         return `I could not read the mines: ${errText(err)}`;

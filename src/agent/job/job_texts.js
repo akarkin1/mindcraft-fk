@@ -80,13 +80,20 @@ export function restartText(job) {
  */
 export function doneText(job) {
     const words = capital(wordsOf(job));
+    const count = doneCount(job);
+    return count ? `${words} is done: ${count}.` : `${words} is done.`;
+}
+
+// `16 iron` for a done job with a count, null without one: what the bot got; when the skill said it is
+// done (it counted itself), at least the wanted number.
+function doneCount(job) {
     if (!isFiniteNumber(job?.wanted)) {
-        return `${words} is done.`;
+        return null;
     }
     const got = isFiniteNumber(job.got) ? job.got : 0;
     const n = job.skillDone === true ? Math.max(got, job.wanted) : got;
     const thing = jobCommand(job.kind)?.thing(job.args) ?? null;
-    return `${words} is done: ${n}${thing ? ` ${thing}` : ''}.`;
+    return `${n}${thing ? ` ${thing}` : ''}`;
 }
 
 // The word of a missing thing: `torches`, `pickaxe`, `stone pickaxe`, `wood`, `food`.
@@ -214,13 +221,39 @@ export function stopText(job, text) {
     return `I stop ${wordsOf(job)}: ${end}`;
 }
 
+/** The longest line of the knowledge block for a finished or left job (F27). */
+const LAST_LINE_MAX = 99;
+
+/**
+ * The line for the last job that is done or left (v0.1.4.11, F27): `Last job: the chopping, done, 99 oak logs.`,
+ * `Last job: the farming, done.`, `Last job: the farming, left.` '' for any other job.
+ * @param {object|null} job
+ * @returns {string}
+ */
+export function lastJobText(job) {
+    if (!isPlainObject(job) || (job.state !== 'done' && job.state !== 'left')) {
+        return '';
+    }
+    const words = wordsOf(job);
+    if (job.state === 'left') {
+        return `Last job: ${words}, left.`;
+    }
+    const count = doneCount(job);
+    const line = count ? `Last job: ${words}, done, ${count}.` : `Last job: ${words}, done.`;
+    return line.length <= LAST_LINE_MAX ? line : `Last job: ${words}, done.`.slice(0, LAST_LINE_MAX);
+}
+
 /**
  * The line of the knowledge block: `Job: the mining, 6 of 16 iron, step 2 of 4.`; `Job: the farming.`;
- * `, paused` for a paused job. '' without a running or paused job.
+ * `, paused` for a paused job. For a job that is done or left the line of lastJobText (F27); '' without
+ * a job.
  * @param {object|null} job
  * @returns {string}
  */
 export function statusText(job) {
+    if (isPlainObject(job) && (job.state === 'done' || job.state === 'left')) {
+        return lastJobText(job);
+    }
     if (!isPlainObject(job) || (job.state !== 'running' && job.state !== 'paused')) {
         return '';
     }

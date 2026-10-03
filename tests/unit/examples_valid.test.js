@@ -113,6 +113,10 @@ const NEW_EXAMPLES = [
     ['collect the coal you passed', '!collectPassedOre'],
     ['which ways do you know', '!routes'],
     ['forget the way to the bed', '!forgetRoute'],
+    // v0.1.4.11, part P (3.7): a place from one sentence, the kind concluded by the scan
+    ['we are in the aviary', '!rememberArea'],
+    ["it's a pen, chickens live here", '!rememberArea'],
+    ['this is the farmland', '!rememberArea'],
 ];
 
 const exampleOf = (sentence) => PROFILE.conversation_examples.find((example) => example.some((t) => t.role === 'user' && t.content.endsWith(': ' + sentence)));

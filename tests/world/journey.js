@@ -19,7 +19,11 @@ export const PLAYER = 'w_player';
 // The owner's switches of PLAYTEST.md section 2 (v0.1.4.9): the switches he kept (every pack, protected areas, rules,
 // world memory), the settings of v0.1.4.8 on (stuck_restart_after 3, knowledge_in_prompt among them), routes_pack,
 // mine_routes, skills_over_code on, ore_sense_range 0, and the modes of his profile with the reflexes (MODES_PROFILE).
-export const JOURNEY_SETTINGS = () => settings0149({ skills_over_code: true, ore_sense_range: 0, stuck_restart_after: 3 });
+// v0.1.4.11 (W91 to W98): the three switches of the release on, as the owner will play: mine_from_inside, area_sense,
+// routes_by_search (a key the code does not know yet is ignored, so the journeys run on v0.1.4.10 as before).
+export const JOURNEY_SETTINGS = () => settings0149({
+    skills_over_code: true, ore_sense_range: 0, stuck_restart_after: 3, mine_from_inside: true, area_sense: true, routes_by_search: true,
+});
 
 // v0.1.4.10 "Goals" (W85 to W90): the owner's switches as above with job_memory on (the owner's switch of the
 // release), and what a journey needs on top (`extra`: idle_jobs, area_floors, ...).
@@ -161,6 +165,8 @@ export async function playerDownToRoom(b, from) {
 export async function setDoubleDoor(b, open) {
     const cmds = [];
     for (const d of b.owner.doors) {
+        // F8 (the lead, W96): a door half placed over another kind of door is refused; both halves to air first
+        cmds.push(`fill ${d.lower.x} ${d.lower.y} ${d.lower.z} ${d.upper.x} ${d.upper.y} ${d.upper.z} minecraft:air`);
         cmds.push(`setblock ${d.lower.x} ${d.lower.y} ${d.lower.z} minecraft:oak_door[facing=west,half=lower,hinge=${d.hinge},open=${open}]`);
         cmds.push(`setblock ${d.upper.x} ${d.upper.y} ${d.upper.z} minecraft:oak_door[facing=west,half=upper,hinge=${d.hinge},open=${open}]`);
     }

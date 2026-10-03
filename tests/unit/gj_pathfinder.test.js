@@ -6,7 +6,7 @@
 //
 // The handoff wins over the spec where they differ: the stuck cost is added per move in getNeighbors (not through
 // exclusionAreasStep), the mark is on the point the bot could not reach, only bottom slabs and bottom stairs are
-// no-stand.
+// no-stand. Since v0.1.4.11 (F24) bottom slabs and bottom stairs are floor again; a move still never breaks them.
 import { describe, test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
@@ -318,20 +318,71 @@ describe('P3: doors in the path', () => {
 // ------------------------------------------------------------------------------------------------------- P4
 
 describe('P4: blocks to stand on', () => {
-    test('a bottom slab and bottom stairs are no floor; a top slab, a double slab and top stairs are', () => {
+    // v0.1.4.11, F24: a bottom slab and bottom stairs are floor again (as in the upstream pathfinder); a move still
+    // never breaks a slab or stairs.
+    test('a bottom slab and bottom stairs are floor, as a top slab, a double slab and top stairs; no move breaks one', () => {
         const world = makeWorld();
         world.set(0, 64, 0, 'oak_slab', { type: 'bottom' });
         world.set(1, 64, 0, 'oak_slab', { type: 'top' });
         world.set(2, 64, 0, 'oak_slab', { type: 'double' });
         world.set(3, 64, 0, 'oak_stairs', { half: 'bottom', facing: 'north' });
         world.set(4, 64, 0, 'oak_stairs', { half: 'top', facing: 'north' });
+        world.set(5, 64, 0, 'cobblestone_stairs', { half: 'bottom', facing: 'east' });
         const m = new pf.Movements(moveBot(world));
-        const physical = (x) => m.getBlock(new Vec3(x, 64, 0), 0, 0, 0).physical;
-        assert.equal(physical(0), false, 'bottom slab');
-        assert.equal(physical(1), true, 'top slab');
-        assert.equal(physical(2), true, 'double slab');
-        assert.equal(physical(3), false, 'bottom stairs');
-        assert.equal(physical(4), true, 'top stairs');
+        const block = (x) => m.getBlock(new Vec3(x, 64, 0), 0, 0, 0);
+        assert.equal(block(0).physical, true, 'bottom slab');
+        assert.equal(block(1).physical, true, 'top slab');
+        assert.equal(block(2).physical, true, 'double slab');
+        assert.equal(block(3).physical, true, 'bottom stairs');
+        assert.equal(block(4).physical, true, 'top stairs');
+        assert.equal(block(5).physical, true, 'bottom cobblestone stairs');
+        for (const x of [0, 1, 2, 3, 4, 5]) assert.equal(m.mayBreakOnPath(block(x)), false, `never broken by a move: x ${x}`);
+        assert.equal(m.mayBreakOnPath(m.getBlock(new Vec3(6, 63, 0), 0, 0, 0)), true, 'stone may be broken');
+    });
+
+    /** Plans a path from the bot's cell to the goal; -> the result, with no move that digs or places. */
+    function planWithoutDigOrPlace(world, from, goal) {
+        const bot = pathBot(world, from);
+        const m = new pf.Movements(bot); // canDig as the bot has it; the inventory is empty: nothing to place
+        const result = bot.pathfinder.getPathTo(m, goal);
+        const trace = JSON.stringify(result.path.map((p) => [p.x, p.y, p.z]));
+        assert.equal(result.status, 'success', trace);
+        for (const p of result.path) {
+            assert.deepEqual(p.toBreak, [], `a dig at ${p.x}, ${p.y}, ${p.z}: ${trace}`);
+            assert.deepEqual(p.toPlace, [], `a place at ${p.x}, ${p.y}, ${p.z}: ${trace}`);
+        }
+        return result;
+    }
+
+    test('a staircase of bottom stairs rising 3 blocks over 3 cells is a way: no dig, no place', () => {
+        const world = makeWorld();
+        // x 1..3: bottom stairs facing east (they rise to the east), each on a column of stone; x 4: the landing
+        for (let i = 0; i < 3; i++) {
+            if (i > 0) world.fill(1 + i, 64, 0, 1 + i, 63 + i, 0, 'stone');
+            world.set(1 + i, 64 + i, 0, 'cobblestone_stairs', { half: 'bottom', facing: 'east' });
+        }
+        world.fill(4, 64, 0, 4, 66, 0, 'stone');
+        world.fill(-1, 64, -1, 5, 70, -1, 'stone').fill(-1, 64, 1, 5, 70, 1, 'stone'); // walls: the stairs are the only way
+        world.fill(5, 64, 0, 5, 70, 0, 'stone');
+        const result = planWithoutDigOrPlace(world, [0.5, 64, 0.5], new pf.goals.GoalBlock(4, 67, 0));
+        const cells = result.path.map((p) => `${Math.floor(p.x)},${p.y}`);
+        for (const c of ['1,65', '2,66', '3,67', '4,67']) assert.ok(cells.includes(c), `on ${c}: ${cells.join(' ')}`);
+    });
+
+    test('a staircase of bottom slabs (half a block per cell) is a way: no dig, no place', () => {
+        const world = makeWorld();
+        // x 1: bottom slab (64.5), x 2: stone (65), x 3: bottom slab over stone (65.5), x 4: stone (66), x 5: slab (66.5)
+        world.set(1, 64, 0, 'stone_slab', { type: 'bottom' });
+        world.set(2, 64, 0, 'stone');
+        world.fill(3, 64, 0, 3, 64, 0, 'stone').set(3, 65, 0, 'stone_slab', { type: 'bottom' });
+        world.fill(4, 64, 0, 4, 65, 0, 'stone');
+        world.fill(5, 64, 0, 5, 65, 0, 'stone').set(5, 66, 0, 'stone_slab', { type: 'bottom' });
+        world.fill(-1, 64, -1, 6, 70, -1, 'stone').fill(-1, 64, 1, 6, 70, 1, 'stone');
+        world.fill(6, 64, 0, 6, 70, 0, 'stone');
+        const result = planWithoutDigOrPlace(world, [0.5, 64, 0.5], new pf.goals.GoalBlock(5, 67, 0));
+        // the points of the path are at the height of the floor: on a bottom slab half a block over the cell
+        const cells = result.path.map((p) => `${Math.floor(p.x)},${p.y}`);
+        assert.deepEqual(cells, ['1,64.5', '2,65', '3,65.5', '4,66', '5,66.5']);
     });
 
     test('cauldrons, composters, hoppers and every block of isNoStandBlock are no floor', () => {

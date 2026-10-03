@@ -89,6 +89,8 @@ function resetReason(state, sample) {
         return 'using_item';
     if (Number.isFinite(sample.notedAt) && sample.notedAt > state.since)
         return 'noted';
+    if (sample.searching === true)
+        return 'searching'; // v0.1.4.11 (F15): the time of a search of the walk to the player is no time stuck
     return null;
 }
 
@@ -103,7 +105,8 @@ function resetReason(state, sample) {
  * @param {object} sample
  * @param {number} now
  * @returns {{state: object, stuck: boolean, reason: string|null, elapsedMs: number}} reason: why the
- *     stuck time started again ('start', 'moved', 'dig', 'inventory', 'window', 'sleeping', 'using_item', 'noted')
+ *     stuck time started again ('start', 'moved', 'dig', 'inventory', 'window', 'sleeping', 'using_item', 'noted',
+ *     'searching': v0.1.4.11, F15, bot.searching of goToPlayer and followPlayer)
  */
 export function stuckStep(state, sample, now) {
     const s = state && typeof state === 'object' ? state : newStuckState();

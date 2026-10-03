@@ -99,16 +99,67 @@ export function isDiggingRequest(text) {
 }
 
 /**
+ * The ore that a text names, one of DIG_ORES (also in the plural, with "ore" or "deepslate"), the first one
+ * of the text that counts for isDiggingRequest; null when it names none. Never throws.
+ * @param {string} text
+ * @returns {string|null}
+ */
+export function oreOfRequest(text) {
+    try {
+        for (const word of isDiggingRequest(text).words) {
+            const ore = DIG_ORES.find((name) => new RegExp(`(?:^|\\s)${name}s?(?:\\s|$)`).test(word));
+            if (ore)
+                return ore;
+        }
+        return null;
+    } catch {
+        return null;
+    }
+}
+
+/** The count of the call that the refusal of W7 names. */
+export const DIG_COUNT = 8;
+
+// v0.1.4.11 (W7): the one call to make from where the bot stands, or null when the commands it needs are off.
+// in a tunnel of a known mine: !mineOre("iron", 8); inside a known mine with mine_from_inside, or on the surface:
+// !mineOre("iron", 8, true); in a known mine, not in a tunnel: !rememberTunnel, then !mineOre("iron", 8);
+// underground, no known mine: say "leave the mine", then !mineOre("iron", 8, true).
+function callFromHere(on, place) {
+    if (!on.has('!mineore'))
+        return null;
+    const ore = typeof place.ore === 'string' && DIG_ORES.includes(place.ore) ? place.ore : 'iron';
+    const call = (more = '') => `!mineOre("${ore}", ${DIG_COUNT}${more})`;
+    if (place.inMine === true && place.inTunnel === true)
+        return call();
+    if (place.inMine === true && place.fromInside === true)
+        return call(', true');
+    if (place.inMine === true)
+        return on.has('!remembertunnel') ? `!rememberTunnel, then ${call()}` : null;
+    if (place.underground === true)
+        return `say "leave the mine", then ${call(', true')}`;
+    return call(', true');
+}
+
+/**
  * The answer of !newAction to a digging request. commands: the digging commands that are on (the
  * glue gives them, with or without "!"). With !mineOre on:
  * `I do not write code for digging. I have skills for it: !mineOre for an ore, !rememberTunnel and then !mineOre to dig on in a tunnel, !collectBlocks for blocks in sight.`
  * with only the commands that are on, in that order; !rememberTunnel is named only together with
  * !mineOre, since its phrase names both. Without any of them:
  * `I do not write code for digging. Switch on the mining pack, or type the command !newAction in the chat yourself.`
+ *
+ * v0.1.4.11 (W7, I2): with `place` { inTunnel, inMine, underground, fromInside, ore } and !mineOre on, the one
+ * call to make from where the bot stands: `I do not write code for digging. From here: !mineOre("iron", 8).`
+ * (in a tunnel of a known mine), `... From here: !mineOre("diamond", 8, true).` (on the surface, or inside a
+ * known mine with mine_from_inside), `... From here: !rememberTunnel, then !mineOre("iron", 8).` (in a known
+ * mine, not in a tunnel), `... From here: say "leave the mine", then !mineOre("iron", 8, true).` (underground,
+ * no known mine). The ore is place.ore when it is one of DIG_ORES, else iron; the count is 8. inTunnel counts
+ * only with inMine. Without place, or without the commands that the call needs, the text of v0.1.4.9.
  * @param {string[]} commands
+ * @param {{inTunnel?: boolean, inMine?: boolean, underground?: boolean, fromInside?: boolean, ore?: string|null}|null} [place]
  * @returns {string}
  */
-export function digRefusalText(commands) {
+export function digRefusalText(commands, place = null) {
     try {
         const on = new Set();
         for (const c of Array.isArray(commands) ? commands : []) {
@@ -116,6 +167,11 @@ export function digRefusalText(commands) {
                 continue;
             const name = c.trim().toLowerCase();
             on.add(name.startsWith('!') ? name : `!${name}`);
+        }
+        if (place !== null && typeof place === 'object') {
+            const call = callFromHere(on, place);
+            if (call)
+                return `${REFUSAL_START} From here: ${call}.`;
         }
         const phrases = [];
         for (const command of DIGGING_COMMANDS) {

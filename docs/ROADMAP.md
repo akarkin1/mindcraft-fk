@@ -1,6 +1,6 @@
 # Roadmap
 
-State of 2026-09-30. This file lists what is planned for the fork and in which order. `CHANGELOG.md` lists what is released.
+State of 2026-10-02. This file lists what is planned for the fork and in which order. `CHANGELOG.md` lists what is released.
 
 Rules that hold for every release:
 
@@ -15,8 +15,9 @@ Rules that hold for every release:
 |---|---|---|
 | 0.1.4.8 | Stability | Released |
 | 0.1.4.9 | The mine, the routes of the player, and the model comparison | Released |
-| 0.1.4.10 | Goals | Planned |
-| 0.1.4.11 | Understanding and watching | Planned, both trials passed |
+| 0.1.4.10 | Goals | Released |
+| 0.1.4.11 | Navigation and words | Planned, `docs/releases/0.1.4.11/PLAN.md` |
+| 0.1.4.12 | Understanding and watching | Planned, both trials passed |
 | Later | See the backlog | Not decided |
 
 ## 0.1.4.9 The mine, the routes of the player, and the model comparison
@@ -63,7 +64,11 @@ Also in 0.1.4.10, from the play tests of 0.1.4.9:
 | A play scenario with the model | `npm run test:play`: the first ten minutes with the chat model of the profile, on the owner's machine only, about 10 cents with Luna. The only test in which the model talks. |
 | Chat model | Decided from the routing check with Luna and Haiku: accuracy, time per answer, cost. |
 
-## 0.1.4.11 Understanding and watching
+## 0.1.4.11 Navigation and words
+
+Decided on 2026-10-02 from the two play sessions of that day (Luna and Haiku on v0.1.4.9): the same things went wrong with both models, and the cause was the texts the model reasons from and three rules of the code, not the model. The plan is `docs/releases/0.1.4.11/PLAN.md`: every failure text names the cause and the next step; a shaft from the room or a tunnel end; the tunnel accepted where the owner stands; the surface means open sky; a place from one sentence, with the kind the bot concludes from the scan of the area; routes as waypoints walked by the path search, a dry scan before the first step; no digging toward the player. "Understanding and watching" moves to 0.1.4.12.
+
+## 0.1.4.12 Understanding and watching
 
 ### Part A: the bot picks better examples
 
@@ -92,6 +97,16 @@ The player shows the start of a job, the bot does the rest. Watching writes no n
 Patterns of this release: a line of placed blocks, a rectangle of fences with a gate, the first steps of a tunnel. Setting `watch_and_learn`.
 
 Result of the trial on a real 1.21.8 server: 40 of 40 placed blocks and 60 of 60 broken blocks recorded with the right place and name; with two players who build in the same space, 320 of 320 blocks credited to the right player. Limits: the player of the trial was a second bot; crediting needs 16 blocks or less; the bot never sees crafting, the content of a chest that the player uses, or the inventory of the player.
+
+### Part C: watching the play from the cloud
+
+From the plays of 2026-10-03: the owner cannot judge a test without the geometry, and the tech lead reads the logs only after the session. A small MCP server on the owner's machine, started by the launch script next to the bot, exposes what the bot knows: its position and the block it stands on, its inventory, the last 10 chat lines, the running command and the job, the areas and mines it saved, and one tool `say` that types a chat line as the owner would. The session in the cloud connects to that server over the owner's tunnel, never to the game port 55916, and watches while the owner plays; the owner's words stay the orders. Setting `watch_server` (off), a token in the environment, read-only but for `say`.
+
+The server pushes events, so that the supervisor sleeps between them: an explosion near a saved area, a drop of health, animals missing from a pen against its record, a night without sleep, a job stalled for 10 minutes, the same failure text 5 times, the bot farther than 100 blocks from home. The supervisor answers an event with an order, a job or a rule; the predictable cases (sleep every night, the creeper by the pen) stay in the reflexes. A goal the skills do not know ("find a village") goes to the supervisor, which plans the legs and gives the orders. Without the supervisor the bot finishes its job, works the standing list and sleeps, as today.
+
+### Part D: two bots
+
+Two bots of the owner in one world answered each other's command echoes and results (2026-10-03). Until this part, `only_chat_with` names the owner in each bot's settings and `MINDSERVER_PORT` gives the second bot its own port. The part: a bot recognises the other bots of the owner by name (the launch script passes them), never answers their echoes or results, and a role per bot ("you farm, you mine") in the settings; a question to both ("where are you?") gets one line from each.
 
 ## Backlog
 

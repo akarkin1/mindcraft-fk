@@ -569,7 +569,8 @@ export function createJob(agent, store, options = {}) {
         },
 
         /**
-         * The line for the knowledge block: `Job: the mining, 6 of 16 iron, step 2 of 4.`; '' without a job.
+         * The line for the knowledge block: `Job: the mining, 6 of 16 iron, step 2 of 4.`; for a job that is done
+         * or left `Last job: the farming, left.` (F27); '' without a job.
          * @returns {string}
          */
         status() {
@@ -589,7 +590,7 @@ export function createJob(agent, store, options = {}) {
         },
 
         /**
-         * The text of the job for a player who asks: the status line, or `I have no job.`
+         * The text of the job for a player who asks: the status line, the Last-job line (F27), or `I have no job.`
          * @returns {string}
          */
         describe() {

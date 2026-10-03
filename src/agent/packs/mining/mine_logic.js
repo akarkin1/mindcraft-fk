@@ -789,17 +789,151 @@ export function tripNeeds(ore, fromY, toY, inventory, options = {}) {
  * How a trip for an ore starts (spec v0.1.4.8 E4): `use` the known mine; without one, `underground`
  * when the bot is under the ground (a new mine starts only from the surface), `ask` when the player
  * did not order a new mine, else `new`.
- * @param {{mine?: object|null, newMine?: boolean, underground?: boolean}} input
- * @returns {'use'|'underground'|'ask'|'new'}
+ * v0.1.4.11 (I4): under the ground in the room or a tunnel of a known mine (`inMine`), `inside` with
+ * the setting mine_from_inside (`fromInside`: a shaft down from where the bot stands), else `in_mine`
+ * (refused as `underground` was, with the text that names the mine and the setting). Without `inMine`
+ * everything is as before.
+ * @param {{mine?: object|null, newMine?: boolean, underground?: boolean, inMine?: boolean, fromInside?: boolean}} input
+ * @returns {'use'|'underground'|'ask'|'new'|'inside'|'in_mine'}
  */
 export function tripStart(input) {
     if (input?.mine) {
         return 'use';
     }
     if (input?.underground === true) {
+        if (input?.inMine === true) {
+            return input?.fromInside === true ? 'inside' : 'in_mine';
+        }
         return 'underground';
     }
     return input?.newMine === true ? 'new' : 'ask';
+}
+
+/**
+ * The cells of the way of a mine that a shaft of a second level must leave free (v0.1.4.11, I4, finding
+ * F13 of W92): for every ladder leg of its route the column from its bottom to one above its top, its foot
+ * and its entry, each with the cells within 1 block (`near`); for every door leg (door, gate, trapdoor) the
+ * openable and the cells before and behind it (`exact`, the cell and the one above and below).
+ * @param {object} mine
+ * @returns {{near: object[], exact: object[]}}
+ */
+export function wayCells(mine) {
+    const near = [];
+    const exact = [];
+    for (const leg of Array.isArray(mine?.route) ? mine.route : []) {
+        if (leg?.kind === 'ladder' && [leg.x, leg.z, leg.top, leg.bottom].every(isFiniteNumber)) {
+            for (let y = Math.floor(Math.min(leg.top, leg.bottom)); y <= Math.floor(Math.max(leg.top, leg.bottom)) + 1; y++) {
+                near.push({ x: Math.floor(leg.x), y, z: Math.floor(leg.z) });
+            }
+            for (const p of [cellOf(leg.foot), cellOf(leg.entry)]) {
+                if (p) {
+                    near.push(p);
+                }
+            }
+        } else if (leg?.kind === 'door') {
+            for (const p of [cellOf(leg), cellOf(leg.from), cellOf(leg.to)]) {
+                if (p) {
+                    exact.push(p);
+                }
+            }
+        }
+    }
+    return { near, exact };
+}
+
+/**
+ * True when a floor cell may be the top of a shaft of a second level in `mine` (F13): not within 1 block
+ * of a ladder column, foot or entry of its route, not a door cell or the cell before or behind a door.
+ * @param {{x,y,z}} p
+ * @param {{near: object[], exact: object[]}} way wayCells(mine)
+ * @returns {boolean}
+ */
+export function shaftCellFree(p, way) {
+    const c = cellOf(p);
+    if (!c) {
+        return false;
+    }
+    const close = (q, r) => Math.abs(q.x - c.x) <= r && Math.abs(q.y - c.y) <= r && Math.abs(q.z - c.z) <= r;
+    return !(way?.near ?? []).some(q => close(q, 1)) && !(way?.exact ?? []).some(q => q.x === c.x && q.z === c.z && Math.abs(q.y - c.y) <= 1);
+}
+
+// the face of a shaft at the top cell f: the first direction of mineDirections whose entry is open on solid ground
+function shaftFace(getName, f, level, areas, prefer) {
+    const dirs = mineDirections(f, level, areas, { prefer: isDirection(prefer) ? prefer : undefined });
+    if (dirs.length === 0) {
+        return { reason: 'area' };
+    }
+    for (const face of dirs) {
+        const entry = offset(f, backOf(face));
+        const under = classify(readName(getName, { x: entry.x, y: entry.y - 1, z: entry.z }));
+        if (openCell(getName, entry) && under === 'solid') {
+            return { face, entry, reason: null };
+        }
+    }
+    return { reason: 'no_entry' };
+}
+
+/**
+ * The shaft of a second level from inside a known mine (v0.1.4.11, I4): its top is the floor cell the
+ * bot stands on (`feet`), the ladders hang on the wall `face` as in a surface shaft and the bot climbs
+ * out at the top to `entry`, the cell behind the face, which must be open (feet and head) on solid
+ * ground. The face is the first of mineDirections(feet, level, areas) (the room and the tunnel at the
+ * level keep to the protected areas) with such an entry, `prefer` first. null without one; `reason`
+ * says why: `area` (no direction keeps to the areas) or `no_entry` (no open cell beside the top).
+ * F13 (W92): with `options.mine` (the parent) the top never lies on the way of the parent (shaftCellFree:
+ * a ladder column, foot or entry within 1 block, a door and the cells before and behind it). When the
+ * bot stands on such a cell, the top is the nearest free floor cell (open feet and head on solid ground,
+ * at the level of the feet) of the room of the parent (roomBox), else within 3 blocks, that has a face;
+ * `moved` is then true and the bot walks there first. None: reason `no_cell`.
+ * @param {(x: number, y: number, z: number) => string|null} getName
+ * @param {{x,y,z}} feet
+ * @param {number} level
+ * @param {object[]} areas
+ * @param {{prefer?: string, mine?: object}} [options]
+ * @returns {{top: object, face: string, entry: object, moved: boolean, reason: null}
+ *   |{top: null, face: null, entry: null, moved: false, reason: 'area'|'no_entry'|'no_cell'}}
+ */
+export function insideShaft(getName, feet, level, areas, options = {}) {
+    const f = cellOf(feet);
+    const none = reason => ({ top: null, face: null, entry: null, moved: false, reason });
+    if (!f || typeof getName !== 'function' || !isFiniteNumber(level)) {
+        return none('no_entry');
+    }
+    const way = options?.mine ? wayCells(options.mine) : null;
+    if (!way || shaftCellFree(f, way)) {
+        const r = shaftFace(getName, f, level, areas, options?.prefer);
+        return r.reason ? none(r.reason) : { top: f, face: r.face, entry: r.entry, moved: false, reason: null };
+    }
+    const box = roomBox(options.mine);
+    const inBox = box && f.x >= box.min.x - 1 && f.x <= box.max.x + 1 && f.z >= box.min.z - 1 && f.z <= box.max.z + 1
+        && f.y >= box.min.y - 1 && f.y <= box.max.y;
+    const cells = [];
+    if (inBox) {
+        for (let x = box.min.x; x <= box.max.x; x++) {
+            for (let z = box.min.z; z <= box.max.z; z++) {
+                cells.push({ x, y: f.y, z });
+            }
+        }
+    } else {
+        for (let dx = -3; dx <= 3; dx++) {
+            for (let dz = -3; dz <= 3; dz++) {
+                cells.push({ x: f.x + dx, y: f.y, z: f.z + dz });
+            }
+        }
+    }
+    const dist = p => Math.hypot(p.x - f.x, p.z - f.z);
+    const free = cells.filter(p => shaftCellFree(p, way) && openCell(getName, p)
+        && classify(readName(getName, { x: p.x, y: p.y - 1, z: p.z })) === 'solid')
+        .sort((a, b) => dist(a) - dist(b) || a.x - b.x || a.z - b.z);
+    let area = free.length > 0;
+    for (const p of free) {
+        const r = shaftFace(getName, p, level, areas, options?.prefer);
+        if (!r.reason) {
+            return { top: p, face: r.face, entry: r.entry, moved: true, reason: null };
+        }
+        area = area && r.reason === 'area';
+    }
+    return none(area ? 'area' : 'no_cell');
 }
 
 // ------------------------------------------------------------------ protected areas and the entrance
@@ -1454,15 +1588,43 @@ export function corridorDirections(getName, feet) {
     return out.sort((a, b) => b.length - a.length || DIRECTIONS.indexOf(a.dir) - DIRECTIONS.indexOf(b.dir));
 }
 
+// the open cells (feet and head) in a row beside p towards `side`, at most `max`
+function sideRun(getName, p, side, max = 3) {
+    let n = 0;
+    while (n < max && openCell(getName, offset(p, side, n + 1))) {
+        n++;
+    }
+    return n;
+}
+
+/**
+ * The width of a corridor at a cell, across `dir` (v0.1.4.11, I3): the cell and the open cells (feet
+ * and head) in a row to its left and to its right, at most 3 on each side. 1 for a corridor of 1.
+ * @param {(x: number, y: number, z: number) => string|null} getName
+ * @param {{x,y,z}} p
+ * @param {string} dir
+ * @returns {number}
+ */
+export function corridorWidth(getName, p, dir) {
+    const c = cellOf(p);
+    if (!c || typeof getName !== 'function' || !isDirection(dir)) {
+        return 0;
+    }
+    return 1 + sideRun(getName, c, leftOf(dir)) + sideRun(getName, c, rightOf(dir));
+}
+
 /**
  * The tunnel the bot stands in, measured in `dir` (spec I6, B3): `end` the last open cell ahead
  * before rock, `start` the last open cell behind the bot before the corridor opens into a room (a
  * cell with 3 or more open neighbours at the feet level) or ends, `level` the feet, `length` the
  * cells from start to end. null when the feet are not open or `dir` is no direction.
+ * v0.1.4.11 (I3): a corridor 2 wide is measured too: when the feet are 2 wide (corridorWidth) the
+ * corridor behind opens into a room where a cell is more than 2 wide. `width` is 2 when a cell from
+ * start to end is 2 wide or more, else 1 (the checks of the width are those of tunnelAt).
  * @param {(x: number, y: number, z: number) => string|null} getName
  * @param {{x,y,z}} feet
  * @param {string} dir
- * @returns {{start: object, end: object, length: number, level: number, dir: string}|null}
+ * @returns {{start: object, end: object, length: number, level: number, dir: string, width: number}|null}
  */
 export function measureTunnel(getName, feet, dir) {
     const f = cellOf(feet);
@@ -1477,15 +1639,112 @@ export function measureTunnel(getName, feet, dir) {
         }
         end = p;
     }
+    const wide = corridorWidth(getName, f, dir) >= 2;
     let start = f;
     for (let k = 1; k <= CORRIDOR_LIMIT; k++) {
         const p = offset(f, backOf(dir), k);
-        if (!openCell(getName, p) || openNeighbours(getName, p) >= 3) {
+        // 1 wide: the rule of v0.1.4.9; 2 wide (I3): a cell of the corridor has its twin beside it
+        if (!openCell(getName, p) || (wide ? corridorWidth(getName, p, dir) > 2 : openNeighbours(getName, p) >= 3)) {
             break;
         }
         start = p;
     }
-    return { start, end, length: Math.abs(end.x - start.x) + Math.abs(end.z - start.z) + 1, level: f.y, dir };
+    const width = tunnelCells({ start, end }).some(c => corridorWidth(getName, c, dir) >= 2) ? 2 : 1;
+    return { start, end, length: Math.abs(end.x - start.x) + Math.abs(end.z - start.z) + 1, level: f.y, dir, width };
+}
+
+/**
+ * The tunnel at a cell, or the first check that failed (v0.1.4.11, I3, W2), for "dig here" and for
+ * mineOre in a tunnel that is not saved. The direction: the corridors at the feet (corridorDirections,
+ * those `minAhead` long or more); with only one, rock behind the feet and that one pointing at the
+ * anchor (the bot at the rock face) the tunnel goes the other way, away from the room, whatever the yaw;
+ * else tunnelDirection with the yaw and the anchor. The checks
+ * in this order: the open sides at the feet (open on both sides across the tunnel, or no corridor and
+ * open on 3 sides or more: `open_sides`), the width ahead (a cell ahead more than 2 wide: `wide`), the
+ * ceiling (the cell above the head open: `ceiling`), the length (fewer than `minCells` cells: `short`).
+ * @param {(x: number, y: number, z: number) => string|null} getName
+ * @param {{x,y,z}} feet
+ * @param {{yaw?: number, anchor?: {x,y,z}, minAhead?: number, minCells?: number}} [options]
+ * @returns {{ok: true, tunnel: {start: object, dir: string, end: object, level: number, length: number, width: number}}
+ *   |{ok: false, cause: {kind: 'open_sides'|'wide'|'ceiling'|'short', at: object, sides?: number, width?: number, length?: number}}}
+ */
+export function tunnelAt(getName, feet, options = {}) {
+    const f = cellOf(feet);
+    if (!f || typeof getName !== 'function') {
+        return { ok: false, cause: { kind: 'open_sides', at: f, sides: 0 } };
+    }
+    const minAhead = isFiniteNumber(options?.minAhead) ? options.minAhead : 2;
+    const minCells = isFiniteNumber(options?.minCells) ? options.minCells : 1;
+    const sides = openNeighbours(getName, f);
+    const dirs = corridorDirections(getName, f).filter(d => d.length >= minAhead);
+    const anchor = cellOf(options?.anchor);
+    let dir = null;
+    if (dirs.length === 1 && !openCell(getName, offset(f, backOf(dirs[0].dir))) && anchor && awayFromAnchor(dirs[0].dir, f, anchor) < 0) {
+        dir = backOf(dirs[0].dir); // the rock face: measured backwards, the tunnel goes away from the room
+    } else {
+        dir = tunnelDirection(dirs, f, { yaw: options?.yaw, anchor: options?.anchor });
+    }
+    if (!dir || !openCell(getName, f)) {
+        if (sides >= 3 || !openCell(getName, f)) {
+            return { ok: false, cause: { kind: 'open_sides', at: f, sides } };
+        }
+        const run = Math.max(0, ...DIRECTIONS.map(d => sideRun(getName, f, d, CORRIDOR_LIMIT)));
+        return { ok: false, cause: { kind: 'short', at: f, length: run + 1 } };
+    }
+    if (openCell(getName, offset(f, leftOf(dir))) && openCell(getName, offset(f, rightOf(dir)))) {
+        return { ok: false, cause: { kind: 'open_sides', at: f, sides } };
+    }
+    for (let k = 1; k <= CORRIDOR_LIMIT; k++) {
+        const p = offset(f, dir, k);
+        if (!openCell(getName, p)) {
+            break;
+        }
+        const width = corridorWidth(getName, p, dir);
+        if (width > 2) {
+            return { ok: false, cause: { kind: 'wide', at: p, width } };
+        }
+    }
+    const ceiling = { x: f.x, y: f.y + 2, z: f.z };
+    if (classify(readName(getName, ceiling)) === 'air') {
+        return { ok: false, cause: { kind: 'ceiling', at: ceiling } };
+    }
+    const m = measureTunnel(getName, f, dir);
+    if (!m || m.length < minCells) {
+        return { ok: false, cause: { kind: 'short', at: f, length: m?.length ?? 1 } };
+    }
+    return { ok: true, tunnel: { start: m.start, dir: m.dir, end: m.end, level: m.level, length: m.length, width: m.width } };
+}
+
+/**
+ * A mine with a measured tunnel added (spec B3, v0.1.4.11 for mineOre in a tunnel that is not saved): a
+ * tunnel whose start is within `same` blocks of the start of a known one replaces it (its branches are
+ * kept when the direction is the same); for a mine of the bot whose first tunnel is replaced, its fields
+ * of v0.1.4.7 follow. Pure: a new mine is returned.
+ * @param {object} mine
+ * @param {{start: object, dir: string, end: object, level: number, length: number}} tunnel
+ * @param {number} [same]
+ * @returns {object}
+ */
+export function addTunnel(mine, tunnel, same = 2) {
+    const out = JSON.parse(JSON.stringify(mine));
+    const t = { start: tunnel.start, dir: tunnel.dir, end: tunnel.end, level: tunnel.level, length: tunnel.length, branches: [] };
+    const list = tunnelsOf(out);
+    const at = list.findIndex(x => Math.hypot(x.start.x - t.start.x, x.start.y - t.start.y, x.start.z - t.start.z) <= same);
+    if (at >= 0) {
+        t.branches = list[at].dir === t.dir ? list[at].branches ?? [] : [];
+        list[at] = t;
+    } else {
+        list.push(t);
+    }
+    out.tunnels = list;
+    if (at === 0 && out.source !== 'player' && out.direction) {
+        // the tunnel of a mine of the bot: its fields of v0.1.4.7 follow the measure
+        out.direction = t.dir;
+        out.end = t.end;
+        out.tunnel = [t.start, t.end].filter((p, i, a) => i === 0 || posKey(p) !== posKey(a[0]));
+        out.length = Math.max(0, t.length - 1);
+    }
+    return out;
 }
 
 /**

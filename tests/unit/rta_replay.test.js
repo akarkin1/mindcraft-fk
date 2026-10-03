@@ -95,7 +95,9 @@ describe('walkRoute (I3)', () => {
         const s = scene({ pos: [-2.5, 61, 2.5], ladders: false });
         const r = await P.walkRoute(s.bot, s.ctx, s.route, { ...s.opts, reverse: true });
         assert.deepEqual({ ok: r.ok, reason: r.reason, leg: r.leg }, { ok: false, reason: 'no_path', leg: 2 });
-        assert.equal(r.text, 'I could not follow the route "bed" at step 3 of 4, at (2, 61, -3). Show me the way again.');
+        // v0.1.4.11, W1: the failure text names the cause (the missing ladders), "Show me the way again." is gone
+        assert.equal(r.text, 'I could not follow the route "bed" at step 3 of 4: the ladder at (2, -2) has a gap of 18 at y 42. I need 18 ladders to go on.');
+        assert.deepEqual(r.cause, { kind: 'ladder', x: 2, z: -2, y: 42, gap: 18 });
         assert.equal(s.world.propsAt(2, 60, -2).open, false);
         assert.equal(s.bot.entity.position.y, 61, 'the bot did not fall');
         assert.equal(digs(s.bot), 0);
@@ -104,7 +106,8 @@ describe('walkRoute (I3)', () => {
     test('a ladder removed on the way up: the leg of the ladder fails before the climb', async () => {
         const s = scene({ ladders: false });
         const r = await P.walkRoute(s.bot, s.ctx, s.route, s.opts);
-        assert.equal(r.text, 'I could not follow the route "bed" at step 2 of 4, at (2, 41, -1). Show me the way again.');
+        // v0.1.4.11, W1: the cause instead of "Show me the way again."
+        assert.equal(r.text, 'I could not follow the route "bed" at step 2 of 4: the ladder at (2, -2) has a gap of 18 at y 42. I need 18 ladders to go on.');
     });
 
     test('one ladder missing: down the bot slides past the gap, up it does not start the climb', async () => {
@@ -114,7 +117,8 @@ describe('walkRoute (I3)', () => {
         assert.equal(down.ok, true, down.text);
         assert.deepEqual(feet(s.bot), [2, 41, 1]);
         const up = await P.walkRoute(s.bot, s.ctx, s.route, s.opts);
-        assert.equal(up.text, 'I could not follow the route "bed" at step 2 of 4, at (2, 41, -1). Show me the way again.');
+        // v0.1.4.11, W1: the cause instead of "Show me the way again."
+        assert.equal(up.text, 'I could not follow the route "bed" at step 2 of 4: the ladder at (2, -2) has a gap of 1 at y 50. I need 1 ladder to go on.');
         assert.equal(P.ladderIntact(s.bot, s.route.legs[1], 1), true);
         assert.equal(P.ladderIntact(s.bot, s.route.legs[1]), false);
     });
@@ -124,7 +128,9 @@ describe('walkRoute (I3)', () => {
         s.bot.noPath = true;
         const r = await P.walkRoute(s.bot, s.ctx, s.route, s.opts);
         assert.deepEqual({ ok: r.ok, reason: r.reason, leg: r.leg }, { ok: false, reason: 'no_path', leg: 0 });
-        assert.equal(r.text, 'I could not follow the route "bed" at step 1 of 4, at (2, 41, 1). Show me the way again.');
+        // v0.1.4.11, W1: the cause instead of "Show me the way again."
+        assert.equal(r.text, 'I could not follow the route "bed" at step 1 of 4: I found no way from (2, 41, 1) to (2, 41, -1).');
+        assert.deepEqual(r.cause, { kind: 'no_path', from: { x: 2, y: 41, z: 1 }, to: { x: 2, y: 41, z: -1 } });
         assert.equal(digs(s.bot), 0);
     });
 
@@ -133,7 +139,9 @@ describe('walkRoute (I3)', () => {
         s.bot.failActivations = 99;
         const r = await P.walkRoute(s.bot, s.ctx, s.route, { ...s.opts, reverse: true });
         assert.deepEqual({ ok: r.ok, reason: r.reason, leg: r.leg }, { ok: false, reason: 'blocked_door', leg: 1 });
-        assert.equal(r.text, 'I could not follow the route "bed" at step 2 of 4, at (2, 61, -3). Show me the way again.');
+        // v0.1.4.11, W1: the cause instead of "Show me the way again."
+        assert.equal(r.text, 'I could not follow the route "bed" at step 2 of 4: the trapdoor at (2, 60, -2) is closed and I could not open it.');
+        assert.deepEqual(r.cause, { kind: 'door', name: 'trapdoor', x: 2, y: 60, z: -2, state: 'closed' });
     });
 
     test('stopped on the ladder: interrupted, the text says the step', async () => {
@@ -197,6 +205,6 @@ describe('walkByRoute (I4)', () => {
         const s = scene({ pos: [-4.5, 61, 4.5] });
         s.bot.noPath = true;
         const r = await P.walkByRoute(s.bot, s.ctx, [s.route], { x: 2, y: 41, z: 1 }, s.opts);
-        assert.deepEqual({ ok: r.ok, reason: r.reason, text: r.text }, { ok: false, reason: 'no_path', text: 'I found no way to the start of the route "bed" at (-3, 61, 2).' });
+        assert.deepEqual({ ok: r.ok, reason: r.reason, text: r.text }, { ok: false, reason: 'no_path', text: 'I find no way from (-5, 61, 4) to the start of the route "bed" at (-3, 61, 2).' }, 'v0.1.4.11, W1');
     });
 });

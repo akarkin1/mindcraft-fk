@@ -249,8 +249,20 @@ function stopReason(reason, bot) {
 
 async function passDown(bot, lad, column, clock, walkMs) {
     const leg = { kind: 'ladder', x: column.x, z: column.z, top: column.top, bottom: column.bottom, face: column.facing, entry: entryOf(column) };
-    const under = bot.blockAt(new Vec3(column.x, column.bottom - 1, column.z));
-    if (!under || AIR.has(under.name)) {
+    // v0.1.4.11 (F21): a column whose lowest rung is 1 or 2 blocks above the floor ends with a drop that slideDown
+    // counts as arrived (feet at most 2 blocks below the bottom); only a deeper fall is refused
+    let floor = false;
+    for (let dy = 1; dy <= 3 && !floor; dy++) {
+        const under = bot.blockAt(new Vec3(column.x, column.bottom - dy, column.z));
+        if (!under) {
+            break;
+        }
+        if (under.name === 'lava') {
+            break;
+        }
+        floor = !AIR.has(under.name);
+    }
+    if (!floor) {
         return 'no_floor'; // the bot would fall past the foot of the column
     }
     // a bot in the column already slides from where it is (slideDown); the trapdoor above it is no matter

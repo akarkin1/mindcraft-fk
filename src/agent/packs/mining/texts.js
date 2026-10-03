@@ -1,6 +1,6 @@
 // Texts of the mining pack that the player or the model reads. The spec v0.1.4.7 M4 gives the
 // texts of mineOre word for word, tests compare them; v0.1.4.9 (B2, B3, B4, B6) the texts of the
-// mine of the player and of the ore list. Pure.
+// mine of the player and of the ore list; v0.1.4.11 (W2, W3) the tunnel and the new mine underground. Pure.
 import { countsText, posText } from '../storage/texts.js';
 import { ORES, ORE_NAMES, PICKAXE_LEVELS, oreOf } from './ore_table.js';
 
@@ -40,6 +40,10 @@ export const TEXTS = Object.freeze({
     noMineHere: 'I know no mine here. Tell me "this is the mine" first.',
     noCorridor: 'I stand in no tunnel. A tunnel is 1 wide and 2 high and open ahead of me.',
     noRouteWalk: 'I cannot walk the way of the mine: the routes pack is off.',
+    // v0.1.4.11, W3: underground, in no mine the bot knows
+    undergroundNoMine: 'I am underground, not in a mine I know. A new mine starts from the surface: say "leave the mine" or "go to the surface" first.',
+    // v0.1.4.11, F14: a shaft from inside never starts on the parent's way out
+    noShaftCell: 'I find no floor cell for a shaft here that leaves the way out free. Stand elsewhere in the room and tell me again.',
 });
 
 function listWords(words) {
@@ -372,13 +376,80 @@ export function rememberMineText(r) {
 }
 
 /**
- * The text of rememberTunnel (spec B3):
+ * The text of rememberTunnel (spec B3; v0.1.4.11, W2):
  * `I measured the tunnel: it starts at (22, 25, 2), goes north, and ends at (22, 25, 13) after 12 blocks, at level 25. I dig on at its end when you ask for ore.`
- * @param {{start: object, dir: string, end: object, length: number, level: number}} t
+ * A tunnel 2 wide (`width: 2`) adds `, 2 wide` after the level; a tunnel measured from the player's cell
+ * (`fromPlayer: true`, the bot's cell failed) says `I measured the tunnel from where you stand: ...`.
+ * @param {{start: object, dir: string, end: object, length: number, level: number, width?: number, fromPlayer?: boolean}} t
  * @returns {string}
  */
 export function rememberTunnelText(t) {
-    return `I measured the tunnel: it starts at ${posText(t?.start)}, goes ${t?.dir}, and ends at ${posText(t?.end)} after ${plural(t?.length ?? 0, 'block')}, at level ${t?.level}. I dig on at its end when you ask for ore.`;
+    const from = t?.fromPlayer === true ? ' from where you stand' : '';
+    const wide = t?.width === 2 ? ', 2 wide' : '';
+    return `I measured the tunnel${from}: it starts at ${posText(t?.start)}, goes ${t?.dir}, and ends at ${posText(t?.end)} after ${plural(t?.length ?? 0, 'block')}, at level ${t?.level}${wide}. I dig on at its end when you ask for ore.`;
+}
+
+/** The shape of a tunnel, the end of two texts of W2. */
+const TUNNEL_SHAPE = 'A tunnel is 1 or 2 wide and 2 high.';
+
+/**
+ * Why the bot stands in no tunnel (v0.1.4.11, W2), the first check that failed, in the order open sides at the
+ * feet, the width ahead, the ceiling:
+ * `{ kind: 'open_sides', at, sides: 3 }` -> `I stand in no tunnel: it is open on 3 sides at (10, 30, 6). Stand in the tunnel and say "dig here".`
+ * `{ kind: 'wide', at, width: 3 }` -> `I stand in no tunnel: the way ahead at (10, 30, 5) is 3 wide. A tunnel is 1 or 2 wide and 2 high.`
+ * `{ kind: 'ceiling', at }` -> `I stand in no tunnel: the ceiling at (10, 32, 6) is open. A tunnel is 1 or 2 wide and 2 high.`
+ * Another or no cause: TEXTS.noCorridor.
+ * @param {{kind: string, at: {x,y,z}, sides?: number, width?: number}|null} cause
+ * @returns {string}
+ */
+export function noCorridorText(cause) {
+    const at = cause?.at;
+    const ok = at && Number.isFinite(at.x) && Number.isFinite(at.y) && Number.isFinite(at.z);
+    if (!ok) {
+        return TEXTS.noCorridor;
+    }
+    switch (cause.kind) {
+    case 'open_sides': {
+        const sides = Number.isFinite(cause.sides) && cause.sides > 0 ? cause.sides : 3;
+        return `I stand in no tunnel: it is open on ${sides} ${sides === 1 ? 'side' : 'sides'} at ${posText(at)}. Stand in the tunnel and say "dig here".`;
+    }
+    case 'wide': {
+        const width = Number.isFinite(cause.width) && cause.width > 0 ? cause.width : 3;
+        return `I stand in no tunnel: the way ahead at ${posText(at)} is ${width} wide. ${TUNNEL_SHAPE}`;
+    }
+    case 'ceiling':
+        return `I stand in no tunnel: the ceiling at ${posText(at)} is open. ${TUNNEL_SHAPE}`;
+    case 'short': {
+        // the lead, round 1 (E2's request): a corridor shorter than the 4 cells of rememberMine
+        const length = Number.isFinite(cause.length) && cause.length > 0 ? cause.length : 1;
+        return `I stand in no tunnel: the corridor at ${posText(at)} is only ${length} long. A tunnel is 4 or more.`;
+    }
+    default:
+        return TEXTS.noCorridor;
+    }
+}
+
+/**
+ * A new shaft from inside a known mine (v0.1.4.11, W3, mine_from_inside on):
+ * `I dig a shaft down from here to level -58 for diamond.`
+ * @param {number} level
+ * @param {string|object} ore
+ * @returns {string}
+ */
+export function shaftFromHereText(level, ore) {
+    const row = oreOf(ore);
+    return `I dig a shaft down from here to level ${level} for ${row ? row.ore : String(ore ?? '')}.`;
+}
+
+/**
+ * A new mine asked for inside a known mine with mine_from_inside off (v0.1.4.11, W3):
+ * `I am in the mine "mine". A new shaft from inside needs the setting mine_from_inside; say "leave the mine" first for a new mine from the surface.`
+ * A mine without a name: `I am in the mine at (20, 64, -14). ...`
+ * @param {object} mine
+ * @returns {string}
+ */
+export function inMineText(mine) {
+    return `I am in ${mineLabel(mine)}. A new shaft from inside needs the setting mine_from_inside; say "leave the mine" first for a new mine from the surface.`;
 }
 
 /**

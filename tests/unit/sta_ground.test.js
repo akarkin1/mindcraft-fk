@@ -179,6 +179,56 @@ describe('depthUnderGround and isUnderground', () => {
     });
 });
 
+// v0.1.4.11 (F25): the owner's basement lies under the plank floor of the house; that floor counts as ground.
+describe('F25: the depth under a built floor', () => {
+    // grass at y 63; a cellar of air under a plank floor at y 63 (the floor replaces the grass) over |x|, |z| <= 4;
+    // the cellar is |x|, |z| <= 3 from y `floorY` to 62, its walls the natural stone around it
+    function cellar(floorY = 59, wall = undefined) {
+        return world({ extra: (x, y, z) => {
+            const ax = Math.abs(x), az = Math.abs(z);
+            if (y === 63 && ax <= 4 && az <= 4) return 'oak_planks';
+            if (y >= floorY && y <= 62 && ax <= 3 && az <= 3) return 'air';
+            if (wall && y >= floorY && y <= 62 && ax <= 4 && az <= 4) return wall;
+            return undefined;
+        } });
+    }
+
+    test('isBuiltFloorName: planks, cobblestone, bricks, slabs, stairs, glass, trapdoors; not thin built blocks or natural ones', () => {
+        for (const name of ['oak_planks', 'cobblestone', 'stone_bricks', 'oak_slab', 'cobblestone_stairs', 'glass', 'oak_trapdoor', 'minecraft:spruce_planks'])
+            assert.equal(G.isBuiltFloorName(name), true, name);
+        for (const name of ['oak_door', 'oak_fence', 'oak_fence_gate', 'cobblestone_wall', 'glass_pane', 'iron_bars', 'ladder', 'torch', 'wall_torch',
+            'lantern', 'rail', 'white_carpet', 'oak_sign', 'stone_button', 'lever', 'red_bed', 'stone', 'dirt', 'oak_log', 'air', null, ''])
+            assert.equal(G.isBuiltFloorName(name), false, String(name));
+    });
+
+    test('in a cellar 4 blocks high under the plank floor of the house: 5 deep (before: 0)', () => {
+        assert.equal(G.groundLevelAround(cellar(), { x: 0.5, y: 59, z: 0.5 }, TOP), 63);
+        assert.equal(G.depthUnderGround(cellar(), { x: 0.5, y: 59, z: 0.5 }, TOP), 5);
+    });
+
+    test('in a cellar 13 blocks high under a plank floor: underground', () => {
+        const depth = G.depthUnderGround(cellar(50), { x: 0.5, y: 50, z: 0.5 }, TOP);
+        assert.equal(depth, 14);
+        assert.equal(G.isUnderground(depth), true);
+    });
+
+    test('a floor laid onto the grass: the bot standing on it is on the surface', () => {
+        const floor = world({ extra: (x, y) => (y === 64 ? 'oak_planks' : undefined) });
+        assert.equal(G.depthUnderGround(floor, { x: 0.5, y: 65, z: 0.5 }, TOP), 0);
+    });
+
+    test('a house or a roof over the grass still is no ground', () => {
+        const house = world({ extra: (x, y) => (y === 64 ? 'oak_planks' : y === 69 ? 'oak_planks' : y === 70 ? 'oak_stairs' : undefined) });
+        assert.equal(G.groundLevelAround(house, { x: 0.5, y: 65, z: 0.5 }, TOP), 64, 'the floor on the grass, not the roof');
+        assert.equal(G.depthUnderGround(house, { x: 0.5, y: 65, z: 0.5 }, TOP), 0);
+    });
+
+    test('every known column in a cellar with built walls and no natural surface among them: the floor is not seen', () => {
+        // the 8 columns are the cobblestone walls or the cellar: the natural ground of each is the stone under them
+        assert.equal(G.depthUnderGround(cellar(59, 'cobblestone'), { x: 0.5, y: 59, z: 0.5 }, TOP), 0);
+    });
+});
+
 describe('whereAmI(bot) of where_am_i.js', () => {
     function makeBot(read, { pos = vec(0.5, 30, 0.5), guard, game = { minY: -64, height: 384 } } = {}) {
         const bot = { entity: { position: pos }, game, reads: 0, areaGuard: guard };

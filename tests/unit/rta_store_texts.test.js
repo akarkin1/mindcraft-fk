@@ -148,9 +148,10 @@ describe('texts', () => {
     });
 
     test('I3: a failure and a stop', () => {
-        assert.equal(X.routeFailedText({ name: 'bed' }, 3, 7, { x: 12, y: 45, z: 8 }), 'I could not follow the route "bed" at step 3 of 7, at (12, 45, 8). Show me the way again.');
+        // v0.1.4.11, W1: "Show me the way again." is gone; without a cause the text ends with the position
+        assert.equal(X.routeFailedText({ name: 'bed' }, 3, 7, { x: 12, y: 45, z: 8 }), 'I could not follow the route "bed" at step 3 of 7, at (12, 45, 8).');
         assert.equal(X.routeStoppedText({ name: 'bed' }, 3, 7), 'I was stopped on the route "bed" at step 3 of 7.');
-        assert.equal(X.routeFailedText({ legs: [] }, 1, 2, { x: 1.7, y: 2, z: -3.2 }), 'I could not follow the route at step 1 of 2, at (1, 2, -4). Show me the way again.');
+        assert.equal(X.routeFailedText({ legs: [] }, 1, 2, { x: 1.7, y: 2, z: -3.2 }), 'I could not follow the route at step 1 of 2, at (1, 2, -4).');
         assert.equal(X.routeTimeText({ name: 'bed' }, 3, 7, { x: 1, y: 2, z: 3 }), 'The time for the route "bed" ran out at step 3 of 7, at (1, 2, 3).');
         assert.equal(X.routeDoneText({ name: 'bed' }, 7), 'I followed the route "bed", 7 steps.');
         assert.equal(X.emptyRouteText({ name: 'bed' }), 'The route "bed" has no steps.');

@@ -12,7 +12,8 @@
 // - routes: the routes of the glue (v0.1.4.9, I4, optional): with it and the setting mine_routes the
 //   work in a known mine of spec B4 to B6 (the mine by nearest, the way by walkRoute, the tunnel by
 //   tunnelFor, side branches, the ore list). Without them everything is as in v0.1.4.8.
-// The settings are read only by makeJob (mine_routes, ore_sense_range) and maxMinutes.
+// The settings are read only by makeJob (mine_routes, ore_sense_range), maxMinutes and, since v0.1.4.11,
+// fromInsideOn of mine_way (mine_from_inside: a shaft of a second level from inside a known mine, I4).
 // Every function returns { ok, reason, text, ... } with numbers, ends on bot.interrupt_code, has an
 // upper limit of time and never throws.
 import { horizontalDistanceToBox } from '../home/box_math.js';
@@ -25,18 +26,21 @@ import {
 } from './dig.js';
 import { followDown, followUp, placeLadder, waitStanding } from './ladder.js';
 import {
-    BRANCH_LENGTH, addPassedEntry, backOf, branchCells, branchPlan, cellOf, chooseEntrance, classify, faceNeighbours, isDirection, leftOf, mineAt, offset, posKey,
-    removePassedAt, returnTimeMs, rightOf, roomBox, roomPlan, senseCut, shaftAllowed, shaftStep, shaftView, shouldReturn, staircaseStep,
-    staircaseView, torchDue, tripNeeds, tripStart, tunnelAllowed, tunnelCells, tunnelFor, tunnelSlots, tunnelStep, tunnelView, tunnelsOf,
+    BRANCH_LENGTH, addPassedEntry, addTunnel, backOf, branchCells, branchPlan, cellOf, chooseEntrance, classify, faceNeighbours, insideShaft, isDirection, leftOf,
+    mineAt, offset, posKey, removePassedAt, returnTimeMs, rightOf, roomBox, roomPlan, senseCut, shaftAllowed, shaftStep, shaftView, shouldReturn, staircaseStep,
+    staircaseView, torchDue, tripNeeds, tripStart, tunnelAllowed, tunnelAt, tunnelCells, tunnelFor, tunnelSlots, tunnelStep, tunnelView, tunnelsOf,
     usablePickaxes, veinParts,
 } from './mine_logic.js';
-import { MineStore } from './mine_store.js';
-import { MINE_RANGE, chooseMine, mineRoutesOn, senseRangeOf, walksRoute, wayIn, wayOut } from './mine_way.js';
+import { MineStore, NEAREST_RANGE, mineId } from './mine_store.js';
+import { MINE_RANGE, chooseMine, fromInsideOn, mineRoutesOn, senseRangeOf, walksRoute, wayIn, wayOut } from './mine_way.js';
 import { ORES, isOreBlock, oreOf, pickaxeMaterial, targetLevel, tripPickaxe } from './ore_table.js';
 import {
     NO_TORCHES_TEXT, STOP_REASONS, TEXTS, askMineText, cannotMineText, descendText, mineLabel, mineOreText, noTunnelText, passedText, posText,
-    suppliesStoppedText, suppliesText, tunnelText, unknownOreText,
+    rememberTunnelText, suppliesStoppedText, suppliesText, tunnelText, unknownOreText,
 } from './texts.js';
+// v0.1.4.11: the texts of W2 and W3 that part W adds to texts.js, reached at run time with the words of the
+// spec as the fallback (a named import of a name that does not exist yet would break the loading of the pack)
+import * as TX from './texts.js';
 
 /** Minutes of one trip when the setting mining_max_minutes is missing. */
 export const DEFAULT_MAX_MINUTES = 30;
@@ -119,9 +123,11 @@ function newStats() {
     return { dug: 0, ladders: 0, torches: 0, patches: 0, stairs: 0, moves: 0 };
 }
 
+// The protected areas the digging keeps away from. v0.1.4.11 (F28): an area of type mine is where the owner wants the
+// mining (the guard lets the bot break its natural blocks), so the trip digs in it; its built blocks stay guarded.
 function areasOf(bot, ctx) {
     try {
-        return listAreas(ctx, dimensionOf(bot));
+        return listAreas(ctx, dimensionOf(bot)).filter(a => a?.type !== 'mine');
     } catch {
         return [];
     }
@@ -173,6 +179,46 @@ function underground(ctx) {
     } catch {
         return false;
     }
+}
+
+// W3 (v0.1.4.11): underground, in no mine the bot knows.
+function undergroundText() {
+    const text = TX.TEXTS?.undergroundNoMine;
+    return typeof text === 'string' && text.length > 0 ? text
+        : 'I am underground, not in a mine I know. A new mine starts from the surface: say "leave the mine" or "go to the surface" first.';
+}
+
+// F13 (W92): no floor cell for a shaft from inside that leaves the way of the parent free.
+function noShaftCellText() {
+    const text = TX.TEXTS?.noShaftCell;
+    return typeof text === 'string' && text.length > 0 ? text
+        : 'I find no floor cell for a shaft here that leaves the way out free. Stand elsewhere in the room and tell me again.';
+}
+
+// W3: a new mine asked for in a known mine with mine_from_inside off.
+function inMineWords(mine) {
+    try {
+        const text = typeof TX.inMineText === 'function' ? TX.inMineText(mine) : null;
+        if (typeof text === 'string' && text.length > 0) {
+            return text;
+        }
+    } catch {
+        // the words of the spec
+    }
+    return `I am in ${mineLabel(mine)}. A new shaft from inside needs the setting mine_from_inside; say "leave the mine" first for a new mine from the surface.`;
+}
+
+// W3: the shaft of a second level, said when it starts.
+function shaftWords(level, ore) {
+    try {
+        const text = typeof TX.shaftFromHereText === 'function' ? TX.shaftFromHereText(level, ore) : null;
+        if (typeof text === 'string' && text.length > 0) {
+            return text;
+        }
+    } catch {
+        // the words of the spec
+    }
+    return `I dig a shaft down from here to level ${level} for ${ore}.`;
 }
 
 // The place `home` in the dimension of the bot as a list of one point, for chooseEntrance.
@@ -857,10 +903,15 @@ function groundReader(bot, top) {
  * place `mine`, and digs a shaft of 1 by 1 with ladders on one wall by shaftStep; lava below or a
  * cave without cobblestone moves the shaft 3 blocks to the side; without ladders it goes on as a
  * staircase by staircaseStep. A torch goes at the top of the shaft.
+ * v0.1.4.11 (I4): `options.inside` ({ parent, top, face, entry }, mineOre with mine_from_inside) digs the
+ * shaft of a second level from the floor cell `top` the bot stands on in a known mine: a mine of the bot
+ * with `parent`, its entrance the top, the ladders on the wall `face` with the rules of the surface shaft
+ * (digDown, moveShaft); no place `mine` and no torch at the top (the room of the parent is the owner's).
+ * A known mine with a parent is entered through its parent (wayIn of mine_way).
  * @param {object} bot
  * @param {object} ctx
  * @param {number} y the level: feet of the bot in the tunnel
- * @param {{ore?: string, mine?: object, deadline?: number, timeoutMs?: number}} [options]
+ * @param {{ore?: string, mine?: object, deadline?: number, timeoutMs?: number, inside?: object}} [options]
  * @returns {Promise<{ok: boolean, reason: string|null, text: string, mine: object|null, dug: number, ladders: number, torches: number, patches: number, stairs: number}>}
  */
 export async function descendToLevel(bot, ctx = {}, y = 16, options = {}) {
@@ -870,7 +921,9 @@ export async function descendToLevel(bot, ctx = {}, y = 16, options = {}) {
         const level = Math.floor(y);
         const store = storeOf(ctx);
         const row = oreOf(options.ore);
-        let mine = options.mine ?? (row ? store?.get(row.ore, dimensionOf(bot) ?? undefined) : null) ?? store?.atLevel?.(level, dimensionOf(bot) ?? undefined) ?? null;
+        // v0.1.4.11 (I4): a shaft from inside is a new mine, never one found here
+        let mine = options.inside ? null
+            : options.mine ?? (row ? store?.get(row.ore, dimensionOf(bot) ?? undefined) : null) ?? store?.atLevel?.(level, dimensionOf(bot) ?? undefined) ?? null;
         if (mine && mine.level !== level) {
             mine = null;
         }
@@ -883,7 +936,13 @@ export async function descendToLevel(bot, ctx = {}, y = 16, options = {}) {
             mine = JSON.parse(JSON.stringify(mine));
             ours = mineCells(mine);
             const inside = ours.has(posKey(feet)) && feet.y <= mine.entrance.y - 2;
-            if (!inside) {
+            if (!inside && typeof mine.parent === 'string' && mine.parent.length > 0) {
+                // I4: a mine of a second level: through its parent and down its shaft
+                const into = await wayIn(bot, ctx, mine, { clock: job.clock, deadline: job.deadline });
+                if (!into.ok) {
+                    return done(false, into.reason === 'interrupted' ? 'interrupted' : 'no_path', mine, into.text);
+                }
+            } else if (!inside) {
                 logTo(ctx, `I go to the mine at ${posText(mine.entrance)}.`);
                 const first = mine.route[0];
                 if (first?.entry) {
@@ -896,7 +955,7 @@ export async function descendToLevel(bot, ctx = {}, y = 16, options = {}) {
                     }
                 }
             }
-            if (!inside || (feetOf(bot)?.y ?? 0) > routeEnd(mine)?.y) {
+            if (!(typeof mine.parent === 'string' && mine.parent.length > 0 && !inside) && (!inside || (feetOf(bot)?.y ?? 0) > routeEnd(mine)?.y)) {
                 const down = await followDown(bot, mine.route, { clock: job.clock, deadline: job.deadline });
                 if (!down.ok) {
                     return done(false, down.reason === 'interrupted' ? 'interrupted' : 'stuck', mine, `I could not climb down into the mine at ${posText(mine.entrance)}.`);
@@ -905,11 +964,30 @@ export async function descendToLevel(bot, ctx = {}, y = 16, options = {}) {
             if ((feetOf(bot)?.y ?? Infinity) <= level) {
                 return done(true, null, mine, descendText({ level, mine, climbed: true }));
             }
+        } else if (options.inside && cellOf(options.inside.top) && isDirection(options.inside.face) && cellOf(options.inside.entry)) {
+            // v0.1.4.11 (I4): the shaft of a second level from the floor cell the bot stands on in a known mine
+            const top = cellOf(options.inside.top);
+            const face = options.inside.face;
+            mine = {
+                ore: row?.ore ?? 'iron', entrance: top, level, base: null, chest: null, direction: face, length: 0, shaft: 'ladder',
+                dimension: dimensionOf(bot) ?? 'overworld', end: null, tunnel: [], parent: options.inside.parent,
+                route: [{ kind: 'ladder', x: top.x, z: top.z, top: top.y - 1, bottom: top.y, face, entry: cellOf(options.inside.entry) }],
+            };
+            logTo(ctx, `I start a shaft at ${posText(top)} in the mine "${options.inside.parent}", its tunnel will lead ${face}.`);
+            if (feet.x !== top.x || feet.z !== top.z || feet.y !== top.y) {
+                const w = await walkTo(bot, top, { clock: job.clock, timeoutMs: 30000 });
+                if (!w.ok) {
+                    return done(false, w.reason === 'interrupted' ? 'interrupted' : 'no_path', null, `I could not get to the place for the shaft at ${posText(top)}.`);
+                }
+            }
+            mine = { ...mine, ...saveMine(ctx, job, mine) };
+            ours = mineCells(mine);
         } else {
             // v0.1.4.8, E4: a new mine starts only from the surface, at the place mineOre chose, or at least
             // 16 blocks from the house and the areas of people
             if (underground(ctx)) {
-                return done(false, 'underground', null, TEXTS.underground);
+                // v0.1.4.11, W3: the text names the next step
+                return done(false, 'underground', null, undergroundText());
             }
             const given = options.entrance;
             const entrance = given && isFiniteNumber(given.x) && isFiniteNumber(given.y) && isFiniteNumber(given.z) && given.dir
@@ -1875,9 +1953,11 @@ export async function depositAtBase(bot, ctx = {}, options = {}) {
  * Walks to the way up of the mine and goes up (spec M4): the legs of the mine from the last to the
  * first, ladders by climbing. Ends on the surface at the entrance. With mine_routes (v0.1.4.9, B4)
  * the way of a mine of the player, or of a route with a door, is walked back with walkRoute.
+ * v0.1.4.11 (I4): a mine of a second level goes up its shaft and out through its parent (wayOut of
+ * mine_way); with `options.toParent` it stays in the parent at the top of the shaft.
  * @param {object} bot
  * @param {object} ctx
- * @param {{mine?: object, timeoutMs?: number}} [options]
+ * @param {{mine?: object, timeoutMs?: number, toParent?: boolean}} [options]
  * @returns {Promise<{ok: boolean, reason: string|null, text: string, mine: object|null, ms: number}>}
  */
 export async function climbToSurface(bot, ctx = {}, options = {}) {
@@ -1888,6 +1968,11 @@ export async function climbToSurface(bot, ctx = {}, options = {}) {
         const feet = feetOf(bot);
         if (!mine || !feet) {
             return { ok: false, reason: 'no_mine', text: TEXTS.noMine, mine: null, ms: 0 };
+        }
+        if (typeof mine.parent === 'string' && mine.parent.length > 0) {
+            // v0.1.4.11 (I4): up the shaft, then the parent's way out (or, with toParent, stay in the parent)
+            const out = await wayOut(bot, ctx, mine, { clock, toParent: options.toParent === true });
+            return { ok: out.ok, reason: out.reason, text: out.text, mine, ms: clock.now() - t0 };
         }
         const entry = mine.route[0]?.entry ?? mine.entrance;
         if (feet.y >= mine.entrance.y - 1) {
@@ -1932,6 +2017,56 @@ export async function climbToSurface(bot, ctx = {}, options = {}) {
 }
 
 // ------------------------------------------------------------------ the trip
+
+/** A tunnel that mineOre measures has this many cells at least (MIN_TUNNEL_CELLS of mine_player, fix round F7). */
+const MEASURE_MIN_CELLS = 4;
+/** A measured tunnel whose start is this near the start of a known one replaces it (SAME_TUNNEL of mine_player). */
+const MEASURE_SAME = 2;
+
+// v0.1.4.11 (PLAN 2.3, I3): mineOre under the ground in a tunnel that is not saved, near a known mine (the
+// one it is in, else the nearest within 64): the tunnel is measured (tunnelAt), saved as "dig here" saves
+// it, and its text said; the trip then digs on at its end when it fits the ore. Not in the room, on the
+// way in or in a saved tunnel. null when nothing was measured. Never throws.
+function measureHere(bot, ctx) {
+    try {
+        const store = storeOf(ctx);
+        const feet = feetOf(bot);
+        if (!store || !feet || !underground(ctx)) {
+            return null;
+        }
+        const dimension = dimensionOf(bot) ?? undefined;
+        const at = mineAt(store.list(dimension), feet);
+        if (at && (at.tunnel !== null || at.onRoute)) {
+            return null;
+        }
+        const mine = at?.mine ?? store.nearest?.(feet, dimension, NEAREST_RANGE) ?? null;
+        if (!mine) {
+            return null;
+        }
+        const r = tunnelAt(nameReader(bot), feet, { anchor: mine.room?.center ?? mine.base ?? mine.entrance, minCells: MEASURE_MIN_CELLS });
+        if (!r.ok) {
+            return null;
+        }
+        const saved = store.set(addTunnel(mine, r.tunnel, MEASURE_SAME));
+        return { mine: saved, tunnel: r.tunnel, text: rememberTunnelText({ ...r.tunnel, fromPlayer: false }) };
+    } catch (err) {
+        console.warn('Mining pack: measuring the tunnel failed:', errText(err));
+        return null;
+    }
+}
+
+// v0.1.4.11 (I4): the known mine whose room or tunnel holds the bot ({ mine, tunnel } of mineAt, not on
+// the way in), of the mines the trip sees (those of the player only with mine_routes); null elsewhere.
+function insideMine(bot, ctx, routes) {
+    try {
+        const feet = feetOf(bot);
+        const list = storeOf(ctx)?.list(dimensionOf(bot) ?? undefined) ?? [];
+        const at = feet ? mineAt(routes ? list : list.filter(m => m.source !== 'player'), feet) : null;
+        return at && !at.onRoute ? at : null;
+    } catch {
+        return null;
+    }
+}
 
 // The food the bot carries, the off-hand (slot 45) included (v0.1.4.8, E4): foodItems of the home
 // pack (I7) through ctx.home when the glue gives it, else the inventory and slot 45 read here.
@@ -2026,6 +2161,11 @@ async function digOnce(bot, ctx, mine, tunnel, options) {
  * a broken route ends the trip with its text (reason `no_path`), nothing dug. The bot digs on at the
  * end of the tunnel, side branches first once it is 32 long, stores in the chest of the room, and
  * the text names the ore it left behind.
+ * Since v0.1.4.11: with mine_routes, in a tunnel that is not saved the bot first measures and saves it
+ * and says so (PLAN 2.3). Under the ground in the room or a tunnel of a known mine without a mine for the
+ * ore (tripStart `inside`, I4) the setting mine_from_inside digs a shaft of a second level down from the
+ * floor cell the bot stands on (W3: `I dig a shaft down from here to level -58 for diamond.`); the trip
+ * ends back in that mine. Off, the refusal names the mine and the setting (`in_mine`, reason underground).
  * @param {object} bot
  * @param {object} ctx
  * @param {string} ore
@@ -2066,6 +2206,24 @@ export async function mineOre(bot, ctx = {}, ore = '', count = 8, options = {}) 
     try {
         let known = options.mine ?? null;
         if (routes && !known) {
+            // PLAN 2.3: a tunnel that is not saved is measured first, and the trip may dig on at its end
+            const measured = measureHere(bot, tripCtx);
+            if (measured) {
+                sayTo(ctx, measured.text);
+                // the trip digs on at the end of the tunnel it stands in when its level fits the ore
+                const t = measured.tunnel;
+                const index = tunnelsOf(measured.mine).findIndex(x => cellOf(x.start) && x.start.x === t.start.x && x.start.y === t.start.y
+                    && x.start.z === t.start.z && x.dir === t.dir);
+                if (index >= 0 && t.level >= row.min && t.level <= row.max) {
+                    known = measured.mine;
+                    tunnel = index;
+                }
+            }
+        }
+        // I4: the known mine the bot stands in, and where the trip started
+        const here = insideMine(bot, tripCtx, routes);
+        let insideStart = null;
+        if (routes && !known) {
             const pick = chooseMine(storeOf(tripCtx), feetOf(bot), dimensionOf(bot), row);
             known = pick.mine;
             tunnel = pick.tunnel;
@@ -2086,11 +2244,39 @@ export async function mineOre(bot, ctx = {}, ore = '', count = 8, options = {}) 
                 return { ok: false, reason: 'no_tunnel', text: noTunnelText(known, row, tunnelsOf(known)), mined: 0, stored, mine: null };
             }
         }
-        const start = tripStart({ mine: known, newMine: options.newMine === true, underground: underground(ctx) });
+        const start = tripStart({
+            mine: known, newMine: options.newMine === true, underground: underground(ctx), inMine: Boolean(here), fromInside: fromInsideOn(ctx),
+        });
         const early = (why, text) => ({ ok: false, reason: why, text, mined: 0, stored, mine: null });
         if (start === 'underground') {
-            return early('underground', TEXTS.underground);
+            return early('underground', undergroundText()); // v0.1.4.11, W3
         }
+        if (start === 'in_mine') {
+            return early('underground', inMineWords(here.mine)); // W3: mine_from_inside off
+        }
+        if (start === 'inside') {
+            // I4: a shaft of a second level from the floor cell the bot stands on
+            const feet = feetOf(bot);
+            const dimension = dimensionOf(bot) ?? undefined;
+            let level = targetLevel(row, feet.y, bot.game?.minY ?? -64);
+            for (let k = 0; k < 8 && storeOf(tripCtx)?.atLevel?.(level, dimension); k++) {
+                level += 1; // the key bot:<level> of another mine of the bot is never taken over
+            }
+            const prefer = here.tunnel !== null ? tunnelsOf(here.mine)[here.tunnel]?.dir : here.mine.direction ?? undefined;
+            // F13 (W92): never on the way of the parent; on it, the nearest free floor cell, where the bot walks first
+            const shaft = insideShaft(nameReader(bot), feet, level, areasOf(bot, tripCtx), { prefer, mine: here.mine });
+            if (!shaft.top) {
+                const text = shaft.reason === 'area' ? `The way down from ${posText(feet)} would come too near a protected area.`
+                    : shaft.reason === 'no_cell' ? noShaftCellText()
+                        : `I find no open cell beside ${posText(feet)} to climb out of a shaft. Stand on the floor of the room and tell me again.`;
+                logTo(ctx, text);
+                return early(shaft.reason === 'area' ? 'area' : 'no_entrance', text);
+            }
+            insideStart = { parent: mineId(here.mine), top: shaft.top, face: shaft.face, entry: shaft.entry, level };
+            sayTo(ctx, shaftWords(level, row.ore));
+        }
+        // I4: a trip that starts in the parent of its mine ends there, at the top of the shaft
+        const toParent = Boolean(insideStart) || (Boolean(known?.parent) && Boolean(here) && mineId(here.mine) === known.parent);
         let entrance = null;
         if (start === 'ask' || start === 'new') {
             entrance = newEntrance(bot, tripCtx, row, clock);
@@ -2110,6 +2296,9 @@ export async function mineOre(bot, ctx = {}, ore = '', count = 8, options = {}) 
         const viaRoute = routes && Boolean(known) && walksRoute(known);
         const way = viaRoute ? tunnelsOf(known)[tunnel] : null;
         let prepOptions = entrance ? { ...options, surfaceY: entrance.y } : options;
+        if (insideStart) {
+            prepOptions = { ...options, surfaceY: insideStart.top.y, level: insideStart.level };
+        }
         if (routes && known) {
             prepOptions = way ? { ...prepOptions, mine: known, level: way.level, wayDownTo: way.level, hasBase: true } : { ...prepOptions, mine: known };
         }
@@ -2128,12 +2317,15 @@ export async function mineOre(bot, ctx = {}, ore = '', count = 8, options = {}) 
                 return { ok: false, reason: inside.reason, text: inside.text, mined: 0, stored, mine };
             }
         } else {
-            const down = await descendToLevel(bot, tripCtx, level, { ...pass, ore: row.ore, deadline: deadline - 60000, entrance, ...(routes && known ? { mine: known } : {}) });
+            const down = await descendToLevel(bot, tripCtx, level, {
+                ...pass, ore: row.ore, deadline: deadline - 60000, entrance, ...(routes && known ? { mine: known } : {}),
+                ...(insideStart ? { inside: insideStart } : {}),
+            });
             mine = down.mine;
             if (!down.ok) {
                 reason = down.reason;
                 if (reason !== 'interrupted' && mine) {
-                    await climbToSurface(bot, tripCtx, { ...pass, mine });
+                    await climbToSurface(bot, tripCtx, { ...pass, mine, toParent });
                 }
                 return finish(false, reason, down.text);
             }
@@ -2142,7 +2334,7 @@ export async function mineOre(bot, ctx = {}, ore = '', count = 8, options = {}) 
                 if (!base.ok) {
                     reason = base.reason === 'interrupted' || base.reason === 'time' ? base.reason : 'blocked';
                     if (reason !== 'interrupted') {
-                        await climbToSurface(bot, tripCtx, { ...pass, mine: base.mine ?? mine });
+                        await climbToSurface(bot, tripCtx, { ...pass, mine: base.mine ?? mine, toParent });
                     }
                     return finish(false, reason, base.text);
                 }
@@ -2206,7 +2398,7 @@ export async function mineOre(bot, ctx = {}, ore = '', count = 8, options = {}) 
             addCounts(stored, dep.stored);
             mine = dep.mine ?? mine;
         }
-        const up = await climbToSurface(bot, tripCtx, { ...pass, mine });
+        const up = await climbToSurface(bot, tripCtx, { ...pass, mine, toParent });
         const extra = up.ok ? '' : up.text;
         if (mined() >= wanted) {
             return finish(true, null, extra);
@@ -2224,7 +2416,9 @@ export async function mineOre(bot, ctx = {}, ore = '', count = 8, options = {}) 
  * way of such a mine is walked with walkRoute, and its room is left as it is. Fix round F24 (item
  * 4): with mine_routes the mine is the nearest one within 64 blocks that has a tunnel (else the
  * nearest within 64), whatever the ore; an ore only has to be known. Without a mine in reach, the
- * choice of v0.1.4.8.
+ * choice of v0.1.4.8. v0.1.4.11 (I4): with an ore, in a family of mines (a mine and those dug from
+ * inside it) the one whose level fits the ore (chooseMine); a mine of a second level is entered through
+ * its parent (descendToLevel, wayIn).
  * @param {object} bot
  * @param {object} ctx
  * @param {string} [ore]
@@ -2244,6 +2438,14 @@ export async function goToMine(bot, ctx = {}, ore = '', options = {}) {
                 near = [];
             }
             mine = near.find(m => tunnelsOf(m).length > 0) ?? near[0] ?? null;
+            // v0.1.4.11 (I4): in a family of mines (a parent and the mines dug from inside it) the ore picks the
+            // level, as chooseMine does; without mines of a second level everything is as before
+            const row = typeof ore === 'string' && ore.trim().length > 0 ? oreOf(ore) : null;
+            const family = mine && (typeof mine.parent === 'string' || (store?.children?.(mine)?.length ?? 0) > 0);
+            if (row && family) {
+                const pick = chooseMine(store, feetOf(bot), dimensionOf(bot), row);
+                mine = pick.mine && (typeof pick.mine.parent === 'string' || (store?.children?.(pick.mine)?.length ?? 0) > 0) ? pick.mine : mine;
+            }
         }
         if (typeof ore === 'string' && ore.trim().length > 0) {
             const row = oreOf(ore);

@@ -208,6 +208,13 @@ export async function slideDown(bot, leg, options = {}) {
         return { ok: true, reason: null, ms: 0 };
     }
     const inColumn = at && at.x === leg.x && at.z === leg.z && at.y <= leg.top + 1 && at.y > leg.bottom;
+    if (inColumn) {
+        // v0.1.4.11 (F11): a bot that holds on in the column (holdOnLadder: sneak, of a stopped climb or follow, or the
+        // hold of the path search) lets go: sneak and forward released, the look at the wall, and it slides
+        release(bot);
+        await look(bot, backOf(leg.face));
+        release(bot);
+    }
     if (!inColumn) {
         if (leg.entry) {
             const w = await walkTo(bot, leg.entry, { clock, timeoutMs: options.walkMs ?? 30000 });

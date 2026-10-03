@@ -311,12 +311,14 @@ describe('item 10: !rememberArea with the five types, !setArea', () => {
     }
     const house = (w) => w.house({ x: 0, y: 63, z: 0, width: 7, depth: 7 });
 
+    // v0.1.4.11 (P1): the answer names the kind; "building" is the default of the parser and counts as no type, so the
+    // kind is concluded: a house with a roof, a door and a bed is a home
     for (const type of ['home', 'building']) {
         test(`${type}: the house the bot stands in`, LIMIT, async () => {
             const { store, agent } = areaScene(house, [3.5, 64, 3.5]);
             const r = await run(agent, `!rememberArea("my_${type}", "${type}")`, false);
-            assert.equal(store.get(`my_${type}`)?.type, type, r);
-            assert.match(r, /Tell me if that is wrong\.$/);
+            assert.equal(store.get(`my_${type}`)?.type, 'home', r);
+            assert.match(r, /^I saved "my_\w+": a home, walled, .* I shelter there at night\.$/);
         });
     }
 

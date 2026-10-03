@@ -6,8 +6,8 @@
 //
 // Base world, the modes of the owner, the owner's packs. The bot stands 3 blocks north of the closed gate of
 // the farm, outside the fence. The player types !rememberArea("farm", "farm"). Then:
-//   - the answer ends with "Area "farm" (farm) saved: X x Y x Z blocks, from (...) to (...), 1 gate. Tell me if
-//     that is wrong." (a sentence about the walk in through the gate may come before it, 11.10);
+//   - the answer ends with the text of P1 of v0.1.4.11, "I saved "farm": a farm, fenced, X x Z, 1 gate, ... I only
+//     plant and harvest there." (a sentence about the walk in through the gate may come before it, 11.10);
 //   - the area "farm" of type farm is in the store, its box holds the whole fence ring of the farm and nothing
 //     of the house or the pen;
 //   - the gate is closed at the end (the bot may have walked in through it, 11.10).
@@ -45,8 +45,9 @@ await scenarioMain({
             note(`!rememberArea("farm", "farm") answered ${JSON.stringify(reply)}`);
             const area = agent.area_store?.get('farm') ?? null;
             note(`the area in the store: ${JSON.stringify(area)}`);
-            check(/(^|\. )Area "farm" \(farm\) saved: \d+ x \d+ x \d+ blocks, from \(-?\d+, -?\d+, -?\d+\) to \(-?\d+, -?\d+, -?\d+\), 1 gate\. Tell me if that is wrong\.$/.test(reply),
-                'the answer ends with "Area "farm" (farm) saved: ..., 1 gate. Tell me if that is wrong."', JSON.stringify(reply));
+            // v0.1.4.11 (P1): `I saved "farm": a farm, fenced, 9 x 9, 1 gate, 47 wheat, 1 chest, 1 water block. I only plant and harvest there.`
+            check(/(^|\. )I saved "farm": a farm, fenced, \d+ x \d+, 1 gate\b[^.]*\. I only plant and harvest there\.$/.test(reply),
+                'the answer ends with the text of P1: `I saved "farm": a farm, fenced, <x> x <z>, 1 gate, ... I only plant and harvest there.`', JSON.stringify(reply));
             check(area?.type === 'farm', 'the area "farm" of type farm is saved', JSON.stringify(area?.type));
             const ring = f.fenceRing;
             check(area && ring.every((p) => p.x >= area.min.x && p.x <= area.max.x && p.z >= area.min.z && p.z <= area.max.z && p.y >= area.min.y && p.y <= area.max.y),

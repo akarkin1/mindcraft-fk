@@ -13,18 +13,24 @@ import { TEXTS, forgotText, noRouteText, placeSavedText, rememberedText, routeLi
 import { feetCell } from './trail_logic.js';
 import { ladderFacingReader } from './trail.js';
 import { walkByRoute, walkRoute } from './replay.js';
+import { nearestWaypoint, pickRoute, walkByWaypoints, walkWaypoints, waypointsOf } from './waypoints.js';
+import { dryScan } from './dry_scan.js';
 
 export { TRAIL_RULES, WATER_NAMES, cellBetween, cleanStep, columnIsOpen, feetCell, inShaft, isJump, lineCells, mayStep, nextStep, openSides,
     sameCell, stepSky, viaOf } from './trail_logic.js';
 export { DIRECTIONS, OPENABLE_KINDS, ROUTE_RULES, backOf, cleanLeg, dirVector, directionTo, isDirection, knownThings, legCells, legCounts,
     nearCell, nearestRoute, normalizeRouteName, reverseRoute, routeEnds, routeFromSteps, routeStart, skyStart, startOffLadder,
     trapdoorOverLadder } from './route_logic.js';
-export { TEXTS, emptyRouteText, forgotText, legsText, needLaddersText, noRouteText, noWayToStartText, placeSavedText, posText, rememberedText, replacedText, routeDoneText,
+export { TEXTS, causeText, emptyRouteText, forgotText, legsText, needLaddersText, noRouteText, noWayToStartText, placeSavedText, posText, rememberedText, replacedText, routeDoneText,
     routeErrorText, routeFailedText, routeLabel, routeLineText, routeListText, routeStoppedText, routeTimeText, startText,
     stoppedBeforeRouteText, tooShortText } from './texts.js';
 export { ROUTE_FILE, ROUTE_SOURCES, RouteStore, START_KINDS } from './route_store.js';
 export { TRAIL_FILE, blockGetter, createTrail, ladderFacingReader, readBlock } from './trail.js';
-export { REPLAY_RULES, ladderIntact, walkByRoute, walkRoute } from './replay.js';
+export { REPLAY_RULES, besideLadder, ladderGap, ladderIntact, ladderLeg, legCause, walkByRoute, walkRoute } from './replay.js';
+// v0.1.4.11 (I7, routes_by_search): the waypoints of a route, walked by the path search, and the dry scan
+export { WAYPOINT_KINDS, WAYPOINT_RULES, isOpenableWaypoint, holeUnder, ladderCheck, ladderHop, ladderStand, nearestWaypoint, standCell, pickRoute, planHops, walkByWaypoints, walkWaypoints,
+    waypointsOf } from './waypoints.js';
+export { DRY_SCAN_RULES, dryScan, noLaddersText, noWayText, waypointLabel } from './dry_scan.js';
 
 function sameDimension(a, b) {
     const plain = d => (typeof d === 'string' && d.length > 0 ? d.replace(/^minecraft:/, '') : null);
@@ -251,8 +257,24 @@ export function forgetRoute(ctx, name, dimension) {
 }
 
 /**
+ * True with the setting routes_by_search (v0.1.4.11, section 2) in ctx.settings. Never throws.
+ * @param {object} ctx
+ * @returns {boolean}
+ */
+export function bySearch(ctx) {
+    try {
+        return ctx?.settings?.routes_by_search === true;
+    } catch {
+        return false;
+    }
+}
+
+/**
  * The routes on the context (I4): { store, trail, walkRoute(bot, route, options), walkTo(bot, target,
- * options), routeFor(target, options), logic }. `logic` holds the pure functions for the mining pack
+ * options), routeFor(target, options), logic }. v0.1.4.11 (I7): with routes_by_search walkTo walks the waypoints of
+ * the route (walkByWaypoints, a dry scan first) and routeFor picks by the waypoints (pickRoute); off, as before. Also
+ * bySearch(), waypointsOf(route), nearestWaypoint(waypoints, pos), walkWaypoints(bot, waypoints, options) and
+ * dryScan(bot, waypoints, options) for the mining pack. `logic` holds the pure functions for the mining pack
  * (skyStart, routeFromSteps with the faces of the ladders read from the world, routeStart, reverseRoute,
  * routeEnds, legCells, nearestRoute). ctx is used for its clock and log only; ctx.routes is never read.
  * No timer, no listener.
@@ -275,11 +297,23 @@ export function bindRoutes(bot, ctx, store, trail) {
         store: store ?? null,
         trail: trail ?? null,
         walkRoute: (b, route, options = {}) => walkRoute(b ?? bot, ctx, route, options),
-        walkTo: (b, target, options = {}) => walkByRoute(b ?? bot, ctx, routesOf(b), target, options),
+        // v0.1.4.11 (routes_by_search): the walk to a target by the waypoints of a route, after a dry scan
+        walkTo: (b, target, options = {}) => (bySearch(ctx)
+            ? walkByWaypoints(b ?? bot, options?.ctx ?? ctx, routesOf(b), target, { scan: dryScan, ...options })
+            : walkByRoute(b ?? bot, ctx, routesOf(b), target, options)),
         routeFor: (target, options = {}) => {
             const pos = botPos(bot);
-            return pos ? nearestRoute(routesOf(bot), target, pos, options) : null;
+            if (!pos) {
+                return null;
+            }
+            return bySearch(ctx) ? pickRoute(routesOf(bot), target, pos, options) : nearestRoute(routesOf(bot), target, pos, options);
         },
+        // v0.1.4.11 (I7): for the mining pack; options.ctx gives the context of the caller (its doors)
+        bySearch: () => bySearch(ctx),
+        waypointsOf,
+        nearestWaypoint,
+        walkWaypoints: (b, waypoints, options = {}) => walkWaypoints(b ?? bot, options?.ctx ?? ctx, waypoints, options),
+        dryScan: (b, waypoints, options = {}) => dryScan(b ?? bot, waypoints, options),
         logic: {
             skyStart,
             routeFromSteps: (steps, options = {}) => routeFromSteps(steps, { faceAt: ladderFacingReader(bot), ...options }),

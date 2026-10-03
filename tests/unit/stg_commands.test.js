@@ -448,7 +448,8 @@ describe('!rememberArea and !setArea with the five types (I4, D5, D7)', () => {
     test('home and mine: the building around the bot, else a box; the mine has its own text', async () => {
         const { world, house } = makeWorld();
         const agent = areaAgent({ at: { x: house.inside.x + 0.5, y: house.inside.y, z: house.inside.z + 0.5 }, world });
-        assert.match(await command('!rememberArea').perform(agent, 'home', 'home'), /^Area "home" \(home\) saved: \d+ x \d+ x \d+ blocks, from \(.+\) to \(.+\), 1 door\. Tell me if that is wrong\.$/);
+        // v0.1.4.11 (P1): the answer names the kind, the border, the size in x and z, the openings and the contents
+        assert.match(await command('!rememberArea').perform(agent, 'home', 'home'), /^I saved "home": a home, walled, \d+ x \d+ with a roof, 1 door, 1 bed, 1 chest\. I shelter there at night\.$/);
         const far = areaAgent({ at: { x: 100.5, y: 64, z: 100.5 }, world });
         assert.equal(await command('!rememberArea').perform(far, 'mine', 'mine'), 'I saved a box of 25 x 13 x 25 blocks around this place as the mine "mine". Use !setArea to correct it.');
         assert.equal(far.area_store.get('mine').type, 'mine');
@@ -457,7 +458,8 @@ describe('!rememberArea and !setArea with the five types (I4, D5, D7)', () => {
     test('a farm with the bot inside: saved with its gate', async () => {
         const { world, field } = makeWorld();
         const agent = areaAgent({ at: { x: field.inside.x + 0.5, y: field.inside.y, z: field.inside.z + 0.5 }, world });
-        assert.match(await command('!rememberArea').perform(agent, 'farm', 'farm'), /^Area "farm" \(farm\) saved: 7 x \d+ x 7 blocks, from \(19, \d+, -1\) to \(25, \d+, 5\), 1 gate\. Tell me if that is wrong\.$/);
+        assert.match(await command('!rememberArea').perform(agent, 'farm', 'farm'), /^I saved "farm": a farm, fenced, 7 x 7, 1 gate, 25 wheat\. I only plant and harvest there\.$/); // v0.1.4.11 (P1)
+        assert.deepEqual([agent.area_store.get('farm').min.x, agent.area_store.get('farm').min.z, agent.area_store.get('farm').max.x, agent.area_store.get('farm').max.z], [19, -1, 25, 5]);
         assert.deepEqual(agent.runs, [], 'no walk');
     });
 
@@ -465,7 +467,7 @@ describe('!rememberArea and !setArea with the five types (I4, D5, D7)', () => {
         const { world, field } = makeWorld();
         const agent = areaAgent({ at: { x: field.gate.x + 0.5, y: 64, z: field.gate.z + 2.5 }, world });
         const reply = await command('!rememberArea').perform(agent, 'farm', 'farm');
-        assert.match(reply, /^I stand outside the fence\. The gate is at \(22, 64, 5\)\. Area "farm" \(farm\) saved: 7 x \d+ x 7 blocks, .*, 1 gate\. Tell me if that is wrong\.$/);
+        assert.match(reply, /^I stand outside the fence\. The gate is at \(22, 64, 5\)\. I saved "farm": a farm, fenced, 7 x 7, 1 gate, 25 wheat\. I only plant and harvest there\.$/); // v0.1.4.11 (P1)
         assert.equal(agent.area_store.get('farm').type, 'farm');
         assert.deepEqual(agent.runs, []);
     });
@@ -479,13 +481,13 @@ describe('!rememberArea and !setArea with the five types (I4, D5, D7)', () => {
         assert.deepEqual(agent.runs.map((r) => r.label), ['action:rememberArea']);
         assert.equal(agent.pauses[0]?.name, 'unstuck');
         // the fake bot cannot walk: the text says so, and that the area is saved
-        assert.match(reply, /^I stand outside the fence\. The gate is at \(22, 64, 5\)\. Area "farm" \(farm\) saved: .* Tell me if that is wrong\. I could not go in: /);
+        assert.match(reply, /^I stand outside the fence\. The gate is at \(22, 64, 5\)\. I saved "farm": a farm, .* I only plant and harvest there\. I could not go in: /); // v0.1.4.11 (P1)
     });
 
     test('a pen: fenced ground without farmland; a farm is refused as a pen and the other way round', async () => {
         const { world, field, pen } = makeWorld();
         const inPen = areaAgent({ at: { x: pen.inside.x + 0.5, y: pen.inside.y, z: pen.inside.z + 0.5 }, world });
-        assert.match(await command('!rememberArea').perform(inPen, 'pen', 'pen'), /^Area "pen" \(pen\) saved: .*, 1 gate\. Tell me if that is wrong\.$/);
+        assert.match(await command('!rememberArea').perform(inPen, 'pen', 'pen'), /^I saved "pen": a pen, fenced, \d+ x \d+, 1 gate\. I keep its gate closed and pick nothing up inside it\.$/); // v0.1.4.11 (P1)
         assert.equal(await command('!rememberArea').perform(inPen, 'pasture', 'farm'), 'The fenced ground has no farmland and no crop, so it is no farm. Till one block of it, or save it as a pen.');
         const inField = areaAgent({ at: { x: field.inside.x + 0.5, y: field.inside.y, z: field.inside.z + 0.5 }, world });
         assert.equal(await command('!rememberArea').perform(inField, 'pen', 'pen'), 'The fenced ground has farmland, so it is a farm, not a pen. Save it as a farm.');

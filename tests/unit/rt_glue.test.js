@@ -241,6 +241,9 @@ describe('G3, I7: agent.whereAmI() and the mine', () => {
 // ------------------------------------------------------------------------------ G5, I8: !newAction
 
 describe('G5, I8: !newAction and skills_over_code', () => {
+    // v0.1.4.11, W7 (engineer E1): with !mineOre on, the refusal names the one call from where the bot stands; the
+    // bot of these tests stands on the surface, in no mine, and the requests name no ore: iron, a new mine
+    const DIG_HERE = 'I do not write code for digging. From here: !mineOre("iron", 8, true).';
     function coderAgent(extraFields = {}) {
         const coder = { calls: 0, last_run: null, async generateCode() { this.calls++; return 'Code ran.'; } };
         const agent = makeGlueAgent(G, { fields: { coder, work_packs: { mining: MINING, routes: ROUTES }, ...extraFields } });
@@ -251,7 +254,7 @@ describe('G5, I8: !newAction and skills_over_code', () => {
         set({ ...ALL_ON, allow_insecure_coding: true, skills_over_code: true });
         const { agent, coder } = coderAgent();
         const out = await run(agent, '!newAction("dig a tunnel to the east")', false);
-        assert.equal(out, DIG_ALL);
+        assert.equal(out, DIG_HERE);
         assert.equal(coder.calls, 0);
     });
 
@@ -273,14 +276,14 @@ describe('G5, I8: !newAction and skills_over_code', () => {
         set({ ...ALL_ON, allow_insecure_coding: true, skills_over_code: true });
         const { agent, coder } = coderAgent();
         agent.turns.push(['MartyByrde2', 'dig me a tunnel to the east, 20 blocks']);
-        assert.equal(await run(agent, '!newAction("Write a loop that moves step by step.")', false), DIG_ALL);
+        assert.equal(await run(agent, '!newAction("Write a loop that moves step by step.")', false), DIG_HERE);
         assert.equal(coder.calls, 0);
     });
 
     test('before the cost check: the refusal, not the text of the cost limit', LIMIT, async () => {
         set({ ...ALL_ON, allow_insecure_coding: true, skills_over_code: true });
         const { agent } = coderAgent({ cost_meter: { allows: () => false } });
-        assert.equal(await run(agent, '!newAction("dig a tunnel")', false), DIG_ALL);
+        assert.equal(await run(agent, '!newAction("dig a tunnel")', false), DIG_HERE);
     });
 
     test('no digging request: the code model is called', LIMIT, async () => {

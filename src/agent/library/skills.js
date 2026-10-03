@@ -6,7 +6,9 @@ import settings from "../../../settings.js";
 import agentSettings from "../settings.js";
 import { isOreName, oreInSight, oreKind, outOfSightText, sightRange, SIGHT_TEXT_DISTANCE } from "./ore_sight_logic.js";
 import { ladderStepTowards, ladderWayTowards, STEP_RULES } from "./ladder_pass.js";
-import { findOpenables, openDoor, passThrough } from "../packs/home/doors.js";
+import { findOpenables, openDoor, passThrough, reserveDoor } from "../packs/home/doors.js";
+import { walkNear } from "../packs/home/motion.js";
+import { GIVE_TEXTS, SURFACE_TEXTS } from "./skill_texts.js";
 import { sideOf } from "../packs/home/door_logic.js";
 import { acquireEatLock } from "../packs/home/eat_lock.js";
 import { wakeUp } from "../packs/home/wake.js";
@@ -1338,6 +1340,18 @@ export async function discard(bot, itemName, num=-1, walkAway=0) {
     // v0.1.4.8 (B6, S14): the walk away has a limit of 3 s; when it fails the items are tossed where the bot stands
     if (walkAway > 0 && world.getInventoryItem(bot, itemName))
         await walkAwayWithin(bot, walkAway, DISCARD_WALK_MS);
+    const discarded = await tossItems(bot, itemName, num);
+    if (discarded === 0) {
+        log(bot, `You do not have any ${itemName} to discard.`);
+        return false;
+    }
+    log(bot, `Discarded ${discarded} ${itemName}.`);
+    return true;
+}
+
+// v0.1.4.11 (W5, the lead's fix round F3): the toss without a text, shared by discard (which says "Discarded")
+// and giveToPlayer (which says what the player took). Returns the number of items tossed.
+async function tossItems(bot, itemName, num = -1) {
     let discarded = 0;
     let fromOffhand = false;
     while (true) {
@@ -1358,12 +1372,7 @@ export async function discard(bot, itemName, num=-1, walkAway=0) {
             break;
         }
     }
-    if (discarded === 0) {
-        log(bot, `You do not have any ${itemName} to discard.`);
-        return false;
-    }
-    log(bot, `Discarded ${discarded} ${itemName}.`);
-    return true;
+    return discarded;
 }
 
 export async function putInChest(bot, itemName, num=-1) {
@@ -1562,28 +1571,69 @@ export async function giveToPlayer(bot, itemType, username, num=1) {
     }
 
     await bot.lookAt(player.position);
-    if (await discard(bot, itemType, num)) {
-        let given = false;
-        bot.once('playerCollect', (collector, collected) => {
-            console.log(collected.name);
-            if (collector.username === username) {
-                log(bot, `${username} received ${itemType}.`);
-                given = true;
+    // v0.1.4.11, W5: the items the player picked up are counted; the text says how many he took and where the rest lie
+    const before = world.getInventoryCounts(bot)[itemType] ?? 0;
+    let taken = 0;
+    let dropped = 0;
+    const onCollect = (collector, collected) => {
+        if (collector?.username !== username)
+            return;
+        const item = droppedItemOf(collected);
+        if (item && item.name !== itemType)
+            return;
+        taken += Number.isFinite(item?.count) && item.count > 0 ? item.count : Math.max(1, dropped - taken);
+    };
+    bot.on('playerCollect', onCollect);
+    try {
+        // F3: the toss says nothing itself; the texts of W5 below say what the player took
+        if ((await tossItems(bot, itemType, num)) > 0) {
+            dropped = Math.max(0, before - (world.getInventoryCounts(bot)[itemType] ?? 0)) || num;
+            let start = Date.now();
+            while (taken < dropped && !bot.interrupt_code) {
+                await new Promise(resolve => setTimeout(resolve, 500));
+                if (Date.now() - start > 3000) {
+                    break;
+                }
             }
-        });
-        let start = Date.now();
-        while (!given && !bot.interrupt_code) {
-            await new Promise(resolve => setTimeout(resolve, 500));
-            if (given) {
+            if (taken >= dropped) {
+                log(bot, GIVE_TEXTS.given(dropped, itemType, username));
                 return true;
             }
-            if (Date.now() - start > 3000) {
-                break;
-            }
+            log(bot, GIVE_TEXTS.partly(username, taken, dropped, itemType, groundItemAt(bot, itemType) ?? bot.entity.position));
+            return taken > 0;
         }
+    } finally {
+        bot.removeListener('playerCollect', onCollect);
     }
     log(bot, `Failed to give ${itemType} to ${username}, it was never received.`);
     return false;
+}
+
+// The item of a dropped item entity ({ name, count }), or null when it cannot be read.
+function droppedItemOf(entity) {
+    try {
+        const item = typeof entity?.getDroppedItem === 'function' ? entity.getDroppedItem() : null;
+        return item && typeof item.name === 'string' ? item : null;
+    } catch (err) {
+        return null;
+    }
+}
+
+// The position of the dropped item of this name nearest to the bot, or null.
+function groundItemAt(bot, itemType) {
+    try {
+        const me = bot.entity.position;
+        let best = null;
+        for (const entity of Object.values(bot.entities ?? {})) {
+            if (entity?.name !== 'item' || !entity.position || droppedItemOf(entity)?.name !== itemType)
+                continue;
+            if (!best || entity.position.distanceTo(me) < best.position.distanceTo(me))
+                best = entity;
+        }
+        return best ? best.position : null;
+    } catch (err) {
+        return null;
+    }
 }
 
 export async function goToGoal(bot, goal) {
@@ -2103,9 +2153,10 @@ async function ladderTowards(bot, target, passes, after = null) {
 // or below and a column near that leads towards it, then the path search is stopped with setGoal(null) for the
 // ladder step and started again. At most 3 passes a minute (`passes`); each stop is followed by a walk.
 // Rejects with the error of the walk, as goToGoal; returns without a value when the command was stopped.
+// v0.1.4.11 (N2): `walk(goal)` walks instead of goToGoal (goToPlayer: without digging, no destructive fallback).
 const LADDER_STILL_MS = 3000;
 
-async function walkWatchingLadders(bot, makeGoal, target, passes, after = null) {
+async function walkWatchingLadders(bot, makeGoal, target, passes, after = null, walk = null) {
     let failure = null;
     for (let rounds = 0; rounds <= STEP_RULES.perMinute; rounds++) {
         let wanted = false;
@@ -2132,7 +2183,10 @@ async function walkWatchingLadders(bot, makeGoal, target, passes, after = null) 
         }, 500);
         failure = null;
         try {
-            await goToGoal(bot, makeGoal());
+            if (walk)
+                await walk(makeGoal());
+            else
+                await goToGoal(bot, makeGoal());
         } catch (err) {
             failure = err;
         } finally {
@@ -2152,6 +2206,382 @@ async function walkWatchingLadders(bot, makeGoal, target, passes, after = null) 
 
 
 const PLAYER_WAIT_MS = 2000; // F38: how long goToPlayer waits for the entity of the player
+
+// v0.1.4.11 (N2, a correction, no switch): goToPlayer and followPlayer never dig toward the player. Their path search
+// has no digging and no destructive fallback. Fix round T3-1: a search that runs out of time is no proof: the bot
+// walks the partial path of the search (its best node) toward the player and searches again from there, as long as
+// each round brings it 1 block or more nearer; it says that it finds no way and stops only when a round brings it no
+// nearer, or when the search has looked at every cell it can reach (noPath, no limit on the length of the way). A
+// walk of these two that enters a cave (open air 3 wide and 3 high around the bot under a natural ceiling, in no
+// saved area, no block the bot placed within 8 blocks), while the player is not under such a ceiling himself, stops
+// once and says so. Other walks keep the fallback of goToGoal.
+// F20: true when the bot hangs at the top of a column of ladders: not on the ground, its feet in the open trapdoor
+// over it (lower in the column the ladder step of the follow helps). Never throws.
+function hangsInColumn(bot) {
+    try {
+        if (bot.entity?.onGround === true)
+            return false;
+        const b = bot.blockAt(bot.entity.position.floored());
+        if (!b || typeof b.name !== 'string')
+            return false;
+        const props = (typeof b.getProperties === 'function' ? b.getProperties() : b._properties) ?? {};
+        return b.name.endsWith('_trapdoor') && (props.open === true || props.open === 'true');
+    } catch (err) {
+        return false;
+    }
+}
+
+// F20: out of the open trapdoor at the top of a column toward a point: look at it, jump and walk forward for at most
+// 1.2 s, until the bot stands on the ground out of the trapdoor. Never throws.
+// F22 (W88, C2, two runs): the path search took the bot out of the trapdoor toward the player and wedged it there,
+// the feet at 60.7 to 60.8 under the floor at 61 and the body 0.02 into the floor block beside: no control moved it
+// for 2.7 s (the jump toward the player of F20, and a climb against the ladder wall, did nothing) and the follow
+// stood for 13 s, until the path search planned a way out to another side; that way took the bot out at once. Now
+// the bot walks (the path search, `movements` without digging, at most 3 s) to the free cell beside the top of the
+// column nearest to the point: feet and head free, a solid block under it, never the side the bot is wedged
+// against (its middle 0.15 or more off the middle of the cell toward it). Without such a cell, the jump of F20.
+// The caller stops the follow before and sets it again after.
+const CLIMB_OUT = { outMs: 1200, walkMs: 3000, lean: 0.15 };
+const SIDES = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+
+function exitCellsOf(bot, cell, point) {
+    const p = bot.entity.position;
+    const free = (x, y, z) => bot.blockAt(new Vec3(x, y, z))?.boundingBox === 'empty';
+    const out = [];
+    for (const [dx, dz] of SIDES) {
+        const lean = dx !== 0 ? (p.x - (cell.x + 0.5)) * dx : (p.z - (cell.z + 0.5)) * dz;
+        if (lean >= CLIMB_OUT.lean)
+            continue; // the side the bot is wedged against
+        const x = cell.x + dx, y = cell.y + 1, z = cell.z + dz;
+        if (free(x, y, z) && free(x, y + 1, z) && bot.blockAt(new Vec3(x, y - 1, z))?.boundingBox === 'block')
+            out.push({ x, y, z });
+    }
+    return out.sort((a, b) => Math.hypot(a.x + 0.5 - point.x, a.z + 0.5 - point.z) - Math.hypot(b.x + 0.5 - point.x, b.z + 0.5 - point.z));
+}
+
+async function climbOutToward(bot, point, movements = null) {
+    const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+    try {
+        const exit = exitCellsOf(bot, bot.entity.position.floored(), point)[0];
+        if (exit) {
+            try {
+                await walkWith(bot, new pf.goals.GoalBlock(exit.x, exit.y, exit.z), movements ?? noDigMovements(bot), CLIMB_OUT.walkMs);
+            } catch (err) {
+                // measured below
+            }
+            if (bot.interrupt_code || !hangsInColumn(bot))
+                return;
+        }
+        const p = bot.entity.position;
+        bot.setControlState('sneak', false);
+        await bot.lookAt(new Vec3(point.x, p.y + 1.6, point.z), true);
+        bot.setControlState('forward', true);
+        bot.setControlState('jump', true);
+        const end = Date.now() + CLIMB_OUT.outMs;
+        while (Date.now() < end && !bot.interrupt_code) {
+            await wait(50);
+            if (bot.entity.onGround && !hangsInColumn(bot) && bot.blockAt(bot.entity.position.floored())?.name?.endsWith('_trapdoor') !== true)
+                break;
+        }
+    } catch (err) {
+        // the follow goes on
+    } finally {
+        try {
+            bot.setControlState('jump', false);
+            bot.setControlState('forward', false);
+        } catch (err) {
+            // nothing to release
+        }
+    }
+}
+
+const NO_WAY_TO_PLAYER = 'I find no way to you from here without digging. Come closer or tell me to dig.';
+// the search for a way without digging: think time of one round, rounds at most, the progress a round must make,
+// how often a follow that stands still asks again
+const PLAYER_SEARCH = { timeoutMs: 10000, totalMs: 20000, rounds: 30, progress: 1, everyMs: 5000, doorRange: 4 };
+const CAVE_RULES = { placedRange: 8, ceiling: 24, againRange: 16, againMs: 600000, everyMs: 500 };
+const caveStops = new WeakMap(); // bot -> { x, y, z, at }: the last stop at a cave; "go on" walks past it
+
+function caveText(at) {
+    return `I stopped at (${at.x}, ${at.y}, ${at.z}): ahead is a cave. Tell me to go on if you want.`;
+}
+
+function noDigMovements(bot) {
+    const movements = new pf.Movements(bot);
+    movements.canDig = false;
+    return movements;
+}
+
+// The walk of goToPlayer: without digging, as goToGoal walks once it has chosen its movements.
+async function walkWithoutDigging(bot, goal) {
+    if (bot.interrupt_code)
+        return false;
+    return (await walkWith(bot, goal, noDigMovements(bot))) === 'arrived';
+}
+
+// One search without digging from where the bot stands, with no limit on the length of the way and at most 10 s:
+// { status, path } (status success, noPath, timeout or interrupted; path the complete path, or the partial one to the
+// best node), null when the bot has no search to ask. Never throws.
+// F15: `budget` ({ leftMs }) bounds the time of all the searches of one order (20 s; the walks and climbs between
+// them do not count); a search that finds it spent answers { status: 'budget' }. While it runs, bot.searching is
+// true: the mode unstuck does not count that time (a bot that stands still while it thinks is not stuck;
+// stuckSample of modes.js).
+async function searchWithoutDigging(bot, goal, budget = null) {
+    const left = budget ? budget.leftMs : Infinity;
+    if (left <= 0)
+        return { status: 'budget', path: [] };
+    const timeout = Math.min(PLAYER_SEARCH.timeoutMs, left);
+    const began = Date.now();
+    bot.searching = true;
+    try {
+        const finder = bot.pathfinder;
+        const movements = noDigMovements(bot);
+        if (typeof finder?.getPathFromTo === 'function') {
+            const search = finder.getPathFromTo(movements, bot.entity.position, goal, { timeout, searchRadius: -1 });
+            const end = Date.now() + timeout + 200;
+            let result = null;
+            for (;;) {
+                const step = search.next();
+                if (step.done)
+                    break;
+                result = step.value?.result ?? null;
+                if (result?.status !== 'partial')
+                    break;
+                if (Date.now() > end) {
+                    result = { status: 'timeout', path: result.path }; // the search is bounded here too
+                    break;
+                }
+                await new Promise(resolve => setImmediate(resolve));
+                if (bot.interrupt_code)
+                    return { status: 'interrupted', path: [] };
+            }
+            if (result?.status === 'timeout' && budget && budget.leftMs - (Date.now() - began) <= 0)
+                return { status: 'budget', path: Array.isArray(result.path) ? result.path : [] };
+            return result ? { status: result.status, path: Array.isArray(result.path) ? result.path : [] } : null;
+        }
+        if (typeof finder?.getPathTo === 'function') {
+            const result = await finder.getPathTo(movements, goal, timeout);
+            return result ? { status: result.status, path: Array.isArray(result.path) ? result.path : [] } : null;
+        }
+        return null;
+    } catch (err) {
+        return null;
+    } finally {
+        bot.searching = false;
+        if (budget)
+            budget.leftMs -= Date.now() - began;
+    }
+}
+
+// T3-1: toward the player round by round, without digging. 'way': the search found a complete path from where the
+// bot now stands; 'none': it found no path at all, or a round brought the bot less than 1 block nearer; 'unknown': the
+// bot has no search to ask, or 30 rounds went by; 'stopped': interrupted, or the cave watch stopped a walk.
+// F5 of the fix round: the path search opens a closed door only on a level step (getMoveForward); a jump up into a
+// closed door (the descent of the base up into the room, whose double door stands one block above the last step)
+// has no move, so the search without digging found no path at all. Where the search ends without a way, the closed
+// doors, gates and trapdoors within 4 blocks of the bot that lie nearer to the player than the bot are opened (each
+// once per order, reserved with the door service for 20 s so that it does not close them before the bot passes),
+// and the search runs again. Returns the number opened. Never throws.
+async function openTowardPlayer(bot, player, opened) {
+    let count = 0;
+    try {
+        const me = bot.entity.position;
+        const away = me.distanceTo(player.position);
+        const doors = findOpenables(bot, PLAYER_SEARCH.doorRange)
+            .filter(d => !d.open && !opened.has(`${d.x},${d.y},${d.z}`)
+                && player.position.distanceTo(new Vec3(d.x + 0.5, d.y, d.z + 0.5)) < away)
+            .sort((a, b) => me.distanceTo(new Vec3(a.x + 0.5, a.y, a.z + 0.5)) - me.distanceTo(new Vec3(b.x + 0.5, b.y, b.z + 0.5)));
+        for (const door of doors) {
+            if (bot.interrupt_code)
+                break;
+            opened.add(`${door.x},${door.y},${door.z}`);
+            reserveDoor(bot, door, 20000);
+            if (await openDoor(bot, door))
+                count++;
+        }
+    } catch (err) {
+        // the search decides without them
+    }
+    return count;
+}
+
+// F9 of the fix round: where the search finds no way at all (a column of ladders whose lowest rung is 2 blocks above
+// the floor: the path search cannot get onto it), the ladder step of v0.1.4.9 toward the player (ladderTowards: the
+// column within 6 blocks that leads toward his height; enterColumn places the missing ladders when the bot carries
+// some), then the search again. True when the pass brought the bot 1 block or more nearer to the player.
+async function ladderTowardPlayer(bot, player, ladder) {
+    try {
+        if (!ladder || ladderGap(bot, player.position) < LADDER_GAP)
+            return false;
+        const before = bot.entity.position.distanceTo(player.position);
+        const step = await ladderTowards(bot, player.position, ladder.passes, ladder.username);
+        return step.tried && !bot.interrupt_code && bot.entity.position.distanceTo(player.position) <= before - PLAYER_SEARCH.progress;
+    } catch (err) {
+        return false;
+    }
+}
+
+// `first`: the result of a search the caller made already from where the bot stands; `ladder`: { passes, username }
+// for the ladder step of F9 (the passes of the call, at most 3 a minute).
+// `budget`: { leftMs } of the order (F15: at most 20 s of search in all before the text of no way).
+async function approachWithoutDigging(bot, player, distance, cave = null, first = null, ladder = null, budget = null) {
+    const opened = new Set(); // F5: the openables opened in this order
+    const spend = budget ?? { leftMs: PLAYER_SEARCH.totalMs };
+    let retried = false; // F21: the one search more after a timeout without progress
+    for (let round = 0; round < PLAYER_SEARCH.rounds; round++) {
+        if (bot.interrupt_code || cave?.at)
+            return 'stopped';
+        const r = round === 0 && first ? first : await searchWithoutDigging(bot, new pf.goals.GoalFollow(player, distance), spend);
+        if (!r)
+            return 'unknown';
+        if (r.status === 'budget')
+            return bot.interrupt_code ? 'stopped' : 'none'; // F15: the owner waits at most 20 s for the answer
+        if (r.status === 'success')
+            return 'way';
+        if (r.status === 'interrupted' || bot.interrupt_code)
+            return 'stopped';
+        // noPath or timeout: the path to the best node of the search (on noPath the nearest cell it could reach)
+        const before = bot.entity.position.distanceTo(player.position);
+        const end = r.path[r.path.length - 1];
+        const nearer = end && player.position.distanceTo(new Vec3(end.x + 0.5, end.y, end.z + 0.5)) <= before - PLAYER_SEARCH.progress;
+        if (nearer) {
+            try {
+                await walkWith(bot, new pf.goals.GoalNear(end.x, end.y, end.z, 1), noDigMovements(bot));
+            } catch (err) {
+                // a walk that ends short is measured below
+            }
+            if (bot.interrupt_code || cave?.at)
+                return 'stopped';
+        }
+        const moved = bot.entity.position.distanceTo(player.position) <= before - PLAYER_SEARCH.progress;
+        if (r.status === 'noPath' || !moved) {
+            // F5: at the end of what the search reaches, a closed door toward the player is opened and the search runs again
+            if (await openTowardPlayer(bot, player, opened) > 0)
+                continue;
+            if (bot.interrupt_code || cave?.at)
+                return 'stopped';
+            // F9: a column of ladders toward the player that the path search cannot get onto
+            if (await ladderTowardPlayer(bot, player, ladder))
+                continue;
+            if (bot.interrupt_code || cave?.at)
+                return 'stopped';
+            // F21 (W84, D): a search that ran out of time with no node nearer to the player is no proof; it is asked
+            // once more with what is left of the 20 s of search before the text
+            if (r.status === 'timeout' && !nearer && !retried) {
+                retried = true;
+                continue;
+            }
+            return 'none';
+        }
+    }
+    return 'unknown';
+}
+
+const BUILT_PREFIXES = ['smooth_', 'polished_', 'cut_', 'chiseled_', 'cobble', 'mossy_cobble', 'infested_'];
+const NATURAL_CEILING = /(^stone|deepslate|^dirt|gravel|granite|diorite|andesite|tuff|calcite|_ore|^clay|sand$|sandstone|netherrack|basalt|bedrock|dripstone_block|^mud$|moss_block|^obsidian|coarse_dirt|rooted_dirt|amethyst_block|^grass_block)$/;
+
+// A natural block of the rock around a cave (stone, deepslate, dirt, ores ...); no built block.
+function isNaturalCeiling(bot, name) {
+    if (typeof name !== 'string' || BUILT_PREFIXES.some(p => name.startsWith(p)) || !NATURAL_CEILING.test(name))
+        return false;
+    try {
+        return bot.areaGuard?.isBuilt?.(name) !== true;
+    } catch (err) {
+        return true;
+    }
+}
+
+function openForCave(bot, x, y, z) {
+    const b = bot.blockAt(new Vec3(x, y, z));
+    return Boolean(b) && b.boundingBox === 'empty' && b.name !== 'water' && b.name !== 'lava' && b.name !== 'bubble_column';
+}
+
+// True when the first block above (x, y, z) that is not open, within 24 blocks, is natural rock: under the ground.
+function underRock(bot, x, y, z) {
+    for (let dy = 0; dy <= CAVE_RULES.ceiling; dy++) {
+        const b = bot.blockAt(new Vec3(x, y + dy, z));
+        if (!b)
+            return false;
+        if (b.boundingBox === 'empty')
+            continue;
+        return isNaturalCeiling(bot, b.name);
+    }
+    return false;
+}
+
+// The cell of a cave at the feet (N2), or null: open air 3 wide and 3 high around the feet, natural rock above, in
+// no saved area, and no block the bot placed (placed.json, through bot.areaGuard) within 8 blocks. Never throws.
+function caveAt(bot, pos) {
+    try {
+        const x = Math.floor(pos.x);
+        const y = Math.floor(pos.y + 0.01);
+        const z = Math.floor(pos.z);
+        for (let dx = -1; dx <= 1; dx++)
+            for (let dz = -1; dz <= 1; dz++)
+                for (let dy = 0; dy <= 2; dy++)
+                    if (!openForCave(bot, x + dx, y + dy, z + dz))
+                        return null;
+        if (!underRock(bot, x, y + 3, z))
+            return null;
+        const guard = bot.areaGuard;
+        if (guard?.areaAt?.({ x: x + 0.5, y, z: z + 0.5 }))
+            return null;
+        if (typeof guard?.placedByBot === 'function') {
+            const r = CAVE_RULES.placedRange;
+            for (let dx = -r; dx <= r; dx++)
+                for (let dy = -r; dy <= r; dy++)
+                    for (let dz = -r; dz <= r; dz++)
+                        if (guard.placedByBot({ x: x + dx, y: y + dy, z: z + dz }))
+                            return null;
+        }
+        return { x, y, z };
+    } catch (err) {
+        return null;
+    }
+}
+
+// True when the player stands under natural rock: the goal is in the cave (or underground with it).
+function playerUnderRock(bot, pos) {
+    try {
+        return underRock(bot, Math.floor(pos.x), Math.floor(pos.y + 0.01) + 2, Math.floor(pos.z));
+    } catch (err) {
+        return false;
+    }
+}
+
+// The cave watch of one walk of goToPlayer or followPlayer (N2): every 500 ms, the first cave cell the bot enters
+// while the player is not under rock ends the walk once (setGoal(null)); `at` is that cell. Not when the walk
+// started in a cave, nor within 16 blocks of the last stop at a cave of the last 10 minutes (the player said go on).
+// check() looks once (followPlayer); start() watches with a timer that stop() clears (goToPlayer).
+function caveWatch(bot, playerPos) {
+    const me = bot.entity.position;
+    const last = caveStops.get(bot);
+    const passed = last && Date.now() - last.at <= CAVE_RULES.againMs
+        && Math.hypot(me.x - last.x, me.y - last.y, me.z - last.z) <= CAVE_RULES.againRange;
+    const watch = { at: null, off: Boolean(passed) || caveAt(bot, me) !== null, timer: null };
+    watch.check = () => {
+        if (watch.off || watch.at || bot.interrupt_code)
+            return watch.at;
+        const cell = caveAt(bot, bot.entity.position);
+        if (cell && !playerUnderRock(bot, playerPos())) {
+            watch.at = cell;
+            caveStops.set(bot, { ...cell, at: Date.now() });
+            try {
+                bot.pathfinder.setGoal(null); // goto rejects with GoalChanged
+            } catch (err) {
+                // the walk ends by itself
+            }
+        }
+        return watch.at;
+    };
+    watch.start = () => {
+        if (!watch.off)
+            watch.timer = setInterval(watch.check, CAVE_RULES.everyMs);
+        return watch;
+    };
+    watch.stop = () => clearInterval(watch.timer);
+    return watch;
+}
 
 async function playerEntity(bot, username, waitMs) {
     const end = Date.now() + waitMs;
@@ -2196,22 +2626,64 @@ export async function goToPlayer(bot, username, distance=3) {
     distance = Math.max(distance, 0.5);
     const goal = new pf.goals.GoalFollow(player, distance);
 
+    // v0.1.4.11 (N2, T3-1): no digging toward the player; along partial paths while they bring the bot nearer; without
+    // a way the bot says so and stops
+    const cave = caveWatch(bot, () => player.position).start();
+    const passes = []; // the ladder passes of this call (at most 3 a minute)
+    let way;
+    try {
+        way = await approachWithoutDigging(bot, player, distance, cave, null, { passes, username });
+    } catch (err) {
+        way = 'unknown';
+    }
+    if (way === 'stopped' || bot.interrupt_code || cave.at) {
+        cave.stop();
+        if (cave.at && !bot.interrupt_code) {
+            log(bot, caveText(cave.at));
+            return false;
+        }
+        return;
+    }
+    if (way === 'none') {
+        cave.stop();
+        log(bot, NO_WAY_TO_PLAYER);
+        return false;
+    }
+    if (way === 'way')
+        log(bot, `Found non-destructive path.`); // the line of goToGoal, which goToPlayer no longer calls
+    const walk = (g) => walkWithoutDigging(bot, g);
+
     // v0.1.4.9 (section 13, F14; W75, L1): the ladder step when the path search ends with the player still 2 or
     // more blocks above or below, then the path search once more. v0.1.4.10 (P6): no step before the path search,
     // which climbs and descends ladders itself; the step is the fallback.
-    const passes = [];
     let failure = null;
     try {
-        await walkWatchingLadders(bot, () => goal, player.position, passes, username); // F33: the step mid-walk
-    } catch (err) {
-        failure = err;
+        try {
+            await walkWatchingLadders(bot, () => goal, player.position, passes, username, walk); // F33: the step mid-walk
+        } catch (err) {
+            failure = err;
+        }
+        if (!cave.at && !bot.interrupt_code && ladderGap(bot, player.position) >= LADDER_GAP
+            && (await ladderTowards(bot, player.position, passes, username)).tried) {
+            if (bot.interrupt_code)
+                return;
+            failure = null;
+            try {
+                await walkWatchingLadders(bot, () => goal, player.position, passes, username, walk);
+            } catch (err) {
+                failure = err;
+            }
+        }
+    } finally {
+        cave.stop();
     }
-    if (!bot.interrupt_code && ladderGap(bot, player.position) >= LADDER_GAP
-        && (await ladderTowards(bot, player.position, passes, username)).tried) {
-        if (bot.interrupt_code)
-            return;
-        failure = null;
-        await walkWatchingLadders(bot, () => goal, player.position, passes, username);
+    if (cave.at && !bot.interrupt_code) {
+        log(bot, caveText(cave.at));
+        return false;
+    }
+    if (failure && !bot.interrupt_code && failure.name === 'NoPath') {
+        log(bot, NO_WAY_TO_PLAYER); // N2: the walk found no way without digging
+        return false;
     }
     if (failure)
         throw failure;
@@ -2239,8 +2711,30 @@ export async function followPlayer(bot, username, distance=4) {
     if (!player)
         return false;
 
-    const move = new pf.Movements(bot);
-    move.digCost = 10;
+    // v0.1.4.11 (N2, T3-1): the follow never digs toward the player; along partial paths while they bring the bot
+    // nearer; without a way it says so and stops
+    const move = noDigMovements(bot);
+    const cave = caveWatch(bot, () => player.position).start();
+    let hang_since = null; // F20: since when the bot hangs in the open trapdoor at the top of a column
+    let hang_tries = 0; // F20: the climbs out since the bot last stood on the ground
+    const ladder_passes = []; // the times of the passes of the last minute
+    let way;
+    try {
+        way = await approachWithoutDigging(bot, player, distance, cave, null, { passes: ladder_passes, username });
+    } catch (err) {
+        way = 'unknown';
+    } finally {
+        cave.stop();
+    }
+    if (cave.at && !bot.interrupt_code) {
+        log(bot, caveText(cave.at));
+        return false;
+    }
+    if (way === 'none' && !bot.interrupt_code) {
+        log(bot, NO_WAY_TO_PLAYER);
+        return false;
+    }
+    let way_checked = Date.now();
     bot.pathfinder.setMovements(move);
     let doorCheckInterval = startDoorInterval(bot);
 
@@ -2259,7 +2753,6 @@ export async function followPlayer(bot, username, distance=4) {
     let still_gap = ladderGap(bot, player.position);
     let still_since = Date.now();
     let player_at = player.position.clone(); // v0.1.4.10 (P6): where the player was half a second ago
-    const ladder_passes = []; // the times of the passes of the last minute
     const ladder_failures = new Set(); // the texts of failed passes, each written once
 
     while (!bot.interrupt_code) {
@@ -2309,6 +2802,75 @@ export async function followPlayer(bot, username, distance=4) {
         const teleport_distance = 100;
         const ignore_modes_distance = 30;
         const nearby_distance = distance + 2;
+
+        // v0.1.4.11, F20 (W88): the follow goal is met within its distance, also with the bot hanging in the open
+        // trapdoor at the top of a column of ladders under the player: the path search then holds it there. A bot that
+        // hangs there for 1 s while the player stands above it climbs out toward him (at most 3 times until it stands).
+        if (hangsInColumn(bot) && player.position.y >= bot.entity.position.y - 0.5) {
+            if (hang_since === null)
+                hang_since = Date.now();
+            else if (Date.now() - hang_since >= 1000 && hang_tries < 3) {
+                // out of the trapdoor toward the player as a player does. F22: the path search is stopped for it (it
+                // set its controls back every tick; its stop holds the bot on the ladder) and set again after it
+                hang_tries++;
+                bot.pathfinder.setGoal(null);
+                await climbOutToward(bot, player.position, move);
+                if (bot.interrupt_code)
+                    break;
+                bot.pathfinder.setMovements(move);
+                bot.pathfinder.setGoal(new pf.goals.GoalFollow(player, distance), true);
+                hang_since = null;
+                still_cell = feetCellOf(bot);
+                still_gap = ladderGap(bot, player.position);
+                still_since = Date.now();
+            }
+        }
+        else {
+            hang_since = null;
+            if (bot.entity.onGround)
+                hang_tries = 0;
+        }
+        // v0.1.4.11 (N2): a follow that enters a cave stops once and says so
+        if (cave.check()) {
+            log(bot, caveText(cave.at));
+            clearInterval(doorCheckInterval);
+            return false;
+        }
+        // v0.1.4.11 (N2): a bot that stands still away from the player asks the path search, at most every 5 s,
+        // whether a walk without digging is left; when none is, it says so and stops
+        if (distance_from_player > nearby_distance && bot.entity.position.distanceTo(stuck_pos) < 0.1
+            && Date.now() - stuck_since >= 3000 && Date.now() - way_checked >= PLAYER_SEARCH.everyMs) {
+            way_checked = Date.now();
+            // a complete way: the follow goes on as it is; none at all: stop; a partial one: the follow is stopped for
+            // the rounds of the partial paths (T3-1), then set again
+            const budget = { leftMs: PLAYER_SEARCH.totalMs };
+            const first = await searchWithoutDigging(bot, new pf.goals.GoalFollow(player, distance), budget);
+            if (bot.interrupt_code)
+                break;
+            if (first && first.status !== 'success') {
+                bot.pathfinder.setGoal(null);
+                cave.start();
+                let again;
+                try {
+                    again = await approachWithoutDigging(bot, player, distance, cave, first, { passes: ladder_passes, username }, budget);
+                } catch (err) {
+                    again = 'unknown';
+                } finally {
+                    cave.stop();
+                }
+                if (bot.interrupt_code)
+                    break;
+                if (cave.at || again === 'none') {
+                    log(bot, cave.at ? caveText(cave.at) : NO_WAY_TO_PLAYER);
+                    clearInterval(doorCheckInterval);
+                    return false;
+                }
+                bot.pathfinder.setMovements(move);
+                bot.pathfinder.setGoal(new pf.goals.GoalFollow(player, distance), true);
+                stuck_pos = bot.entity.position.clone();
+                stuck_since = Date.now();
+            }
+        }
 
         if (bot.entity.position.distanceTo(stuck_pos) >= 0.1 || distance_from_player <= nearby_distance) {
             stuck_pos = bot.entity.position.clone();
@@ -2978,23 +3540,200 @@ export async function digDown(bot, distance = 10) {
     return true;
 }
 
-export async function goToSurface(bot) {
-    /**
-     * Navigate to the surface (highest non-air block at current x,z).
-     * @param {MinecraftBot} bot, reference to the minecraft bot.
-     * @returns {Promise<boolean>} true if the surface was reached, false otherwise.
-     **/
-    const pos = bot.entity.position;
-    for (let y = 360; y > -64; y--) { // probably not the best way to find the surface but it works
-        const block = bot.blockAt(new Vec3(pos.x, y, pos.z));
-        if (!block || block.name === 'air' || block.name === 'cave_air') {
-            continue;
+// v0.1.4.11, W4: the numbers of goToSurface (its texts are in skill_texts.js).
+const SURFACE_RULES = Object.freeze({
+    roofReach: 6,    // a block this far above the head counts as a roof
+    skyRange: 16,    // the open sky is looked for within this distance
+    doorRange: 16,   // the entrance of a building within this distance
+    doorHeight: 3,   // and at most this many blocks above or below the feet
+    tries: 3,        // the nearest columns with open sky that are tried
+    walkMs: 20000,   // one walk
+});
+const SKY_AIR = new Set(['air', 'cave_air', 'void_air']);
+const BUILDING_KINDS = new Set(['home', 'building', 'storage']);
+
+function feetCell(bot) {
+    const p = bot?.entity?.position;
+    return p ? { x: Math.floor(p.x), y: Math.floor(p.y + 0.01), z: Math.floor(p.z) } : null;
+}
+
+// The y below which nothing is built and the y of the top of the world.
+function worldTop(bot) {
+    const minY = Number.isFinite(bot?.game?.minY) ? bot.game.minY : -64;
+    const height = Number.isFinite(bot?.game?.height) ? bot.game.height : 384;
+    return minY + height;
+}
+
+// True when no block is above the cell of the feet up to the top of the world (W4: "open sky"); the cell of the
+// head and everything above it is air. An unloaded block is no open sky. Never throws.
+function underOpenSky(bot, feet) {
+    try {
+        const top = worldTop(bot);
+        for (let y = Math.floor(feet.y) + 1; y < top; y++) {
+            const block = bot.blockAt(new Vec3(Math.floor(feet.x), y, Math.floor(feet.z)));
+            if (!block || !SKY_AIR.has(block.name))
+                return false;
         }
-        await goToPosition(bot, block.position.x, block.position.y + 1, block.position.z, 0); // this will probably work most of the time but a custom mining and towering up implementation could be added if needed
-        log(bot, `Going to the surface at y=${y+1}.`);``
         return true;
+    } catch (err) {
+        return false;
+    }
+}
+
+// True when a block that is not air is within SURFACE_RULES.roofReach above the head.
+function roofAbove(bot, feet) {
+    for (let y = feet.y + 2; y <= feet.y + 1 + SURFACE_RULES.roofReach; y++) {
+        const block = bot.blockAt(new Vec3(feet.x, y, feet.z));
+        if (block && !SKY_AIR.has(block.name))
+            return true;
     }
     return false;
+}
+
+// True inside a building: in an area of kind home, building or storage, or under a roof within 6 blocks.
+function inBuildingHere(bot, feet) {
+    try {
+        const area = bot.areaGuard?.areaAt?.(feet) ?? null;
+        if (area && (BUILDING_KINDS.has(area.kind) || BUILDING_KINDS.has(area.type)))
+            return true;
+        return roofAbove(bot, feet);
+    } catch (err) {
+        return false;
+    }
+}
+
+// True when a cell under the open sky is ground, not a roof: the two blocks under it are not air, and it is in
+// no building that the bot protects (W4: never on the roof).
+function groundCell(bot, cell) {
+    for (const dy of [1, 2]) {
+        const below = bot.blockAt(new Vec3(cell.x, cell.y - dy, cell.z));
+        if (!below || SKY_AIR.has(below.name))
+            return false;
+    }
+    const area = bot.areaGuard?.areaAt?.(cell) ?? null;
+    return !(area && (BUILDING_KINDS.has(area.kind) || BUILDING_KINDS.has(area.type)));
+}
+
+// The cells within SURFACE_RULES.skyRange where the bot can stand under the open sky, the nearest first (a
+// block up counts twice): per column the highest block that is not air, solid, with ground under it. Never throws.
+function openSkyCells(bot, feet) {
+    const cells = [];
+    try {
+        const top = worldTop(bot);
+        const r = SURFACE_RULES.skyRange;
+        for (let dx = -r; dx <= r; dx++) {
+            for (let dz = -r; dz <= r; dz++) {
+                if (dx * dx + dz * dz > r * r)
+                    continue;
+                const x = feet.x + dx;
+                const z = feet.z + dz;
+                for (let y = top - 1; y >= feet.y - r; y--) {
+                    const block = bot.blockAt(new Vec3(x, y, z));
+                    if (!block)
+                        break; // not loaded
+                    if (SKY_AIR.has(block.name))
+                        continue;
+                    if (block.boundingBox === 'block' && !['water', 'lava'].includes(block.name)) {
+                        const cell = { x, y: y + 1, z };
+                        const up = cell.y - feet.y;
+                        if (Math.hypot(dx, up, dz) <= r && groundCell(bot, cell))
+                            cells.push({ ...cell, d: Math.hypot(dx, dz) + Math.abs(up) + Math.max(0, up) });
+                    }
+                    break; // only the highest block of a column has the open sky above it
+                }
+            }
+        }
+    } catch (err) {
+        // the cells found so far
+    }
+    return cells.sort((a, b) => a.d - b.d);
+}
+
+// Walks to the nearest cells with open sky, without digging; the cell reached, or null.
+async function walkToOpenSky(bot, feet) {
+    for (const cell of openSkyCells(bot, feet).slice(0, SURFACE_RULES.tries)) {
+        if (bot.interrupt_code)
+            return null;
+        await walkNear(bot, cell, 0, { timeoutMs: SURFACE_RULES.walkMs, allowDoors: true, allowDig: false });
+        const here = feetCell(bot);
+        if (here && underOpenSky(bot, here))
+            return here;
+    }
+    return null;
+}
+
+// The nearest door or gate within SURFACE_RULES.doorRange at about the height of the feet (no trapdoor).
+function nearestEntrance(bot, feet) {
+    try {
+        const doors = findOpenables(bot, SURFACE_RULES.doorRange)
+            .filter((d) => (d.kind === 'door' || d.kind === 'gate') && Math.abs(d.y - feet.y) <= SURFACE_RULES.doorHeight);
+        doors.sort((a, b) => Math.hypot(a.x - feet.x, a.y - feet.y, a.z - feet.z) - Math.hypot(b.x - feet.x, b.y - feet.y, b.z - feet.z));
+        return doors[0] ?? null;
+    } catch (err) {
+        return null;
+    }
+}
+
+export async function goToSurface(bot, ctx = null) {
+    /**
+     * Go out under the open sky (no block above the bot up to the top of the world). Inside a building the bot
+     * leaves through the nearest door first; elsewhere it walks to the nearest place with open sky within 16
+     * blocks. It never digs.
+     * @param {MinecraftBot} bot, reference to the minecraft bot.
+     * @returns {Promise<boolean>} true if the bot stands under the open sky, false otherwise.
+     **/
+    // v0.1.4.11, W4: ctx (optional, the glue of !goToSurface gives it): whereAmI() and, with the mining pack on,
+    // mining.climbToSurface(bot, ctx), the way out of a mine. Without ctx the skill works without them.
+    const start = feetCell(bot);
+    if (!start)
+        return false;
+    try {
+        if (underOpenSky(bot, start)) {
+            log(bot, SURFACE_TEXTS.already());
+            return true;
+        }
+        const where = typeof ctx?.whereAmI === 'function' ? ctx.whereAmI() : null;
+        if (where?.mine && typeof ctx?.mining?.climbToSurface === 'function') {
+            const out = await ctx.mining.climbToSurface(bot, ctx);
+            if (bot.interrupt_code)
+                return false;
+            const here = feetCell(bot);
+            if (here && underOpenSky(bot, here)) {
+                log(bot, SURFACE_TEXTS.climbed(here));
+                return true;
+            }
+            if (out && out.ok === false && typeof out.text === 'string' && out.text !== '')
+                log(bot, out.text);
+        }
+        const from = feetCell(bot) ?? start;
+        if (inBuildingHere(bot, from)) {
+            const door = nearestEntrance(bot, from);
+            if (door) {
+                const walk = await passThrough(bot, door, ctx ?? {}, { allowDig: false });
+                if (bot.interrupt_code)
+                    return false;
+                if (walk?.ok) {
+                    const here = feetCell(bot);
+                    const sky = here && underOpenSky(bot, here) ? here : await walkToOpenSky(bot, here ?? from);
+                    if (sky) {
+                        log(bot, SURFACE_TEXTS.door(door.kind, door, sky));
+                        return true;
+                    }
+                }
+            }
+        }
+        const sky = await walkToOpenSky(bot, feetCell(bot) ?? from);
+        if (sky) {
+            log(bot, SURFACE_TEXTS.climbed(sky));
+            return true;
+        }
+        if (!bot.interrupt_code)
+            log(bot, SURFACE_TEXTS.noWay(feetCell(bot) ?? start));
+        return false;
+    } catch (err) {
+        log(bot, SURFACE_TEXTS.noWay(feetCell(bot) ?? start));
+        return false;
+    }
 }
 
 export async function useToolOn(bot, toolName, targetName) {

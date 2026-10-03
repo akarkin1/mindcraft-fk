@@ -160,16 +160,52 @@ export function routeLabel(route) {
 }
 
 /**
- * `I could not follow the route "bed" at step 3 of 7, at (12, 45, 8). Show me the way again.`
+ * The cause of a failed step in words (v0.1.4.11, I1 and W1), '' for a cause it does not know:
+ * door `the door at (9, 41, 43) is closed and I could not open it.` or `the gate at (-6, 63, 28) is blocked.`;
+ * ladder `the ladder at (13, 51) has a gap of 2 at y 61. I need 2 ladders to go on.`;
+ * no_path `I found no way from (11, 67, 52) to (13, 68, 51).`; stuck `I got stuck at (8, 41, 46).`
+ * @param {object|null} cause
+ * @returns {string}
+ */
+export function causeText(cause) {
+    const c = v => (typeof v === 'number' && Number.isFinite(v) ? Math.floor(v) : v);
+    switch (cause?.kind) {
+        case 'door': {
+            const name = ['door', 'gate', 'trapdoor'].includes(cause.name) ? cause.name : 'door';
+            const how = cause.state === 'closed' ? 'is closed and I could not open it' : 'is blocked';
+            return `the ${name} at ${posText(cause)} ${how}.`;
+        }
+        case 'ladder': {
+            const gap = Number.isFinite(cause.gap) && cause.gap > 0 ? Math.round(cause.gap) : 1;
+            return `the ladder at (${c(cause.x)}, ${c(cause.z)}) has a gap of ${gap} at y ${c(cause.y)}. I need ${plural(gap, 'ladder')} to go on.`;
+        }
+        case 'no_path':
+            return `I found no way from ${posText(cause.from)} to ${posText(cause.to)}.`;
+        case 'stuck':
+            return `I got stuck at ${posText(cause.at)}.`;
+        default:
+            return '';
+    }
+}
+
+/**
+ * `I could not follow the route "mine" at step 6 of 12: the door at (9, 41, 43) is closed and I could not open it.`
+ * (v0.1.4.11, W1): the step and the cause (causeText). Without a cause it knows, the position:
+ * `I could not follow the route "mine" at step 6 of 12, at (8, 41, 46).` The request of v0.1.4.9 to show the way again is gone.
  * @param {object} route
  * @param {number} step 1 for the first leg walked
  * @param {number} total
  * @param {{x,y,z}|null} at
+ * @param {object|null} [cause] I1: door, ladder, no_path, stuck
  * @returns {string}
  */
-export function routeFailedText(route, step, total, at) {
-    const where = at ? `, at ${posText(at)}` : '';
-    return `I could not follow ${routeLabel(route)} at step ${step} of ${total}${where}. Show me the way again.`;
+export function routeFailedText(route, step, total, at, cause = null) {
+    const head = `I could not follow ${routeLabel(route)} at step ${step} of ${total}`;
+    const why = causeText(cause);
+    if (why) {
+        return `${head}: ${why}`;
+    }
+    return at ? `${head}, at ${posText(at)}.` : `${head}.`;
 }
 
 /**
@@ -231,13 +267,16 @@ export function emptyRouteText(route) {
 }
 
 /**
- * `I found no way to the start of the route "bed" at (30, 41, 4).`
+ * `I find no way from (11, 67, 52) to the start of the route "mine" at (9, 67, 52).` (v0.1.4.11, W1); without
+ * the position of the bot `I find no way to the start of the route "mine" at (9, 67, 52).`
  * @param {object} route
  * @param {{x,y,z}} start
+ * @param {{x,y,z}|null} [from] where the bot stands
  * @returns {string}
  */
-export function noWayToStartText(route, start) {
-    return `I found no way to the start of ${routeLabel(route)} at ${posText(start)}.`;
+export function noWayToStartText(route, start, from = null) {
+    const where = from ? ` from ${posText(from)}` : '';
+    return `I find no way${where} to the start of ${routeLabel(route)} at ${posText(start)}.`;
 }
 
 /**

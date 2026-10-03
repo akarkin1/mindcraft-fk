@@ -252,11 +252,12 @@ describe('a new mine never starts underground (M4)', () => {
             const r = await M.mineOre(s.bot, s.ctx, 'coal', 2, opts);
             assert.equal(r.ok, false);
             assert.equal(r.reason, 'underground');
-            assert.equal(r.text, 'I am underground. I start a new mine only from the surface.');
+            // v0.1.4.11, W3: the text names the next step (underground, in no mine the bot knows)
+            assert.equal(r.text, 'I am underground, not in a mine I know. A new mine starts from the surface: say "leave the mine" or "go to the surface" first.');
         }
         const d = await M.descendToLevel(s.bot, s.ctx, 10, { ...s.opts, ore: 'coal' });
         assert.equal(d.reason, 'underground');
-        assert.equal(d.text, 'I am underground. I start a new mine only from the surface.');
+        assert.equal(d.text, 'I am underground, not in a mine I know. A new mine starts from the surface: say "leave the mine" or "go to the surface" first.', 'v0.1.4.11, W3');
         assert.equal(digs(s.bot), 0);
         assert.equal(s.ctx.mines.list().length, 0);
     });

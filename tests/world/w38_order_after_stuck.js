@@ -10,9 +10,11 @@
 //
 // Flat world, the modes of the owner (MODES_PROFILE), stuck_restart_after 3. A closed room of 1 x 1 x 2 blocks
 // of obsidian (as in W31), the player 10 blocks away.
-//   1. The bot in the room, the player types !followPlayer: "I'm stuck!", the escape fails, the reflex gives
+// v0.1.4.11: in place of the typed follow, steps 1 and 2 start an action of the agent that walks toward the player again
+// and again (walkOut below: a follow that finds no way now says so and ends, N2 and W97; this tests the reflex).
+//   1. The bot in the room, the walk toward the player starts: "I'm stuck!", the escape fails, the reflex gives
 //      up ("I am stuck at (x, y, z) and could not walk away.").
-//   2. At once (within a second of that line) the player types !followPlayer again. The bot still cannot move,
+//   2. At once (within a second of that line) the walk starts again (a new command for the reflex). The bot still cannot move,
 //      so unstuck fires again, but not before the new command had its 20 s: the first "I'm stuck!" after the
 //      order comes 18 s after it or later.
 //   3. !stop; the bot is put on open ground and at once the player types three !goToCoordinates in a row, each
@@ -20,13 +22,30 @@
 // The process lives (2 failed escapes of 3).
 import {
     scenarioMain, check, note, exitSoon, startAgent, stopRealAgent, NEW_FLAGS_OFF, FLAGS_0148_OFF, withModes, placeBot,
-    resetBot, waitFor, entityPos, fmt, commands, orderChannel, sleep, tp, STUCK_SAID,
+    resetBot, waitFor, entityPos, fmt, commands, orderChannel, sleep, tp, STUCK_SAID, importProject,
 } from './helpers.js';
 import { region, prepareRegion, releaseRegion } from './world.js';
 
 const NAME = 'w_afterstuck';
 const PLAYER = 'w_player';
 const GIVE_UP = /I am stuck at \(-?\d+, -?\d+, -?\d+\) and could not walk away\./;
+
+// v0.1.4.11 (N2, W97): no typed order keeps the bot trying in the closed room any more: a follow that finds no way to
+// the player says so and ends, a walk without a way ends within a second (and every new action starts the stuck time
+// from zero), !newAction pauses the reflex, and a follow with the player in reach is no being stuck. So in place of the
+// order the scenario starts an action of the agent, as a typed command starts one (the label action:walkOut counts as a
+// new command for the reflex), that walks toward the player 10 blocks away again and again until it is stopped. It is
+// not awaited: the reflex stops it.
+let skillsLib = null;
+async function walkOut(agent, to) {
+    skillsLib ??= await importProject('src/agent/library/skills.js');
+    agent.actions.runAction('action:walkOut', async () => {
+        for (let i = 0; i < 600 && !agent.bot.interrupt_code; i++) {
+            await skillsLib.goToPosition(agent.bot, to.x, to.y, to.z, 1);
+            await sleep(500);
+        }
+    }, { timeout: 15 }).catch(() => {});
+}
 
 const r = region(30);
 const g = r.g;
@@ -47,19 +66,19 @@ await scenarioMain({
             const at = await placeBot(agent, CELL, 0);
             check(at && Math.floor(at.x) === CELL.x && Math.floor(at.z) === CELL.z, 'precondition: the bot stands in the closed room of obsidian', fmt(at));
             orders = await orderChannel(s, { name: PLAYER, at: { x: CELL.x + 10, y: g + 1, z: CELL.z } });
+            const to = { x: CELL.x + 10, y: g + 1, z: CELL.z }; // the player, 10 blocks away
 
             // ---------------------------------------------------------- 1. the reflex gives up
             let from = s.behavior.length;
-            const o1 = orders.orderInfo(`!followPlayer("${PLAYER}", 2)`, 5000);
+            await walkOut(agent, to);
             const g1 = await waitFor(() => s.behavior.slice(from).find((x) => GIVE_UP.test(x.text)), { ms: 120000, every: 100 });
-            await o1;
             note(`1: the behaviour log ${JSON.stringify(s.behavior.slice(from).map((x) => x.text))}`);
             check(g1.ok, '1: precondition: the reflex gave up in the closed room', g1.ok ? g1.value.text : 'no give-up within 120 s');
 
             // ---------------------------------------------------------- 2. a new order right after
             from = s.behavior.length;
             const t2 = Date.now();
-            orders.orderInfo(`!followPlayer("${PLAYER}", 2)`, 5000);
+            await walkOut(agent, to);
             const stuck2 = await waitFor(() => s.behavior.slice(from).find((x) => x.text.includes(STUCK_SAID)), { ms: 60000, every: 100 });
             const after = stuck2.ok ? (stuck2.value.t - t2) / 1000 : null;
             note(`2: the order was typed ${g1.ok ? ((t2 - g1.value.t) / 1000).toFixed(1) : '?'} s after the give-up; the first "${STUCK_SAID}" after it came ${after === null ? 'never (60 s)' : after.toFixed(1) + ' s'} after the order`);

@@ -17,6 +17,7 @@ import { HOLE_RULES, holeAt, escapeSides, walkControls, leftHole } from './refle
 import { sleepIsProgress } from './reflex/wake_logic.js';
 import { keepOutAreas, keptOutBy, itemNameOf, leaveText, mayLeaveText } from './areas/keep_out_logic.js';
 import { collectItems } from './areas/keep_out.js';
+import { newSenseState, senseTick } from './areas/area_sense.js';
 
 async function say(agent, message) {
     agent.bot.modes.behavior_log += message + '\n';
@@ -379,6 +380,7 @@ function stuckSample(bot, label = '') {
         sleeping: Boolean(bot.isSleeping) && sleepIsProgress(label),
         usingItem: Boolean(bot.usingHeldItem),
         notedAt: bot.modes?.progress_at ?? 0,
+        searching: bot.searching === true, // v0.1.4.11 (F15): the walk to the player thinks, it is not stuck
     };
 }
 
@@ -910,6 +912,48 @@ const home_modes = [
     }
 ];
 
+// v0.1.4.11 (P2): the area sense, added by initModes only with the setting area_sense (off by default). While the bot
+// is idle it scans the enclosure it stands in and, once per enclosure per start, says what it seems to be when no
+// saved area holds it (areas/area_sense.js). It never calls execute, so it interrupts nothing.
+const area_sense_mode = {
+    name: 'area_sense',
+    description: 'Say what an unsaved enclosure you stand in seems to be. Does not interrupt actions.',
+    interrupts: [],
+    on: true,
+    active: false,
+    state: newSenseState(),
+    update: function (agent) {
+        try {
+            const bot = agent.bot;
+            const text = senseTick(this.state, bot, {
+                now: Date.now(),
+                idle: agent.isIdle(),
+                areas: agent.area_store?.list?.() ?? [],
+                floors: settings.area_floors === true,
+            });
+            if (!text)
+                return;
+            if (typeof agent.sayText === 'function') {
+                bot.modes.behavior_log += text + '\n';
+                agent.sayText(text);
+            }
+            else {
+                say(agent, text);
+            }
+        } catch (error) {
+            console.warn('Mode area_sense failed:', error);
+        }
+    }
+};
+
+function addSenseMode() {
+    if (settings.area_sense !== true || !settings.protected_areas || modes_map.area_sense)
+        return;
+    const cheat = modes_list.findIndex(mode => mode.name === 'cheat');
+    modes_list.splice(cheat >= 0 ? cheat : modes_list.length, 0, area_sense_mode);
+    modes_map.area_sense = area_sense_mode;
+}
+
 function addHomeModes() {
     if (!settings.home_pack)
         return;
@@ -1075,6 +1119,7 @@ class ModeController {
 export function initModes(agent) {
     _agent = agent;
     addHomeModes(); // v0.1.4.6: before the profile sets which modes are on
+    addSenseMode(); // v0.1.4.11 (P2)
     watchOwnDrops(agent.bot); // v0.1.4.8, A8
     // the mode controller is added to the bot object so it is accessible from anywhere the bot is used
     agent.bot.modes = new ModeController();

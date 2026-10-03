@@ -1,12 +1,12 @@
 // W07 scan (spec section 8 "Scan", A3, section 6 !rememberArea and !areas): protected_areas on,
 // world_memory on. The areas are read from the reply and from <worldDir>/areas.json.
-//   1. inside a built house: !rememberArea("home", "building") saves a box that covers the house and
+//   1. inside a built house: !rememberArea("home", "building") (v0.1.4.11: the answer of P1) saves a box that covers the house and
 //      is at most 2 blocks bigger on every side, and the door is found;
 //   2. inside a fenced field: !rememberArea("wheat_farm", "farm") finds the farm and its gate;
 //   3. on an open field: !rememberArea("field", "farm") saves nothing and says that no fence is near (v0.1.4.8,
 //      D5: the text of the reason no_fence_near);
-//   4. on an open field, type building: the fallback box of section 6 is saved with its text
-//      (section 8 says "nothing is saved" only for the farm; section 6 defines the building case);
+//   4. on an open field, type building: v0.1.4.11 (P1) saves nothing and says "I find no border around me: ...";
+//      (the fallback box of section 6 of v0.1.4.6 is gone);
 //   5. !areas lists the areas.
 import fs from 'node:fs';
 import path from 'node:path';
@@ -49,30 +49,35 @@ await scenarioMain({
             await placeBot(agent, h.inside, 0);
             const r1 = await command_(agent, '!rememberArea("home", "building")', 30000);
             note(`1: ${JSON.stringify(r1)}`);
-            const m1 = /Area "home" \(building\) saved: (\d+) x (\d+) x (\d+) blocks, from \((-?\d+), (-?\d+), (-?\d+)\) to \((-?\d+), (-?\d+), (-?\d+)\), 1 door\. Tell me if that is wrong\./.exec(r1);
-            check(m1, '1: the reply is "Area "home" (building) saved: <x> x <y> x <z> blocks, from (...) to (...), 1 door. Tell me if that is wrong."', JSON.stringify(r1.slice(0, 240)));
+            // v0.1.4.11 (P1): `I saved "home": a home, walled, 9 x 9 with a roof, 1 door, 1 bed, 1 chest. I shelter there at night.`
+            // ("building" is also the default of the parser, so the bot may name the kind it concluded, T3-6 of v0.1.4.10)
+            const m1 = /I saved "home": an? (\w+), walled, (\d+) x (\d+) with a roof, 1 door\b[^.]*\. [^.]+\.$/.exec(r1);
+            check(m1, '1: the reply is the text of P1: `I saved "home": a <kind>, walled, <x> x <z> with a roof, 1 door, ...`', JSON.stringify(r1.slice(0, 240)));
             const a1 = readAreas(agent);
             const home = a1.areas?.home;
             note(`1: areas.json ${a1.file}: ${JSON.stringify(home)}`);
             check(a1.json?.version === 1 && home, '1: areas.json (version 1) holds the area "home"', a1.error || '');
-            check(home?.type === 'building' && home?.source === 'scan', '1: the area is a building found by a scan', `${home?.type} ${home?.source}`);
+            check(['building', 'home'].includes(home?.type) && home?.source === 'scan', '1: the area is a building (or the home the bot concluded) found by a scan', `${home?.type} ${home?.source}`);
             check(home && covers(home, h.box), `1: the box covers the house ${B(h.box)}`, home ? B(home) : '');
             check(home && atMostBigger(home, h.box, 2), '1: the box is at most 2 blocks bigger than the house on every side', home ? B(home) : '');
             const door = (home?.entrances || []).find((e) => e.x === h.door.x && e.y === h.door.y && e.z === h.door.z);
             check(door && door.kind === 'door' && home.entrances.length === 1, `1: the door is found: one entrance, the lower block of the door (${h.door.x}, ${h.door.y}, ${h.door.z}), kind door`,
                 JSON.stringify(home?.entrances));
             if (m1 && home) {
-                const size = [Number(m1[1]), Number(m1[2]), Number(m1[3])];
-                const expectSize = ['x', 'y', 'z'].map((k) => home.max[k] - home.min[k] + 1);
-                check(JSON.stringify(size) === JSON.stringify(expectSize) && r1.includes(`from ${B(home)}`),
-                    '1: the size and corners in the reply are those of the saved box', `${JSON.stringify(size)} vs ${JSON.stringify(expectSize)}, ${B(home)}`);
+                // P1 names x and z of the enclosure, the house or its box grown by the scan
+                const size = [Number(m1[2]), Number(m1[3])];
+                const house = [h.box.max.x - h.box.min.x + 1, h.box.max.z - h.box.min.z + 1];
+                const box = [home.max.x - home.min.x + 1, home.max.z - home.min.z + 1];
+                check([house, box].some((w) => w[0] === size[0] && w[1] === size[1]),
+                    '1: the size in the reply is that of the house or of the saved box (x and z)', `${JSON.stringify(size)} vs house ${JSON.stringify(house)}, box ${JSON.stringify(box)}`);
             }
 
             // ---------------------------------------------------------- 2. the fenced field
             await placeBot(agent, f.inside, 0);
             const r2 = await command_(agent, '!rememberArea("wheat_farm", "farm")', 30000);
             note(`2: ${JSON.stringify(r2)}`);
-            check(/Area "wheat_farm" \(farm\) saved: \d+ x \d+ x \d+ blocks, .*1 gate\./.test(r2), '2: the reply is "Area "wheat_farm" (farm) saved: ..., 1 gate."', JSON.stringify(r2.slice(0, 240)));
+            // v0.1.4.11 (P1): `I saved "wheat_farm": a farm, fenced, 9 x 9, 1 gate, ... I only plant and harvest there.`
+            check(/I saved "wheat_farm": a farm, fenced, \d+ x \d+, 1 gate\b[^.]*\. I only plant and harvest there\./.test(r2), '2: the reply is the text of P1: `I saved "wheat_farm": a farm, fenced, <x> x <z>, 1 gate, ... I only plant and harvest there.`', JSON.stringify(r2.slice(0, 240)));
             const farm = readAreas(agent).areas?.wheat_farm;
             note(`2: ${JSON.stringify(farm)}`);
             check(farm?.type === 'farm', '2: the farm is found and saved as type farm', JSON.stringify(farm?.type));
@@ -99,18 +104,19 @@ await scenarioMain({
             // ---------------------------------------------------------- 4. an open field, building
             const r4 = await command_(agent, '!rememberArea("camp", "building")', 30000);
             note(`4: ${JSON.stringify(r4)}`);
-            check(r4.includes('I found no building here. I saved a box of 25 x 13 x 25 blocks around this place as "camp". Use !setArea to correct it.'),
-                '4: open field, building: the fallback text of section 6', JSON.stringify(r4.slice(0, 220)));
+            // v0.1.4.11 (P1): no border around the bot: nothing is saved and the answer says what to do (the box of
+            // 25 x 13 x 25 of section 6 of v0.1.4.6 is gone)
+            const NO_BORDER = 'I find no border around me: no fence, wall, hedge or water within 24 blocks. Stand inside the place and say it again.';
+            check(r4.includes(NO_BORDER), `4: open field, building: the text of P1 \`${NO_BORDER}\``, JSON.stringify(r4.slice(0, 220)));
             const camp = readAreas(agent).areas?.camp;
-            check(camp && camp.max.x - camp.min.x + 1 === 25 && camp.max.y - camp.min.y + 1 === 13 && camp.max.z - camp.min.z + 1 === 25
-                && camp.min.x === open.x - 12 && camp.min.y === open.y - 4 && camp.min.z === open.z - 12,
-            '4: open field, building: a box of 25 x 13 x 25 around the bot is saved (12 around in x and z, 4 below to 8 above)', camp ? B(camp) : 'not saved');
+            check(!camp, '4: open field, building: nothing is saved (P1)', camp ? B(camp) : 'not saved');
 
             // ---------------------------------------------------------- 5. !areas
             const list = await command_(agent, '!areas', 10000);
             note(`5: ${JSON.stringify(list)}`);
-            check(list.includes('Protected areas in this world:') && home && list.includes(`- home (building): from ${B(home)}, 1 door`),
-                '5: !areas lists "- home (building): from (...) to (...), 1 door"', JSON.stringify(list.slice(0, 300)));
+            // v0.1.4.11 (P1): the type of the area is set from the kind the bot concluded (home or building)
+            check(list.includes('Protected areas in this world:') && home && list.includes(`- home (${home.type}): from ${B(home)}, 1 door`),
+                '5: !areas lists "- home (<its type>): from (...) to (...), 1 door"', JSON.stringify(list.slice(0, 300)));
             check(list.includes('- wheat_farm (farm):'), '5: !areas lists the farm');
 
             check(s.realCalls.length === 0, 'no request reached a real model class', JSON.stringify(s.realCalls));

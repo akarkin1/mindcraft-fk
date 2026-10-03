@@ -209,10 +209,11 @@ describe('!rememberArea (R3)', () => {
         const world = twoFloors();
         const agent = areaAgent(world, { x: 4.5, y: 61, z: 4.5 });
         const up = await command('!rememberArea').perform(agent, 'home', 'home');
-        assert.match(up, /^Area "home" \(home\) saved: 9 x 6 x 9 blocks, from \(0, 60, 0\) to \(8, 65, 8\), 1 door, 1 trapdoor\. Tell me if that is wrong\.$/);
+        // v0.1.4.11 (P1): the answer names the kind, the border, the size in x and z, the openings and the contents
+        assert.match(up, /^I saved "home": a home, walled, 9 x 9 with a roof, 1 door, 1 trapdoor, 1 bed\. I shelter there at night\.$/);
         agent.bot.entity.position = vec(5.5, 56, 5.5);
         const down = await command('!rememberArea').perform(agent, 'basement', 'building');
-        assert.match(down, /^Area "basement" \(building\) saved: 9 x 6 x 9 blocks, from \(0, 55, 0\) to \(8, 60, 8\)/);
+        assert.match(down, /^I saved "basement": a /, 'v0.1.4.11 (P1): without a type the kind of the scan');
         assert.deepEqual(boxOf(agent.area_store.get('home')), box(0, 60, 0, 8, 65, 8));
         assert.deepEqual(boxOf(agent.area_store.get('basement')), box(0, 55, 0, 8, 60, 8));
         assert.deepEqual(agent.area_store.get('home').entrances.map((e) => e.kind).sort(), ['door', 'trapdoor']);
@@ -234,7 +235,7 @@ describe('!rememberArea (R3)', () => {
         const world = twoFloors();
         const agent = areaAgent(world, { x: 4.5, y: 61, z: 4.5 });
         await command('!rememberArea').perform(agent, 'home', 'building');
-        assert.match(await command('!rememberArea').perform(agent, 'Home', 'home'), /^Area "home" \(home\) saved: /);
+        assert.match(await command('!rememberArea').perform(agent, 'Home', 'home'), /^I saved "home": a home, /); // v0.1.4.11 (P1)
         assert.equal(agent.area_store.list().length, 1);
         assert.equal(agent.area_store.get('home').type, 'home');
     });
@@ -242,8 +243,12 @@ describe('!rememberArea (R3)', () => {
     test('no building: the box around the bot; the same box under another name is refused', async () => {
         const world = createBlockWorld().flatGround(63);
         const agent = areaAgent(world, { x: 100.5, y: 64, z: 100.5 });
-        assert.match(await command('!rememberArea').perform(agent, 'spot', 'building'), /^I found no building here\./);
-        assert.equal(await command('!rememberArea').perform(agent, 'other', 'building'), 'That is the area "spot" already.');
+        // v0.1.4.11 (P1): without a type and without a border nothing is saved; a box around the bot only for a type
+        assert.equal(await command('!rememberArea').perform(agent, 'spot', 'building'),
+            'I find no border around me: no fence, wall, hedge or water within 24 blocks. Stand inside the place and say it again.');
+        assert.equal(agent.area_store.list().length, 0);
+        assert.match(await command('!rememberArea').perform(agent, 'spot', 'home'), /^I found no building here\./);
+        assert.equal(await command('!rememberArea').perform(agent, 'other', 'home'), 'That is the area "spot" already.');
         assert.equal(agent.area_store.list().length, 1);
     });
 });
@@ -373,7 +378,7 @@ describe('executeCommand: the hooks of the job (I4)', () => {
 
     test('a command that does not parse or that the repeat guard refuses: no hook', async () => {
         const agent = jobAgent();
-        assert.equal(await M.index.executeCommand(agent, '!forgetMine(1, 2)', { typed: false }), 'Command !forgetMine was given 2 args, but requires 1 args.');
+        assert.equal(await M.index.executeCommand(agent, '!forgetMine(1, 2)', { typed: false }), '!forgetMine takes 1 argument (name): !forgetMine("name").', 'v0.1.4.11, W5: the form of the command');
         agent.repeat_guard = { check: () => 'I tried !forgetMine 3 times with the same result.', record() {} };
         assert.equal(await M.index.executeCommand(agent, '!forgetMine("old")', { typed: false }), 'I tried !forgetMine 3 times with the same result.');
         assert.deepEqual(agent.calls, []);

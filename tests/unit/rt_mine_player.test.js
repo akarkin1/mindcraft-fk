@@ -251,7 +251,8 @@ describe('B3: rememberTunnel', () => {
         moveTo(s, 40, 41, 20);
         const r = await M.rememberTunnel(s.bot, s.ctx, '', {});
         assert.deepEqual({ ok: r.ok, reason: r.reason, text: r.text },
-            { ok: false, reason: 'no_corridor', text: 'I stand in no tunnel. A tunnel is 1 wide and 2 high and open ahead of me.' });
+            // v0.1.4.11: a pocket is a corridor too short (the lead's text, round 1)
+            { ok: false, reason: 'no_corridor', text: 'I stand in no tunnel: the corridor at (40, 41, 20) is only 1 long. A tunnel is 4 or more.' });
     });
 });
 
@@ -474,7 +475,8 @@ describe('B4 to B7: mineOre in the mine of the player (W67, W64, W68, W69 in sma
         const s = await trip({ world });
         const r = await M.mineOre(s.bot, s.ctx, 'iron', 2, opts(s));
         assert.equal(r.reason, 'no_path', r.text);
-        assert.match(r.text, /^I could not follow the route "mine" at step \d+ of \d+, at \(-?\d+, -?\d+, -?\d+\)\. Show me the way again\.$/);
+        // v0.1.4.11, W1: the failure text names the missing ladders, "Show me the way again." is gone
+        assert.match(r.text, /^I could not follow the route "mine" at step \d+ of \d+: the ladder at \(-?\d+, -?\d+\) has a gap of \d+ at y -?\d+\. I need \d+ ladders? to go on\.$/);
         assert.deepEqual(digsAt(s), []);
         assert.ok(s.bot.entity.position.y >= 60, 'the bot did not fall down the shaft');
     });

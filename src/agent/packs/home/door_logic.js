@@ -147,6 +147,12 @@ function feetInCell(pos, door) {
     return Math.floor(pos.x) === door.x && Math.floor(pos.z) === door.z && Math.abs(Math.floor(pos.y + 0.01) - door.y) <= 1;
 }
 
+// F20: the feet of the bot in the column under a trapdoor (its x and z, from 40 below it up to 1 above it).
+function inColumnUnder(pos, door) {
+    const y = Math.floor(pos.y + 0.01);
+    return Math.floor(pos.x) === door.x && Math.floor(pos.z) === door.z && y <= door.y + 1 && y >= door.y - 40;
+}
+
 function isIronDoorRecord(door) {
     return isIronOpenable(door.name) || (typeof door.kind === 'string' && door.kind.startsWith('iron'));
 }
@@ -278,6 +284,8 @@ export const DOOR_SERVICE_RULES = Object.freeze({
     forgetDistance: 16,   // ... or when the bot is this far from it
     startMs: 5000,        // the look at the start lasts this long (chunks arrive late) ...
     startPlayerRange: 3,  // ... and closes open openables of saved areas with no player this close
+    reserveMaxMs: 20000,  // v0.1.4.11 (I8): a walk reserves an openable it is about to pass for at most this long ...
+    reserveNear: 1.5,     // ... and while the bot is this close to it, the reservation holds on
 });
 
 /**
@@ -303,6 +311,8 @@ export const DOOR_SERVICE_RULES = Object.freeze({
  *   bot passed it or when the bot has stopped beside it (the pass is missed when the gate was seen closed
  *   in between). Doors and trapdoors keep the 2 blocks.
  * - Up to 3 attempts, 1 s apart; forgotten after 60 s, 16 blocks away, or when seen closed.
+ * - v0.1.4.11 (I8): an openable a walk reserved (reserve) is not closed before the end of the reservation (at
+ *   most 20 s), nor after it while the bot is within 1.5 blocks of it, until the walk releases it.
  */
 /**
  * On which side of an openable the feet of the bot are (v0.1.4.9, F21): -1 or 1, 0 in the openable, null
@@ -352,6 +362,89 @@ export class DoorWatch {
         this._startUntil = null;
         this._startDone = new Set();
         this._late = [];
+        this._reserved = new Map(); // v0.1.4.11 (I8): key -> { door, until }
+    }
+
+    /**
+     * v0.1.4.11 (I8): a walk is about to pass this openable. It is not closed until `now + ms` (ms at most
+     * 20 s), and after that not while the bot is within 1.5 blocks of it, until the walk releases it. A second
+     * reservation of the same openable moves its end.
+     * @param {{x,y,z}} door
+     * @param {number} now
+     * @param {number} ms
+     * @returns {boolean} false for an invalid openable
+     */
+    reserve(door, now, ms) {
+        if (!isPoint(door)) {
+            return false;
+        }
+        const t = isFiniteNumber(now) ? now : Date.now();
+        const span = Math.max(0, Math.min(DOOR_SERVICE_RULES.reserveMaxMs, isFiniteNumber(ms) ? ms : DOOR_SERVICE_RULES.reserveMaxMs));
+        const cell = { x: Math.floor(door.x), y: Math.floor(door.y), z: Math.floor(door.z) };
+        this._reserved.set(doorKey(cell), { door: cell, until: t + span });
+        return true;
+    }
+
+    /**
+     * v0.1.4.11 (I8): the walk passed the openable or ended; the service treats it as before. F12 of the fix round:
+     * with `passed` the walk went through it, and the service notes it as passed (closed by its rules: 2 blocks past
+     * a door or trapdoor, the feet out of the cell of a gate), also when it never saw the pass itself.
+     * @param {{x,y,z}} [door] every reservation without one
+     * @param {{passed?: boolean, now?: number}} [options]
+     */
+    release(door, options = {}) {
+        if (door === undefined || door === null) {
+            this._reserved.clear();
+        } else if (isPoint(door)) {
+            const cell = { x: Math.floor(door.x), y: Math.floor(door.y), z: Math.floor(door.z) };
+            const key = doorKey(cell);
+            this._reserved.delete(key);
+            if (options?.passed === true) {
+                const now = isFiniteNumber(options.now) ? options.now : Date.now();
+                const entry = this._noted.get(key);
+                if (entry) {
+                    entry.passed = true;
+                } else {
+                    this._note(key, { ...cell, kind: typeof door.kind === 'string' ? door.kind : undefined }, 'passed', now);
+                    this._noted.get(key).passed = true;
+                }
+            }
+        }
+    }
+
+    /**
+     * v0.1.4.11 (I8): true while the openable is reserved: before the end of its reservation, and after it while
+     * the bot is within 1.5 blocks of it. A reservation that ran out with the bot farther away is dropped. A
+     * reservation of the upper half of a door counts for the door.
+     * @param {{x,y,z}} door
+     * @param {number} now
+     * @param {{x,y,z}|null} [botPos]
+     * @returns {boolean}
+     */
+    isReserved(door, now, botPos = null) {
+        if (!isPoint(door) || this._reserved.size === 0) {
+            return false;
+        }
+        const t = isFiniteNumber(now) ? now : Date.now();
+        for (const key of [doorKey(door), doorKey({ x: door.x, y: door.y + 1, z: door.z })]) {
+            const entry = this._reserved.get(key);
+            if (!entry) {
+                continue;
+            }
+            if (t < entry.until) {
+                return true;
+            }
+            if (isPoint(botPos) && dist3(botPos, doorCenter(door)) <= DOOR_SERVICE_RULES.reserveNear) {
+                return true;
+            }
+            this._reserved.delete(key);
+        }
+        return false;
+    }
+
+    /** Number of reservations (I8). */
+    get reservedCount() {
+        return this._reserved.size;
     }
 
     /**
@@ -457,6 +550,26 @@ export class DoorWatch {
             }
         }
         const out = [];
+        // F18: with `debug` on, the decision for each gate within 3 blocks (see debugLines)
+        this._debug = this.debug === true ? [] : null;
+        const why = (door, text, extra = {}) => {
+            if (this._debug && door?.kind === 'gate' && dist3(botPos, doorCenter(door)) <= 3) {
+                const key = doorKey(door);
+                const entry = this._noted.get(key);
+                this._debug.push({ at: key, open: door.open === true, noted: entry?.why ?? null, near: entry?.near ?? false,
+                    passed: entry?.passed ?? false, side: this._sides.get(key)?.side ?? null, moving: input.moving === true,
+                    occupied: door.occupied === true, players2: playerWithin(door, DOOR_SERVICE_RULES.playerClearance),
+                    reserved: this.isReserved(door, now, botPos), d: Math.round(dist3(botPos, doorCenter(door)) * 100) / 100,
+                    feetIn: feetInCell(botPos, door), decision: text, ...extra });
+            }
+        };
+        if (this._debug) {
+            for (const door of doors) {
+                if (door.kind === 'gate' && !this._noted.has(doorKey(door))) {
+                    why(door, door.open === true ? 'not noted' : 'closed');
+                }
+            }
+        }
         for (const [key, entry] of this._noted) {
             const d = dist3(botPos, doorCenter(entry.door));
             if (now - entry.notedAt > DOOR_SERVICE_RULES.forgetMs || d > DOOR_SERVICE_RULES.forgetDistance) {
@@ -466,10 +579,20 @@ export class DoorWatch {
             }
             const door = visible.get(key);
             if (!door || entry.tries >= DOOR_SERVICE_RULES.tries || now < entry.nextTryAt) {
+                why(door ?? entry.door, !door ? 'not visible' : (entry.tries >= DOOR_SERVICE_RULES.tries ? 'tries used' : 'retry later'));
                 continue;
             }
             if (door.occupied === true || playerWithin(door, DOOR_SERVICE_RULES.playerClearance) || d > DOOR_SERVICE_RULES.reach) {
+                why(door, door.occupied === true ? 'occupied' : (d > DOOR_SERVICE_RULES.reach ? 'out of reach' : 'player within 2'));
                 continue;
+            }
+            if (this.isReserved(door, now, botPos)) {
+                why(door, 'reserved');
+                continue; // v0.1.4.11 (I8): a walk is about to pass it
+            }
+            if (door.kind === 'trapdoor' && inColumnUnder(botPos, door) && !(entry.passed && passSide(door, botPos) === -1)) {
+                why(door, 'bot in the column');
+                continue; // v0.1.4.11 (F20): never a trapdoor over the column the bot climbs up in (down through it: as before)
             }
             // F21: only an openable the bot passed (a gate of a pen or farm: came near), 2 blocks past it.
             // v0.1.4.10 (T3-5): a gate the bot went through is closed as soon as its feet are out of the gate
@@ -480,12 +603,25 @@ export class DoorWatch {
             // then stands 1.4 blocks past an open gate that nobody closes. A noted gate the bot has stopped
             // beside, its feet out of the gate cell, is closed too; while it walks the pass still decides.
             const gateBehind = door.kind === 'gate' && !feetInCell(botPos, door) && (entry.passed || input.moving !== true);
-            const away = entry.why === 'start' ? d > 0.8 : gateBehind || (passed && d >= DOOR_SERVICE_RULES.pastDistance);
+            // F2 (v0.1.4.11, W94): a gate of a pen or a farm that the bot opened while walking is closed 2 blocks
+            // past it, pass seen or not (the service's own click had dropped the side tracking; the path search
+            // opened the gate again and the bot walked on to the farm with the gate open behind it)
+            const gateOpened = door.kind === 'gate' && door.gated === true && entry.why === 'opened' && d >= DOOR_SERVICE_RULES.pastDistance;
+            const away = entry.why === 'start' ? d > 0.8 : gateBehind || gateOpened || (passed && d >= DOOR_SERVICE_RULES.pastDistance);
+            why(door, away ? 'close' : 'wait', { gateBehind, gateOpened });
             if (away) {
                 out.push({ ...door, why: entry.why, distance: d });
             }
         }
         return out.sort((a, b) => a.distance - b.distance);
+    }
+
+    /**
+     * F18: the decisions of the last look for the gates within 3 blocks, with `debug` set on the watch; [] else.
+     * @returns {object[]}
+     */
+    debugLines() {
+        return Array.isArray(this._debug) ? this._debug : [];
     }
 
     /**
@@ -505,6 +641,7 @@ export class DoorWatch {
         if (closed === true) {
             this._noted.delete(key);
             this._sides.delete(key);
+            this._seen.set(key, false); // F2 (v0.1.4.11): the next look sees an opening again as "opened"
             return 'closed';
         }
         entry.tries += 1;

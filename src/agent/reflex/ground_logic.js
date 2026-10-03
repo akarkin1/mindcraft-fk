@@ -11,6 +11,7 @@ export const GROUND_OFFSETS = Object.freeze([[4, 0], [-4, 0], [0, 4], [0, -4], [
 export const MIN_COLUMNS = 3;       // with fewer known columns the ground is unknown
 export const UNDERGROUND_DEPTH = 8; // deeper than this is underground
 const WORLD_HEIGHT = 384;           // from the height limit down to the bottom of the overworld
+export const FLOOR_OVER_SURFACE = 1; // v0.1.4.11 (F25): a built floor counts up to this far above the natural surface
 
 const AIR = new Set(['air', 'cave_air', 'void_air']);
 
@@ -53,9 +54,30 @@ export function isGroundName(name) {
     return !PLANTS.has(n) && !PLANT_ENDINGS.some(ending => n.endsWith(ending));
 }
 
-// The y of the ground of one column, from top - 1 down to bottom; null when a block of the column is
-// not loaded or the column has no ground.
+// Built blocks that are no floor to stand under: thin ones, borders, things a player walks through.
+const THIN_BUILT_PARTS = ['_door', 'fence', 'wall', 'pane', 'bars', 'ladder', 'torch', 'lantern', 'rail', 'carpet', 'sign',
+    'banner', 'button', 'pressure_plate', 'lever', 'flower_pot', 'potted_', 'scaffolding', 'chain', 'campfire', 'bell', '_bed'];
+
+/**
+ * True for a built block that is a floor (v0.1.4.11, F25): a built block (isBuiltBlock of area_scan.js) that is not
+ * thin: no door, fence, wall, pane, bars, ladder, torch, lantern, rail, carpet, sign, banner, button, pressure plate,
+ * lever, flower pot, scaffolding, chain, campfire, bell or bed. Planks, cobblestone, bricks, slabs, stairs, glass and
+ * trapdoors are.
+ * @param {string} name
+ * @returns {boolean}
+ */
+export function isBuiltFloorName(name) {
+    if (typeof name !== 'string' || name === '')
+        return false;
+    const n = baseName(name);
+    return isBuiltBlock(n) && !THIN_BUILT_PARTS.some(part => n.includes(part));
+}
+
+// One column, from top - 1 down to bottom: { ground, built } with the y of its natural ground (isGroundName) and the
+// ys of the built floor blocks above it, highest first; null when a block of the column is not loaded before the
+// ground or the column has no ground.
 function columnGround(getBlockName, x, z, top, bottom) {
+    const built = [];
     for (let y = top - 1; y >= bottom; y--) {
         let name;
         try {
@@ -66,9 +88,19 @@ function columnGround(getBlockName, x, z, top, bottom) {
         if (typeof name !== 'string')
             return null;
         if (isGroundName(name))
-            return y;
+            return { ground: y, built };
+        if (isBuiltFloorName(name))
+            built.push(y);
     }
     return null;
+}
+
+// The level of a column: its natural ground, or the highest built floor block of it at most FLOOR_OVER_SURFACE above
+// the surface (v0.1.4.11, F25): a floor laid into or onto the ground over a cellar counts, a house or a roof on the
+// ground does not.
+function columnLevel(column, surface) {
+    const floor = column.built.find(y => y <= surface + FLOOR_OVER_SURFACE);
+    return floor !== undefined && floor > column.ground ? floor : column.ground;
 }
 
 // The median; with an even number of values the lower of the two middle ones (decision of the tech
@@ -81,7 +113,11 @@ function median(values) {
 /**
  * The ground level around pos: the median of the ground of the 8 columns at the offsets (4,0) (-4,0)
  * (0,4) (0,-4) (3,3) (3,-3) (-3,3) (-3,-3). The ground of a column is the y of the highest block, from
- * top - 1 down, that isGroundName. Columns that are not loaded are left out. null with fewer than 3
+ * top - 1 down, that isGroundName; v0.1.4.11 (F25): or the y of a higher built floor block of the column
+ * (isBuiltFloorName) at most 1 block above the surface, the highest natural ground of the known columns: the built
+ * floor of a house over its cellar counts, a house or a roof standing on the ground does not. When every known
+ * column lies inside the cellar (no natural surface among them), the floor is not seen. Columns that are
+ * not loaded are left out. null with fewer than 3
  * known columns. With an even number of columns the median is the lower of the two middle ones, so with
  * 8 known columns the bot is more than 8 blocks deep only when 5 of them are.
  * @param {Function} getBlockName (x, y, z) => name | null
@@ -96,13 +132,16 @@ export function groundLevelAround(getBlockName, pos, top, bottom = top - WORLD_H
     const t = Math.floor(top);
     const b = Number.isFinite(bottom) ? Math.floor(bottom) : t - WORLD_HEIGHT;
     const bx = Math.floor(pos.x), bz = Math.floor(pos.z);
-    const levels = [];
+    const columns = [];
     for (const [dx, dz] of GROUND_OFFSETS) {
-        const ground = columnGround(getBlockName, bx + dx, bz + dz, t, b);
-        if (ground !== null)
-            levels.push(ground);
+        const column = columnGround(getBlockName, bx + dx, bz + dz, t, b);
+        if (column !== null)
+            columns.push(column);
     }
-    return levels.length < MIN_COLUMNS ? null : median(levels);
+    if (columns.length < MIN_COLUMNS)
+        return null;
+    const surface = Math.max(...columns.map(c => c.ground));
+    return median(columns.map(c => columnLevel(c, surface)));
 }
 
 /**

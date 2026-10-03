@@ -311,7 +311,8 @@ describe('I3: walkRoute on flat ground, 7 walk legs of 4 blocks', () => {
         s.bot.noPath = new Set(['12,64,0']);
         const r = await P.walkRoute(s.bot, s.ctx, s.route, { clock: s.clock });
         assert.deepEqual({ ok: r.ok, reason: r.reason, leg: r.leg }, { ok: false, reason: 'no_path', leg: 2 });
-        assert.equal(r.text, 'I could not follow the route "bed" at step 3 of 7, at (8, 64, 0). Show me the way again.');
+        // v0.1.4.11, W1: the cause instead of "Show me the way again."
+        assert.equal(r.text, 'I could not follow the route "bed" at step 3 of 7: I found no way from (8, 64, 0) to (12, 64, 0).');
         assert.deepEqual(r.at, { x: 8, y: 64, z: 0 });
         assert.equal(digs(s.bot), 0);
     });
@@ -407,7 +408,8 @@ describe('I3: a walk leg tried twice, a door leg, A5 no pause', () => {
         const s = flatDoor({ open: false, opens: false });
         const r = await P.walkRoute(s.bot, s.ctx, s.route, { clock: s.clock });
         assert.deepEqual({ ok: r.ok, reason: r.reason, leg: r.leg }, { ok: false, reason: 'blocked_door', leg: 1 });
-        assert.match(r.text, /^I could not follow the route "house" at step 2 of 3, at \(-?\d+, -?\d+, -?\d+\)\. Show me the way again\.$/);
+        // v0.1.4.11, W1: the door that did not open instead of "Show me the way again."
+        assert.match(r.text, /^I could not follow the route "house" at step 2 of 3: the door at \(-?\d+, -?\d+, -?\d+\) is closed and I could not open it\.$/);
         assert.equal(digs(s.bot), 0);
     });
 

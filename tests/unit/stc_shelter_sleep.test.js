@@ -54,6 +54,21 @@ describe('C4: chooseShelter takes only a home', () => {
         }
         assert.deepEqual([home, shed, pen, mine].map(L.isBuildingArea), [true, true, false, false]);
     });
+
+    test('F25: isSafeArea: home, building and no type, not a yard; shelterHere: the home first, else the building', () => {
+        const yard = { ...shed, kind: 'yard' };
+        assert.deepEqual([home, shed, { ...shed, type: undefined }, yard, pen, mine, farm].map(L.isSafeArea),
+            [true, true, true, false, false, false, false]);
+        const cabin = box('cabin', 'home', -10, -10, -4, -4);
+        assert.equal(L.shelterHere([shed], p(-7, -7)).name, 'shed');
+        assert.equal(L.shelterHere([shed, cabin], p(-7, -7)).name, 'cabin', 'a home first');
+        assert.equal(L.shelterHere([yard, pen], p(-7, -7)), null);
+        assert.equal(L.shelterHere([shed], p(-7, -7, 80)), null, 'above the box');
+        assert.equal(L.shelterHere([shed], p(-10, -7)), null, 'in the wall');
+        assert.equal(L.shelterHere([{ ...shed, dimension: 'the_nether' }], p(-7, -7), 'overworld'), null);
+        assert.equal(L.shelterHere(null, p(-7, -7)), null);
+        assert.equal(L.shelterHere([shed], null), null);
+    });
 });
 
 describe('C4: goToShelter and isInShelter', () => {
@@ -65,11 +80,59 @@ describe('C4: goToShelter and isInShelter', () => {
         return { world, house, bot, ctx };
     }
 
-    test('in a building (not a home) the bot is not in its shelter', () => {
+    // v0.1.4.11 (F25): inside the walls of a saved building the bot is in shelter too; a pen, a farm, a mine and a
+    // building concluded to be a yard (no roof) are not
+    test('in a home or in a building (not a yard) the bot is in shelter; in a pen, a farm or a mine not', () => {
         const s = scene({ botAt: [4.5, 64, 4.5] });
         assert.equal(S.isInShelter(s.bot, s.ctx), true);
         s.ctx.areas = [{ ...s.house, type: 'building' }];
-        assert.equal(S.isInShelter(s.bot, s.ctx), false);
+        assert.equal(S.isInShelter(s.bot, s.ctx), true, 'building');
+        s.ctx.areas = [{ ...s.house, type: undefined }];
+        assert.equal(S.isInShelter(s.bot, s.ctx), true, 'no type: a building of an old file');
+        for (const type of ['pen', 'farm', 'mine']) {
+            s.ctx.areas = [{ ...s.house, type }];
+            assert.equal(S.isInShelter(s.bot, s.ctx), false, type);
+        }
+        s.ctx.areas = [{ ...s.house, type: 'building', kind: 'yard' }];
+        assert.equal(S.isInShelter(s.bot, s.ctx), false, 'yard');
+        s.ctx.areas = [{ ...s.house, type: 'building' }];
+        s.bot.entity.position.z = 8.5;
+        assert.equal(S.isInShelter(s.bot, s.ctx), false, 'in front of the door');
+    });
+
+    test('F25: !goToShelter in a building: stays, the door read closed, the text names the building', async () => {
+        const s = scene({ botAt: [4.5, 64, 4.5] });
+        const basement = { ...s.house, name: 'basement', type: 'building' };
+        const far = box('home', 'home', 60, 60, 68, 68);
+        s.ctx.areas = [far, basement];
+        const res = await S.goToShelter(s.bot, s.ctx, FAST);
+        assert.deepEqual({ ok: res.ok, where: res.where, text: res.text },
+            { ok: true, where: 'basement', text: 'I am in the shelter "basement". The door is closed.' });
+        assert.deepEqual(s.bot.calls.filter(c => c[0] === 'goto' || c[0] === 'dig'), [], 'nothing moves');
+    });
+
+    test('F25: !goToShelter in a building with an open door: it is closed and read back', async () => {
+        const s = scene({ botAt: [4.5, 64, 4.5] });
+        s.world.door(4, 64, 7, { facing: 'south', open: true });
+        s.ctx.areas = [{ ...s.house, name: 'basement', type: 'building' }];
+        const res = await S.goToShelter(s.bot, s.ctx, FAST);
+        assert.equal(res.text, 'I am in the shelter "basement". The door is closed.');
+        assert.equal(s.world.propsAt(4, 64, 7).open, false);
+    });
+
+    test('F25: !goToShelter in a building without a door: the text claims no door', async () => {
+        const s = scene({ botAt: [4.5, 64, 4.5], withDoor: false });
+        s.ctx.areas = [{ ...s.house, name: 'basement', type: 'building' }];
+        const res = await S.goToShelter(s.bot, s.ctx, FAST);
+        assert.deepEqual({ ok: res.ok, reason: res.reason, text: res.text }, { ok: true, reason: 'no_door', text: 'I am in the shelter "basement".' });
+    });
+
+    test('F25: outside the building the home is still the shelter to go to; a building is never one', async () => {
+        const s = scene({ botAt: [4.5, 64, 30.5] });
+        s.ctx.areas = [{ ...s.house, name: 'shed', type: 'building' }];
+        const res = await S.goToShelter(s.bot, s.ctx, FAST);
+        assert.equal(res.reason, 'no_home', JSON.stringify(res));
+        assert.equal(S.findShelter(s.bot, s.ctx).kind, 'emergency');
     });
 
     test('W48 in the fake world: a mine and a pen nearer than the house, the bot goes into the house', async () => {

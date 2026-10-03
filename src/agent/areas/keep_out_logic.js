@@ -3,6 +3,7 @@
 // A walk of the mode item_collecting never goes through a fence gate, and never into an area of type
 // pen or farm, or an area with the flag no_enter, while the bot is outside that area. An item that lies
 // inside such an area is left there, with a text at most once a minute.
+// v0.1.4.11 (I5): also an area of the kind pen, and an area whose contents hold animals and which has a gate.
 
 /** The extra cost of the path search for a cell the walk must not use (Movements.exclusionAreasStep). */
 export const KEEP_OUT_COST = 100;
@@ -40,8 +41,22 @@ export function isGateName(name) {
     return typeof name === 'string' && name.endsWith('_fence_gate');
 }
 
+// v0.1.4.11 (I5): animals in the counted contents of an area
+function holdsAnimals(area) {
+    const animals = area.contents?.animals;
+    if (animals === null || typeof animals !== 'object') {
+        return false;
+    }
+    return Object.values(animals).some(n => Number.isFinite(n) && n > 0);
+}
+
+function hasGate(area) {
+    return Array.isArray(area.entrances) && area.entrances.some(e => e?.kind === 'gate');
+}
+
 /**
  * True for an area that the reflex does not enter from outside: type pen or farm, or the flag no_enter.
+ * v0.1.4.11 (I5), by the facts: also the kind pen, and an area with animals in its contents and an opening of kind gate.
  * @param {object} area
  * @returns {boolean}
  */
@@ -49,7 +64,8 @@ export function isKeepOutArea(area) {
     if (!isBox(area)) {
         return false;
     }
-    return KEEP_OUT_TYPES.includes(area.type) || area.flags?.no_enter === true;
+    return KEEP_OUT_TYPES.includes(area.type) || area.kind === 'pen' || (holdsAnimals(area) && hasGate(area))
+        || area.flags?.no_enter === true;
 }
 
 /**
@@ -148,13 +164,14 @@ export function itemNameOf(entity) {
 /**
  * The text when the reflex leaves an item (I6):
  * `I leave the oak_fence in the pen "pen". I do not open its gate.`
- * The word before the name is the type of the area.
+ * The word before the name is the kind of the area (v0.1.4.11), else its type.
  * @param {string} item
- * @param {{name: string, type?: string}} area
+ * @param {{name: string, type?: string, kind?: string}} area
  * @returns {string}
  */
 export function leaveText(item, area) {
-    const type = typeof area?.type === 'string' && area.type.length > 0 ? area.type : 'area';
+    const word = typeof area?.kind === 'string' && area.kind.length > 0 ? area.kind : area?.type;
+    const type = typeof word === 'string' && word.length > 0 ? word : 'area';
     return `I leave the ${item || 'item'} in the ${type} "${area?.name ?? ''}". I do not open its gate.`;
 }
 

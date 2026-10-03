@@ -1,5 +1,5 @@
 // The scorecard of play logs (release v0.1.4.10, spec I7 T1): one row per log and a total, then the commands
-// chosen, most first.
+// chosen, most first; v0.1.4.11 (W8): then the failure texts of each log, most first.
 //
 //   node scripts/scorecard.js <log> [<log>...]
 //
@@ -11,7 +11,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { USAGE, decodeLog, parseLog, scorecard, totalRow, formatTable } from './scorecard_logic.js';
+import { USAGE, decodeLog, parseLog, scorecard, totalRow, formatTable, formatFailures } from './scorecard_logic.js';
 
 /**
  * @param {string[]} argv the arguments after the script name
@@ -39,6 +39,7 @@ export function main(argv, { read = (file) => fs.readFileSync(file), log = (text
     }
     if (rows.length > 1) rows.push(totalRow(rows));
     log(formatTable(rows));
+    log(formatFailures(rows));
     return 0;
 }
 

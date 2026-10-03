@@ -698,7 +698,8 @@ describe('farmCycle', () => {
         assert.equal(res.ok, true, res.text);
         assert.equal(res.text, 'Farm "wheat_farm": I harvested 6 wheat and planted 6 again. 3 plants are not ripe yet. '
             + 'I stored 6 wheat in the chest at (-13, 63, 28). I planted 1 wheat_seeds. The gate is closed.');
-        assert.deepEqual(stored, [{ only: ['wheat', 'wheat_seeds'], keep: { wheat_seeds: 32 } }]);
+        // F23 (v0.1.4.11): 32 seeds and one for the empty cell the planting sows after the store step
+        assert.deepEqual(stored, [{ only: ['wheat', 'wheat_seeds'], keep: { wheat_seeds: 33 } }]);
         assert.equal(world.nameAt(0, 64, 4), 'wheat');
         assert.equal(gateOpen(world, 5), false);
         assert.ok(bot.entity.position.z > 5);
