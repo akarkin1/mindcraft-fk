@@ -122,3 +122,24 @@ placing toward the player (N2), a pen saved from one sentence with its kind conc
 Not in this release: the watch MCP for the owner's machine (the bot's position, inventory, chat and action read
 from here while the owner plays, never a connection to port 55916 from the cloud) and the two-bot mode go to
 v0.1.4.12 "Understanding and watching".
+
+## The fix round of the plays, 2026-10-03
+
+F24 and F25 by E5 (ad26ac9): bottom stairs and bottom slabs are floor again, a move still never breaks them; a
+bot inside the walls of a saved home or building (not a yard) is in shelter, `!goToShelter` stays there and closes
+the open doors of that area; a roof with a trapdoor and no door is a building; a built floor at most 1 block above
+the natural surface counts as ground, so a cellar under a house has a depth while a house or a roof on the ground
+has none (a cellar whose 8 columns all lie inside built walls sees no surface: known gap, documented in the test).
+
+W99 `owner_region` by T3 (547781f), on the owner's dump of radius 48 (`MCW_OWNER_DUMP`, every y the owner's own):
+the staircase is 2 wide, 11 bottom cobblestone stairs from (9..10, 30, 25) up to (9..10, 40, 35), from the tunnel
+at y 30 to the corridor of the mine room at y 41; "come here" up and down it in 4.8 s each, nothing broken, nothing
+placed, no destructive line; the night in the basement without a shelter line, 0 of 55 samples outside,
+`!goToShelter` answers `I am in the shelter "basement". The door is closed.`. 23 of 23 at the third run (the first
+two failed on the test: water that flows, a distance of 2.026 measured between entities instead of cells). The dump
+builds in 16 s (90,135 commands).
+
+| Id | Finding | Decision |
+|---|---|---|
+| T3-5 | In the basement (0 doors, 2 trapdoors) `!goToShelter` says `The door is closed.` after closing the floor trapdoor. | Kept: "the door" names the openable the bot closed, as in the hatch text of v0.1.4.8 (`I went down the ladder ... The door is closed.`); the claim was checked. |
+| T3-6 | The area sense in the corridor above the staircase said `I am in a walled storage 13 x 26 with a roof, 1 chest, 1 crafting table, 7 ladders, 207 water blocks, 2 doors and 3 gaps ...`: the scan of a corridor in rock counts the water pockets of the rock. | Known; a corridor is no enclosure to name. The sense says it once per place. For v0.1.4.12: a scan whose border is natural rock is a cave, not a storage. |

@@ -32,6 +32,12 @@ path search.
 - **"Come here" and "follow me" never dig toward you.** A long open way is walked in rounds (the search may think 10 s and has no cap on the length); a closed door or gate on the way is opened; a ladder whose lowest rung is out of reach is climbed with the ladder step of v0.1.4.9, which places the missing ladders when the bot carries some. When no way exists: `I find no way to you from here without digging. Come closer or tell me to dig.` A walk of these two that enters a cave stops once: `I stopped at (13, 40, -10): ahead is a cave. Tell me to go on if you want.`
 - **A ladder is left from the middle of its column**: an order that comes while the bot hangs on a ladder (a stopped follow) slides it down or climbs it up from where it is, never back to the entry first (the defect of the Luna session of 2026-10-02). A ladder hop of a route is the ladder leg of v0.1.4.9 (the missing ladders placed, the trapdoor opened and closed), never the path search alone; a shaft dug under a ladder is bridged with ladders on the way up.
 - **The scorecard** counts the failure texts of a session: `Failure texts, <log>: <text> N, ...`.
+- **Bottom stairs and bottom slabs are floor again** for the path search (v0.1.4.10 had made them no standing places, so the owner's cobblestone staircase to the tunnel was walked around, dug beside or built over); a move still never breaks them.
+- **A saved building is shelter at night**: inside the walls of a saved home or building (the owner's basement, saved with `!rememberArea("basement", "building")`) the night reflex stays, and `!goToShelter` answers `I am in the shelter "basement". The door is closed.` after closing the open doors and trapdoors of that area. A scan with a roof and a trapdoor and no door is a building. A cellar under a built floor has a depth.
+- **The knowledge block keeps the last job**: `Last job: the chopping, done, 128 oak_log.` or `Last job: the farming, left.`, so a question in the morning is answered from the record.
+- **`!rememberArea(name, "mine")` records the mine too** with the mine routes on, as `!rememberMine(name)` does, and the mining trip digs inside an area of type mine (its built blocks stay guarded).
+- **The farm cycle keeps the seeds its planting needs**: 32 plus one per empty cell, so none is stored and fetched back.
+- **The play guide has a section for two bots** (`only_chat_with`, `MINDSERVER_PORT`); a two-bot mode is for v0.1.4.12.
 
 ### Settings
 
