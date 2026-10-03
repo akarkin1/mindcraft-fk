@@ -60,3 +60,15 @@ The `explosion` packet of the client against the areas of the dimension; `health
 ### Requests
 
 - To the lead: the owner's guide needs the tunnel and the client (`MC_WATCH_URL`, `MC_WATCH_TOKEN`), and the cloud session's allowed hosts.
+
+## From part G (the small items, E3), done in round 1
+
+| Item | What |
+|---|---|
+| G1 | `patches/mineflayer+4.33.0.patch`: `wake()` of `bed.js` sends `entity_action` with `actionId: 'leave_bed'` when `bot.supportFeature('entityActionUsesStringMapper')`, else 2. `wake.js` keeps `wakeUp` (the waits, the tries, the texts) and calls `bot.wake()` only. |
+| G2 | `agent.js` exports `sendPlayerLoaded(bot)` (writes `player_loaded {}` when the protocol of the version has the packet, one console line, never throws) and calls it on every `spawn` (mineflayer emits it again after a death and a dimension change). `tests/world/helpers.js` waits 0.5 s after the spawn instead of 3.5. |
+| G3 | `patches/mineflayer-pathfinder+2.4.5.patch`: in `postProcessPath` the point after a door, gate or trapdoor the bot opens gets the centre of its cell. Over a full block that point was centred already; it sat off-centre over a floor without a full top face (bottom stairs). |
+| G4 | `skills.useToolOn` / `useToolOnBlock` on a door, gate or trapdoor: the state read before the click and again for up to 1 s after it; `I opened the door at (x, y, z).`, `I closed the door at (x, y, z).` (the result true), `The door at (x, y, z) was open already.` (open and stayed open, false), `The door at (x, y, z) did not open.` (closed and stayed closed, false), `The iron door at (x, y, z) does not open by hand.` (no click); the kind word door, gate or trapdoor; both halves of a door give the lower half's place. The description of `!useOn` is unchanged (the prompt has no room). |
+| G5 | `!endConversation` → `Conversation with ${name} ended.`; `goToPlayer` → `I see no player "Steve". The players I see: MartyByrde2.` / `... I see no other player.` from `bot.players`; a stopped wait says nothing. |
+
+Decisions accepted: the door toggles (the three texts of the spec fit only with a toggle); the texts of a stopped `goToPlayer`; `sendPlayerLoaded` as a top-level export for its test. Tests adapted by the lead: `fxc_wake` (the fake bots send the packet from `bot.wake()`), `rtl_follow_ladder` (the new text).
