@@ -213,7 +213,7 @@ export function createJob(agent, store, options = {}) {
             setJob(job);
             const started = job.started;
             const text = typeof failText === 'string' && failText.length > 0 ? failText : null;
-            const context = { where: call(() => where(), null), pos: call(() => position(), null), chests: call(() => chests(), null) };
+            const context = { where: call(() => where(), null), pos: call(() => position(), null), chests: call(() => chests(), null), mining: call(() => Boolean(settings.mining_pack) && (agent?._workStores?.()?.mines?.list?.(agent?.bot?.game?.dimension)?.length ?? 0) > 0, false) }; // v0.1.4.12 (W105): !mineOre in the prompt only with the mining pack and a known mine
             const prompt = planPrompt(job, text ? { ...b, text } : b, call(() => inventory(), {}), PLAN_COMMANDS, context);
             let answer = null;
             try {
@@ -221,10 +221,14 @@ export function createJob(agent, store, options = {}) {
             } catch (error) {
                 console.warn('The job could not ask the model for a plan:', error?.message ?? error);
             }
-            const steps = parsePlan(answer, PLAN_COMMAND_NAMES);
+            let steps = parsePlan(answer, PLAN_COMMAND_NAMES);
             job = getJob();
             if (!job || job.started !== started || job.state !== 'running') {
                 return result(false, 'changed', ''); // a new order came while the model planned
+            }
+            // v0.1.4.12 (T3-1): a step that repeats the command of the job itself is no plan (the job would loop)
+            if (Array.isArray(steps) && typeof job.kind === 'string' && steps.some(step => String(step?.command ?? '').match(/^!\w+/)?.[0] === `!${job.kind}`)) {
+                steps = null;
             }
             if (steps === null) {
                 return result(false, 'no_plan', pause(job, noPlanText(b)));
@@ -495,7 +499,13 @@ export function createJob(agent, store, options = {}) {
                         return result(true, 'wait', '');
                     }
                     const steps = Array.isArray(job.steps) ? job.steps : [];
-                    const next = steps.findIndex(step => step.state === 'todo');
+                    // v0.1.4.12 (T3-1): a step whose check the inventory already meets is done before it runs
+                    let next = steps.findIndex(step => step.state === 'todo');
+                    while (next >= 0 && Number.isFinite(steps[next]?.check?.count) && stepDone(steps[next], call(() => inventory(), {}), false)) {
+                        steps[next].state = 'done';
+                        setJob(job);
+                        next = steps.findIndex(step => step.state === 'todo');
+                    }
                     if (next >= 0) {
                         const command = steps[next].command;
                         if (needsSurface(command) && call(() => underground(), false)) {

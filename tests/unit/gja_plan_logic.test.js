@@ -25,7 +25,7 @@ describe('planPrompt', () => {
     });
 
     test('the commands of the wood, storage and crafting kind only', () => {
-        assert.deepEqual([...P.PLAN_COMMAND_NAMES], ['!chopTrees', '!craftSupplies', '!craftRecipe', '!getTool', '!fetchItem', '!collectBlocks', '!smeltItem']);
+        assert.deepEqual([...P.PLAN_COMMAND_NAMES], ['!chopTrees', '!craftSupplies', '!craftRecipe', '!getTool', '!fetchItem', '!collectBlocks', '!smeltItem', '!mineOre']); // v0.1.4.12 (E)
     });
 
     test('an empty inventory and a list of names', () => {
@@ -60,7 +60,7 @@ describe('parsePlan', () => {
     });
 
     test('a command outside the list refuses the plan', () => {
-        assert.equal(P.parsePlan('!chopTrees(4)\n!mineOre("iron", 8)', P.PLAN_COMMAND_NAMES), null);
+        assert.equal(P.parsePlan('!chopTrees(4)\n!farmCycle("farm")', P.PLAN_COMMAND_NAMES), null);
         assert.equal(P.parsePlan('!craftSupplies("torch", 16)\n!goToPlayer("Steve")', P.PLAN_COMMAND_NAMES), null);
         assert.equal(P.parsePlan('!chopTrees(4)', ['!craftSupplies']), null);
     });

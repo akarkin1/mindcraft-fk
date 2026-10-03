@@ -2,7 +2,7 @@
 // read as steps, and when a step is done. Only the commands of the wood, storage and crafting kind may be
 // steps. Pure. Nothing here throws.
 import { commandText } from '../repeat_guard.js';
-import { JOB_RULES, dropOf, itemMatches, resumeCommand } from './job_logic.js';
+import { JOB_RULES, dropOf, itemMatches, oreOf, resumeCommand } from './job_logic.js';
 
 /**
  * The commands a plan may use, with their params (type int or string, a default or none) and the line
@@ -23,7 +23,14 @@ export const PLAN_COMMANDS = Object.freeze([
         params: Object.freeze([{ type: 'string' }, { type: 'int', default: 1 }]) }),
     Object.freeze({ name: '!smeltItem', usage: '!smeltItem(item_name, num)', description: 'Smelt num of an item in a furnace: raw_iron to iron_ingot, raw_copper, raw_gold, sand to glass, logs to charcoal.',
         params: Object.freeze([{ type: 'string' }, { type: 'int' }]) }),
+    // v0.1.4.12 (W105): the raw iron of a plan comes from the mine. Not a surface command: the mining pack walks to
+    // the mine by itself. The plan prompt lists it only when the mining pack is on and a mine is known (context.mining).
+    Object.freeze({ name: '!mineOre', usage: '!mineOre(ore, num)', description: 'Mine num of an ore in the known mine: iron, coal, copper, gold, diamond.',
+        params: Object.freeze([{ type: 'string' }, { type: 'int', default: 8 }]) }),
 ]);
+
+/** The plan commands that the prompt lists only with a known mine and the mining pack (context.mining of planPrompt). */
+export const MINE_COMMANDS = Object.freeze(['!mineOre']);
 
 /**
  * What a furnace makes of an item, for the check of a step !smeltItem (spec v0.1.4.12, 4.2). The same table as
@@ -168,6 +175,9 @@ export function checkOf(name, args) {
             return { item: dropOf(a[0]), count: a[1] };
         case '!smeltItem':
             return { item: productOf(a[0]), count: a[1] ?? null };
+        case '!mineOre':
+            // the drop of the ore: raw_iron, raw_copper, raw_gold; coal, diamond, emerald; lapis_lazuli, redstone
+            return { item: oreOf(a[0])?.item ?? (typeof a[0] === 'string' ? a[0] : null), count: a[1] ?? null };
         default:
             return { item: null, count: null };
     }
@@ -192,6 +202,13 @@ function commandLines(commands) {
     }).filter(Boolean);
 }
 
+// The commands the prompt lists: !mineOre only with `mining` (the mining pack on and a mine known).
+function promptCommands(commands, mining) {
+    const list = Array.isArray(commands) && commands.length > 0 ? commands : PLAN_COMMANDS;
+    const nameOf = c => (typeof c === 'string' ? (c.startsWith('!') ? c : `!${c}`) : c?.name);
+    return mining ? list : list.filter(c => !MINE_COMMANDS.includes(nameOf(c)));
+}
+
 // The names a plan may use: the names of the list (strings or { name }), PLAN_COMMAND_NAMES without one.
 function allowedNames(commands) {
     const list = Array.isArray(commands) && commands.length > 0 ? commands : PLAN_COMMAND_NAMES;
@@ -205,12 +222,17 @@ function allowedNames(commands) {
  * Since v0.1.4.12 (4.2) a supply that a furnace makes has `smelt`, the step that makes it: iron_ingot
  * `!smeltItem("raw_iron", n)`; an iron tool (or `no_iron`) also needs its iron_ingot, with the count of
  * the tool: `{ kind: 'no_item', item: 'iron_ingot', smelt: '!smeltItem("raw_iron", 3)' }` for a pickaxe.
+ * W105: with `context.mining` (the mining pack on and a mine known) and less raw iron carried and in the known
+ * chests than the ingots need, the iron_ingot entry gets `steps`: mine, (the coal from a chest when the bot
+ * carries no fuel), smelt, then the tool: `['!mineOre("iron", 3)', '!smeltItem("raw_iron", 3)', '!getTool("pickaxe", "iron")']`.
+ * The count comes from the tool, else from the text of the skill (`3 iron_ingot`), else 3.
  * @param {object} job the job record (I1)
- * @param {{kind: string, item: string|null}} blocker
+ * @param {{kind: string, item: string|null, text?: string}} blocker
  * @param {object|Array} inventory { name: count } or [{ name, count }]
+ * @param {{mining?: boolean, chests?: object[]}} [context] as planPrompt's
  * @returns {{kind: string, item: string|null}[]}
  */
-export function missingSupplies(job, blocker, inventory) {
+export function missingSupplies(job, blocker, inventory, context = {}) {
     const b = isPlainObject(blocker) ? blocker : {};
     const out = [{ kind: typeof b.kind === 'string' ? b.kind : 'unknown', item: typeof b.item === 'string' ? b.item : null }];
     try {
@@ -219,10 +241,34 @@ export function missingSupplies(job, blocker, inventory) {
         if (item !== null && Object.hasOwn(SMELT_SUPPLIES, item)) {
             first.smelt = `!smeltItem("${SMELT_SUPPLIES[item]}", n)`;
         }
-        const tool = typeof first.item === 'string' ? first.item.match(/^iron_(pickaxe|axe|sword|shovel|hoe)$/) : null;
-        if (tool || first.kind === 'no_iron') {
-            const n = tool ? IRON_TOOL_INGOTS[tool[1]] : 'n';
-            out.push({ kind: 'no_item', item: 'iron_ingot', smelt: `!smeltItem("raw_iron", ${n})` });
+        const text = typeof b.text === 'string' ? b.text : '';
+        const named = typeof first.item === 'string' ? first.item.match(/^iron_(pickaxe|axe|sword|shovel|hoe)$/) : null;
+        const tool = named ?? text.match(/\bfor an? iron_(pickaxe|axe|sword|shovel|hoe)\b/);
+        const said = text.match(/\b(\d+) iron_ingot\b/);
+        const count = tool ? IRON_TOOL_INGOTS[tool[1]] : (said ? Number(said[1]) : null);
+        if (first.item === 'iron_ingot' && count !== null) {
+            first.smelt = `!smeltItem("raw_iron", ${count})`;
+        }
+        if (named || first.kind === 'no_iron') {
+            out.push({ kind: 'no_item', item: 'iron_ingot', smelt: `!smeltItem("raw_iron", ${count ?? 'n'})` });
+        }
+        const c = isPlainObject(context) ? context : {};
+        const ingot = out.find(m => m.item === 'iron_ingot');
+        if (ingot && c.mining === true) {
+            const n = count ?? 3;
+            const chests = Array.isArray(c.chests) ? c.chests : [];
+            const inChests = (name) => chests.reduce((sum, ch) => sum + (isFiniteNumber(ch?.items?.[name]) ? ch.items[name] : 0), 0);
+            const carried = inventoryCounts(inventory);
+            const ingots = (carried.iron_ingot ?? 0) + inChests('iron_ingot');
+            const raw = (carried.raw_iron ?? 0) + inChests('raw_iron');
+            if (ingots + raw < n) {
+                const fuel = ['coal', 'charcoal'].some(f => (carried[f] ?? 0) > 0)
+                    || Object.entries(carried).some(([name, k]) => k > 0 && /_(planks|log)$/.test(name) && !/^(stripped_)?(crimson|warped)_/.test(name));
+                const coal = !fuel ? ['coal', 'charcoal'].find(f => inChests(f) > 0) : null;
+                ingot.smelt = `!smeltItem("raw_iron", ${n})`;
+                ingot.steps = [`!mineOre("iron", ${n})`, ...(coal ? [`!fetchItem("${coal}", ${Math.ceil(n / 8)})`] : []), ingot.smelt,
+                    ...(tool ? [`!getTool("${tool[1]}", "iron")`] : [])];
+            }
         }
     } catch {
         // the blocker alone
@@ -290,8 +336,9 @@ function chestLines(chests, pos) {
  * @param {{kind: string, item: string|null, text?: string}} blocker
  * @param {object|Array} inventory { name: count } or [{ name, count }]
  * @param {Array} [commands] names or { name, usage, description }; PLAN_COMMANDS without
- * @param {{where?: {underground: boolean, mine?: object, area?: object}, chests?: object[], pos?: {x, y, z}}} [context]
- *   where: whereAmI of the agent; chests: the chests of the chest index ({ x, y, z, items }); pos: the bot.
+ * @param {{where?: {underground: boolean, mine?: object, area?: object}, chests?: object[], pos?: {x, y, z}, mining?: boolean}} [context]
+ *   where: whereAmI of the agent; chests: the chests of the chest index ({ x, y, z, items }); pos: the bot;
+ *   mining: the mining pack is on and a mine is known (v0.1.4.12: !mineOre is listed only then).
  *   A part that is not given is left out.
  * @returns {string}
  */
@@ -300,7 +347,7 @@ export function planPrompt(job, blocker, inventory, commands, context = {}) {
     const c = isPlainObject(context) ? context : {};
     const count = isFiniteNumber(j.wanted) ? `, ${isFiniteNumber(j.got) ? j.got : 0} of ${j.wanted} done` : '';
     const b = isPlainObject(blocker) ? blocker : {};
-    const problem = missingSupplies(j, b, inventory).map(m => `${m.kind}${m.item ? ` (${m.item}${m.smelt ? `, made by ${m.smelt}` : ''})` : ''}`);
+    const problem = missingSupplies(j, b, inventory, c).map(m => `${m.kind}${m.item ? ` (${m.item}${m.smelt ? `, made by ${m.smelt}` : ''}${Array.isArray(m.steps) ? `; the steps: ${m.steps.join(', ')}` : ''})` : ''}`);
     if (typeof b.text === 'string' && b.text.trim().length > 0) {
         problem.push(`the skill said: "${b.text.trim()}"`);
     }
@@ -314,7 +361,7 @@ export function planPrompt(job, blocker, inventory, commands, context = {}) {
         `What the bot carries: ${inventoryText(inventory)}.`,
         ...(chests ?? []),
         'The commands you may use:',
-        ...commandLines(commands),
+        ...commandLines(promptCommands(commands, c.mining === true)),
         `Answer with the steps that get what is missing, one command per line, in the order the bot runs them, at most ${JOB_RULES.maxSteps} lines.`,
         'Write the commands with their arguments, strings in double quotes, for example !craftSupplies("stick", 8). Use no other command and write nothing else.',
         'After the steps the bot goes back to its job by itself; do not write the job command.',

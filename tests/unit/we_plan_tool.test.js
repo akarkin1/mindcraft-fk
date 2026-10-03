@@ -55,6 +55,68 @@ describe('the plan: the step smelt', () => {
     });
 });
 
+describe('the plan: !mineOre for the raw iron (W105)', () => {
+    const NO_IRON = { kind: 'no_iron', item: 'iron_ingot', text: 'I have no iron for an iron_pickaxe: 3 iron_ingot or 3 raw_iron are needed. Say "mine 3 iron" first.' };
+    const job = L.jobOf('!getTool', ['pickaxe', 'iron']);
+
+    test('a plan command: usage, description, params; not a surface command', () => {
+        const c = P.PLAN_COMMANDS.find(x => x.name === '!mineOre');
+        assert.equal(c.usage, '!mineOre(ore, num)');
+        assert.equal(c.description, 'Mine num of an ore in the known mine: iron, coal, copper, gold, diamond.');
+        assert.deepEqual(c.params.map(p => [p.type, p.default]), [['string', undefined], ['int', 8]]);
+        assert.ok(P.PLAN_COMMAND_NAMES.includes('!mineOre'));
+        assert.equal(P.needsSurface('!mineOre("iron", 3)'), false);
+        assert.ok(!P.SURFACE_COMMANDS.includes('!mineOre'));
+        assert.equal(P.needsSurface('!fetchItem("coal", 2)'), true, 'the coal of the room: the way out first');
+    });
+
+    test('checkOf: the drop of the ore and the count', () => {
+        assert.deepEqual(P.checkOf('!mineOre', ['iron', 3]), { item: 'raw_iron', count: 3 });
+        assert.deepEqual(P.checkOf('!mineOre', ['copper', 5]), { item: 'raw_copper', count: 5 });
+        assert.deepEqual(P.checkOf('!mineOre', ['gold', 2]), { item: 'raw_gold', count: 2 });
+        assert.deepEqual(P.checkOf('!mineOre', ['coal', 8]), { item: 'coal', count: 8 });
+        assert.deepEqual(P.checkOf('!mineOre', ['diamond', 1]), { item: 'diamond', count: 1 });
+        assert.deepEqual(P.checkOf('!mineOre', ['emerald', 1]), { item: 'emerald', count: 1 });
+        assert.deepEqual(P.checkOf('!mineOre', ['lapis', 4]), { item: 'lapis_lazuli', count: 4 });
+    });
+
+    test('the plan of W105 is parsed with its checks', () => {
+        const steps = P.parsePlan('!mineOre("iron", 3)\n!fetchItem("coal", 2)\n!smeltItem("raw_iron", 3)\n!getTool("pickaxe", "iron")', P.PLAN_COMMAND_NAMES);
+        assert.deepEqual(steps.map(x => [x.command, x.check]), [
+            ['!mineOre("iron", 3)', { item: 'raw_iron', count: 3 }],
+            ['!fetchItem("coal", 2)', { item: 'coal', count: 2 }],
+            ['!smeltItem("raw_iron", 3)', { item: 'iron_ingot', count: 3 }],
+            ['!getTool("pickaxe", "iron")', { item: 'iron_pickaxe', count: null }],
+        ]);
+        assert.deepEqual(P.parsePlan('!mineOre("iron")', P.PLAN_COMMAND_NAMES)[0].check, { item: 'raw_iron', count: 8 }, 'the default 8');
+        assert.equal(P.stepDone(steps[0], { raw_iron: 3 }, false), true);
+    });
+
+    test('missingSupplies: no raw iron carried or in a chest: mine, the coal of the chest, smelt, the tool', () => {
+        const chests = [{ x: 1, y: 64, z: 1, items: { coal: 8, cobblestone: 20 } }];
+        assert.deepEqual(P.missingSupplies(job, NO_IRON, { stone_pickaxe: 1 }, { mining: true, chests }), [{
+            kind: 'no_iron', item: 'iron_ingot', smelt: '!smeltItem("raw_iron", 3)',
+            steps: ['!mineOre("iron", 3)', '!fetchItem("coal", 1)', '!smeltItem("raw_iron", 3)', '!getTool("pickaxe", "iron")'],
+        }]);
+        assert.deepEqual(P.missingSupplies(job, NO_IRON, { coal: 2 }, { mining: true, chests: [] })[0].steps,
+            ['!mineOre("iron", 3)', '!smeltItem("raw_iron", 3)', '!getTool("pickaxe", "iron")'], 'it carries fuel');
+        assert.equal(P.missingSupplies(job, NO_IRON, { raw_iron: 3 }, { mining: true })[0].steps, undefined, 'raw iron carried');
+        assert.equal(P.missingSupplies(job, NO_IRON, {}, { mining: true, chests: [{ items: { raw_iron: 4 } }] })[0].steps, undefined, 'raw iron in a chest');
+        assert.equal(P.missingSupplies(job, NO_IRON, {}, { mining: false })[0].steps, undefined, 'no mine: no mining step');
+        assert.equal(P.missingSupplies(job, NO_IRON, {})[0].steps, undefined);
+    });
+
+    test('the prompt lists !mineOre only with the mining pack and a known mine, and gives the steps', () => {
+        const on = P.planPrompt(job, NO_IRON, { stone_pickaxe: 1 }, P.PLAN_COMMANDS, { mining: true, chests: [{ x: 1, y: 64, z: 1, items: { coal: 8 } }] });
+        assert.ok(on.includes('!mineOre(ore, num): Mine num of an ore in the known mine: iron, coal, copper, gold, diamond.'), on);
+        assert.ok(on.includes('no_iron (iron_ingot, made by !smeltItem("raw_iron", 3); the steps: !mineOre("iron", 3), !fetchItem("coal", 1), !smeltItem("raw_iron", 3), !getTool("pickaxe", "iron"))'), on);
+        const off = P.planPrompt(job, NO_IRON, { stone_pickaxe: 1 }, P.PLAN_COMMANDS, { mining: false });
+        assert.ok(!off.includes('!mineOre'), off);
+        assert.ok(!P.planPrompt(job, NO_IRON, {}, P.PLAN_COMMANDS).includes('!mineOre'));
+        assert.ok(off.includes('!smeltItem(item_name, num)'));
+    });
+});
+
 function scene({ smelting = true, storage = null, chests = null } = {}) {
     const world = makeWorld();
     const bot = makeWoodBot({ world, pos: [0.5, 64, 0.5] });
