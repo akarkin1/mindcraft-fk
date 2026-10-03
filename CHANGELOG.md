@@ -6,7 +6,7 @@ This fork is based on [Mindcraft](https://github.com/mindcraft-bots/mindcraft) `
 
 Each release lists new settings and feature flags with their default value.
 
-## [0.1.4.11] - unreleased
+## [0.1.4.11] - 2026-10-03
 
 "Navigation and words": every failure text names the cause and the next step, a shaft from inside the
 mine, the tunnel accepted where you stand, the open sky, a place from one sentence, routes walked by the
