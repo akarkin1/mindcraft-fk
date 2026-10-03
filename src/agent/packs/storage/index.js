@@ -17,9 +17,9 @@ export { CHEST_FILE, ChestIndex } from './chest_index.js';
 export { FETCH_LOOK_LIMIT, FETCH_LOOK_RANGE, FETCH_TIMEOUT_MS, LOOK_LIMIT, LOOK_RANGE, LOOK_TIMEOUT_MS, OPEN_TIMEOUT_MS, REACH, STORE_LIMIT,
     STORE_RANGE, STORE_TIMEOUT_MS, chestsText, fetchItem, lookIntoChest, lookIntoChests, recordChest, recordContainer, storeItems } from './storage.js';
 // v0.1.4.12 (part E): smelting
-export { BATCH_MAX, EXTRA_MS, FUELS, FURNACE_AREA_KINDS, FURNACE_RANGE, NO_FURNACE_KINDS, PER_ITEM_MS, PLACE_RANGE, POLL_MS, SMELT_PRODUCTS,
+export { BATCH_MAX, EXTRA_MS, FUELS, FURNACE_AREA_KINDS, FURNACE_FAR_RANGE, FURNACE_RANGE, NO_FURNACE_KINDS, PER_ITEM_MS, PLACE_RANGE, POLL_MS, SMELT_PRODUCTS,
     areaKindOf, batchesOf, cellAllowsFurnace, chooseFuel, chooseFurnace, chooseFurnaceSpot, fuelKindOf, fuelPer, isBurningLog, isBurningPlanks,
-    productOf, timeLimitMs, unitsFor, usableFurnaces } from './smelt_logic.js';
+    productOf, timeLimitMs, unitsFor, usableFurnaces, walkLimitMs } from './smelt_logic.js';
 export { SMELT_OPEN_TIMEOUT_MS, SMELT_REACH, STALL_MS, smeltItem } from './smelt.js';
 
 /**

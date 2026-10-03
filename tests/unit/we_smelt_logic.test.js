@@ -162,6 +162,17 @@ describe('the furnace choice from a fixture of areas', () => {
         assert.equal(L.chooseFurnace(furnaces, me, () => false), null);
         assert.equal(L.chooseFurnace([], me), null);
     });
+
+    test('F1: the second ring of 64 blocks; the walk limit of the storage pack', () => {
+        const furnaces = [{ x: 30, y: 64, z: 0 }, { x: 70, y: 64, z: 0 }];
+        assert.equal(L.FURNACE_FAR_RANGE, 64);
+        assert.equal(L.chooseFurnace(furnaces, me), null, 'none within 16');
+        assert.deepEqual(L.chooseFurnace(furnaces, me, null, L.FURNACE_FAR_RANGE), { x: 30, y: 64, z: 0 });
+        assert.deepEqual(L.usableFurnaces(furnaces, me, null, 64), [{ x: 30, y: 64, z: 0 }], 'not the one 70 away');
+        assert.equal(L.walkLimitMs(0), 20000);
+        assert.equal(L.walkLimitMs(30), 35000);
+        assert.equal(L.walkLimitMs(200), 60000);
+    });
 });
 
 describe('the texts of smelting, word for word (storage/texts.js)', () => {
@@ -169,7 +180,9 @@ describe('the texts of smelting, word for word (storage/texts.js)', () => {
         assert.equal(T.TEXTS.smelted(8, 'raw_iron', 'iron_ingot', { x: 12, y: 64.5, z: -3.2 }, 1, 'coal'),
             'I smelted 8 raw_iron into 8 iron_ingot in the furnace at (12, 64, -4) with 1 coal.');
         assert.equal(T.TEXTS.noFuel, 'I have no fuel: no coal, charcoal, planks or logs.');
-        assert.equal(T.TEXTS.noFurnace, 'I know no furnace within 16 blocks and carry none.');
+        assert.equal(T.TEXTS.noFurnace(64), 'I know no furnace within 64 blocks and carry none.');
+        assert.equal(T.TEXTS.noFurnace(16), 'I know no furnace within 16 blocks and carry none.');
+        assert.equal(T.TEXTS.noFurnace(), 'I know no furnace within 16 blocks and carry none.', 'the first ring of the spec');
         assert.equal(T.TEXTS.noItem('raw_iron'), 'I carry no raw_iron.');
         assert.equal(T.TEXTS.stopped(3, 8, 'raw_iron'), 'I stopped after 3 of 8 raw_iron.');
         assert.equal(T.TEXTS.notSmeltable('raw_cobblestone'), 'raw_cobblestone is not something a furnace changes.');

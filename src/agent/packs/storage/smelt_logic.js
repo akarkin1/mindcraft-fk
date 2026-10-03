@@ -42,8 +42,10 @@ export const FUELS = Object.freeze([
 
 /** At most this many items go into the furnace at once. */
 export const BATCH_MAX = 64;
-/** A furnace within this distance is used. */
+/** A furnace within this distance is used first (the first ring of the spec). */
 export const FURNACE_RANGE = 16;
+/** Then a furnace within this distance among the loaded blocks (v0.1.4.12, F1: the room is 20 to 30 blocks from the tunnel's end). */
+export const FURNACE_FAR_RANGE = 64;
 /** A furnace from the inventory is placed within this distance. */
 export const PLACE_RANGE = 8;
 /** The furnace is read this often, in ms. */
@@ -335,18 +337,20 @@ export function chooseFurnaceSpot(cells, areas, from, canPlace = null) {
 }
 
 /**
- * The furnaces the bot may use, the nearest first: within 16 blocks of `from` and allowed by
+ * The furnaces the bot may use, the nearest first: within `range` blocks of `from` (16) and allowed by
  * `canUse(furnace)` (the area guard). A canUse that throws counts as a refusal.
  * @param {{x,y,z}[]} furnaces
  * @param {{x,y,z}} from
  * @param {(furnace: object) => boolean} [canUse]
+ * @param {number} [range] FURNACE_RANGE
  * @returns {{x: number, y: number, z: number}[]}
  */
-export function usableFurnaces(furnaces, from, canUse = null) {
+export function usableFurnaces(furnaces, from, canUse = null, range = FURNACE_RANGE) {
     if (!isPoint(from)) {
         return [];
     }
-    return (Array.isArray(furnaces) ? furnaces : []).filter(isPoint).filter(f => distance(f, from) <= FURNACE_RANGE)
+    const r = isFiniteNumber(range) && range > 0 ? range : FURNACE_RANGE;
+    return (Array.isArray(furnaces) ? furnaces : []).filter(isPoint).filter(f => distance(f, from) <= r)
         .filter(f => {
             if (typeof canUse !== 'function') {
                 return true;
@@ -366,8 +370,20 @@ export function usableFurnaces(furnaces, from, canUse = null) {
  * @param {{x,y,z}[]} furnaces
  * @param {{x,y,z}} from
  * @param {(furnace: object) => boolean} [canUse]
+ * @param {number} [range] FURNACE_RANGE
  * @returns {{x: number, y: number, z: number}|null}
  */
-export function chooseFurnace(furnaces, from, canUse = null) {
-    return usableFurnaces(furnaces, from, canUse)[0] ?? null;
+export function chooseFurnace(furnaces, from, canUse = null, range = FURNACE_RANGE) {
+    return usableFurnaces(furnaces, from, canUse, range)[0] ?? null;
+}
+
+/**
+ * The time a walk to a container may take: 20 s plus 0.5 s per block, at least 1 s, at most 60 s (the walk of the
+ * storage pack to a chest: 20 s plus 0.5 s per block).
+ * @param {number} distanceBlocks
+ * @returns {number} ms
+ */
+export function walkLimitMs(distanceBlocks) {
+    const d = isFiniteNumber(distanceBlocks) && distanceBlocks > 0 ? distanceBlocks : 0;
+    return Math.max(1000, Math.min(60000, 20000 + d * 500));
 }

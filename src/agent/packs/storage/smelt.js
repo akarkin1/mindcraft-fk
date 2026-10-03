@@ -9,8 +9,8 @@ import { Vec3 } from 'vec3';
 import { botPos, clockOf, dimensionOf, listAreas, logTo } from '../home/context.js';
 import { walkNear } from '../home/motion.js';
 import { cleanName } from './storage_logic.js';
-import { BATCH_MAX, FURNACE_RANGE, PLACE_RANGE, POLL_MS, batchesOf, chooseFuel, chooseFurnaceSpot, fuelPer, productOf, timeLimitMs,
-    usableFurnaces } from './smelt_logic.js';
+import { BATCH_MAX, FURNACE_FAR_RANGE, FURNACE_RANGE, PLACE_RANGE, POLL_MS, batchesOf, chooseFuel, chooseFurnaceSpot, fuelPer, productOf,
+    timeLimitMs, usableFurnaces, walkLimitMs } from './smelt_logic.js';
 import { TEXTS, posText } from './texts.js';
 
 /** The bot walks to within this many blocks of a furnace before it opens it. */
@@ -93,11 +93,11 @@ function closeQuietly(bot, window) {
     }
 }
 
-// The furnaces within 16 blocks that the area guard lets the bot use, the nearest first.
-function furnacesNear(bot) {
+// The furnaces within `range` blocks (among the loaded blocks) that the area guard lets the bot use, the nearest first.
+function furnacesNear(bot, range = FURNACE_RANGE) {
     let found = [];
     try {
-        found = bot.findBlocks({ matching: b => b?.name === 'furnace', maxDistance: FURNACE_RANGE, count: 32 }) ?? [];
+        found = bot.findBlocks({ matching: b => b?.name === 'furnace', maxDistance: range, count: 16 }) ?? [];
     } catch {
         found = [];
     }
@@ -109,7 +109,7 @@ function furnacesNear(bot) {
             return Boolean(block) && guard.canUse(block, held) !== false;
         }
         : null;
-    return usableFurnaces(found.map(p => ({ x: p.x, y: p.y, z: p.z })), botPos(bot), canUse);
+    return usableFurnaces(found.map(p => ({ x: p.x, y: p.y, z: p.z })), botPos(bot), canUse, range);
 }
 
 // The free floor cells within 8 blocks: air with a full block below, not where the bot stands.
@@ -194,8 +194,12 @@ function busyWith(furnace, item, product) {
 }
 
 // Walks to the furnace and opens it. { ok, window } or { ok: false, reason }: interrupted, unreachable, busy.
-async function useFurnace(bot, at, item, product, clock, deadline) {
-    const walk = await walkNear(bot, at, SMELT_REACH, { clock, timeoutMs: Math.max(1000, Math.min(30000, deadline - clock.now())) });
+// The walk is the storage pack's walk to a chest: walkNear without digging (doors open), 20 s plus 0.5 s per block.
+async function useFurnace(bot, at, item, product, clock) {
+    const me = botPos(bot);
+    const d = me ? Math.hypot(at.x + 0.5 - me.x, at.y - me.y, at.z + 0.5 - me.z) : 0;
+    progress(bot);
+    const walk = await walkNear(bot, at, SMELT_REACH, { clock, timeoutMs: walkLimitMs(d) });
     progress(bot);
     if (bot.interrupt_code || walk.reason === 'interrupted') {
         return { ok: false, reason: 'interrupted' };
@@ -353,13 +357,16 @@ function mainFuel(fuelPut, fuelBack, lastName) {
 
 /**
  * Smelts `count` of an item (spec v0.1.4.12, 4.2). The furnace: the nearest within 16 blocks that the
- * area guard lets the bot use (canUse) and that holds nothing else; none: a furnace from the inventory,
+ * area guard lets the bot use (canUse) and that holds nothing else, then (F1) the nearest within 64 blocks
+ * among the loaded blocks, walked to without digging; none: a furnace from the inventory,
  * placed on the nearest free floor cell within 8 blocks that lies in a saved area of kind storage,
  * building, home or mine (never a pen, a farm or a yard, never outside every area when areas exist;
  * without any area the nearest free cell) and that canPlace allows. The fuel: chooseFuel (coal or
  * charcoal, then planks, then logs; the fewest units). Batches of at most 64; the furnace is read every
  * 2 s and the output taken as it comes, the count is what came out. A stop (bot.interrupt_code) takes
- * what is done and leaves the furnace empty of the bot's items. Time limit: 12 s per item plus 10 s.
+ * what is done and leaves the furnace empty of the bot's items. Time limit: 12 s per item plus 10 s, from the
+ * open furnace (the walk has its own limit: 20 s plus 0.5 s per block, at most 60 s). Without a furnace:
+ * `I know no furnace within 64 blocks and carry none.`
  * Never throws.
  * @param {object} bot
  * @param {object} ctx { areas, log, now, skills }
@@ -404,10 +411,13 @@ export async function smeltItem(bot, ctx = {}, item, count = 1, options = {}) {
         if (!chooseFuel(fuelInventory(bot, name, run.target), run.target)) {
             return finish(false, 'no_fuel', TEXTS.noFuel);
         }
-        run.deadline = run.clock.now() + timeLimitMs(run.target);
+        // v0.1.4.12 (F1): a furnace within 16 blocks first, then one within 64 among the loaded blocks, then one placed
         let failed = null;
-        for (const f of furnacesNear(bot)) {
-            const use = await useFurnace(bot, f, name, run.product, run.clock, run.deadline);
+        const near = furnacesNear(bot, FURNACE_RANGE);
+        const tried = new Set(near.map(f => `${f.x},${f.y},${f.z}`));
+        const far = furnacesNear(bot, FURNACE_FAR_RANGE).filter(f => !tried.has(`${f.x},${f.y},${f.z}`));
+        for (const f of [...near, ...far]) {
+            const use = await useFurnace(bot, f, name, run.product, run.clock);
             if (use.ok) {
                 window = use.window;
                 at = f;
@@ -421,7 +431,7 @@ export async function smeltItem(bot, ctx = {}, item, count = 1, options = {}) {
         if (!window) {
             const placed = await placeFurnace(bot, ctx);
             if (placed) {
-                const use = await useFurnace(bot, placed, name, run.product, run.clock, run.deadline);
+                const use = await useFurnace(bot, placed, name, run.product, run.clock);
                 if (use.ok) {
                     window = use.window;
                     at = placed;
@@ -439,8 +449,10 @@ export async function smeltItem(bot, ctx = {}, item, count = 1, options = {}) {
             if (failed) {
                 return finish(false, 'unreachable', `I could not get to the furnace at ${posText(failed.at)}.`);
             }
-            return finish(false, 'no_furnace', TEXTS.noFurnace);
+            return finish(false, 'no_furnace', TEXTS.noFurnace(FURNACE_FAR_RANGE));
         }
+        // the time limit counts from the open furnace: the walk to it has its own limit
+        run.deadline = run.clock.now() + timeLimitMs(run.target);
         // what lay in the output before is the product of an earlier smelt: taken out, not counted
         const earlier = slotOf(window, 'outputItem');
         if (earlier) {

@@ -270,6 +270,54 @@ describe('smeltItem: the furnace near the bot', () => {
     });
 });
 
+describe('smeltItem: F1, a furnace within 64 blocks', () => {
+    // a pathfinder that walks the bot next to the goal and records whether the movements may dig
+    function walker(bot) {
+        const walks = [];
+        bot.pathfinder = {
+            setMovements(m) { walks.push({ canDig: m.canDig }); },
+            async goto(goal) {
+                walks[walks.length - 1].goal = [goal.x, goal.y, goal.z];
+                bot.entity.position = new Vec3(goal.x + 1.5, goal.y, goal.z + 0.5);
+            },
+            stop() {}, setGoal() {},
+        };
+        bot.clearControlStates = () => {};
+        return walks;
+    }
+
+    test('none within 16: the furnace 30 blocks away, walked to without digging, then the smelt', async () => {
+        const s = scene({ items: { raw_iron: 3, coal: 1 }, furnace: [30, 64, 0] });
+        const walks = walker(s.bot);
+        const r = await S.smeltItem(s.bot, s.ctx, 'raw_iron', 3, s.opts);
+        assert.equal(r.ok, true, r.text);
+        assert.equal(r.text, 'I smelted 3 raw_iron into 3 iron_ingot in the furnace at (30, 64, 0) with 1 coal.');
+        assert.ok(walks.length >= 1);
+        assert.ok(walks.every(w => w.canDig === false), JSON.stringify(walks));
+        assert.deepEqual(walks[0].goal, [30, 64, 0]);
+    });
+
+    test('one beyond 64 blocks is not used; one within 16 comes before one farther away', async () => {
+        const s = scene({ items: { raw_iron: 1, coal: 1 }, furnace: [70, 64, 0] });
+        walker(s.bot);
+        const r = await S.smeltItem(s.bot, s.ctx, 'raw_iron', 1, s.opts);
+        assert.deepEqual([r.reason, r.text], ['no_furnace', 'I know no furnace within 64 blocks and carry none.']);
+        const t = scene({ items: { raw_iron: 1, coal: 1 }, furnace: [40, 64, 0] });
+        const near = t.bot.addFurnace(10, 64, 0);
+        t.bot._furnaces = () => [t.furnace, near];
+        walker(t.bot);
+        const r2 = await S.smeltItem(t.bot, t.ctx, 'raw_iron', 1, t.opts);
+        assert.equal(r2.text, 'I smelted 1 raw_iron into 1 iron_ingot in the furnace at (10, 64, 0) with 1 coal.');
+    });
+
+    test('the far furnace the guard refuses is not used', async () => {
+        const s = scene({ items: { raw_iron: 1, coal: 1 }, furnace: [30, 64, 0], guard: { canUse: () => false, canPlace: () => true } });
+        walker(s.bot);
+        const r = await S.smeltItem(s.bot, s.ctx, 'raw_iron', 1, s.opts);
+        assert.equal(r.reason, 'no_furnace');
+    });
+});
+
 describe('smeltItem: refusals before anything moves', () => {
     test('not smeltable, nothing carried, no fuel, no furnace', async () => {
         let s = scene({ items: { coal: 1 } });
@@ -283,7 +331,7 @@ describe('smeltItem: refusals before anything moves', () => {
         assert.deepEqual(s.bot.calls, [], 'no furnace opened');
         s = scene({ items: { raw_iron: 3, coal: 1 }, furnace: null });
         const none = await S.smeltItem(s.bot, s.ctx, 'raw_iron', 3, s.opts);
-        assert.deepEqual([none.reason, none.text], ['no_furnace', 'I know no furnace within 16 blocks and carry none.']);
+        assert.deepEqual([none.reason, none.text], ['no_furnace', 'I know no furnace within 64 blocks and carry none.']);
     });
 
     test('a furnace that the guard does not let the bot use is not used', async () => {
@@ -336,7 +384,7 @@ describe('smeltItem: a furnace from the inventory', () => {
         const areas = [box('pen', 'pen', 'pen', [-3, 60, -3], [1, 70, 3]), box('far', 'storage', 'building', [30, 60, 30], [35, 70, 35])];
         const s = scene({ items: { raw_iron: 1, coal: 1, furnace: 1 }, furnace: null, areas });
         const r = await S.smeltItem(s.bot, s.ctx, 'raw_iron', 1, s.opts);
-        assert.deepEqual([r.reason, r.text], ['no_furnace', 'I know no furnace within 16 blocks and carry none.']);
+        assert.deepEqual([r.reason, r.text], ['no_furnace', 'I know no furnace within 64 blocks and carry none.']);
         assert.deepEqual(s.placed, []);
         assert.equal(s.bot.count('furnace'), 1);
     });
