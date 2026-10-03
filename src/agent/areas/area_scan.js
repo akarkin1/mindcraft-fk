@@ -1,6 +1,7 @@
 // Finds the building or the fenced field around a position (spec v0.1.4.6, A3).
 // Pure: the world is read through getBlockName(x, y, z), which returns the name of a block
-// or null for a block that is not loaded. Nothing is imported.
+// or null for a block that is not loaded. Nothing is imported (v0.1.4.12: the measure of a tunnel of the mining pack is
+// given, see useTunnelMeasure).
 
 // --- block names --------------------------------------------------------------------------
 
@@ -650,13 +651,17 @@ const SCAN_TEXTS = Object.freeze({
     // v0.1.4.11 (P1): scanEnclosure found nothing that bounds the place
     no_border: (i) => `I find no border around me: no fence, wall, hedge or water within ${i.radius} blocks. `
         + 'Stand inside the place and say it again.',
+    // v0.1.4.12 (F1): a border of rock is a tunnel or a cave, never an area of !rememberArea without a type
+    tunnel: () => 'I am in a tunnel; a tunnel is saved with "this is the mine" or "dig here".',
+    cave: () => 'I am in a cave; a cave is nothing I save.',
 });
 
 /**
  * The text for the reason of a failed scan (v0.1.4.8, D5): what went wrong and what to do.
  * Reasons: no_built_blocks, too_few_blocks (scanBuilding); not_loaded, no_ground, not_enclosed,
  * no_fence, no_crops, roofed, farmland (scanFarm, scanPen); no_fence_near, not_closed, too_big
- * (findFencedGroundNear); no_border (scanEnclosure, v0.1.4.11). An unknown reason gives ''.
+ * (findFencedGroundNear); no_border (scanEnclosure, v0.1.4.11); tunnel, cave (scanEnclosure, v0.1.4.12, F1: the
+ * answer of !rememberArea without a type in rock). An unknown reason gives ''.
  * @param {string} reason
  * @param {{range?: number, radius?: number, count?: number, minBlocks?: number, what?: string}} [info]
  *   range: the reach of findFencedGroundNear (6) or the start radius of scanBuilding; radius: of
@@ -928,8 +933,11 @@ export function scanWithoutType(getBlockName, origin, options = {}) {
 
 // --- the enclosure: one scan for every place (v0.1.4.11, I5) --------------------------------
 
-/** The kinds of the border of an enclosure; null when nothing made bounds it. */
-export const ENCLOSURE_BORDERS = Object.freeze(['fence', 'wall', 'glass', 'hedge', 'water', 'mixed']);
+/**
+ * The kinds of the border of an enclosure; null when nothing made bounds it. v0.1.4.12 (F1): 'rock', the border of a
+ * tunnel or a cave (a place that scanEnclosure gives with found false, see there).
+ */
+export const ENCLOSURE_BORDERS = Object.freeze(['fence', 'wall', 'glass', 'hedge', 'water', 'mixed', 'rock']);
 
 /** The kinds of an opening of an enclosure. A gap is a doorway without a door in the wall of a building. */
 export const OPENING_KINDS = Object.freeze(['door', 'gate', 'trapdoor', 'gap']);
@@ -1234,6 +1242,268 @@ function buildingEnclosure(getBlockName, read, origin, opts) {
     return enclosureFound(scan.min, scan.max, buildingFacts(read, scan, origin), 'building', scan);
 }
 
+// --- rock: a tunnel or a cave (v0.1.4.12, F1, F4) ---------------------------------------------
+
+/** The border is rock when this share of the columns that bound the place, or more, is natural (F1). */
+export const ROCK_SHARE = 2 / 3;
+
+/** A tunnel is 1 or 2 wide and at least this many cells long (F1). */
+export const TUNNEL_MIN_LENGTH = 4;
+
+/** A scan that takes longer than this many milliseconds says how long it took (F4). */
+export const SCAN_SLOW_MS = 2000;
+
+// Under rock: the block over the head is natural and this many blocks above it are solid too (a roof is thinner).
+const ROCK_ABOVE = 3;
+
+// How far the measure of a cave looks from the feet to each side.
+const CAVE_REACH = 16;
+
+const DIR_STEPS = Object.freeze({ north: [0, -1], east: [1, 0], south: [0, 1], west: [-1, 0] });
+
+// The measure of a tunnel when the options of scanEnclosure give none (useTunnelMeasure).
+let tunnelMeasure = null;
+
+/**
+ * The measure of a tunnel that scanEnclosure uses when its options give none (v0.1.4.12, F1): tunnelAt of the mining
+ * pack (src/agent/packs/mining/mine_logic.js). area_sense.js registers it when it is loaded, so this module keeps
+ * importing nothing. Without a measure a place in rock is a cave.
+ * @param {Function|null} fn tunnelAt(getName, feet, options) => { ok: true, tunnel } | { ok: false, cause }; null
+ *   removes it
+ */
+export function useTunnelMeasure(fn) {
+    tunnelMeasure = typeof fn === 'function' ? fn : null;
+}
+
+/**
+ * The text of a scan that took longer than 2 s (F4): `The scan took 3 s.`; '' for 2 s or less.
+ * @param {number} ms
+ * @returns {string}
+ */
+export function tookText(ms) {
+    return Number.isFinite(ms) && ms > SCAN_SLOW_MS ? `The scan took ${Math.round(ms / 1000)} s.` : '';
+}
+
+// F4: one pass, every cell read once per scan: the names of getBlockName kept by x, y, z. A read that throws is null.
+function cachedNames(getBlockName) {
+    const cache = new Map();
+    return (x, y, z) => {
+        const key = `${x},${y},${z}`;
+        if (cache.has(key)) {
+            return cache.get(key);
+        }
+        let name = null;
+        try {
+            name = getBlockName(x, y, z);
+        } catch {
+            name = null;
+        }
+        cache.set(key, name);
+        return name;
+    };
+}
+
+// Rock, dirt, ore and the like: solid and not built, no log, no leaves, no glass, no liquid.
+function isNaturalSolid(name) {
+    return name !== null && !isPassable(name) && !isBuiltBlock(name) && !isLogBlock(name) && !isLeaves(name)
+        && !isGlass(name) && name !== 'water' && name !== 'lava';
+}
+
+// True when the feet lie under rock: the first block that is not passable over the feet, within ENCLOSURE_ROOF, is
+// natural and the ROCK_ABOVE blocks above it are solid. The roof of a house is built or thin; the sky is no roof.
+function underRock(read, x, feet, z) {
+    for (let y = feet + 1; y <= feet + ENCLOSURE_ROOF; y++) {
+        const name = read(x, y, z);
+        if (name === null) {
+            return false;
+        }
+        if (isPassable(name)) {
+            continue;
+        }
+        if (!isNaturalSolid(name)) {
+            return false;
+        }
+        for (let k = 1; k <= ROCK_ABOVE; k++) {
+            const above = read(x, y + k, z);
+            if (above === null || isPassable(above)) {
+                return false;
+            }
+        }
+        return true;
+    }
+    return false;
+}
+
+// F1: natural for 2 of 3 of the columns or more.
+function rockShare(counts) {
+    let total = 0;
+    for (const n of Object.values(counts)) {
+        total += n;
+    }
+    return total >= 3 && (counts.natural ?? 0) >= total * ROCK_SHARE;
+}
+
+function addBound(counts, read, x, z, feet) {
+    const kind = boundOf(read, x, z, feet).kind;
+    counts[kind] = (counts[kind] ?? 0) + 1;
+}
+
+// A cell a player stands in: feet and head passable.
+function standCell(read, x, y, z) {
+    const feet = read(x, y, z);
+    const head = read(x, y + 1, z);
+    return feet !== null && head !== null && isPassable(feet) && isPassable(head);
+}
+
+function cellOfPoint(p) {
+    return p && Number.isFinite(p.x) && Number.isFinite(p.y) && Number.isFinite(p.z)
+        ? { x: Math.floor(p.x), y: Math.floor(p.y), z: Math.floor(p.z) } : null;
+}
+
+// The tunnel at the origin (F1): the measure (tunnelAt of the mining pack) asked for TUNNEL_MIN_LENGTH cells; when the
+// corridor ahead opens wider than 2 (a room), it is measured again away from that cell. null without a tunnel 1 or 2
+// wide and 4 long or more.
+function tunnelHere(read, origin, measure) {
+    if (typeof measure !== 'function') {
+        return null;
+    }
+    const feet = cellOfPoint(origin);
+    const ask = (more) => {
+        try {
+            const r = measure(read, feet, { minCells: TUNNEL_MIN_LENGTH, ...more });
+            return r && typeof r === 'object' ? r : null;
+        } catch {
+            return null;
+        }
+    };
+    let r = ask({});
+    if (r && r.ok !== true && r.cause?.kind === 'wide' && cellOfPoint(r.cause.at)) {
+        r = ask({ anchor: cellOfPoint(r.cause.at) });
+    }
+    const t = r?.ok === true ? r.tunnel : null;
+    const start = cellOfPoint(t?.start);
+    const end = cellOfPoint(t?.end);
+    if (!t || !start || !end || !Object.hasOwn(DIR_STEPS, t.dir) || !Number.isInteger(t.length) || t.length < TUNNEL_MIN_LENGTH
+        || !(t.width === 1 || t.width === 2)) {
+        return null;
+    }
+    return { start, end, dir: t.dir, length: t.length, width: t.width, level: Number.isFinite(t.level) ? Math.floor(t.level) : feet.y };
+}
+
+// The walls of a measured tunnel (the first column beside each cell that is no cell to stand in, on both sides, and the
+// rock face beyond its end) and its box: the cells and their twins grown by 1, from its floor to its ceiling.
+function tunnelPlace(read, tunnel) {
+    const [dx, dz] = DIR_STEPS[tunnel.dir];
+    const [sx, sz] = [dz, -dx];
+    const feet = tunnel.level;
+    const counts = {};
+    let minX = tunnel.start.x;
+    let maxX = tunnel.start.x;
+    let minZ = tunnel.start.z;
+    let maxZ = tunnel.start.z;
+    const take = (x, z) => {
+        minX = Math.min(minX, x);
+        maxX = Math.max(maxX, x);
+        minZ = Math.min(minZ, z);
+        maxZ = Math.max(maxZ, z);
+    };
+    for (let k = 0; k < tunnel.length; k++) {
+        const x = tunnel.start.x + dx * k;
+        const z = tunnel.start.z + dz * k;
+        take(x, z);
+        for (const side of [1, -1]) {
+            let n = 1;
+            while (n <= 2 && standCell(read, x + side * sx * n, feet, z + side * sz * n)) {
+                take(x + side * sx * n, z + side * sz * n);
+                n++;
+            }
+            addBound(counts, read, x + side * sx * n, z + side * sz * n, feet);
+        }
+    }
+    const last = { x: tunnel.start.x + dx * (tunnel.length - 1), z: tunnel.start.z + dz * (tunnel.length - 1) };
+    addBound(counts, read, last.x + dx, last.z + dz, feet);
+    return { counts, box: { min: { x: minX - 1, y: feet - 1, z: minZ - 1 }, max: { x: maxX + 1, y: feet + 2, z: maxZ + 1 } } };
+}
+
+// The measure of a cave at the feet (F2): the open cells in a row from the feet to each side, the width (the longer of
+// the two rows), the sides of that rectangle beyond which a cell to stand in lies (one block up or down too), the box
+// from the floor to the roof over the feet.
+function cavePlace(read, origin) {
+    const at = cellOfPoint(origin);
+    const run = (dx, dz) => {
+        let n = 0;
+        while (n < CAVE_REACH && standCell(read, at.x + dx * (n + 1), at.y, at.z + dz * (n + 1))) {
+            n++;
+        }
+        return n;
+    };
+    const x0 = at.x - run(-1, 0);
+    const x1 = at.x + run(1, 0);
+    const z0 = at.z - run(0, -1);
+    const z1 = at.z + run(0, 1);
+    const openAt = (x, z) => [at.y - 1, at.y, at.y + 1].some(y => standCell(read, x, y, z));
+    const row = (z) => Array.from({ length: x1 - x0 + 1 }, (_, i) => [x0 + i, z]);
+    const column = (x) => Array.from({ length: z1 - z0 + 1 }, (_, i) => [x, z0 + i]);
+    const sides = [row(z0 - 1), column(x1 + 1), row(z1 + 1), column(x0 - 1)]
+        .filter(cells => cells.some(([x, z]) => openAt(x, z))).length;
+    let top = at.y + 1;
+    while (top < at.y + ENCLOSURE_ROOF) {
+        const name = read(at.x, top + 1, at.z);
+        if (name === null || !isPassable(name)) {
+            break;
+        }
+        top++;
+    }
+    return {
+        at,
+        width: Math.max(x1 - x0 + 1, z1 - z0 + 1),
+        sides,
+        box: { min: { x: x0 - 1, y: at.y - 1, z: z0 - 1 }, max: { x: x1 + 1, y: top + 1, z: z1 + 1 } },
+    };
+}
+
+// A place in rock (F1): found false (nothing of !rememberArea without a type), with its box, the border 'rock', the
+// reason and the text of the refusal, and the facts of the tunnel or the cave.
+function rockFound(kind, box, facts) {
+    return {
+        found: false,
+        box: { min: { ...box.min }, max: { ...box.max } },
+        border: 'rock',
+        openings: [],
+        roof: true,
+        floor: 'ground',
+        reason: kind,
+        text: scanText(kind),
+        min: { ...box.min },
+        max: { ...box.max },
+        entrances: [],
+        source: 'rock',
+        scan: null,
+        tunnel: kind === 'tunnel' ? facts : null,
+        cave: kind === 'cave' ? facts : null,
+    };
+}
+
+// The place in rock at the origin, or null (F1): a tunnel that the measure accepts and whose walls are natural for 2
+// of 3 or more; else, when the columns that bound the ground of the flood are natural for 2 of 3 or more, a cave. A
+// corridor whose walls a player built is no tunnel and no cave.
+function rockPlace(read, origin, bounds, measure) {
+    const tunnel = tunnelHere(read, origin, measure);
+    if (tunnel) {
+        const place = tunnelPlace(read, tunnel);
+        return rockShare(place.counts) ? rockFound('tunnel', place.box, tunnel) : null;
+    }
+    const counts = {};
+    for (const [x, z, surface] of bounds) {
+        addBound(counts, read, x, z, surface + 1);
+    }
+    if (!rockShare(counts)) {
+        return null;
+    }
+    const cave = cavePlace(read, origin);
+    return rockFound('cave', cave.box, { at: cave.at, width: cave.width, sides: cave.sides });
+}
+
 /**
  * The enclosure around a position (v0.1.4.11, I5): the one scan of a place, whatever bounds it: a fence, a wall,
  * glass, a hedge, water, or a mix of them. Pure, like the other scans.
@@ -1253,10 +1523,22 @@ function buildingEnclosure(getBlockName, read, origin, opts) {
  * block 1 to 8 above their ground. The floor: 'tilled' when 1 of 3 of the cells or more is farmland, else 'built' or
  * 'ground' for more than half, else 'mixed'.
  *
+ * v0.1.4.12 (F1): in mode 'auto', when the origin lies under rock (a natural block over the head with 3 solid blocks
+ * above it) and no made border closes the ground, the place is rock: a tunnel when the measure of a tunnel (tunnelAt of
+ * the mining pack, `options.tunnelAt` or useTunnelMeasure) accepts the origin, 1 or 2 wide and 4 long or more, and its
+ * walls are natural for 2 of 3 or more; else a cave when the columns that bound the ground of the flood are natural for
+ * 2 of 3 or more. Such a place has `found: false`, `border: 'rock'`, `reason` 'tunnel' or 'cave', `source` 'rock', the
+ * text of the refusal of !rememberArea without a type, its box (the tunnel or the cave, from the floor to the roof),
+ * and `tunnel` ({ start, end, dir, length, width, level }) or `cave` ({ at, width, sides }).
+ * F4: every cell is read once per scan; a scan over 2 s gets `ms`, `took` (`The scan took 3 s.`) and the took text
+ * appended to a text that is not empty.
+ *
  * @param {(x: number, y: number, z: number) => string|null} getBlockName
  * @param {{x: number, y: number, z: number}} origin usually the position of the bot
- * @param {{mode?: 'auto'|'ground'|'building', radius?: number, floors?: boolean, type?: 'pen'|'farm'}} [options]
- *   radius 24 for the ground; floors and the other options of scanBuilding for a building
+ * @param {{mode?: 'auto'|'ground'|'building', radius?: number, floors?: boolean, type?: 'pen'|'farm',
+ *   tunnelAt?: Function|null, now?: () => number}} [options]
+ *   radius 24 for the ground; floors and the other options of scanBuilding for a building; tunnelAt: the measure of a
+ *   tunnel (null: none); now: the clock of the time a scan takes (Date.now)
  * @returns {{found: boolean, box: {min: object, max: object}|null, border: string|null,
  *   openings: {x: number, y: number, z: number, kind: 'door'|'gate'|'trapdoor'|'gap'}[], roof: boolean,
  *   floor: 'tilled'|'built'|'ground'|'mixed', reason: string|null, text: string, min: object|null, max: object|null,
@@ -1269,6 +1551,22 @@ function buildingEnclosure(getBlockName, read, origin, opts) {
 export function scanEnclosure(getBlockName, origin, options = {}) {
     const opts = options ?? {};
     checkArgs(getBlockName, origin, typeof opts.fn === 'string' ? opts.fn : 'scanEnclosure');
+    // v0.1.4.12 (F4): one pass, each cell read once; a scan over 2 s says how long it took
+    const clock = typeof opts.now === 'function' ? opts.now : Date.now;
+    const started = clock();
+    const result = enclosureOf(cachedNames(getBlockName), origin, opts);
+    const ms = clock() - started;
+    const took = tookText(ms);
+    if (took) {
+        result.ms = ms;
+        result.took = took;
+        result.text = result.text ? `${result.text} ${took}` : result.text;
+    }
+    return result;
+}
+
+// The body of scanEnclosure, after checkArgs, with the reads of one scan kept (cachedNames).
+function enclosureOf(getBlockName, origin, opts) {
     const read = reader(getBlockName);
     if (opts.mode === 'building') {
         return buildingEnclosure(getBlockName, read, origin, opts);
@@ -1287,6 +1585,7 @@ export function scanEnclosure(getBlockName, origin, options = {}) {
     let fences = 0;
     let unloaded = false;
     let roofed = null;
+    let made = false; // the first flood closed and made blocks bound it
     const first = floodFenced(read, origin, radius, Infinity);
     if (first.reason === null) {
         const ground = groundEnclosure(read, first);
@@ -1294,6 +1593,7 @@ export function scanEnclosure(getBlockName, origin, options = {}) {
             return ground;
         }
         roofed = ground;
+        made = ground !== null;
     } else if (first.reason === 'not_enclosed') {
         fences = first.fences;
         const second = floodFenced(read, origin, radius, Infinity, { water: true });
@@ -1313,6 +1613,13 @@ export function scanEnclosure(getBlockName, origin, options = {}) {
     const ox = Math.floor(origin.x);
     const oz = Math.floor(origin.z);
     const feet = Math.floor(origin.y);
+    // v0.1.4.12 (F1): under rock, ground bounded by natural rock is a tunnel or a cave, never a building
+    if (!made && (first.reason === null || first.reason === 'not_enclosed') && underRock(read, ox, feet, oz)) {
+        const rock = rockPlace(read, origin, first.bounds, Object.hasOwn(opts, 'tunnelAt') ? opts.tunnelAt : tunnelMeasure);
+        if (rock) {
+            return rock;
+        }
+    }
     if (roofed || hasRoof(read, ox, feet - 1, oz)) {
         const building = buildingEnclosure(getBlockName, read, origin, opts);
         if (building.found) {

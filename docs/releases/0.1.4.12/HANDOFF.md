@@ -72,3 +72,29 @@ The `explosion` packet of the client against the areas of the dimension; `health
 | G5 | `!endConversation` → `Conversation with ${name} ended.`; `goToPlayer` → `I see no player "Steve". The players I see: MartyByrde2.` / `... I see no other player.` from `bot.players`; a stopped wait says nothing. |
 
 Decisions accepted: the door toggles (the three texts of the spec fit only with a toggle); the texts of a stopped `goToPlayer`; `sendPlayerLoaded` as a top-level export for its test. Tests adapted by the lead: `fxc_wake` (the fake bots send the packet from `bot.wake()`), `rtl_follow_ladder` (the new text).
+
+## From part B (learning by watching, E4), done in round 2
+
+### Exports
+
+| File | What |
+|---|---|
+| `src/agent/packs/watch/index.js` | `watchMe(bot, ctx, player)`, `continueLike(bot, ctx, size)`, `buildWatched(bot, ctx)`, `stopWatching(bot, ctx)`, `record()` (a frozen copy); loaded by `_loadWorkPacks` behind `watch_and_learn` as `agent.work_packs.watch` |
+| `pattern_logic.js` | pure: `findPattern(record, size, world)` → line, fence, tunnel or null (`too_few`, `no_line`, `no_size`); `describePattern(pattern, have)`; `parseSize`, `netEntries` (a block placed and broken again cancels out), `dirOf`, `rightOf`, `oppositeOf` |
+| `recorder.js` | `changeOf`, `creditedTo`, `createRecord` (500 entries), `startRecorder`: a block that turns to air is a break, one that appears where air, a plant, snow or a liquid was is a place; a state change (a fence connecting, a gate opening), liquids, fire, ground plants, leaves, the upper half of a door and the head of a bed count as nothing; credited to the watched player within 6 blocks of the block and nearest of the players other than the bot |
+| `build.js` | `buildPattern`, `buildSteps`, `standFor`: the bot walks with `walkNear` (no digging), stands 2 beside a line, 2 outside a fence, 2 behind a gate against its facing, in the column before a tunnel cell; a cell with a block in it is skipped and named, never broken; a tunnel block next to lava is refused |
+| `texts.js` | the texts of the spec plus `refusedDig`, the reasons `whyGuard`, `whyInTheWay`, `whyUnreachable`, `whyPlaceFailed`, `whyDigFailed`, `whyLava`, `noPlayer`, `shortBuilt`; `watched(placed, broken)`; `understood.fence` takes the block names as trailing parameters |
+| `actions.js` | `!watchMe` (`Watch what I do and learn the pattern.`), `!continueLike` (`Continue the pattern you watched, for a size.`, `size`: `"12 long" or "7 by 10".`), `!buildWatched` (`Build or dig what you understood, after I said yes.`), after `!stay`; `!watchMe` runs as an action until the next order interrupts it and then says `I watched you: ...` without a model call |
+
+### Decisions beyond the spec, accepted
+
+| Decision | Why |
+|---|---|
+| The follow is `skills.followPlayer(bot, player, 16)`, the head turned to the player every second, `I watch you.` at the start, the follow retried every 10 s when it ends by itself | PLAN 2.1 |
+| The larger of the stated size and the run the owner placed; sizes 1 to 64; a line takes only `N long` | |
+| A gate facing along the line: the side with more free ground; a tie: the right of the line's direction; without a gate the gate goes on the nearest unplaced cell of the side nearest the player | |
+| A tunnel counts columns 2 high (12 long minus 3 dug = 9) | the example of the spec |
+| In creative mode the material is not counted | |
+| The lead: the commands are hidden when the switch is off or the pack is missing (`blocked_actions`), the packs load with `watch_and_learn` alone, the routing list knows the part, four descriptions of other commands were shortened for the prompt limit (`!rememberArea`, `!rememberRule`, `!setMode`, the material of `!getTool`): 16,770 characters with every switch on | the prompt at 17,000 |
+
+W102 passed on the real server (the line built in 6.1 s, nothing else placed within 3 blocks).

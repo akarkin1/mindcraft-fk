@@ -40,7 +40,7 @@ describe('module', () => {
     });
 
     test('the description of !rememberRule, word for word', () => {
-        assert.equal(C.REMEMBER_RULE_DESCRIPTION, 'Save a lasting rule from the player. Use this when the player tells you to always or never do something, or says "remember", "do not forget" or "from now on". Write the rule as one short sentence.');
+        assert.equal(C.REMEMBER_RULE_DESCRIPTION, 'Save a lasting rule from the player: "always", "never", "remember", "do not forget", "from now on". One short sentence.');
     });
 });
 

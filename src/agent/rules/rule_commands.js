@@ -4,7 +4,7 @@
 // Pure: the store is passed in. Never throws.
 import { numberedRules } from './rule_prompt.js';
 
-export const REMEMBER_RULE_DESCRIPTION = 'Save a lasting rule from the player. Use this when the player tells you to always or never do something, or says "remember", "do not forget" or "from now on". Write the rule as one short sentence.';
+export const REMEMBER_RULE_DESCRIPTION = 'Save a lasting rule from the player: "always", "never", "remember", "do not forget", "from now on". One short sentence.';
 
 // Not in the spec: the answer when the store is missing or fails.
 const NOT_AVAILABLE = 'The rules are not available.';

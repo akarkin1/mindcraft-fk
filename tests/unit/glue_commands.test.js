@@ -276,7 +276,7 @@ describe('the commands of the rules (R3)', () => {
     });
 
     test('the description of !rememberRule, word for word', () => {
-        assert.equal(command('!rememberRule').description, 'Save a lasting rule from the player. Use this when the player tells you to always or never do something, or says "remember", "do not forget" or "from now on". Write the rule as one short sentence.');
+        assert.equal(command('!rememberRule').description, 'Save a lasting rule from the player: "always", "never", "remember", "do not forget", "from now on". One short sentence.');
     });
 });
 
@@ -328,7 +328,7 @@ describe('the descriptions of the spec', () => {
     // v0.1.4.8 (part G): the descriptions say what the commands do now (five types, only a home as shelter,
     // eat until full); the size of the prompt made them shorter (tests/routing/commands.js holds them too)
     test('!rememberArea and !allowChanges', () => {
-        assert.equal(command('!rememberArea').description, 'Save the place you stand in as a protected area: home (the house), building, farm (only plant and harvest), pen (animals) or mine (only natural blocks). Use this when the player says "this is home", "this is the farm" or "this is the mine".');
+        assert.equal(command('!rememberArea').description, 'Save the place you stand in as a protected area; without a type you conclude the kind from what is there. Use this when the player says "this is home", "this is the farm" or "this is the mine".');
         assert.equal(command('!allowChanges').description, 'Allow yourself to break and place blocks in a protected area for some minutes. ONLY when the player tells you to build, repair or break something there.');
     });
 

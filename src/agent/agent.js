@@ -45,6 +45,7 @@ import { writeExit, readExit, restartNote } from './restart_context.js';
 import { RepeatGuard } from './repeat_guard.js';
 import { withTimeLimit } from '../utils/kill_timer.js';
 import { createJob, JobStore, JOB_FILE } from './job/index.js'; // v0.1.4.10: no pack; createJob runs only with job_memory
+import { shouldAnswer } from './bots_logic.js'; // v0.1.4.12, D2: which chat line the bot answers
 
 // v0.1.4.8: the longest wait of a step at spawn that talks to the server (the move out of the off-hand)
 const SPAWN_STEP_MS = 5000;
@@ -326,7 +327,7 @@ export class Agent {
             this.blocked_actions.push('!goToShelter', '!eat', '!closeDoor');
         // the parts of v0.1.4.7: a pack is imported only while a switch needs it; the commands of a part
         // that is off, or whose pack could not be loaded, are hidden (v0.1.4.9: also the routes pack)
-        if (settings.storage_pack || settings.farming_pack || settings.wood_pack || settings.mining_pack || settings.routes_pack) {
+        if (settings.storage_pack || settings.farming_pack || settings.wood_pack || settings.mining_pack || settings.routes_pack || settings.watch_and_learn) {
             this.work_packs = await this._loadWorkPacks();
             if (!settings.world_memory && (this.work_packs.storage || this.work_packs.mining))
                 console.warn('Without world_memory the chest index and the mine store live in memory only and are lost when the bot stops.');
@@ -341,6 +342,8 @@ export class Agent {
             this.blocked_actions.push('!mineOre', '!goToMine', '!leaveMine');
         if (!settings.mining_pack || !this.work_packs?.mining)
             this.blocked_actions.push('!mines', '!forgetMine'); // v0.1.4.10 (R4): the mines the bot knows
+        if (!settings.watch_and_learn || !this.work_packs?.watch)
+            this.blocked_actions.push('!watchMe', '!continueLike', '!buildWatched'); // v0.1.4.12 (part B): learning by watching
         // the parts of v0.1.4.9: the ways of the player (routes_pack), the mine of the player (mine_routes as it
         // takes effect, with mining_pack and routes_pack, both packs loaded)
         if (!settings.routes_pack || !this.work_packs?.routes)
@@ -922,7 +925,7 @@ export class Agent {
         }
         // v0.1.4.12 (part B): the watching pack (learning by watching), with watch_and_learn; start() loads the work
         // packs while one of their switches is on, so the test names them too
-        if (settings.watch_and_learn && (settings.storage_pack || settings.farming_pack || settings.wood_pack || settings.mining_pack || settings.routes_pack)) {
+        if (settings.watch_and_learn) {
             try {
                 packs.watch = await (loaders.watch ? loaders.watch() : import('./packs/watch/index.js'));
             } catch (error) {
@@ -1219,8 +1222,15 @@ export class Agent {
         
         const respondFunc = async (username, message) => {
             if (message === "") return;
-            if (username === this.name) return;
-            if (settings.only_chat_with.length > 0 && !settings.only_chat_with.includes(username)) return;
+            // v0.1.4.12, D2: the bot itself, the owner's other bots, a command echo or a result of a bot, a name
+            // outside only_chat_with: dropped, with one console line behind verbose_commands (not for its own lines)
+            const verdict = shouldAnswer({ from: username, text: message, self: this.name,
+                otherBots: settings.other_bots, onlyChatWith: settings.only_chat_with });
+            if (!verdict.answer) {
+                if (settings.verbose_commands && verdict.why !== 'self')
+                    console.log(`${this.name} does not answer ${username} (${verdict.why}): ${message}`);
+                return;
+            }
             try {
                 if (ignore_messages.some((m) => message.startsWith(m))) return;
 
@@ -1229,7 +1239,9 @@ export class Agent {
                 console.log(this.name, 'received message from', username, ':', message);
 
                 if (convoManager.isOtherAgent(username)) {
-                    console.warn('received whisper from other bot??')
+                    // a bot of the mindserver: its lines come through the conversation, never through the chat
+                    if (settings.verbose_commands)
+                        console.log(`${this.name} does not answer ${username} (other_bot): ${message}`);
                 }
                 else {
                     let translation = await handleEnglishTranslation(message);

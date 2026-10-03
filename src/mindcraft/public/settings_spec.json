@@ -403,6 +403,21 @@
         "description": "The port of the watch server, on 127.0.0.1 only. Needs watch_server",
         "default": 8090
     },
+    "watch_and_learn": {
+        "type": "boolean",
+        "description": "Whether the bot learns by watching: !watchMe records the blocks the player places or breaks, !continueLike says the pattern it understood (a line, a fence with a gate, a tunnel) and !buildWatched builds or digs the rest after the player's yes",
+        "default": false
+    },
+    "other_bots": {
+        "type": "array",
+        "description": "The names of the owner's other bots. The bot never answers their chat, and never answers a command echo (*x used y*) or a result of a bot, whoever sent it. Empty: the bot answers every player",
+        "default": []
+    },
+    "bot_role": {
+        "type": "string",
+        "description": "One sentence of the bot's role in the conversation prompt, e.g. 'You are the farmer. gpt is the miner.' Empty: no role line",
+        "default": ""
+    },
     "code_timeout_mins": {
         "type": "number",
         "description": "Number of minutes to allow code execution. -1 for no timeout",

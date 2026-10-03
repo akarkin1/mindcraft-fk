@@ -385,6 +385,64 @@ async function runPack(agent, label, pack, name, fn) {
     return await runForText(agent, label, async () => await fn(pack, agent.bot, agent.packContext()), -1, { pack: true });
 }
 
+// v0.1.4.12 (part B): the commands of the watching pack. The pack is loaded by _loadWorkPacks behind watch_and_learn,
+// and the agent loads the work packs while one of their switches is on.
+const WATCH_OFF = 'Learning by watching is off.';
+const WATCH_NEEDS_PACKS = 'Learning by watching needs one of storage_pack, farming_pack, wood_pack, mining_pack or routes_pack on.';
+
+/**
+ * v0.1.4.12 (part B): the watching pack as it takes effect: watch_and_learn, and the work packs loaded (one of the
+ * switches of v0.1.4.7 or routes_pack on, as agent.start() asks before it calls _loadWorkPacks).
+ * @param {object} [s] the settings, those of the agent without it
+ * @returns {boolean}
+ */
+function watchOn(s = settings) {
+    return s?.watch_and_learn === true && Boolean(s?.storage_pack || s?.farming_pack || s?.wood_pack || s?.mining_pack || s?.routes_pack);
+}
+
+// The player !watchMe watches: who typed it, else who gave the order the model answered with it; null: the pack takes
+// the nearest player.
+function watchedPlayer(agent) {
+    const typed = typedCommandPlayer(agent, '!watchMe');
+    if (typed !== null)
+        return typed;
+    const order = agent?.last_order;
+    if (order !== null && typeof order === 'object' && order.command === '!watchMe' && typeof order.by === 'string' && order.by !== '')
+        return order.by;
+    return null;
+}
+
+// v0.1.4.12 (part B): !watchMe runs as an action until the next order interrupts it (the normal end of the watching).
+// Then what was watched is said (`I watched you: 4 blocks placed, 0 broken.`) without a turn of the model and the
+// command returns nothing; it is not reported as stopped. Unstuck is paused as for every pack command.
+async function runWatch(agent) {
+    if (!watchOn())
+        return settings.watch_and_learn === true ? WATCH_NEEDS_PACKS : WATCH_OFF;
+    const pack = agent.work_packs?.watch;
+    if (!pack)
+        return 'The watch pack could not be loaded.';
+    const player = watchedPlayer(agent);
+    const entry = Array.isArray(agent.running_commands) ? agent.running_commands[agent.running_commands.length - 1] ?? null : null;
+    let result = null;
+    const code_return = await agent.actions.runAction('action:watchMe', async () => {
+        pauseUnstuck(agent);
+        result = await pack.watchMe(agent.bot, agent.packContext(), player);
+    }, { timeout: -1, resume: false });
+    const text = typeof result?.text === 'string' && result.text !== '' ? result.text : null;
+    if (entry)
+        entry.pack = { ok: result ? result.ok : undefined, reason: result?.reason ?? null, text };
+    if (code_return.interrupted && !code_return.timedout) {
+        if (text !== null)
+            agent.sayText?.(text);
+        return;
+    }
+    if (code_return.success && text !== null) {
+        agent.last_pack_text = text;
+        return text;
+    }
+    return code_return.message;
+}
+
 // v0.1.4.9 (decision of the tech lead): a command of a pack that does not move the bot is no action: its
 // perform awaits fn(pack) and returns the text of the result ({ ok, reason, text } or a text) word for word, so a
 // running action (!followPlayer into the mine) keeps running. Like runForText it notes the text for say_results
@@ -1023,7 +1081,7 @@ export const actionsList = [
     },
     {
         name: '!rememberArea',
-        description: 'Save the place you stand in as a protected area: home (the house), building, farm (only plant and harvest), pen (animals) or mine (only natural blocks). Use this when the player says "this is home", "this is the farm" or "this is the mine".',
+        description: 'Save the place you stand in as a protected area; without a type you conclude the kind from what is there. Use this when the player says "this is home", "this is the farm" or "this is the mine".',
         params: {
             'name': { type: 'string', description: 'The name of the area, for example "home".' },
             'type': { type: 'string', description: 'home, building, farm, pen or mine.', default: 'building' }
@@ -1544,7 +1602,7 @@ export const actionsList = [
         description: 'Make sure you have a tool. You take it from a chest you know or craft it, with everything that needs.',
         params: {
             'kind': { type: 'string', description: 'The tool: pickaxe, axe, shovel, hoe or sword.' },
-            'material': { type: 'string', description: 'The weakest material that is good enough: wooden, stone, iron or diamond. Empty: the best you can make, up to stone.', default: '' }
+            'material': { type: 'string', description: 'wooden, stone, iron or diamond; empty: the best you can make, up to stone.', default: '' }
         },
         perform: async function (agent, kind, material) {
             if (!settings.wood_pack)
@@ -1696,9 +1754,39 @@ export const actionsList = [
             await skills.stay(agent.bot, seconds);
         })
     },
+    // v0.1.4.12 (part B): learning by watching, behind watch_and_learn. Nothing is placed or dug before !buildWatched
+    // (rule 20). !continueLike and !buildWatched run as actions, so they end a running !watchMe.
+    {
+        name: '!watchMe',
+        description: 'Watch what I do and learn the pattern.',
+        perform: async function (agent) {
+            return await runWatch(agent);
+        }
+    },
+    {
+        name: '!continueLike',
+        description: 'Continue the pattern you watched, for a size.',
+        params: {
+            'size': { type: 'string', description: '"12 long" or "7 by 10".' }
+        },
+        perform: async function (agent, size) {
+            if (!watchOn())
+                return settings.watch_and_learn === true ? WATCH_NEEDS_PACKS : WATCH_OFF;
+            return await runPack(agent, 'continueLike', agent.work_packs?.watch, 'watch', (pack, bot, ctx) => pack.continueLike(bot, ctx, size));
+        }
+    },
+    {
+        name: '!buildWatched',
+        description: 'Build or dig what you understood, after I said yes.',
+        perform: async function (agent) {
+            if (!watchOn())
+                return settings.watch_and_learn === true ? WATCH_NEEDS_PACKS : WATCH_OFF;
+            return await runPack(agent, 'buildWatched', agent.work_packs?.watch, 'watch', (pack, bot, ctx) => pack.buildWatched(bot, ctx));
+        }
+    },
     {
         name: '!setMode',
-        description: 'Set a mode on or off. A mode is an automatic behavior that reacts to the world. Only the player switches a safety reflex off.',
+        description: 'Set a mode on or off. Only the player switches a safety reflex off.',
         params: {
             'mode_name': { type: 'string', description: 'The name of the mode to enable.' },
             'on': { type: 'boolean', description: 'Whether to enable or disable the mode.' }
@@ -1788,7 +1876,7 @@ export const actionsList = [
             if (!convoManager.inConversation(player_name))
                 return `Not in conversation with ${player_name}.`;
             convoManager.endConversation(player_name);
-            return `Converstaion with ${player_name} ended.`;
+            return `Conversation with ${player_name} ended.`;
         }
     },
     {

@@ -5,6 +5,9 @@
 /** The kinds of a place, in the order of the rules of kindOf. */
 export const PLACE_KINDS = Object.freeze(['pen', 'farm', 'home', 'storage', 'building', 'yard']);
 
+/** The kinds of a place in rock (v0.1.4.12, F1): never saved as an area, so not among PLACE_KINDS. */
+export const ROCK_KINDS = Object.freeze(['tunnel', 'cave']);
+
 /**
  * The type of the area store for each kind (I5): a storage and a yard are saved as a building, so every reflex of
  * v0.1.4.10 that reads the type keeps working.
@@ -115,16 +118,20 @@ function hasOpening(enclosure, kinds) {
 }
 
 /**
- * The kind of a place (I5), the first rule that fits: animals of 1 kind or more and an opening of kind gate or door:
+ * The kind of a place (I5), the first rule that fits. v0.1.4.12 (F1): a border of rock (scanEnclosure under rock) is
+ * `tunnel` when the scan measured a tunnel at the origin (`enclosure.tunnel`), else `cave`. Then: animals of 1 kind or more and an opening of kind gate or door:
  * `pen`; crops on a tilled floor: `farm`; a roof, a door and a bed: `home`; a roof and chests or furnaces: `storage`;
  * a roof and a door, or a roof and a trapdoor (a cellar entered from above, v0.1.4.11, F25): `building`; else `yard`.
  * scanEnclosure gives the opening kinds door, gate, trapdoor and gap (OPENING_KINDS of area_scan.js); a ladder is no
  * opening of its own, the trapdoor over its column is.
  * @param {{roof?: boolean, floor?: string, openings?: {kind: string}[]}|null} enclosure the result of scanEnclosure
  * @param {object|null} contents the result of countContents
- * @returns {'pen'|'farm'|'home'|'storage'|'building'|'yard'}
+ * @returns {'pen'|'farm'|'home'|'storage'|'building'|'yard'|'tunnel'|'cave'}
  */
 export function kindOf(enclosure, contents) {
+    if (enclosure?.border === 'rock') {
+        return enclosure.tunnel ? 'tunnel' : 'cave';
+    }
     const roof = enclosure?.roof === true;
     const door = hasOpening(enclosure, ['door']);
     if (animalCount(contents) > 0 && hasOpening(enclosure, ['gate', 'door'])) {
@@ -250,7 +257,8 @@ export function savedText(name, kind, enclosure, contents, box) {
     const size = sizeWords(box);
     const head = `a ${kind}, ${borderWord(enclosure?.border ?? null)}${size ? `, ${size}` : ''}${enclosure?.roof === true ? ' with a roof' : ''}`;
     const parts = [head, ...openingsParts(enclosure), ...contentsParts(contents)];
-    return `I saved "${name}": ${parts.join(', ')}. ${KIND_SENTENCES[kind] ?? KIND_SENTENCES.building}`;
+    const took = typeof enclosure?.took === 'string' && enclosure.took !== '' ? ` ${enclosure.took}` : ''; // v0.1.4.12 (F4)
+    return `I saved "${name}": ${parts.join(', ')}. ${KIND_SENTENCES[kind] ?? KIND_SENTENCES.building}${took}`;
 }
 
 /**
@@ -279,4 +287,72 @@ export function senseText(kind, enclosure, contents, box) {
     const size = sizeWords(box);
     return `I am in ${article} ${word} ${kind}${size ? ` ${size}` : ''}${withWords(enclosure, contents)} that I have not saved. `
         + 'Tell me its name and I keep it.';
+}
+
+// --- the sentences of a place in rock (v0.1.4.12, F2) ------------------------------------------
+
+const HEADINGS = new Set(['north', 'east', 'south', 'west']);
+
+function wholeNumber(n) {
+    return typeof n === 'number' && Number.isFinite(n) ? Math.round(n) : null;
+}
+
+/**
+ * The words of the mine of a tunnel (F2): ` of the mine "mine"` for a mine with a name, ` of my mine` for a mine
+ * without one (dug by the bot), ` of no mine I know` without a mine.
+ * @param {string|{name?: string|null}|null} mine the name, or whereAmI().mine
+ * @returns {string}
+ */
+function mineWords(mine) {
+    const name = typeof mine === 'string' ? mine : (mine && typeof mine === 'object' ? mine.name : null);
+    if (typeof name === 'string' && name.trim() !== '') {
+        return ` of the mine "${name}"`;
+    }
+    return mine && typeof mine === 'object' ? ' of my mine' : ' of no mine I know';
+}
+
+/**
+ * The sentence of a tunnel (F2): `I am in a tunnel 2 wide and 23 long, heading west, of the mine "mine".` or
+ * `I am in a tunnel 1 wide and 9 long, heading north, of no mine I know.` '' without a measured tunnel.
+ * @param {{width: number, length: number, dir: string}|null} tunnel the tunnel of scanEnclosure
+ * @param {string|{name?: string|null}|null} [mine] the name of the mine, or whereAmI().mine; null: no mine
+ * @returns {string}
+ */
+export function tunnelText(tunnel, mine = null) {
+    const width = wholeNumber(tunnel?.width);
+    const length = wholeNumber(tunnel?.length);
+    if (width === null || length === null || !HEADINGS.has(tunnel?.dir)) {
+        return '';
+    }
+    return `I am in a tunnel ${width} wide and ${length} long, heading ${tunnel.dir},${mineWords(mine)}.`;
+}
+
+/**
+ * The sentence of a cave (F2): `I am in a cave at (x, y, z), 6 wide and open on 3 sides.` (`open on 1 side`; `closed
+ * on every side` when no side is open). '' without a measured cave.
+ * @param {{at: {x: number, y: number, z: number}, width: number, sides: number}|null} cave the cave of scanEnclosure
+ * @returns {string}
+ */
+export function caveText(cave) {
+    const at = cave?.at;
+    const width = wholeNumber(cave?.width);
+    const sides = wholeNumber(cave?.sides);
+    if (!at || [at.x, at.y, at.z].some(v => wholeNumber(v) === null) || width === null || sides === null) {
+        return '';
+    }
+    const open = sides > 0 ? `open on ${sides} ${sides === 1 ? 'side' : 'sides'}` : 'closed on every side';
+    return `I am in a cave at (${Math.floor(at.x)}, ${Math.floor(at.y)}, ${Math.floor(at.z)}), ${width} wide and ${open}.`;
+}
+
+/**
+ * The sentence of a place in rock (F2): tunnelText for a tunnel, caveText for a cave, '' for anything else.
+ * @param {{border?: string, tunnel?: object|null, cave?: object|null}|null} enclosure the result of scanEnclosure
+ * @param {string|{name?: string|null}|null} [mine]
+ * @returns {string}
+ */
+export function rockText(enclosure, mine = null) {
+    if (enclosure?.border !== 'rock') {
+        return '';
+    }
+    return enclosure.tunnel ? tunnelText(enclosure.tunnel, mine) : caveText(enclosure.cave);
 }

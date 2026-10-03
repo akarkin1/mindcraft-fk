@@ -36,6 +36,8 @@ export const SPEC_SETTINGS = {
     mine_routes: 'boolean',
     ore_sense_range: 'number',
     skills_over_code: 'boolean',
+    // v0.1.4.12, section 2 of its spec
+    watch_and_learn: 'boolean',
 };
 
 // The switches of the parts whose commands are hidden while the switch is off.
@@ -56,18 +58,25 @@ export const PART_COMMANDS = {
     // v0.1.4.9: the commands of the routes pack and of the mine routes (I10 of its spec)
     routes_pack: ['!rememberRoute', '!routes', '!forgetRoute'],
     mine_routes: ['!rememberMine', '!rememberTunnel', '!collectPassedOre'],
+    // v0.1.4.12 (part B): learning by watching
+    watch_and_learn: ['!watchMe', '!continueLike', '!buildWatched'],
 };
 
 // Commands of this release, from the spec. `params` in order; `default` where the spec gives one.
 // `assumed` marks what the spec leaves open.
 export const SPEC_COMMANDS = [
+    // v0.1.4.12 (part B, SPEC 4.4): learning by watching
+    { name: '!watchMe', section: '4.4', part: 'watch_and_learn', params: [], description: 'Watch what I do and learn the pattern.' },
+    { name: '!continueLike', section: '4.4', part: 'watch_and_learn', params: [{ name: 'size', type: 'string' }],
+        description: 'Continue the pattern you watched, for a size.' },
+    { name: '!buildWatched', section: '4.4', part: 'watch_and_learn', params: [], description: 'Build or dig what you understood, after I said yes.' },
     { name: '!rememberRule', section: 'R3', part: 'player_rules', params: [{ name: 'text', type: 'string' }],
-        description: 'Save a lasting rule from the player. Use this when the player tells you to always or never do something, or says "remember", "do not forget" or "from now on". Write the rule as one short sentence.' },
+        description: 'Save a lasting rule from the player: "always", "never", "remember", "do not forget", "from now on". One short sentence.' },
     { name: '!forgetRule', section: 'R3', part: 'player_rules', params: [{ name: 'number', type: 'int' }] },
     { name: '!rules', section: 'R3', part: 'player_rules', params: [] },
     { name: '!rememberArea', section: '6', part: 'protected_areas',
         params: [{ name: 'name', type: 'string' }, { name: 'type', type: 'string', default: 'building' }],
-        description: 'Save the place you stand in as a protected area: home (the house), building, farm (only plant and harvest), pen (animals) or mine (only natural blocks). Use this when the player says "this is home", "this is the farm" or "this is the mine".' },
+        description: 'Save the place you stand in as a protected area; without a type you conclude the kind from what is there. Use this when the player says "this is home", "this is the farm" or "this is the mine".' },
     { name: '!setArea', section: '6', part: 'protected_areas', assumed: 'types of the coordinates (float, as in actions.js)',
         params: [{ name: 'name', type: 'string' }, { name: 'type', type: 'string' },
             ...['x1', 'y1', 'z1', 'x2', 'y2', 'z2'].map((name) => ({ name, type: 'float' }))] },

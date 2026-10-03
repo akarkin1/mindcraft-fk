@@ -535,6 +535,32 @@
         ],
 
         [
+            {"role": "user", "content": "nia_3: watch me"},
+            {"role": "assistant", "content": "I'm watching. !watchMe"}
+        ],
+
+        [
+            {"role": "user", "content": "oli_7: continue like this, 7 by 10"},
+            {"role": "assistant", "content": "Let me look at what you built. !continueLike(\"7 by 10\")"},
+            {"role": "system", "content": "I understood: a fence 7 x 10 from (4, 64, -12) northwards, the gate where you placed it; 26 oak_fence more, I carry 12 oak_fence. Say yes to build it."},
+            {"role": "assistant", "content": "A fence 7 by 10 with your gate, 26 fences more. Say yes and I build it."}
+        ],
+
+        [
+            {"role": "system", "content": "I understood: a line of oak_planks 12 long from (3, 64, 7) eastwards; 8 oak_planks more, I carry 20. Say yes to build it."},
+            {"role": "user", "content": "pip_5: yes, build it"},
+            {"role": "assistant", "content": "Building it. !buildWatched"},
+            {"role": "system", "content": "I built the line: 8 oak_planks."},
+            {"role": "assistant", "content": "The line is 12 long now."}
+        ],
+
+        [
+            {"role": "system", "content": "You are the farmer. gpt is the miner. A question to all of us gets one line from you."},
+            {"role": "user", "content": "ada_4: mine 4 iron"},
+            {"role": "assistant", "content": "That is gpt's job. I farm."}
+        ],
+
+        [
             {"role": "user", "content": "hal_7: this is the mine, remember this"},
             {"role": "assistant", "content": "I'll learn the way in and the mine. !rememberMine(\"mine\")"},
             {"role": "system", "content": "I remember the mine \"mine\": the entrance at (30, 60, 4), the way in has 6 steps with 1 ladder and 1 trapdoor, the room at level 41 with a chest and a crafting table, one tunnel at level 25, 12 blocks long, going south."},

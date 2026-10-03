@@ -930,6 +930,8 @@ const area_sense_mode = {
                 idle: agent.isIdle(),
                 areas: agent.area_store?.list?.() ?? [],
                 floors: settings.area_floors === true,
+                whereAmI: typeof agent.whereAmI === 'function' ? () => agent.whereAmI() : undefined, // v0.1.4.12 (F3): the mine
+                tunnelAt: agent.work_packs?.mining?.tunnelAt, // v0.1.4.12 (F1): the measure of a tunnel, when the pack is loaded
             });
             if (!text)
                 return;
