@@ -5,10 +5,10 @@
 export const COMMAND_ECHO = /^\*\S+ used \S+\*$/;
 /** A result of a bot that a bot says in the chat (D1). */
 export const BOT_RESULT = /^(Action output:|Found (non-)?destructive path\.|You have reached)/;
-/** The placeholder of the role line in the conversing prompt of a profile (D3). */
-export const ROLE_PLACEHOLDER = '$BOT_ROLE';
-/** Where the role line goes in a conversing prompt without the placeholder: before the memory. */
-const MEMORY_MARKER = '\nSummarized memory:';
+/** The start of the W6 sentence of v0.1.4.11 in the conversing prompt; the role line follows its line (D3, DECISIONS F2). */
+export const ROLE_ANCHOR = 'A rule about a place names ';
+/** The fallback place of the role line: right before this line (DECISIONS F2b). */
+export const MEMORY_MARKER = 'Summarized memory:';
 
 const nameList = (list) => (Array.isArray(list) ? list : []).filter((n) => typeof n === 'string');
 
@@ -63,26 +63,10 @@ export function roleLine(role) {
 }
 
 /**
- * The prompt with the placeholder $BOT_ROLE replaced (D3): by the role line, or, with an empty role, removed
- * with its line break, so the prompt is the one without a role. No replacement patterns: a `$` in the role
- * stays as it is.
- * @param {string} prompt
- * @param {string} role
- * @returns {string}
- */
-export function withBotRole(prompt, role) {
-    if (typeof prompt !== 'string' || !prompt.includes(ROLE_PLACEHOLDER))
-        return prompt;
-    const line = roleLine(role);
-    if (!line)
-        return prompt.split(ROLE_PLACEHOLDER + '\n').join('').split(ROLE_PLACEHOLDER).join('');
-    return prompt.split(ROLE_PLACEHOLDER).join(line);
-}
-
-/**
- * For a conversing prompt without the placeholder (the default profile, an older profile of the owner): the
- * role line on its own line before "Summarized memory:" (after the two lines of W6 where a profile has them),
- * else as the first line. An empty role leaves the prompt as it is.
+ * The conversing prompt with the role line (D3, DECISIONS F2 and F2b): on its own line right after the line that
+ * starts with "A rule about a place names " (the second W6 line of v0.1.4.11); without that line, on its own line
+ * right before "Summarized memory:"; without both, nothing. An empty role or the line there already: the prompt
+ * unchanged, byte for byte.
  * @param {string} prompt
  * @param {string} role
  * @returns {string}
@@ -91,8 +75,17 @@ export function insertRoleLine(prompt, role) {
     const line = roleLine(role);
     if (typeof prompt !== 'string' || !line || prompt.includes(line))
         return prompt;
-    const at = prompt.indexOf(MEMORY_MARKER);
-    if (at < 0)
+    const at = prompt.startsWith(ROLE_ANCHOR) ? 0 : prompt.indexOf('\n' + ROLE_ANCHOR);
+    if (at >= 0) {
+        const end = prompt.indexOf('\n', at + 1);
+        if (end < 0)
+            return `${prompt}\n${line}`;
+        return prompt.slice(0, end) + '\n' + line + prompt.slice(end);
+    }
+    const memory = prompt.startsWith(MEMORY_MARKER) ? 0 : prompt.indexOf('\n' + MEMORY_MARKER);
+    if (memory < 0)
+        return prompt;
+    if (memory === 0)
         return `${line}\n${prompt}`;
-    return prompt.slice(0, at) + '\n' + line + prompt.slice(at);
+    return prompt.slice(0, memory) + '\n' + line + prompt.slice(memory);
 }

@@ -1,9 +1,11 @@
-// Spec v0.1.4.12, 4.6 (part D, engineer E6), D3: the role line of bot_role in the conversing prompt.
-//   - both profiles carry the placeholder $BOT_ROLE on its own line right after the two lines of W6 of v0.1.4.11;
-//   - through the real Prompter (promptConvo with a fake model) and profiles/claude.json: an empty role leaves no line
-//     and no placeholder (the prompt as without the placeholder); a role puts `${bot_role} A question to all of us gets
-//     one line from you.` right after the two lines of W6; the size of the prompt with a role of 60 characters is printed;
-//   - a profile without the placeholder (the default profile, as the scenarios run it): the line before the memory.
+// Spec v0.1.4.12, 4.6 (part D, engineer E6), D3 with DECISIONS F2: the role line of bot_role in the conversing prompt,
+// without a placeholder.
+//   - both profiles keep their text (no placeholder);
+//   - through the real Prompter (promptConvo with a fake model) and profiles/claude.json: an empty role leaves the prompt
+//     byte for byte as without the switch; a role puts `${bot_role} A question to all of us gets one line from you.` on
+//     its own line right after the two lines of W6; the size of the prompt with a role of 60 characters is printed;
+//   - F2b: without the W6 line (the default conversing prompt, as the scenarios run it) the line goes right before
+//     "Summarized memory:"; without both, nowhere.
 import { describe, test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -86,32 +88,22 @@ async function conversingPrompt(profile, role) {
     }
 }
 
-describe('D3: the placeholder in both profiles', () => {
-    for (const file of ['profiles/claude.json', 'profiles/gpt.json']) {
-        test(`${file}: $BOT_ROLE once, on its own line right after the two lines of W6`, () => {
-            const conversing = JSON.parse(fs.readFileSync(repoPath(file), 'utf8')).conversing;
-            assert.ok(conversing.includes(`${W6[0]}\n${W6[1]}\n$BOT_ROLE\nSummarized memory:`), conversing);
-            assert.equal(conversing.split('$BOT_ROLE').length, 2);
+describe('D3: no placeholder in the profiles (DECISIONS F2)', () => {
+    for (const file of ['profiles/claude.json', 'profiles/gpt.json', 'profiles/defaults/_default.json']) {
+        test(`${file}: no $BOT_ROLE`, () => {
+            assert.ok(!JSON.parse(fs.readFileSync(repoPath(file), 'utf8')).conversing.includes('$BOT_ROLE'));
         });
     }
-
-    test('the default profile has no placeholder (the prompter puts the line before the memory)', () => {
-        const fallback = JSON.parse(fs.readFileSync(repoPath('profiles/defaults/_default.json'), 'utf8'));
-        assert.ok(!fallback.conversing.includes('$BOT_ROLE'));
-    });
 });
 
 describe('D3: through the prompter, profiles/claude.json', () => {
-    test('an empty role: no role line, no placeholder, no warning; the prompt is the one of the profile without the placeholder', async (t) => {
+    test('an empty role: byte for byte the prompt without bot_role', async (t) => {
         const empty = await conversingPrompt(CLAUDE(), '');
-        assert.ok(!empty.prompt.includes('$BOT_ROLE'));
+        const unset = await conversingPrompt(CLAUDE(), undefined);
+        assert.equal(empty.prompt, unset.prompt);
         assert.ok(!empty.prompt.includes('A question to all of us'));
+        assert.ok(empty.prompt.includes(`${W6[0]}\n${W6[1]}\nSummarized memory:`), 'as in v0.1.4.11');
         assert.deepEqual(empty.unknown, []);
-        assert.ok(empty.prompt.includes(`${W6[1]}\nSummarized memory:`), 'the memory right after the two lines, as in v0.1.4.11');
-        const without = CLAUDE();
-        without.conversing = without.conversing.replace('$BOT_ROLE\n', '');
-        const old = await conversingPrompt(without, '');
-        assert.equal(empty.prompt, old.prompt);
         t.diagnostic(`v0.1.4.12, claude.json, no role: ${empty.prompt.length} characters`);
     });
 
@@ -119,7 +111,7 @@ describe('D3: through the prompter, profiles/claude.json', () => {
         assert.equal(ROLE_60.length, 60);
         const empty = await conversingPrompt(CLAUDE(), '');
         const role = await conversingPrompt(CLAUDE(), ROLE_60);
-        assert.ok(role.prompt.includes(`${W6[1]}\n${LINE_60}\nSummarized memory:`), role.prompt.slice(0, 1400));
+        assert.ok(role.prompt.includes(`${W6[0]}\n${W6[1]}\n${LINE_60}\nSummarized memory:`), role.prompt.slice(0, 1400));
         assert.equal(role.prompt.split(LINE_60).length, 2, 'once');
         assert.deepEqual(role.unknown, []);
         assert.equal(role.prompt.length - empty.prompt.length, LINE_60.length + 1);
@@ -132,18 +124,28 @@ describe('D3: through the prompter, profiles/claude.json', () => {
     });
 });
 
-describe('D3: a profile without the placeholder (the default conversing prompt)', () => {
-    const plain = () => ({ name: 'w_farmer', model: CLAUDE().model });
+describe('D3 (F2b): a conversing prompt without the W6 line', () => {
+    const plain = () => ({ name: 'w_farmer', model: CLAUDE().model }); // the default conversing prompt, as the scenarios run it
 
-    test('a role: the line on its own line before "Summarized memory:", once', async () => {
-        const { prompt } = await conversingPrompt(plain(), ROLE_60);
+    test('the default profile: the role line on its own line right before "Summarized memory:", once', async () => {
+        const { prompt, unknown } = await conversingPrompt(plain(), ROLE_60);
         assert.ok(prompt.includes(`take a deep breath and have fun :)\n${LINE_60}\nSummarized memory:`), prompt.slice(0, 1200));
         assert.equal(prompt.split(LINE_60).length, 2);
+        assert.deepEqual(unknown, []);
     });
 
-    test('no role: the prompt as before', async () => {
-        const { prompt } = await conversingPrompt(plain(), '');
-        assert.ok(prompt.includes('take a deep breath and have fun :)\nSummarized memory:'));
-        assert.ok(!prompt.includes('A question to all of us'));
+    test('the default profile with an empty role: byte for byte the prompt without bot_role', async () => {
+        const empty = await conversingPrompt(plain(), '');
+        const unset = await conversingPrompt(plain(), undefined);
+        assert.equal(empty.prompt, unset.prompt);
+        assert.ok(empty.prompt.includes('take a deep breath and have fun :)\nSummarized memory:'));
+    });
+
+    test('neither the W6 line nor "Summarized memory:": no role line, the prompt as without a role', async () => {
+        const own = () => ({ ...plain(), conversing: 'You are $NAME, a bot.\n$STATS\n$INVENTORY\n$COMMAND_DOCS\n$EXAMPLES\nConversation Begin:' });
+        const role = await conversingPrompt(own(), ROLE_60);
+        const none = await conversingPrompt(own(), '');
+        assert.ok(!role.prompt.includes('A question to all of us'));
+        assert.equal(role.prompt, none.prompt);
     });
 });

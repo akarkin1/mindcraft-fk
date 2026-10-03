@@ -14,7 +14,7 @@ import { extractTask } from '../agent/skills/skill_review.js';
 import { withPurpose } from '../agent/cost/usage_context.js';
 import { buildRulesSection } from '../agent/rules/rule_prompt.js';
 import { visibleExamples } from '../agent/rules/example_filter.js';
-import { withBotRole, insertRoleLine, ROLE_PLACEHOLDER } from '../agent/bots_logic.js';
+import { insertRoleLine } from '../agent/bots_logic.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -241,9 +241,6 @@ export class Prompter {
                 prompt = prompt.replaceAll('$BLUEPRINTS', blueprints.slice(0, -2));
             }
         }
-        // v0.1.4.12 (D3): the role line of bot_role, or nothing with an empty role; without replacement patterns
-        if (prompt.includes(ROLE_PLACEHOLDER))
-            prompt = withBotRole(prompt, settings.bot_role);
         // v0.1.4.8 (C1): what the bot knows, with knowledge_in_prompt, else nothing. Last, and without
         // replacement patterns, so a name in the block is never read as a placeholder.
         if (prompt.includes('$KNOWLEDGE'))
@@ -278,11 +275,10 @@ export class Prompter {
             let prompt = this.profile.conversing;
             // v0.1.4.8: a profile without $KNOWLEDGE (the profile of the owner) gets the block like the rules
             const knowledge_placeholder = typeof prompt === 'string' && prompt.includes('$KNOWLEDGE');
-            // v0.1.4.12 (D3): a profile without $BOT_ROLE (the default profile) gets the role line before the memory
-            const role_placeholder = typeof prompt === 'string' && prompt.includes(ROLE_PLACEHOLDER);
             prompt = await this.replaceStrings(prompt, messages, this.convo_examples);
-            if (!role_placeholder)
-                prompt = insertRoleLine(prompt, settings.bot_role); // '' leaves the prompt as it is
+            // v0.1.4.12 (D3, DECISIONS F2, F2b): the line of bot_role after the W6 sentence of the rules of places, else
+            // before "Summarized memory:", else nowhere; an empty role: the prompt unchanged
+            prompt = insertRoleLine(prompt, settings.bot_role);
             if (this.agent?.skill_manager) {
                 try {
                     prompt = insertSection(prompt, this.agent.skill_manager.conversingSection());
