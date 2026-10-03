@@ -150,6 +150,8 @@ const SCENARIOS = [
     ['dry_scan', 'w96_dry_scan.js', 1200, false, 'base'],
     ['no_digging_to_player', 'w97_no_digging_to_player.js', 600, false, 'base'],
     ['words', 'w98_words.js', 1500, false, 'base'],
+    // the owner's region from his dump (MCW_OWNER_DUMP): his staircase (F24) and his basement as a shelter (F25)
+    ['owner_region', 'w99_owner_region.js', 2400, false, 'base'],
 ];
 
 // Words that select a group of scenarios (spec v0.1.4.8, W30: the work scenarios of v0.1.4.7, which run
@@ -165,7 +167,7 @@ const GROUPS = {
         'owner_base', 'first_minutes', 'first_mine', 'come_here_floors', 'chest_and_torches', 'ten_minutes',
         'job_comes_back', 'blocker_steps', 'idle_list', 'ladders_native', 'pen_gate_safe', 'two_floors',
         'tunnel_where_you_stand', 'shaft_from_room', 'open_sky', 'place_from_sentence', 'route_joined', 'dry_scan',
-        'no_digging_to_player', 'words',
+        'no_digging_to_player', 'words', 'owner_region',
     ],
 };
 
