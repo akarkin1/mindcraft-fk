@@ -11,10 +11,11 @@ git stash
 git checkout main
 git pull
 git stash pop
+Remove-Item -Recurse -Force node_modules\mineflayer-pathfinder
 npm install
 ```
 
-`npm install` is needed when you come from v0.1.4.9 (the path search patch); from v0.1.4.10 it changes nothing.
+The path search patch changed (the stairs, step 18). Over a `node_modules` that carries the patch of v0.1.4.10 the new one cannot be applied, and `npm install` says so only in its output (`patch-package finished with 1 error(s)`) while it ends fine: remove the package first, as above, and `npm install` installs it again and patches it. Check: `Select-String F24 node_modules\mineflayer-pathfinder\lib\movements.js` prints 3 lines.
 
 ## 2. Switch the parts on
 
