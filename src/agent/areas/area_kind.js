@@ -117,7 +117,9 @@ function hasOpening(enclosure, kinds) {
 /**
  * The kind of a place (I5), the first rule that fits: animals of 1 kind or more and an opening of kind gate or door:
  * `pen`; crops on a tilled floor: `farm`; a roof, a door and a bed: `home`; a roof and chests or furnaces: `storage`;
- * a roof and a door: `building`; else `yard`.
+ * a roof and a door, or a roof and a trapdoor (a cellar entered from above, v0.1.4.11, F25): `building`; else `yard`.
+ * scanEnclosure gives the opening kinds door, gate, trapdoor and gap (OPENING_KINDS of area_scan.js); a ladder is no
+ * opening of its own, the trapdoor over its column is.
  * @param {{roof?: boolean, floor?: string, openings?: {kind: string}[]}|null} enclosure the result of scanEnclosure
  * @param {object|null} contents the result of countContents
  * @returns {'pen'|'farm'|'home'|'storage'|'building'|'yard'}
@@ -137,7 +139,7 @@ export function kindOf(enclosure, contents) {
     if (roof && (numberOf(contents, 'chests') > 0 || numberOf(contents, 'furnaces') > 0)) {
         return 'storage';
     }
-    if (roof && door) {
+    if (roof && (door || hasOpening(enclosure, ['trapdoor']))) {
         return 'building';
     }
     return 'yard';

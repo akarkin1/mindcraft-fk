@@ -452,7 +452,7 @@ index b38bd30..2efecd4 100644
  
  module.exports = {
 diff --git a/node_modules/mineflayer-pathfinder/lib/movements.js b/node_modules/mineflayer-pathfinder/lib/movements.js
-index a7e3505..2d66afb 100644
+index a7e3505..6894568 100644
 --- a/node_modules/mineflayer-pathfinder/lib/movements.js
 +++ b/node_modules/mineflayer-pathfinder/lib/movements.js
 @@ -15,6 +15,11 @@ const diagonalDirections = [
@@ -496,7 +496,7 @@ index a7e3505..2d66afb 100644
      this.emptyBlocks = new Set()
  
      this.replaceables = new Set()
-@@ -92,13 +108,36 @@ class Movements {
+@@ -92,13 +108,37 @@ class Movements {
        }
      })
      registry.blocksArray.forEach(block => {
@@ -512,13 +512,14 @@ index a7e3505..2d66afb 100644
 -    this.canOpenDoors = false // Causes issues. Probably due to none paper servers.
 +    this.canOpenDoors = true
 +
-+    // No-stand blocks (v0.1.4.10, P4): hollow blocks and containers are never ground to stand on, a bottom slab and
-+    // bottom stairs neither (the bot stands half a block low and gets stuck). The list of isNoStandBlock of
-+    // src/agent/packs/home/stand_logic.js, copied: the patch cannot import. A closed fence gate is a fence already.
++    // No-stand blocks (v0.1.4.10, P4): hollow blocks and containers are never ground to stand on. The list of
++    // isNoStandBlock of src/agent/packs/home/stand_logic.js, copied: the patch cannot import. A closed fence gate is a
++    // fence already. Slabs and stairs are floor again (v0.1.4.11, F24): a staircase of bottom stairs or bottom slabs
++    // is a way, as in the upstream pathfinder; halfBlocks only keeps a move from breaking them (mayBreakOnPath).
 +    const noStandNames = ['composter', 'cauldron', 'water_cauldron', 'lava_cauldron', 'powder_snow_cauldron', 'hopper',
 +      'chest', 'trapped_chest', 'ender_chest']
 +    this.noStandBlocks = new Set()
-+    this.halfBlocks = new Set() // slabs and stairs: no stand only in their bottom half
++    this.halfBlocks = new Set() // slabs and stairs: never broken by a move (mayBreakOnPath)
 +    this.keepBlocks = new Set() // the hollow ones: never broken by a move either (mayBreakOnPath)
 +    registry.blocksArray.forEach(block => {
 +      if (noStandNames.includes(block.name) || block.name.endsWith('_fence') || block.name.endsWith('_wall')) this.noStandBlocks.add(block.id)
@@ -535,7 +536,7 @@ index a7e3505..2d66afb 100644
  
      this.exclusionAreasStep = []
      this.exclusionAreasBreak = []
-@@ -230,8 +269,22 @@ class Movements {
+@@ -230,8 +270,22 @@ class Movements {
        }
      }
      b.climbable = this.climbables.has(b.type)
@@ -560,16 +561,15 @@ index a7e3505..2d66afb 100644
      b.replaceable = this.replaceables.has(b.type) && !b.physical
      b.liquid = this.liquids.has(b.type)
      b.height = pos.y + dy
-@@ -244,6 +297,15 @@ class Movements {
+@@ -244,6 +298,14 @@ class Movements {
      return b
    }
  
-+  // P4: a block of the no-stand list, a closed fence gate, a bottom slab or a bottom stairs
++  // P4: a block of the no-stand list or a closed fence gate. A bottom slab and bottom stairs are floor (v0.1.4.11, F24).
 +  isNoStand (b) {
 +    if (this.noStandBlocks.has(b.type)) return true
 +    const props = b._properties ?? {}
 +    if (b.name.endsWith('_fence_gate')) return props.open !== true
-+    if (this.halfBlocks.has(b.type)) return props.type === 'bottom' || props.half === 'bottom'
 +    return false
 +  }
 +
@@ -580,8 +580,8 @@ index a7e3505..2d66afb 100644
      return block.type && !this.blocksCantBreak.has(block.type) && this.exclusionBreak(block) < 100
    }
  
-+  // v0.1.4.10 (P1, P4): a move of the path search never breaks a door, a gate, a trapdoor, a ladder, nor a block that
-+  // P4 made no floor (a slab, stairs, a cauldron, a composter, a hopper), where it would step down to place a block.
++  // v0.1.4.10 (P1, P4): a move of the path search never breaks a door, a gate, a trapdoor, a ladder, a slab, stairs
++  // (floor again since v0.1.4.11, F24), a cauldron, a composter or a hopper.
 +  // safeToBreak stays as it was: the skills ask it what the bot may collect.
 +  mayBreakOnPath (block) {
 +    if (this.openable.has(block.type) || block.type === this.ladderId || this.keepBlocks.has(block.type) || this.halfBlocks.has(block.type)) return false

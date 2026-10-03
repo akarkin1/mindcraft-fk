@@ -1,5 +1,6 @@
 // The shelter of the bot (spec v0.1.4.6 H3, v0.1.4.8 C4): go there, get in through the door and
-// close it. Only an area of type home or the place home is a shelter. Digging in (the emergency
+// close it. Only an area of type home or the place home is a shelter to go to; inside the walls of a
+// saved building the bot is in shelter too (v0.1.4.11, F25). Digging in (the emergency
 // shelter) is left for a creeper that stands at every entrance at night.
 import { Vec3 } from 'vec3';
 import { containsPos, distance, distanceToBox, expandBox, floorPos } from './box_math.js';
@@ -9,8 +10,8 @@ import { doorCenter, sideOf } from './door_logic.js';
 import { closeDoor, doorState, findOpenables, passThrough } from './doors.js';
 import { goals, gotoGoal, isNear, makeMovements, walkNear } from './motion.js';
 import { isNight } from './night_logic.js';
-import { chooseCoverBlock, chooseShelter, chooseStandingPlace, isBuildingArea, isFallingBlockName, isInsideArea, isShelterArea, orderEntrances,
-    roomCenter } from './shelter_logic.js';
+import { chooseCoverBlock, chooseShelter, chooseStandingPlace, isBuildingArea, isFallingBlockName, isInsideArea, orderEntrances,
+    roomCenter, shelterHere } from './shelter_logic.js';
 import { isBedName } from './sleep_logic.js';
 import { isNoStandBlock } from './stand_logic.js';
 import { TEXTS, creeperAtShelterText, dugInText, inShelterText, shelterText } from './texts.js';
@@ -48,16 +49,16 @@ function coords(p) {
 }
 
 /**
- * True when the bot stands inside the walls of a shelter of its dimension: an area of type home
- * (v0.1.4.8, C4).
+ * True when the bot stands inside the walls of a saved area of its dimension that is safe at night: an area of type
+ * home (v0.1.4.8, C4) or a building with walls (v0.1.4.11, F25; not one concluded to be a yard). See shelterHere.
+ * A building is never a shelter to go to: findShelter and goToShelter choose only an area of type home.
  * @param {object} bot
  * @param {object} ctx
  * @returns {boolean}
  */
 export function isInShelter(bot, ctx) {
     try {
-        const pos = botPos(bot);
-        return Boolean(pos) && listAreas(ctx, dimensionOf(bot)).some(area => isShelterArea(area) && isInsideArea(area, pos));
+        return shelterHere(listAreas(ctx, dimensionOf(bot)), botPos(bot)) !== null;
     } catch {
         return false;
     }
@@ -396,7 +397,10 @@ export async function throughHatch(bot, area, hatch, ctx, options, clock) {
  * blocks the creeper procedure runs first. A creeper that stands (F3) keeps the bot from the entrances
  * within 16 blocks of it; without another entrance the bot does not go in, and at night it digs in at
  * least 24 blocks from the creeper. `The door is closed.` is said only after the state of the door was
- * read. `options.area` forces an area (used by sleepInBed). Never throws.
+ * read. `options.area` forces an area (used by sleepInBed). v0.1.4.11 (F25): when the bot already stands inside the
+ * walls of another area of type home or of a building (shelterHere), it stays there: it closes the open doors, gates
+ * and trapdoors of that area and answers `I am in the shelter "<name>". The door is closed.`, or without a door read
+ * `I am in the shelter "<name>".` (reason no_door), or `..., but a door is still open.` (reason door_open). Never throws.
  * @param {object} bot
  * @param {object} ctx { areas, places, settings, log, now }
  * @param {object} [options]
@@ -406,11 +410,17 @@ export async function goToShelter(bot, ctx = {}, options = {}) {
     try {
         const clock = clockOf(ctx, options);
         const choice = options.area ? { kind: 'area', area: options.area, why: 'given' } : findShelter(bot, ctx);
+        if (choice.kind === 'area' && isInsideArea(choice.area, botPos(bot))) {
+            return { ok: true, where: choice.area.name ?? 'shelter', reason: 'already_inside', text: TEXTS.inShelterAlready };
+        }
+        // v0.1.4.11 (F25): inside the walls of another home or of a building the bot is in shelter already: it stays,
+        // closes the open doors of the area and says `The door is closed.` only when it read the state of a door
+        const here = options.area ? null : shelterHere(listAreas(ctx, dimensionOf(bot)), botPos(bot));
+        if (here) {
+            return insideText(here.name ?? 'shelter', await closeOpenDoorsOf(bot, here, options));
+        }
         if (choice.kind === 'area') {
             const name = choice.area.name ?? 'shelter';
-            if (isInsideArea(choice.area, botPos(bot))) {
-                return { ok: true, where: name, reason: 'already_inside', text: TEXTS.inShelterAlready };
-            }
             const creeper = await creeperFirst(bot, ctx, options);
             if (creeper && !creeper.ok) {
                 return { ok: false, where: name, reason: 'creeper', text: creeper.text };

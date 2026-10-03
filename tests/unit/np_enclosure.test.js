@@ -229,6 +229,16 @@ describe('kindOf: each rule and the order (I5)', () => {
         assert.equal(K.kindOf(null, null), 'yard');
     });
 
+    // v0.1.4.11 (F25): the owner's basement, 0 doors and 2 trapdoors in its ceiling over ladders
+    test('a roof and a trapdoor without a door: building; a trapdoor without a roof or a roof with a gap: yard', () => {
+        const hatches = [{ x: 0, y: 66, z: 0, kind: 'trapdoor' }, { x: 3, y: 66, z: 0, kind: 'trapdoor' }];
+        assert.equal(K.kindOf(ENC({ roof: true, border: 'wall', openings: hatches }), C({ ladders: 6 })), 'building');
+        assert.equal(K.kindOf(ENC({ roof: true, border: 'wall', openings: hatches }), C({ beds: 1 })), 'building', 'a bed but no door: no home');
+        assert.equal(K.kindOf(ENC({ roof: true, openings: hatches }), C({ chests: 1 })), 'storage', 'storage comes first');
+        assert.equal(K.kindOf(ENC({ openings: hatches }), C()), 'yard', 'no roof');
+        assert.equal(K.kindOf(ENC({ roof: true, openings: [{ x: 0, y: 64, z: 0, kind: 'gap' }] }), C()), 'yard', 'a gap is no trapdoor');
+    });
+
     test('the order: the first rule that fits wins', () => {
         const all = C({ animals: { pig: 2 }, crops: { carrots: 3 }, beds: 1, chests: 1 });
         assert.equal(K.kindOf(ENC({ roof: true, floor: 'tilled', openings: DOOR }), all), 'pen');
