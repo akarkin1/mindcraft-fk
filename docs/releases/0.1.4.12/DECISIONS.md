@@ -60,3 +60,6 @@ The old set in the fresh clone at c8d9146: the first half (37 scenarios, 2642 s)
 | Id | Finding | Where | Decision | Owner |
 |---|---|---|---|---|
 | F10 | W47 creeper_in_sight (the bot in the tunnel of a saved mine area) died twice of `JavaScript heap out of memory` after 220 s; run 1 passed in 12 s; the scenario passed in every set before part F. The flood of the rock scan runs out through the natural caves of the world without a bound. | creeper_in_sight | A hard cap on the flood and the cache (cells and box); at the cap the place is open: found false, no rock place, nothing said. | F (E5) |
+
+The old set at c8d9146, both halves: 73 scenarios, 87 of 88 lines passed (2642 s and 3807 s); the one failure is W47 of F10
+(1 of 3 runs). The fix of F10, the creeper runs and a last gate follow before the merge.
