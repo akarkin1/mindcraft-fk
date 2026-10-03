@@ -9,12 +9,13 @@ let agent_processes = {};
 let agent_count = 0;
 let mindserver_port = 8080;
 
-export async function init(host_public=false, port=8080, auto_open_ui=true) {
+// voice_options (v0.1.4.13): voice_ui, voice_voice and voice_language of settings.js, for the live voice of the page
+export async function init(host_public=false, port=8080, auto_open_ui=true, voice_options={}) {
     if (connected) {
         console.error('Already initiliazed!');
         return;
     }
-    mindserver = createMindServer(host_public, port);
+    mindserver = createMindServer(host_public, port, voice_options);
     mindserver_port = port;
     connected = true;
     if (auto_open_ui) {

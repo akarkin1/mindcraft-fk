@@ -78,7 +78,9 @@ if (process.env.SETTINGS_JSON) {
 // v0.1.4.8, F4: [HH:MM:SS] before each line of the console, once the settings are final
 installLogTime(settings.log_timestamps ?? false);
 
-Mindcraft.init(false, settings.mindserver_port, settings.auto_open_ui);
+// v0.1.4.13: the live voice of the page (off by default)
+Mindcraft.init(false, settings.mindserver_port, settings.auto_open_ui,
+    { voice_ui: settings.voice_ui === true, voice_voice: settings.voice_voice, voice_language: settings.voice_language });
 
 for (let profile of settings.profiles) {
     const profile_json = JSON.parse(readFileSync(profile, 'utf8'));
