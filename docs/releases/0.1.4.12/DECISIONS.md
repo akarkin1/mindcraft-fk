@@ -28,3 +28,12 @@ as they stood. T1 has not started. Open items, in the order of the next session:
 | F4 | `tests/unit/stg_commands.test.js` ("the words of the new behaviour") wants `home.*building.*farm.*pen.*mine` in the description of `!rememberArea`, which the lead shortened for the prompt limit. | the lead's glue | The description names the kinds in short: `...; without a type you conclude the kind (home, building, farm, pen, mine) from what is there.`, the test stays. | lead |
 | F5 | `scripts/routing_check.js --dry-run --all-parts` fails ("every part is on"): the dry run's list of parts does not switch `watch_and_learn` on. | routing | `--all-parts` switches every key of PART_COMMANDS on. | T1 |
 | F6 | E5's static import of `tunnelAt` from the mining pack in `area_sense.js` (the rule: packs through ctx). | scan_underground | Through the context, or a pure copy in areas if small; E5 was told. | F (E5) |
+
+## Found by the unit tests of T1 (from the spec, 171 tests)
+
+| Id | Finding | Where | Decision | Owner |
+|---|---|---|---|---|
+| T1-1 | `!rememberArea` and the knowledge line scan without the measure of the mining pack (only the sense registered it, on its first tick), so a tunnel 2 wide and 23 long came out as a cave. | the scans underground | The measure is registered with `useTunnelMeasure` when the mining pack loads (`_loadWorkPacks`); the test registers it the same way. | lead, done |
+| T1-2 | The state tool measured the distance to home from the exact position to the corner of the home block: `(12, 67, 52)` and `Home: (10, 67, 52), 3 blocks away.` | the watch server | The distance between the two cells printed. | lead, done |
+
+W103 (the fence) and W104 (the tunnel) ran for the first time on the finished code and pass (40.7 s, 31.0 s); W106 passes with ladders in the kit (148 s); W108 passes with the role line fallback (56.5 s). Every journey of this release has passed at least once.

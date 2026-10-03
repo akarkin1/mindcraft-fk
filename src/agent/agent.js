@@ -41,6 +41,7 @@ import { installChatLimit } from './reflex/chat_limit.js';
 import { WAKE_RULES, shouldWakeFor } from './reflex/wake_logic.js';
 import { knowledgeText, whereLine, KNOWLEDGE_HEADER } from './knowledge/knowledge_text.js';
 import { unsavedEnclosure, enclosureKnowledge, ENCLOSURE_KNOWLEDGE_MS } from './areas/area_sense.js';
+import { useTunnelMeasure } from './areas/area_scan.js'; // v0.1.4.12 (T1-1)
 import { writeExit, readExit, restartNote } from './restart_context.js';
 import { RepeatGuard } from './repeat_guard.js';
 import { withTimeLimit } from '../utils/kill_timer.js';
@@ -911,6 +912,10 @@ export class Agent {
         if (settings.mining_pack) {
             try {
                 packs.mining = await (loaders.mining ? loaders.mining() : import('./packs/mining/index.js'));
+                // v0.1.4.12 (T1-1): the measure of a tunnel for the scans of the areas, registered once the pack is loaded, so
+                // !rememberArea and the knowledge line name a tunnel before the sense ever ticked
+                if (typeof packs.mining?.tunnelAt === 'function')
+                    useTunnelMeasure(packs.mining.tunnelAt);
             } catch (error) {
                 failed('mining', error);
             }

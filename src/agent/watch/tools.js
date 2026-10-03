@@ -119,7 +119,8 @@ function homeLine(agent, pos, dimension) {
         return TEXTS.noHome;
     if (home.dimension && plainDimension(home.dimension) !== plainDimension(dimension))
         return TEXTS.homeElsewhere(posText(home), plainDimension(home.dimension));
-    const d = distance(pos, home);
+    const cell = (p) => (p && Number.isFinite(p.x) ? { x: Math.floor(p.x), y: Math.floor(p.y), z: Math.floor(p.z) } : p);
+    const d = distance(cell(pos), cell(home)); // T1-2: between the cells, as the two printed positions are
     if (!Number.isFinite(d))
         return TEXTS.homeElsewhere(posText(home), plainDimension(home.dimension));
     return TEXTS.home(posText(home), Math.round(d));
