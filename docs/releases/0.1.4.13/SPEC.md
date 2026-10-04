@@ -52,6 +52,7 @@ in the style of `watch_server`, after `voice_language`):
 |---|---|---|---|---|
 | `supervisor_name` | `""` | string | N | The name the owner addresses the supervisor by; `""`: no supervisor in the chat, no `help` or `message` events, no notes |
 | `supervisor_voice` | `"supertonic:M1"` | string | N | With `voice_ui`: the voice of the supervisor's lines on the page |
+| `supervisor_updates` | `false` | bool | N | The supervisor's unprompted updates are shown and spoken; off: only its answers |
 | `watch_report_seconds` | `0` | int | S | A `report` event every N seconds; 0: none |
 | `shared_memory` | `false` | bool | M | One memory of the world for all bots |
 | `prompt_cache` | `false` | bool | M | The fixed part of the prompt first and cache-marked |
@@ -69,7 +70,7 @@ cache writes (M3) have no switch. With every switch off the bot behaves as v0.1.
 | K The creeper loop | E2 | `src/agent/packs/home/creeper.js`, `src/agent/modes.js` (the creeper mode only), new `scripts/profile_creeper.js` if a script is needed; `tests/unit/xk_*.test.js` | 1 |
 | P The job corrections | E3 | `src/agent/job/index.js`, `job_logic.js`, `plan_logic.js`, `job_texts.js`, `src/agent/packs/mining/mining.js` (the supply step, the counter), `src/agent/packs/mining/dig.js` (the wear rule), `src/agent/packs/mining/texts.js` (the new texts), `src/agent/packs/storage/smelt.js`, `smelt_logic.js`, `src/agent/packs/storage/texts.js` (the furnace texts), `src/agent/packs/wood/actions.js` (`ensureTool`), `src/agent/commands/actions.js` (`!getTool`, `!smeltItem` only); `tests/unit/xp_*.test.js` | 1 |
 | Q The way and the safety | E4 | `src/agent/library/skills.js` (`goToPosition`, `goToSurface`, `giveToPlayer`, `pickupNearbyItems`: Q2, Q3, Q5, Q6, Q7), `src/agent/commands/actions.js` (`!goToCoordinates`, `!mineOre` only), `src/agent/packs/mining/mine_player.js`, `mine_logic.js`, `mine_way.js` (Q1, Q4), `src/agent/packs/mining/mining.js` (Q4 the full bag, Q9 other ores: after E3's handoff), `src/agent/areas/keep_out_logic.js`, `area_scan.js` (Q8), `src/agent/modes.js` (the item mode: Q6, Q7), `src/agent/packs/home/` (the armour rule: Q6), `patches/mineflayer-pathfinder+2.4.5.patch` (Q3, Q8 the gate rule), `settings.js` and `settings_spec.json` for `mine_other_ores`; `tests/unit/xq_*.test.js` | 2 |
-| N2 The supervisor in the chat | E5 | new `src/agent/watch/supervisor.js`, `supervisor_logic.js` (the `message` and `help` events, `reply`, presence, `note`), `src/agent/watch/tools.js` (the registration of `reply` and `note` only, after E1's handoff), `src/agent/bots_logic.js` (the supervisor's name in `shouldAnswer`, after E2's handoff), `src/models/prompter.js` (the note line), `src/mindcraft/voice/voice_logic.js` and `voice_server.js` (the second voice), `src/mindcraft/public/` (the chat of every bot and the supervisor: one file, see 4.6), new `.claude/skills/supervise/SKILL.md`, new `docs/SUPERVISOR.md`, `settings.js` and `settings_spec.json` for `supervisor_name` and `supervisor_voice`; `tests/unit/xv_*.test.js` | 2 |
+| N2 The supervisor in the chat | E5 | new `src/agent/watch/supervisor.js`, `supervisor_logic.js` (the `message` and `help` events, `reply`, presence, `note`), `src/agent/watch/tools.js` (the registration of `reply` and `note` only, after E1's handoff), `src/agent/bots_logic.js` (the supervisor's name in `shouldAnswer`, after E2's handoff), `src/models/prompter.js` (the note line), `src/mindcraft/voice/voice_logic.js` and `voice_server.js` (the second voice), `src/mindcraft/public/` (the chat of every bot and the supervisor, the one speech queue: see 4.5), new `.claude/skills/supervise/SKILL.md`, new `docs/SUPERVISOR.md`, `settings.js` and `settings_spec.json` for `supervisor_name`, `supervisor_voice` and `supervisor_updates`; `tests/unit/xv_*.test.js` | 2 |
 | M One memory and the cost | E6 | new `src/agent/memory_paths.js`, the stores that open a file of `bots/<name>/worlds/<seed>/` (`src/agent/areas/area_store.js`, `src/agent/packs/mining/mine_store.js`, `src/agent/packs/routes/`, `src/agent/packs/storage/` the chest index, the rules store, the places of `memory_bank.js`: the path only), `src/models/prompter.js` (the two-part prompt), `src/models/claude.js` (the cache mark), `src/agent/cost/price_table.js`, `src/agent/cost/` (the writes), `src/models/gpt.js` (the report of writes), `settings.js` and `settings_spec.json` for `shared_memory` and `prompt_cache`; `tests/unit/xm_*.test.js` | 2 |
 | TW Journeys | T3 | `tests/world/w109` to `w118`, `journey.js`, `base_world.js`, `helpers.js`, new `tests/world/supervisor.js` (the scripted supervisor), `tests/world/README.md`, `tests/world/run.js` | 1 (written before the build, fail on the old code), run at every integration |
 | TU Unit tests from the spec | T1 | `tests/unit/xt_*.test.js` | 2 |
@@ -261,9 +262,17 @@ the skill), except through `run` of part S, which queues.
   `Message: "why is it going to the surface?"` with `data.from`, and no bot answers it. When no supervisor
   is connected (presence: no `wait` or `digest` call within 60 s), one bot (the first of the mindserver's
   agents, so two bots do not both answer) says `The supervisor is not here.`
-- **`reply`** (`text`, 1 to 256 characters): the bot relays the line into the chat as
-  `[Opus] <text>` (the configured name); the line is one no bot answers (`shouldAnswer`: `why:
-  'supervisor'`), and the page speaks it with `supervisor_voice`.
+- **`reply`** (`text`, 1 to 256 characters; `kind`: `"answer"` or `"update"`, default `answer`): the bot
+  relays the line into the chat as `[Opus] <text>` (the configured name); the line is one no bot answers
+  (`shouldAnswer`: `why: 'supervisor'`), and the page speaks it with `supervisor_voice`. An `update` (the
+  owner's wish of 2026-10-04: a short note when something happens or progress is made) is relayed and
+  spoken only with `supervisor_updates` on; off, the tool answers `Updates are off.` and nothing is said.
+- **Nobody speaks over anybody** (the owner's rule of 2026-10-04). In the chat: `supervisor.js` holds a
+  supervisor's line while a bot is answering (a bot line in the last 3 s) and relays it after; an `update`
+  held for more than 20 s is dropped (`reply` answered `Dropped: the bot was speaking.`). On the page: one
+  speech queue for every speaker, one line at a time, in the order a bot's answer to the owner, the
+  supervisor's answer, the supervisor's update; an update that waited more than 20 s is not spoken; the
+  owner's speech interrupts everything, as the page does already.
 - **`note`** (`text`, 1 to 200 characters; `minutes`, 1 to 120, default 30): the prompter inserts
   `Supervisor: <text>` as one line after the role line of v0.1.4.12 (or where the role line would be);
   one note at a time, the newer replaces the older; expired notes vanish. `note` with an empty text clears
@@ -277,7 +286,8 @@ in front; the dropdown of the bot you talk with puts that name in front of the r
 `supervisor_voice` for a line that starts with `[<supervisor_name>]`.
 
 `.claude/skills/supervise/SKILL.md` (for a Claude Code session in the repository): the loop, the standing
-rules, what never to do, the report format; it names the tools and the client, nothing of the code.
+rules, the updates (one line, only when something happened: a step or the job done, an intervention; at
+most one per 2 minutes; never while the owner is being answered), what never to do, the report format; it names the tools and the client, nothing of the code.
 `docs/SUPERVISOR.md`: the setup for the owner (the token, the tunnel, `claude mcp add --transport http
 mindcraft <url> --header "Authorization: Bearer <token>"`), the one sentence to give the supervisor, the
 cost (a cent a turn in a fresh session).
@@ -373,7 +383,7 @@ test process: `wait`, `digest`, `run`, `look`, `reply`, counted calls.
 |---|---|---|
 | W109 | supervised_mining | The bot in the mine room of the base with the mine saved and 4 bread; `run ['!mineOre("iron", 6)']`; the supervisor loops `wait any` and acts by two rules only: a `help` or a failure line gets `run` of the fix, `idle` with the job unfinished gets the job's command again; at most 6 wakes until the job is done: 6 raw_iron in the bag (server), the supervisor's wakes 6 or fewer, no `wait` answered later than 60 s. |
 | W110 | two_bots_names | Two bots 6 blocks from the player; "claude, come here": within 20 s claude within 2 blocks, gpt did not move more than 1 block and said nothing; "come here": both within 2 blocks within 20 s. |
-| W111 | supervisor_chat | `supervisor_name` "Opus"; the player says "Opus, where is it?": no bot answers (no bot line within 10 s), `wait event` of the supervisor got the `message`; `reply "It is in the tunnel."`: the chat holds `[Opus] It is in the tunnel.` and no bot answered it; without a supervisor (no call for 60 s): "Opus, hello" gets exactly one line, `The supervisor is not here.`, from one bot. |
+| W111 | supervisor_chat | `supervisor_name` "Opus"; the player says "Opus, where is it?": no bot answers (no bot line within 10 s), `wait event` of the supervisor got the `message`; `reply "It is in the tunnel."`: the chat holds `[Opus] It is in the tunnel.` and no bot answered it; `reply` of kind `update` with `supervisor_updates` off: nothing in the chat; with it on, sent while the bot is answering "where are you?": the update appears after the bot's line, never between the order and the answer; without a supervisor (no call for 60 s): "Opus, hello" gets exactly one line, `The supervisor is not here.`, from one bot. |
 | W112 | bread_beside_tunnel | The mine room with a chest holding 20 bread 4 blocks from the tunnel, the bot with 0 food items and food 12 of 20; `!mineOre("iron", 6)`: within 60 s the bot took bread from that chest (the chest's count fell, the bag's rose), it did not climb to the surface (y never above the room's level + 3), the supply text names the chest. |
 | W113 | furnace_in_bag | A furnace in the bag, none within 64 blocks, 3 raw_iron in the bag, 2 planks; `!getTool("iron_pickaxe")`: with no second order, within 3 minutes a furnace stands within 3 blocks of where the bot stood (server), the bag holds an iron_pickaxe, the plan text and the step text were said. |
 | W114 | worn_pickaxe | The bot's iron pickaxe worn to 12 uses (the control gives it with damage), 3 iron_ingot and 2 sticks in the bag; `!mineOre("iron", 6)`: the mining ends with 6 raw_iron, the bag holds a new iron_pickaxe and the old one, the wear text was said, no "nearly broken" stop. |

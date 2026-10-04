@@ -49,7 +49,7 @@ One channel, two names: what you say goes into the game chat, and both of us rea
 |---|---|
 | 1.10 | Addressing by name, for the bots too (your play of 2026-10-04 with two bots: both answered every line until you told them). A line that starts with a name, or names one in its first words ("claude, come here", "gpt please wait here"), is for that one; the other bot stays quiet and does nothing. A line without a name goes to every bot, as today. The name is matched by code, no model call for the bot that is not meant. |
 | 1.11 | `supervisor_name`: a line that names the supervisor ("Opus, why is it going up?") is a `message` event for the supervisor and nothing a bot answers; every line the supervisor writes is a line no bot answers (the `other_bots` filter of v0.1.4.12 with one more name). |
-| 1.12 | `reply`: the supervisor's answer, which a bot relays into chat as `[Opus] ...`. With nobody connected, "Opus, ..." gets one line: `The supervisor is not here.` |
+| 1.12 | `reply`: the supervisor's answer, which a bot relays into chat as `[Opus] ...`. With nobody connected, "Opus, ..." gets one line: `The supervisor is not here.` The supervisor may also speak unasked, a short update when something happens or progress is made (a step done, the job done, an intervention), behind `supervisor_updates`; its rules: one line, at most one per 2 minutes, never while you are being answered. Nobody speaks over anybody: in the chat a supervisor's line waits while a bot answers; on the page one speech queue for every speaker, in the order a bot's answer, the supervisor's answer, an update; an update that waited over 20 s is dropped; your speech interrupts everything. |
 | 1.13 | Voice (section 9, built): the recognised speech goes into the game chat as your line, so the same names apply; the page's dropdown of the bot you talk with puts that name in front of your speech; the page speaks each bot in its own voice (`voice_voice` per profile) and the supervisor's `[Opus]` lines in `supervisor_voice`. The name and the voice are settings, in `settings.js` and the page's Settings modal like every setting; "Opus" is only the example of the docs and the tests. |
 
 The supervisor's side, in the repository:
@@ -125,6 +125,7 @@ All off by default, as always.
 | `mine_other_ores` | Only the ore asked for | The other ores in the tunnel's walls too |
 | `voice_ui`, `voice_voice`, `voice_language` | No voice on the page | The live voice of section 9 (`false`, `"supertonic:F1"`, `"en"`) |
 | `supervisor_voice` | `"supertonic:M1"` | With `voice_ui`: the voice the page gives the supervisor's lines |
+| `supervisor_updates` | `false` | The supervisor's unprompted updates are shown and spoken |
 
 The tools of the watch server, the addressing by name, the corrections, the creeper loop and the tests have no switch.
 
