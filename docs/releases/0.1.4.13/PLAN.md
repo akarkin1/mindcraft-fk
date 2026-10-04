@@ -1,6 +1,6 @@
-# Plan v0.1.4.13 "Supervision and routines"
+# Plan v0.1.4.13 "Supervision"
 
-Based on your decisions of 2026-10-03 (routines) and 2026-10-04 (supervision as the main feature, one channel for the bot and the supervisor), and on the supervised play of 2026-10-04: Claude on Haiku and gpt on Luna mining diamonds in the deep mine, with me as the supervisor through the watch server for 2 hours 50 minutes. The numbers of that play are in section 2.
+Based on your decisions of 2026-10-04 (supervision as the main feature, one channel for the bot and the supervisor, the split into two releases: this one, and v0.1.4.14 "Routines" after it) and on the supervised play of 2026-10-04: Claude on Haiku and gpt on Luna mining diamonds in the deep mine, with me as the supervisor through the watch server for 2 hours 50 minutes. The numbers of that play are in section 2.
 
 ## 1. Goal
 
@@ -8,7 +8,6 @@ Based on your decisions of 2026-10-03 (routines) and 2026-10-04 (supervision as 
 |---|---|
 | You give the supervisor one sentence ("diamonds for a full set, avoid lava, stop at 36") and play, or leave. The supervisor wakes only when something changes, orders the bot in one call, and reports at the end: diamonds per hour, interventions, cost | I poll every 25 seconds, send one order in four calls, and cost $7 an hour |
 | "Opus, why is it going to the surface?" in the game chat or by voice: the supervisor answers in chat, in its own voice. "claude, come here": the bot. One channel | Two chats: the game for the bot, this session for me |
-| "Maintain the base": the bot works a routine you wrote once in your words, step by step, until "stop" | A rule constrains; nothing describes a procedure |
 | Out of food in the mine: the bot takes bread from the chest beside it. A furnace in the bag is placed and used. A plan that was made starts. A worn pickaxe is replaced before it breaks | The bot climbs to the basement for bread that lies 3 blocks away, says it carries no furnace while it does, waits after planning, mines with a pickaxe at 2 uses, then wanders for planks |
 | "claude, come here": claude comes, gpt stays quiet. Two bots share the places, chests, routes, mines and rules of a world; a pen is a pen for both before anyone saves it | Both answer every line; gpt learned the mine, four chests and ten rules that Claude already knew; the two opened the pens together |
 | Haiku's hour costs about $0.60 | $1.70: every call carries the whole prompt |
@@ -19,7 +18,7 @@ Based on your decisions of 2026-10-03 (routines) and 2026-10-04 (supervision as 
 |---|---|---|
 | Model calls in an hour of your play | 250 | 256 |
 | Tokens per call | 4,700 in, 70 out | 3,700 in, 95 out |
-| Cost per hour of your play | $1.70 | $0.14 (the bill; the table said $0.11, see 5.2) |
+| Cost per hour of your play | $1.70 | $0.15 (the bill; the meter said $0.11, see 5.2) |
 | Reply time | median 1 s, 9 of 10 under 2 s | median 2 s, 9 of 10 under 4 s |
 | Diamonds | 9 in 29 s once in fresh rock | 7 in 2 min once in fresh rock, after 25 min lost |
 | Restarts of the process | 3 | 2 |
@@ -61,16 +60,9 @@ The supervisor's side, in the repository:
 | 1.15 | `docs/SUPERVISOR.md`: the token, the tunnel, `claude mcp add` so the tools are native in a Claude Code session, the one sentence you give the supervisor, what it costs. A fresh session with that prompt costs about a cent a turn. |
 | 1.16 | A journey with a scripted supervisor on the test server: a 10-minute mining job through `wait` and `run` with at most 6 wakes, the food fetched from the chest beside the tunnel, one `help` answered. |
 
-### Package 2: Routines
+### Package 2: Routines, moved to v0.1.4.14
 
-Your words of 2026-10-03: "something like maintain the base cannot be expressed as a function, but can easily be described with words". A rule is a constraint; a routine is a procedure in your words, kept per world like the rules.
-
-| # | Change |
-|---|---|
-| 2.1 | `!rememberRoutine("maintain the base", "Farm the wheat and store it. Feed the chickens if any are missing. Keep 32 torches. At night mine iron in the mine. Stay within 100 blocks of home.")`, `!routines`, `!forgetRoutine`; in `bots/<name>/routines.json` or the shared memory of package 4; at most 20, one paragraph each. |
-| 2.2 | `!doRoutine("maintain the base")`, or the name in a sentence: the text becomes the goal of a job of v0.1.4.10; the model turns the sentences into steps (commands only, never code), code checks each step, errands do not end it, it survives a restart; a routine that maintains runs its steps again when they are done, until "stop". One line per step done; the knowledge block names the running routine and its step. |
-| 2.3 | The supervisor's lever: `say "maintain the base"` when you are away. |
-| 2.4 | What it is not: no new commands beyond the four, no code written, no rule changed. |
+Your decision of 2026-10-04: two releases instead of one. Routines (`!rememberRoutine`, `!routines`, `!forgetRoutine`, `!doRoutine`: a paragraph in your words as a job) and the model comparison as a test go to v0.1.4.14 "Routines", planned after the play of this release, which shows which routines you would write. Their text of the first plan is in `docs/ROADMAP.md`.
 
 ### Package 3: The corrections from the play of 2026-10-04
 
@@ -104,8 +96,8 @@ No switch: each is a defect. The 25 interventions of the supervisor map onto the
 
 | # | Change |
 |---|---|
-| 5.1 | `prompt_cache` (a setting, off): on the Anthropic API the fixed part of the prompt (the command list, the examples' format) is sent with a cache mark; the cost meter counts cache reads at their price. About 70 percent of Haiku's input tokens; the hour from $1.70 to about $0.60. Nothing the bot does changes. |
-| 5.2 | The price of `gpt-6-luna` in the price table ($0.10 in, $0.50 out per million) is about 30 percent low: your bill of 2026-10-03 (UTC) says about $0.14 where the meter said $0.107, and 2026-10-04 $0.06 against $0.042; the meter counts OpenAI's `completion_tokens`, reasoning included, so the gap is the price. The table takes the line of the platform's Pricing page when you send it; until then $0.13 in and $0.65 out, which lands on the bill within a cent. |
+| 5.1 | `prompt_cache` (a setting, off): the prompt is built in two parts, the fixed part first (the introduction, the command list) and the changing part after it (memory, stats, inventory, knowledge, examples); on the Anthropic API the fixed part carries a cache mark. Your bill of 2026-10-03 shows why it matters on OpenAI too: 997k of Luna's 1,131k prompt tokens were cache writes at $0.125 per million and only 79k cache reads at $0.01, because the prompt's start changes with every call. With the fixed part first about 70 percent of the tokens are reads: Luna's hour from about $0.15 to about $0.04, Haiku's from $1.70 to about $0.60. Nothing the bot does changes. |
+| 5.2 | The cost meter counts OpenAI's cache writes: the price table gets `cache_write` ($0.125 per million for `gpt-6-luna`, from your bill's CSV) and the meter counts the prompt tokens that were not cache reads as writes when the prompt is 1,024 tokens or longer, as OpenAI does. The per-token prices of the table ($0.10 in, $0.50 out, $0.01 cached) were right; the meter said $0.107 for 2026-10-03 where the bill says $0.146 because of the writes. |
 
 ### Package 6: The creeper loop
 
@@ -117,9 +109,8 @@ No switch: each is a defect. The 25 interventions of the supervisor map onto the
 
 | # | Change |
 |---|---|
-| 7.1 | Journeys, black box, written before the build and failing on v0.1.4.12: the scripted supervisor (1.16); "claude, come here" with two bots and only claude moving; "Opus, where is it" answered and not answered by the bots; a routine of three steps run to the end and again; food from the chest beside the tunnel; the furnace from the bag; the plan that starts; the worn pickaxe; the shaft refused; the unsaved pen whose gate stays closed under `!followPlayer` through it; the shared mine known to the second bot. They gate the release with the 30 of v0.1.4.9 to v0.1.4.12. |
-| 7.2 | Unit tests of every text, of the digest from staged facts, of the addressing rule, of the routine store, of the tool wear rule, of the shared memory paths. |
-| 7.3 | The model comparison: `npm run test:play -- --situations`: six situations in plain words, the same for each model ("you are stuck, get back to your tunnel", "your bag is full, deal with it", "there is lava ahead", "go get bread", "give me the rest of my stuff", a two-step order), on your machine only, about 20 cents a model; the table says the first command, the follow-ups and the time. |
+| 7.1 | Journeys, black box, written before the build and failing on v0.1.4.12: the scripted supervisor (1.16); "claude, come here" with two bots and only claude moving; "Opus, where is it" answered and not answered by the bots;  food from the chest beside the tunnel; the furnace from the bag; the plan that starts; the worn pickaxe; the shaft refused; the unsaved pen whose gate stays closed under `!followPlayer` through it; the shared mine known to the second bot. They gate the release with the 30 of v0.1.4.9 to v0.1.4.12. |
+| 7.2 | Unit tests of every text, of the digest from staged facts, of the addressing rule, of the tool wear rule, of the shared memory paths, of the prompt split. |
 
 ## 4. New settings
 
@@ -129,7 +120,6 @@ All off by default, as always.
 |---|---|---|
 | `supervisor_name` | `""`: no supervisor in the chat, no `help` events, no notes | The name you address the supervisor by; the bot never answers it |
 | `watch_report_seconds` | `0`: no report | A `report` event with the digest every N seconds |
-| `routines` | No `!rememberRoutine` | The four commands of package 2 |
 | `shared_memory` | Each bot its own memory | One memory of the world for all bots |
 | `prompt_cache` | The prompt sent as today | The fixed part marked for the cache on the Anthropic API |
 | `mine_other_ores` | Only the ore asked for | The other ores in the tunnel's walls too |
@@ -144,15 +134,15 @@ The tools of the watch server, the addressing by name, the corrections, the cree
 |---|---|
 | The watch tools, the digest, the events, the queue | Code only. No model call. |
 | `note` | About 50 tokens in the prompt while a note stands |
-| A routine | One call of the model when it starts (the steps), then code; a call per step the model has to plan |
 | The supervisor | A fresh session with the skill: about a cent a turn, and a turn only when something changes. Under $1 an hour against $7 on 2026-10-04. |
-| `prompt_cache` | Haiku's hour from about $1.70 to about $0.60 |
-| The engineers | About 32 hours of sessions, three full runs on the real server |
+| `prompt_cache` | Haiku's hour from about $1.70 to about $0.60, Luna's from about $0.15 to about $0.04 |
+| The engineers | About 26 hours of sessions, three full runs on the real server |
 
 ## 6. What this release does not contain
 
 | Topic | Where |
 |---|---|
+| Routines and the model comparison | v0.1.4.14 "Routines", the next release |
 | The supervisor and the bot as one mind | After this release: when the supervisor is a program with its own model loop, not a coding session; a session turn is 5 to 30 s and cents, the bot's model 2 s and a fraction of a cent |
 | The local embedding model (part A of v0.1.4.12) | After the routing check measures it |
 | Guides of big goals, trading, the Nether | Backlog |
@@ -162,14 +152,13 @@ The tools of the watch server, the addressing by name, the corrections, the cree
 | Package | Size | Hours |
 |---|---|---|
 | 1 Supervision: the tools, the channel, the skill, the guide | Large | 9 |
-| 2 Routines | Large | 6 |
 | 3 The corrections | Large | 8 |
 | 4 One memory | Small | 2 |
 | 5 Cost | Small | 1 |
 | 6 The creeper loop | Small | 2 |
 | 7 Tests, journeys, three full runs, the fix round | Large | 4 |
 
-About 32 hours with three engineers at a time, plus the voice branch, which is built. Round 1: the voice branch merged, packages 3 and 6, the tools of package 1 (1.1 to 1.9) and the addressing (1.10). Round 2: package 2, the channel and the skill of package 1 (1.11 to 1.16), packages 4 and 5. Round 3: the journeys, the fix round, your findings of v0.1.4.12.
+About 26 hours with three engineers at a time, plus the voice branch, which is built and merged. Round 1: the tools of package 1 (1.1 to 1.9), the addressing (1.10) with the creeper loop (6), the corrections of the job (3.1 to 3.6). Round 2: the corrections of the way and the safety (3.7 to 3.15), the channel and the skill of package 1 (1.11 to 1.16), packages 4 and 5. Round 3: the journeys, the fix round, your findings of v0.1.4.12.
 
 ## 8. What I cannot test
 
