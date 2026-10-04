@@ -24,7 +24,7 @@ import {
     FILLERS, WEAR_LIMIT, blockAt, collectDrops, countOf, digClear, equipPickaxe, fillerCount, freeSlots, inventoryList, isFree, isSolid,
     logicName, nameReader, patchAll, placeInto, placeTorch, stepInto, walkTo, REACH,
 } from './dig.js';
-import { SUPPLY_NEAR_RANGE, applySpareRule, supplyPlan } from './supply_logic.js';
+import { SUPPLY_NEAR_RANGE, applySpareRule, pickaxeToCraft, supplyPlan } from './supply_logic.js';
 import { storeFullBag } from './bag.js';
 import { otherOresWords, storeKinds, withOtherOres } from './bag_logic.js';
 import { followDown, followUp, placeLadder, waitStanding } from './ladder.js';
@@ -611,9 +611,11 @@ export async function prepareMiningTrip(bot, ctx = {}, ore = '', options = {}) {
             const best = usablePickaxes(inventoryList(bot), 'wooden')[0]?.name ?? null;
             return { ok: false, reason: 'pickaxe', missing: plan.missing, level, text: cannotMineText(row.ore, material, best) };
         }
-        if (plan.missing.find(m => m.name === 'pickaxe' && m.spare)) {
-            // P1: the spare from carried material only; never a walk to the surface while the mining can go on
-            await callTool({ ...ctx, storage: null, chests: null }, 'tools', 'ensureTool', bot, 'pickaxe', material, { count: 2, collect: false });
+        const spareOf = plan.missing.find(m => m.name === 'pickaxe' && m.spare) ? pickaxeToCraft(material, inventoryList(bot)) : null;
+        if (spareOf) {
+            // P1: the spare from carried material only; never a walk to the surface while the mining can go on. The correction
+            // of 2026-10-04: the cheapest material that mines the ore (pickaxeToCraft), never a better one
+            await callTool({ ...ctx, storage: null, chests: null }, 'tools', 'ensureTool', bot, 'pickaxe', spareOf, { count: 2, collect: false, exact: true });
             plan = needs();
             if (stopped()) {
                 return stopped();
@@ -1483,6 +1485,10 @@ function wornPickaxe(bot, material) {
  * ore is equipped (`I take my spare one.`), else one is crafted from carried material through ctx.tools.ensureTool
  * at the crafting table of the bag or within 16 blocks, with no walk to a chest or the surface (`I made a new
  * one.`); when nothing can be made the trip stops with the stop text of P2. The old pickaxe stays in the bag.
+ * The correction of 2026-10-04 (no switch): the new one is of the cheapest material that mines the ore
+ * (pickaxeToCraft: stone from cobblestone for iron ore, iron for diamond; iron for an ore that needs stone only from a
+ * stash of more than 20 ingots and no cobblestone; never diamond for an ore that needs less); with nothing to craft it
+ * from, the stop text names that material (`I have no stone for a new one.`).
  * Every text is said through ctx.say. Never throws.
  * @param {object} bot
  * @param {object} ctx
@@ -1496,6 +1502,7 @@ export async function replaceWornPickaxe(bot, ctx, row, worn, count = {}) {
     const fresh = () => usablePickaxes(inventoryList(bot), material).some(p => p.uses > WEAR_LIMIT);
     const name = worn?.name ?? 'pickaxe';
     const uses = isFiniteNumber(worn?.uses) ? worn.uses : 0;
+    let make = null;
     try {
         if (fresh()) {
             await equipPickaxe(bot, material);
@@ -1503,9 +1510,13 @@ export async function replaceWornPickaxe(bot, ctx, row, worn, count = {}) {
             sayTo(ctx, text);
             return { ok: true, text };
         }
-        // from carried material only: no chest, no tree, no stone of the surface
-        await callTool({ ...ctx, storage: null, chests: null }, 'tools', 'ensureTool', bot, 'pickaxe', material, { count: 1, minUses: WEAR_LIMIT + 1, collect: false });
-        if (fresh()) {
+        // from carried material only: no chest, no tree, no stone of the surface; the cheapest material that mines the ore
+        make = pickaxeToCraft(material, inventoryList(bot));
+        if (make) {
+            await callTool({ ...ctx, storage: null, chests: null }, 'tools', 'ensureTool', bot, 'pickaxe', make,
+                { count: 1, minUses: WEAR_LIMIT + 1, collect: false, exact: true });
+        }
+        if (make && fresh()) {
             await equipPickaxe(bot, material);
             const text = wornMadeText(name, uses);
             sayTo(ctx, text);
@@ -1514,7 +1525,7 @@ export async function replaceWornPickaxe(bot, ctx, row, worn, count = {}) {
     } catch (err) {
         console.warn('Mining pack: replacing the worn pickaxe failed:', errText(err));
     }
-    const text = wornStopText(name, uses, count.mined ?? 0, count.wanted ?? 0, row);
+    const text = wornStopText(name, uses, count.mined ?? 0, count.wanted ?? 0, row, make ? null : material);
     sayTo(ctx, text);
     return { ok: false, text };
 }

@@ -56,10 +56,10 @@ Your switches of v0.1.4.12 stay. New in `settings.js` (or the page's Settings):
 | Step | What you do | What should happen |
 |---|---|---|
 | 9 | In the deep mine, with bread in the chest beside the tunnel and little food in the bag: "mine 10 diamonds". | `I get my supplies: N bread from the chest at (...)`: from that chest, no trip to the basement. |
-| 10 | Let the pickaxe wear down. | Before it breaks: `My iron_pickaxe is nearly worn: N uses left. I made a new one.` (or `I take my spare one.`), and it mines on. |
+| 10 | Let the pickaxe wear down while it mines iron, with cobblestone in the bag. | Before it breaks: `My iron_pickaxe is nearly worn: N uses left. I made a new one.` (or `I take my spare one.`); the new one is a stone pickaxe (enough for iron), an iron one only for diamond, gold, redstone or emerald. It mines on. |
 | 11 | A full bag during the mining. | `I stored ... in the chest at (...) and go on.` |
 | 12 | "make me an iron pickaxe" with a furnace in the bag and none near. | `I placed my furnace at (...)`, then the smelt and the pickaxe, without a second order. |
-| 13 | `!goToCoordinates` to a point 20 blocks below the bot. | `I do not dig a shaft 20 blocks down. Say "dig down" if you mean it, or show me stairs.` It stays. |
+| 13 | `!goToCoordinates` to a point 20 blocks below the bot, first with fewer than 22 ladders in the bag, then with 22 or more. | First: `I do not dig a shaft 20 blocks down without ladders: I have N and need 22. Bring me ladders or show me stairs.` It stays. Then: `I dig down 20 blocks with ladders.`, a ladder on every block; you can climb the shaft. |
 | 14 | Die near a bot (or drop your things and step away), then come back. | `I leave MartyByrde2's things at (...)`; it does not wear your armour. |
 | 15 | "give me 30 cobblestone". | `That is a lot. Say "put my stuff in the chest" ...`; 8 or fewer are thrown, and it steps back. |
 | 16 | In an unknown mine underground: "mine 5 iron". | `I made the mine "mine 2" here and measured the tunnel ...` and it mines. |

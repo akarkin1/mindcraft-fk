@@ -32,3 +32,17 @@ The defects and open points the tests found, with the decision and who made the 
 ## The gate in the fresh clone at 83e06fa, 2026-10-04
 
 Unit: 8,405 tests, 8,404 pass, 0 fail, 1 skipped. The world set: the ten journeys of this release, the 30 of v0.1.4.9 to v0.1.4.12 and `creeper_in_sight` twice: 40 of 41 in 3,826 s. The one failure, W101 `watch_events` step 4, asked for the stream `events --follow` that part S replaced by `wait`; its helper now starts `--follow` (a loop of `wait any`), and W101 passed alone in the same clone (75 s).
+
+## Round 3: the owner's requests on PR #21
+
+| Id | Request | Where | Decision | By |
+|---|---|---|---|---|
+| R3-1 | The supervisor runs in a session on the owner's machine. | `.mcp.json`, the skill, `docs/SUPERVISOR.md` | The MCP server `mindcraft` comes from the repository's `.mcp.json`, `http://127.0.0.1:8090/mcp` by default. | lead |
+| R3-2 | No token and no tunnel on one machine. | `watch_local_only` (off by default) | No token; a request with tunnel headers, a host other than the machine's own, or a POST that is not JSON is refused. A token, if set, is still checked. | lead |
+| R3-3 | The best food, not bread only; the decisions of the supervisor by the situation. | the skill | A food order (steak first) and a section "How you decide": the options, safety, then the cost to the owner, then the goal. | lead |
+| R3-4 | The cheapest pickaxe that is enough. | `supply_logic.js` `pickaxeToCraft`, `mining.js`, `wood/tools.js` | A worn pickaxe is replaced by stone for stone, coal, copper, iron and lapis; iron only for diamond, gold, redstone and emerald, or when no cobblestone is there. W114 adapted. The first pickaxe of a trip is a candidate for v0.1.4.14. | E (engineer), lead |
+| R3-5 | Down is fine when the way is safe. | `way_logic.js`, `ladder_shaft.js`, `skills.js` `goToPosition`, `digDown` | Deeper than 3 blocks a shaft gets a ladder on every block when the bag holds the depth plus 2 ladders; without them a refusal that names the count. W115 adapted (part A refusal, part A2 with 30 ladders). | E (engineer), lead |
+| R3-6 | `wait done` did not wake on the owner's line to the supervisor. | `digest_logic.js` `wakeReason` | A new event wakes every wait. | lead |
+| R3-7 | W115 part B, 1 run of 2: a walk over the owner's drops took them after the leave text. | `drop_watch.js` `deathNearBot`, `modes.js` | The item mode takes nothing within 8 blocks of a recent death of another player. A later failure of the check had the bot right (nothing taken, the text once): the death had scattered the boots 5.1 blocks away, so W115 counts the drops within 8 blocks. After it W115 passed 5 of 5 runs, W114 1 of 1. | lead |
+
+The unit suite after round 3: 8,441 tests, 8,439 pass, 0 fail, 2 skipped. The `!digDown` description was cut to keep the conversing prompt with every switch on under 17,000 characters (16,987).

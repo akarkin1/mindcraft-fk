@@ -1,6 +1,11 @@
 // The way and the safety of the skills (v0.1.4.13, part Q, SPEC 4.6): the shaft rule of goToPosition (Q7), the kit rule
 // of giveToPlayer (Q5), the routes to the surface of goToSurface (Q2), and their texts word for word. skills.js exports
 // only functions with their docs (the code model reads them), so the rules live here. Pure: no imports.
+//
+// The correction of 2026-10-04 (the owner, no switch): down is fine by a safe way, never by a bare shaft. A walk that
+// would be a shaft, and !digDown deeper than 3 blocks, dig a shaft with a ladder on every block when the bag holds at
+// least the depth + 2 ladders (ladder_shaft.js digs it, shaftStep below decides each block); else they refuse with
+// noLaddersText and do not move.
 
 /** Q7: a target more than this many blocks below the feet is checked for a shaft; within 1 block of the line. */
 export const SHAFT_RULES = Object.freeze({ maxDrop: 3, near: 1 });
@@ -10,11 +15,6 @@ export const KIT_RULES = Object.freeze({ maxCount: 8, maxKinds: 3, windowMs: 600
 
 /** Q2: a route to the surface starts within this many blocks of the bot. */
 export const SURFACE_ROUTE_RANGE = 8;
-
-/** Q7, word for word. */
-export function shaftText(blocks) {
-    return `I do not dig a shaft ${blocks} blocks down. Say "dig down" if you mean it, or show me stairs.`;
-}
 
 /** Q5, word for word. */
 export const KIT_TEXT = 'That is a lot. Say "put my stuff in the chest" and I put it in the nearest chest.';
@@ -30,6 +30,141 @@ function isPoint(p) {
 
 function cell(p) {
     return { x: Math.floor(p.x), y: Math.floor(p.y + 0.01), z: Math.floor(p.z) };
+}
+
+/** The ladder shaft: the ladders the bag must hold for a shaft of `depth` blocks is depth + `spare`. */
+export const LADDER_SHAFT_RULES = Object.freeze({ spare: 2, maxFall: 2 });
+
+/** The ladders a shaft of `depth` blocks needs in the bag: one per block and 2 more. */
+export function laddersNeeded(depth) {
+    return Math.max(0, Math.floor(Number(depth) || 0)) + LADDER_SHAFT_RULES.spare;
+}
+
+/** Said before the ladder shaft is dug, word for word: `I dig down 20 blocks with ladders.` */
+export function ladderShaftText(blocks) {
+    return `I dig down ${blocks} blocks with ladders.`;
+}
+
+/** The refusal without enough ladders, word for word. */
+export function noLaddersText(blocks, have, need) {
+    return `I do not dig a shaft ${blocks} blocks down without ladders: I have ${have} and need ${need}. Bring me ladders or show me stairs.`;
+}
+
+/** Why a ladder shaft stopped, in words. */
+export const SHAFT_STOP_WORDS = Object.freeze({
+    lava: 'lava is next to the shaft',
+    water: 'water is next to the shaft',
+    drop: 'a drop is below',
+    end: 'the world ends below',
+    no_wall: 'there is no wall for a ladder',
+    blocked: 'I could not break the block below',
+    stuck: 'I did not fall into the hole',
+    ladder: 'I could not place a ladder',
+    protected: 'the place is protected',
+    interrupted: 'I was stopped',
+});
+
+/** The text of a ladder shaft that stopped: `I stopped the shaft after 7 of 20 blocks at (3, 56, -2): lava is next to the shaft.` */
+export function shaftStoppedText(dug, depth, at, reason) {
+    const where = isPoint(at) ? ` at (${Math.floor(at.x)}, ${Math.floor(at.y + 0.01)}, ${Math.floor(at.z)})` : '';
+    return `I stopped the shaft after ${dug} of ${depth} blocks${where}: ${SHAFT_STOP_WORDS[reason] ?? reason}.`;
+}
+
+/** The four sides of a cell, as the wall of a ladder: the direction from the cell to its wall block. */
+export const WALL_SIDES = Object.freeze({ north: [0, -1], south: [0, 1], west: [-1, 0], east: [1, 0] });
+
+const LIQUIDS = new Set(['lava', 'water', 'flowing_lava', 'flowing_water', 'bubble_column']);
+const EMPTY = new Set(['air', 'cave_air', 'void_air']);
+
+/**
+ * The wall of a cell a ladder can hold on: `prefer` when that side is solid, else north, south, west, east; null when
+ * no side is a solid block.
+ * @param {(x: number, y: number, z: number) => ({name: string, solid: boolean}|null)} read
+ * @param {{x, y, z}} c
+ * @param {string|null} [prefer]
+ * @returns {string|null}
+ */
+export function ladderWall(read, c, prefer = null) {
+    const order = [prefer, ...Object.keys(WALL_SIDES)].filter((w, i, all) => typeof w === 'string' && WALL_SIDES[w] && all.indexOf(w) === i);
+    for (const w of order) {
+        const [dx, dz] = WALL_SIDES[w];
+        let b = null;
+        try {
+            b = read(c.x + dx, c.y, c.z + dz);
+        } catch {
+            b = null;
+        }
+        if (b && b.solid === true) {
+            return w;
+        }
+    }
+    return null;
+}
+
+/**
+ * One step of the ladder shaft, from the feet down (pure): the cell below the feet (`target`) is dug next; when 1 or 2
+ * free cells lie below it the bot falls into the lowest, and each of these cells gets a ladder too. `read(x, y, z)` gives
+ * `{ name, solid }` (solid: a full block a ladder holds on) or null for a block that is not loaded. The shaft stops at
+ * lava or water in the target, below it or beside it, at a drop of more than 2 free blocks below the target (as
+ * digDown), at the end of the world, and when a cell of the step has no solid wall for its ladder. The wall is the one
+ * of the ladder above when it is solid, else north, south, west, east.
+ * @param {(x: number, y: number, z: number) => ({name: string, solid: boolean}|null)} read
+ * @param {{x, y, z}} feet the cell of the feet
+ * @param {string|null} [wall] the wall of the ladder above
+ * @returns {{action: 'dig'|'stop', reason: string|null, target: {x, y, z}|null, dig: boolean,
+ *   cells: {x: number, y: number, z: number, wall: string}[]}} cells: from the target down, each with its wall
+ */
+export function shaftStep(read, feet, wall = null) {
+    const stop = (reason) => ({ action: 'stop', reason, target: null, dig: false, cells: [] });
+    if (typeof read !== 'function' || !isPoint(feet)) {
+        return stop('end');
+    }
+    const at = (x, y, z) => {
+        try {
+            const b = read(x, y, z);
+            return b && typeof b.name === 'string' ? b : null;
+        } catch {
+            return null;
+        }
+    };
+    const f = cell(feet);
+    const target = { x: f.x, y: f.y - 1, z: f.z };
+    const here = at(target.x, target.y, target.z);
+    const below = at(target.x, target.y - 1, target.z);
+    if (!here || !below) {
+        return stop('end');
+    }
+    const around = (c) => Object.values(WALL_SIDES).map(([dx, dz]) => at(c.x + dx, c.y, c.z + dz));
+    for (const b of [here, below, ...around(target)]) {
+        if (b && LIQUIDS.has(b.name)) {
+            return stop(b.name.includes('lava') ? 'lava' : 'water');
+        }
+    }
+    const cells = [target];
+    for (let y = target.y - 1; cells.length <= LADDER_SHAFT_RULES.maxFall + 1; y--) {
+        const b = at(target.x, y, target.z);
+        if (!b || !(EMPTY.has(b.name) || b.name === 'ladder')) {
+            break;
+        }
+        cells.push({ x: target.x, y, z: target.z });
+    }
+    if (cells.length - 1 > LADDER_SHAFT_RULES.maxFall) {
+        return stop('drop');
+    }
+    const out = [];
+    let prefer = wall;
+    for (const c of cells) {
+        if (c !== target && around(c).some(b => b && LIQUIDS.has(b.name))) {
+            return stop(around(c).some(b => b && b.name.includes('lava')) ? 'lava' : 'water');
+        }
+        const w = ladderWall(read, c, prefer);
+        if (!w) {
+            return stop('no_wall');
+        }
+        out.push({ ...c, wall: w });
+        prefer = w;
+    }
+    return { action: 'dig', reason: null, target, dig: !(EMPTY.has(here.name) || here.name === 'ladder'), cells: out };
 }
 
 /**

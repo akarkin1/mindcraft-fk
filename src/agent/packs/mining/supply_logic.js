@@ -63,6 +63,54 @@ export function applySpareRule(missing, pickaxes, material) {
     return list;
 }
 
+/** The items a stone pickaxe is crafted from (the `accepts` of the wood pack's stone material). */
+export const STONE_TOOL_ITEMS = Object.freeze(['cobblestone', 'cobbled_deepslate', 'blackstone']);
+/** An ore that needs only stone gets an iron pickaxe only when the bag holds more iron ingots than this. */
+export const IRON_STASH = 20;
+/** Of the head material, a pickaxe takes 3. */
+const PICKAXE_HEAD = 3;
+
+function countIn(inventory, names) {
+    let n = 0;
+    for (const item of Array.isArray(inventory) ? inventory : []) {
+        if (item && names.includes(item.name) && isFiniteNumber(item.count)) {
+            n += Math.max(0, Math.floor(item.count));
+        }
+    }
+    return n;
+}
+
+/**
+ * The material of a pickaxe to craft from what the bag holds (the correction of 2026-10-04, no switch): the cheapest
+ * that mines the ore of the trip. `need` is the trip's material (tripPickaxe: stone for stone, coal, copper, iron and
+ * lapis; iron for gold, redstone and diamond). Stone from 3 cobblestone (or cobbled_deepslate, blackstone); iron from 3
+ * iron ingots when the ore needs iron, and for an ore that needs only stone only when the bag holds more than 20 iron
+ * ingots and too little cobblestone for a stone one; diamond only for an ore that needs diamond, never for one that
+ * needs less. null when the bag holds nothing to craft one from. Sticks and the crafting table are the business of
+ * ensureTool.
+ * @param {string} need wooden, stone, iron or diamond
+ * @param {{name: string, count: number}[]} inventory
+ * @returns {'stone'|'iron'|'diamond'|null}
+ */
+export function pickaxeToCraft(need, inventory) {
+    const level = { wooden: 0, golden: 0, stone: 1, iron: 2, diamond: 3 }[need];
+    if (level === undefined) {
+        return null;
+    }
+    const stone = countIn(inventory, STONE_TOOL_ITEMS) >= PICKAXE_HEAD;
+    const ingots = countIn(inventory, ['iron_ingot']);
+    if (level <= 1) {
+        if (stone) {
+            return 'stone';
+        }
+        return ingots > IRON_STASH ? 'iron' : null;
+    }
+    if (level === 2) {
+        return ingots >= PICKAXE_HEAD ? 'iron' : null;
+    }
+    return countIn(inventory, ['diamond']) >= PICKAXE_HEAD ? 'diamond' : null;
+}
+
 /**
  * Where the missing supplies come from (P1): the chests within 16 blocks of the bot (SUPPLY_NEAR_RANGE) first,
  * then the other chests, each group nearest first; from each chest what it holds of the supplies still missing.

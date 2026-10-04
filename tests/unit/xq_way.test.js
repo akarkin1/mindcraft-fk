@@ -16,8 +16,11 @@ const slopeDown = (n) => Array.from({ length: n * 2 }, (_, i) => step(i + 1, 64 
 
 describe('Q7: the shaft rule', () => {
     test('the text, word for word', () => {
-        assert.equal(W.shaftText(64), 'I do not dig a shaft 64 blocks down. Say "dig down" if you mean it, or show me stairs.');
-        assert.equal(W.shaftText(20), 'I do not dig a shaft 20 blocks down. Say "dig down" if you mean it, or show me stairs.');
+        // the correction of 2026-10-04 (the owner): the refusal names the ladders; with them the shaft is dug with ladders
+        assert.equal(W.noLaddersText(64, 0, 66), 'I do not dig a shaft 64 blocks down without ladders: I have 0 and need 66. Bring me ladders or show me stairs.');
+        assert.equal(W.noLaddersText(20, 6, 22), 'I do not dig a shaft 20 blocks down without ladders: I have 6 and need 22. Bring me ladders or show me stairs.');
+        assert.equal(W.ladderShaftText(20), 'I dig down 20 blocks with ladders.');
+        assert.equal(W.laddersNeeded(20), 22);
     });
 
     test('the drop: whole blocks below the feet, 0 above', () => {

@@ -19,7 +19,7 @@ import { keepOutAreas, keptOutBy, itemNameOf, leaveText, mayLeaveText } from './
 import { collectItems } from './areas/keep_out.js';
 // v0.1.4.13 (part Q): the drops the item reflex leaves (Q5 the bot's own tosses, Q6 death drops and the armour rule) and
 // the pens before anyone saves them (Q8)
-import { watchDrops, leftAlone, takeLeaveText, deathDropAtFeet, stepAwayFrom } from './reflex/drop_watch.js';
+import { watchDrops, leftAlone, takeLeaveText, deathDropAtFeet, stepAwayFrom, deathNearBot } from './reflex/drop_watch.js';
 import { leaveThingsText } from './reflex/drop_logic.js';
 import { installPenGuard, pensNear } from './areas/pen_gate.js';
 import { newSenseState, senseTick } from './areas/area_sense.js';
@@ -252,6 +252,16 @@ const modes_list = [
             }
             // v0.1.4.13 (Q6): a player's death drop at the bot's feet: it steps away before the server gives it the item
             if (stepFromDeathDrop(this, agent)) {
+                this.noticed_at = -1;
+                return;
+            }
+            // v0.1.4.13 (Q6, the lead after W115): near a fresh death the reflex picks up nothing, so no walk passes
+            // over the drops; the leave text is said once for the drops it sees
+            if (deathNearBot(agent.bot, 8)) {
+                for (const entity of Object.values(agent.bot.entities ?? {})) {
+                    if (entity?.name === 'item' && entity.position && agent.bot.entity?.position?.distanceTo?.(entity.position) <= 8)
+                        leftByRule(agent, entity); // the leave text, once per death
+                }
                 this.noticed_at = -1;
                 return;
             }

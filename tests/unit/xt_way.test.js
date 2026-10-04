@@ -24,7 +24,8 @@ register('../helpers/mcdata_hooks.js', import.meta.url);
 
 const OWNER = 'MartyByrde2';
 const KIT_TEXT = 'That is a lot. Say "put my stuff in the chest" and I put it in the nearest chest.';
-const shaftText = (n) => `I do not dig a shaft ${n} blocks down. Say "dig down" if you mean it, or show me stairs.`;
+// the correction of 2026-10-04 (the owner): the refusal names the ladders, since "dig down" led to a bare shaft too
+const shaftText = (n, have = 0) => `I do not dig a shaft ${n} blocks down without ladders: I have ${have} and need ${n + 2}. Bring me ladders or show me stairs.`;
 const PEN_TEXT = 'That is a pen with 26 chickens; I do not open its gate. Say "open the pen" if you mean it.';
 
 let skills;

@@ -1937,7 +1937,7 @@ export const actionsList = [
     },
     {
         name: '!digDown',
-        description: 'Dig down a distance. Stops at lava, water or a drop of 4 blocks or more.',
+        description: 'Dig down. Past 3 blocks it needs distance+2 ladders. Stops at lava or water.',
         params: {'distance': { type: 'int', description: 'Distance to dig down', domain: [1, Number.MAX_SAFE_INTEGER] }},
         perform: runAsAction(async (agent, distance) => {
             await skills.digDown(agent.bot, distance)

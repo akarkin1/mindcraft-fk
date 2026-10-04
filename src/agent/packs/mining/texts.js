@@ -260,12 +260,15 @@ export function wornSpareText(name, uses) {
  * @param {number} mined what the trip mined
  * @param {number} wanted what was asked
  * @param {string|object} ore
+ * @param {string} [lacking] the material the new one would be made of (the correction of 2026-10-04: the cheapest
+ *   that mines the ore, `stone` while mining iron); without it the material of the worn one
  * @returns {string}
  */
-export function wornStopText(name, uses, mined, wanted, ore) {
+export function wornStopText(name, uses, mined, wanted, ore, lacking = null) {
     const row = oreOf(ore);
     const thing = row ? row.ore : String(ore ?? 'ore');
-    return `My ${name} is nearly worn: ${Number.isFinite(uses) ? uses : 0} uses left. I have no ${materialWord(name)} for a new one. `
+    const word = typeof lacking === 'string' && lacking !== '' ? materialWord(`${lacking}_pickaxe`) : materialWord(name);
+    return `My ${name} is nearly worn: ${Number.isFinite(uses) ? uses : 0} uses left. I have no ${word} for a new one. `
         + `I stop the mining at ${Number.isFinite(mined) ? mined : 0} of ${Number.isFinite(wanted) ? wanted : 0} ${thing}.`;
 }
 

@@ -130,7 +130,8 @@ Only with `supervisor_updates` on; with it off `reply` of kind `update` answers 
   - down to an ore: `!mineOre` digs its own shaft and places a ladder on every block of it; check first that the bag
     or a known chest holds at least as many ladders as the depth plus 4, else `run` `!craftSupplies("ladder", N)`
     or tell the owner what it lacks;
-  - never `!digDown` deeper than 3 blocks: it places no ladders.
+  - `!digDown` and `!goToCoordinates` deeper than 3 blocks dig a shaft with a ladder on every block when the bag
+    holds the depth plus 2 ladders, and refuse without them.
 - Never an order while a command runs, unless it is `!stop`. Wait for `done`.
 - Never the same failing command a third time.
 - Never decide for the owner what is his to decide: names of places, what to build, what to give away.

@@ -316,6 +316,16 @@ async function equipFor(bot, block) {
     try {
         const tool = bot.pathfinder?.bestHarvestTool?.(block);
         if (tool) {
+            // the correction of 2026-10-04: the fastest tool may be the nearly worn iron pickaxe; a fresh one that fits goes first
+            if (wornTool(tool) !== null) {
+                const held = bot.heldItem;
+                if (held && pickaxeMaterial(held.name) !== null && wornTool(held) === null && fitsBlock(block, held)) {
+                    return;
+                }
+                if (await equipFreshPickaxe(bot, block)) {
+                    return;
+                }
+            }
             if (bot.heldItem !== tool) {
                 await bot.equip(tool, 'hand');
             }

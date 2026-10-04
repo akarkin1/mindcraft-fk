@@ -73,6 +73,27 @@ export function deathsOf(bot) {
  * @param {object} entity an item entity
  * @returns {{why: 'tossed'|'death', death?: object}|null}
  */
+/**
+ * True while a player died in the last 5 minutes within `range` blocks of the bot (the lead, after W115): the item
+ * reflex then picks up nothing at all, because a walk to any item near the death passes over its drops and the
+ * server gives them to the bot. Never throws.
+ * @param {object} bot
+ * @param {number} [range]
+ * @returns {boolean}
+ */
+export function deathNearBot(bot, range = 8) {
+    try {
+        const state = states.get(bot);
+        const at = positionOf(bot?.entity);
+        if (!state || !at) {
+            return false;
+        }
+        return forgetDeaths(state.deaths, now()).some(d => Math.hypot(d.at.x - at.x, d.at.y - at.y, d.at.z - at.z) <= range);
+    } catch {
+        return false;
+    }
+}
+
 export function leftAlone(bot, entity) {
     try {
         const state = states.get(bot);

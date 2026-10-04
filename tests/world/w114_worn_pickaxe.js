@@ -1,19 +1,23 @@
-// W114 the worn pickaxe (journey of v0.1.4.13 "Supervision", tester T3; PLAN.md 3.2, SPEC section 1 and 4.4 P2): the
-// pickaxe at 10 uses is replaced before it breaks and the mining goes on. Today (v0.1.4.12) the bot mines with a pickaxe
+// W114 the worn pickaxe (journey of v0.1.4.13 "Supervision", tester T3; PLAN.md 3.2, SPEC section 1 and 4.4 P2; the
+// material by the owner's correction of 2026-10-04: the cheapest pickaxe that mines the ore, stone for iron ore, the
+// iron kept): the pickaxe at 10 uses is replaced before it breaks and the mining goes on. v0.1.4.12 mines with a pickaxe
 // at 2 uses and stops with "I stopped because my pickaxe is nearly broken" (the play of 2026-10-04): the scenario fails
-// at the check of the 6 raw_iron or of the new pickaxe.
+// at the check of the 6 raw_iron or of the new pickaxe. The first build of v0.1.4.13 made a new iron pickaxe of the 3
+// ingots: the scenario fails at the check of the stone pickaxe.
 //
 // The owner variant of the base (the dump of the owner's region when tests/world/owner_region.json exists) with the room
 // tunnel of base_world.js (the crafting table of the room is within 16 blocks of the dig), the owner's switches of
 // v0.1.4.12 and of this release (SUPERVISION_SETTINGS), the modes of his profile, an empty memory. The kit: an iron
-// pickaxe worn to 12 uses (given with damage 238 of 250), 16 torches, 8 ladders, 4 bread, 3 iron_ingot and 2 sticks.
+// pickaxe worn to 12 uses (given with damage 238 of 250), 16 torches, 8 ladders, 4 bread, 3 iron_ingot, 8 cobblestone
+// and 2 sticks.
 // The bot is never moved by the control.
 //   0. The player teaches the mine in the room with its tunnel (journey.js partTeachMineInRoom). 6 iron ore beyond the
 //      rock face, feet and head at 2, 4 and 6 blocks: 12 blocks to dig or more, more than the pickaxe has.
-//   1. Typed !mineOre("iron", 6): within 3 minutes the bag holds 6 raw_iron (server); it holds a new iron_pickaxe and the
-//      old one (2 iron_pickaxe, one with damage 238 or more, one with little); the wear text was said: `My iron_pickaxe
-//      is nearly worn: N uses left. I made a new one.`; no stop for the pickaxe (`I stopped because my pickaxe is nearly
-//      broken` never said).
+//   1. Typed !mineOre("iron", 6): within 3 minutes the bag holds 6 raw_iron (server); it holds a new stone_pickaxe and
+//      the old iron one (1 iron_pickaxe with damage 238 or more, no second iron one) and the 3 iron ingots; the wear text
+//      was said (`My iron_pickaxe is nearly worn: N uses left. I made a new one.` or `... I take my spare one.`), or the
+//      supply text of the spare made before the trip (`I get my supplies: ... a second pickaxe ...`); no stop for the
+//      pickaxe (`I stopped because my pickaxe is nearly broken` never said).
 // Throughout: the process lives, no request reached a real model.
 import { scenarioMain, check, note, exitSoon, stopRealAgent, env, entityPos, fmt, sleep, commands, waitFor, itemDamages } from './helpers.js';
 import { region, prepareRegion, releaseRegion, inventoryOf, itemsText } from './world.js';
@@ -22,7 +26,8 @@ import { loadDump } from './owner_region.js';
 import { startJourney, partTeachMineInRoom, spots, saidLines, SUPERVISION_SETTINGS, journeyTrace, printJourney, countItem } from './journey.js';
 
 const NAME = 'w_worn';
-const KIT = [['torch', 16], ['ladder', 8], ['bread', 4], ['iron_ingot', 3], ['stick', 2]];
+const KIT = [['torch', 16], ['ladder', 8], ['bread', 4], ['iron_ingot', 3], ['cobblestone', 8], ['stick', 2]];
+const INGOTS = 3;
 const DURABILITY = 250; // of an iron pickaxe
 const USES = 12;
 // The lead, 2026-10-04 (T3's point 6): the spare may have been made before the trip (P1, under 50 uses) and taken from the
@@ -86,8 +91,9 @@ await scenarioMain({
             note(`1: the bot said ${JSON.stringify(said.slice(0, 30))}`);
             check(mined.ok && (inv.raw_iron || 0) >= 6, '1: the mining ends with 6 raw_iron in the bag (server) within 3 minutes', `${inv.raw_iron || 0} raw_iron`);
             const oldOne = damages.filter((d) => d >= DURABILITY - USES).length;
-            const newOne = damages.filter((d) => d < DURABILITY - USES - 20).length;
-            check(damages.length >= 2 && oldOne >= 1 && newOne >= 1, '1: the bag holds a new iron_pickaxe and the old one (server: 2 iron_pickaxe, one worn, one new)', `damages ${JSON.stringify(damages)}, ${inv.iron_pickaxe || 0} iron_pickaxe`);
+            check((inv.stone_pickaxe || 0) >= 1, '1: the bag holds a new stone_pickaxe: the cheapest pickaxe that mines iron (server)', itemsText(inv));
+            check(damages.length === 1 && oldOne === 1, '1: the worn iron_pickaxe is kept and no new iron one was made (server: 1 iron_pickaxe, worn)', `damages ${JSON.stringify(damages)}, ${inv.iron_pickaxe || 0} iron_pickaxe`);
+            check((inv.iron_ingot || 0) === INGOTS, `1: the ${INGOTS} iron ingots are not spent (server)`, `${inv.iron_ingot || 0} iron_ingot`);
             check(Boolean(wear || spareMade), '1: the wear text was said: `My iron_pickaxe is nearly worn: N uses left. I made a new one.` or `... I take my spare one.`, or the spare was made before the trip: `I get my supplies: ... a second pickaxe ...`', JSON.stringify(said.filter((l) => /worn|pickaxe/i.test(l)).slice(0, 4)));
             if (wear) check(Number(WEAR.exec(wear)[1]) <= 10, '1: the wear text names 10 uses or fewer (the rule of P2)', wear);
             check(!said.some((l) => BROKEN_STOP.test(l)), '1: no "nearly broken" stop', JSON.stringify(said.filter((l) => BROKEN_STOP.test(l))));

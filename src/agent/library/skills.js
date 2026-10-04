@@ -13,7 +13,8 @@ import { sideOf } from "../packs/home/door_logic.js";
 import { acquireEatLock } from "../packs/home/eat_lock.js";
 import { wakeUp } from "../packs/home/wake.js";
 // v0.1.4.13 (part Q): the way and the safety (Q2, Q5, Q7), the drops left alone (Q5, Q6), the gate of a pen (Q8)
-import { KIT_TEXT, SHAFT_RULES, dropOf, isKit, isShaftPath, kindsGiven, routeText, shaftText, surfaceRoutes } from "./way_logic.js";
+import { KIT_TEXT, SHAFT_RULES, dropOf, isKit, isShaftPath, kindsGiven, ladderShaftText, laddersNeeded, noLaddersText, routeText, shaftStoppedText, surfaceRoutes } from "./way_logic.js";
+import { digLadderShaft, ladderCount } from "./ladder_shaft.js";
 import { leftAlone, startTossing, takeLeaveText } from "../reflex/drop_watch.js";
 import { leaveThingsText } from "../reflex/drop_logic.js";
 import { penGateRefusal, takePenText } from "../areas/pen_gate.js";
@@ -2024,12 +2025,20 @@ export async function goToPosition(bot, x, y, z, min_distance=2) {
     }
 
     const target = new Vec3(x, y, z);
-    // v0.1.4.13 (Q7, a correction, no switch): a target more than 3 blocks below is never reached by a shaft dug straight
-    // down (the shaft of 2026-10-04 killed the owner); stairs, a ladder or a slope are walked
+    // v0.1.4.13 (Q7, a correction, no switch): a target more than 3 blocks below is never reached by a bare shaft dug
+    // straight down (the shaft of 2026-10-04 killed the owner); stairs, a ladder or a slope are walked. The correction of
+    // 2026-10-04: with the depth + 2 ladders in the bag the shaft is dug with a ladder on every block; without them the
+    // walk is refused and the bot does not move
     const drop = dropOf(bot.entity.position, target);
     if (drop > SHAFT_RULES.maxDrop && !bot.interrupt_code && await digsShaft(bot, target, min_distance)) {
-        log(bot, shaftText(drop));
-        return false;
+        const shaft = await ladderShaft(bot, drop);
+        if (!shaft)
+            return false;
+        const distance = bot.entity.position.distanceTo(target);
+        if (distance <= min_distance + 1) {
+            log(bot, `You have reached ${positionText(bot)}.`);
+            return true;
+        }
     }
     let nearest = bot.entity.position.distanceTo(target);
     const checkDigProgress = () => {
@@ -2103,6 +2112,26 @@ export async function goToPosition(bot, x, y, z, min_distance=2) {
 }
 
 const WALK_PROGRESS_STEP = 0.5; // blocks nearer to the goal than before
+
+// The correction of 2026-10-04 (no switch): a shaft of `depth` blocks straight down only with a ladder on every block.
+// With fewer than depth + 2 ladders in the bag: the refusal (`I do not dig a shaft 20 blocks down without ladders: I have
+// 6 and need 22. Bring me ladders or show me stairs.`), nothing dug. Else `I dig down 20 blocks with ladders.` and the
+// shaft of ladder_shaft.js; a shaft that stops says where and why. true when the shaft reached its depth.
+async function ladderShaft(bot, depth) {
+    const have = ladderCount(bot);
+    const need = laddersNeeded(depth);
+    if (have < need) {
+        log(bot, noLaddersText(depth, have, need));
+        return false;
+    }
+    log(bot, ladderShaftText(depth));
+    const r = await digLadderShaft(bot, depth, { breakAt: breakBlockAt });
+    if (!r.ok) {
+        log(bot, shaftStoppedText(r.dug, depth, r.at, r.reason));
+        return false;
+    }
+    return true;
+}
 
 // v0.1.4.13 (Q7): true when the walk to the target would dig a shaft: the path the walk of goToGoal would take (the
 // search with digging made dear first, then the one with digging, each at most 1 s; without a complete path the partial
@@ -3574,12 +3603,22 @@ function stringifyItem(bot, item) {
 export async function digDown(bot, distance = 10) {
     /**
      * Digs down a specified distance. Will stop if it reaches lava, water, or a fall of >=4 blocks below the bot.
+     * Deeper than 3 blocks it places a ladder on every block of the shaft and needs distance + 2 ladders in the
+     * inventory; without them it digs nothing.
      * @param {MinecraftBot} bot, reference to the minecraft bot.
      * @param {int} distance, distance to dig down.
      * @returns {Promise<boolean>} true if successfully dug all the way down.
      * @example
      * await skills.digDown(bot, 10);
      **/
+    // the correction of 2026-10-04 (no switch): never a bare shaft deeper than 3 blocks
+    if (Number.isFinite(distance) && Math.floor(distance) > SHAFT_RULES.maxDrop) {
+        const depth = Math.floor(distance);
+        if (!(await ladderShaft(bot, depth)))
+            return false;
+        log(bot, `Dug down ${depth} blocks with a ladder on every block.`);
+        return true;
+    }
 
     let start_block_pos = bot.blockAt(bot.entity.position).position;
     for (let i = 1; i <= distance; i++) {
