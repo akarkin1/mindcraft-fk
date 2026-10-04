@@ -31,4 +31,4 @@ The defects and open points the tests found, with the decision and who made the 
 
 ## The gate in the fresh clone at 83e06fa, 2026-10-04
 
-Unit: 8,405 tests, 8,404 pass, 0 fail, 2 skipped (the count of the runner). The world set: the ten journeys of this release, the 30 of v0.1.4.9 to v0.1.4.12 and `creeper_in_sight` twice: 40 of 41 in 3,826 s. The one failure, W101 `watch_events` step 4, asked for the stream `events --follow` that part S replaced by `wait`; its helper now starts `--follow` (a loop of `wait any`), and W101 passed alone in the same clone (75 s).
+Unit: 8,405 tests, 8,404 pass, 0 fail, 1 skipped. The world set: the ten journeys of this release, the 30 of v0.1.4.9 to v0.1.4.12 and `creeper_in_sight` twice: 40 of 41 in 3,826 s. The one failure, W101 `watch_events` step 4, asked for the stream `events --follow` that part S replaced by `wait`; its helper now starts `--follow` (a loop of `wait any`), and W101 passed alone in the same clone (75 s).
