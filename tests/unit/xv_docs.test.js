@@ -24,7 +24,8 @@ describe('the skill supervise', () => {
         assert.ok(skill.includes('Updates are off.'));
         assert.ok(skill.includes('Dropped: the bot was speaking.'));
         assert.ok(skill.includes('At most one per 2 minutes.'));
-        assert.ok(skill.includes('Never `!goToCoordinates` to a point below the bot'));
+        // the owner, 2026-10-04: going down is fine when the way is safe (ladders on every block, stairs, a known way)
+        assert.ok(skill.includes('Never a bare shaft down'));
     });
 
     test('nothing of the code', () => {

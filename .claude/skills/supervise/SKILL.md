@@ -95,8 +95,14 @@ Only with `supervisor_updates` on; with it off `reply` of kind `update` answers 
 
 ## What never to do
 
-- Never `!goToCoordinates` to a point below the bot: it digs a shaft straight down. Use `!goToRememberedPlace`,
-  `!goToMine` or a route.
+- Never a bare shaft down: a hole the bot or the owner cannot climb out of and can fall into. Going down is fine
+  when the way is safe, chosen by what is there:
+  - a known way: `!goToMine`, `!goToRememberedPlace`, a route, natural or built stairs or a slope
+    (`!goToCoordinates` walks those and refuses a bare shaft by itself);
+  - down to an ore: `!mineOre` digs its own shaft and places a ladder on every block of it; check first that the bag
+    or a known chest holds at least as many ladders as the depth plus 4, else `run` `!craftSupplies("ladder", N)`
+    or tell the owner what it lacks;
+  - never `!digDown` deeper than 3 blocks: it places no ladders.
 - Never an order while a command runs, unless it is `!stop`. Wait for `done`.
 - Never the same failing command a third time.
 - Never decide for the owner what is his to decide: names of places, what to build, what to give away.
