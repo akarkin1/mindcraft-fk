@@ -155,7 +155,9 @@ function supplyWords(m) {
     const n = Number.isFinite(m?.count) && m.count > 0 ? Math.ceil(m.count) : 1;
     switch (m?.name) {
     case 'pickaxe':
-        return `${m.spare ? 'a second' : article(m.material ?? 'stone')} ${m.material ?? 'stone'} pickaxe`;
+        // v0.1.4.13 (W114): a spare is crafted from what the bot carries, so its material is not known here; the
+        // text named the least material of the ore (`a second stone pickaxe`) while an iron one was made
+        return m.spare ? 'a second pickaxe' : `${article(m.material ?? 'stone')} ${m.material ?? 'stone'} pickaxe`;
     case 'ladder':
         return n === 1 ? '1 ladder' : `${n} ladders`;
     case 'torch':

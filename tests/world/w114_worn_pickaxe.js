@@ -28,6 +28,9 @@ const USES = 12;
 // The lead, 2026-10-04 (T3's point 6): the spare may have been made before the trip (P1, under 50 uses) and taken from the
 // bag at the wear limit (P2's second text); both texts say a replacement happened, the facts above say which
 const WEAR = /^My iron_pickaxe is nearly worn: (\d+) uses left\. I (made a new one|take my spare one)\.$/;
+// The lead, round 1 (DECISIONS R1-2): a pickaxe under 50 uses makes the supply step craft the spare before the trip
+// (P1), and the bot then digs with the new one, so the old one never reaches the limit; that text names the spare
+const SPARE_MADE = /^I get my supplies: .*\ba second pickaxe\b/;
 const BROKEN_STOP = /I stopped because my pickaxe is nearly broken/;
 
 await scenarioMain({
@@ -78,13 +81,14 @@ await scenarioMain({
             const damages = await itemDamages(NAME, 'iron_pickaxe');
             const said = saidLines(s, tOrder);
             const wear = said.find((l) => WEAR.test(l)) ?? null;
+            const spareMade = said.find((l) => SPARE_MADE.test(l)) ?? null;
             note(`1: ${((Date.now() - tOrder) / 1000).toFixed(0)} s after the order the bot carries ${itemsText(inv)} at ${fmt(await entityPos(NAME))}; the damage of its iron_pickaxe ${JSON.stringify(damages)}`);
             note(`1: the bot said ${JSON.stringify(said.slice(0, 30))}`);
             check(mined.ok && (inv.raw_iron || 0) >= 6, '1: the mining ends with 6 raw_iron in the bag (server) within 3 minutes', `${inv.raw_iron || 0} raw_iron`);
             const oldOne = damages.filter((d) => d >= DURABILITY - USES).length;
             const newOne = damages.filter((d) => d < DURABILITY - USES - 20).length;
             check(damages.length >= 2 && oldOne >= 1 && newOne >= 1, '1: the bag holds a new iron_pickaxe and the old one (server: 2 iron_pickaxe, one worn, one new)', `damages ${JSON.stringify(damages)}, ${inv.iron_pickaxe || 0} iron_pickaxe`);
-            check(Boolean(wear), '1: the wear text was said: `My iron_pickaxe is nearly worn: N uses left. I made a new one.` or `... I take my spare one.`', JSON.stringify(said.filter((l) => /worn|pickaxe/i.test(l)).slice(0, 4)));
+            check(Boolean(wear || spareMade), '1: the wear text was said: `My iron_pickaxe is nearly worn: N uses left. I made a new one.` or `... I take my spare one.`, or the spare was made before the trip: `I get my supplies: ... a second pickaxe ...`', JSON.stringify(said.filter((l) => /worn|pickaxe/i.test(l)).slice(0, 4)));
             if (wear) check(Number(WEAR.exec(wear)[1]) <= 10, '1: the wear text names 10 uses or fewer (the rule of P2)', wear);
             check(!said.some((l) => BROKEN_STOP.test(l)), '1: no "nearly broken" stop', JSON.stringify(said.filter((l) => BROKEN_STOP.test(l))));
             const info = await Promise.race([order, sleep(1000).then(() => null)]);

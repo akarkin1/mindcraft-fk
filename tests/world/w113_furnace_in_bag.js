@@ -35,7 +35,9 @@ const PLAN_PROMPT = /You plan the steps/;
 const STEPS = ['!fetchItem("raw_iron", 3)', '!smeltItem("raw_iron", 3)', '!getTool("pickaxe", "iron")'];
 const PLAN_SAID = /^I have no iron[ _]ingots?\. I get .+, then I go on\.$/;
 const STEP_SAID = /^Step 1 of \d+: !\w+\(.*\)\.$/;
-const PLACED = /^I placed my furnace at \((-?\d+), (-?\d+), (-?\d+)\)\.$/;
+// The lead, round 1 (DECISIONS R1-2): the placement is said in front of the result of the command, in one line with the
+// smelt text (`I placed my furnace at (x, y, z). I smelted ...`), so the sentence is found inside a line
+const PLACED = /I placed my furnace at \((-?\d+), (-?\d+), (-?\d+)\)\./;
 const NO_FURNACE = /I know no furnace within 64 blocks and carry none/;
 
 await scenarioMain({
@@ -115,8 +117,15 @@ await scenarioMain({
             check(secondOrders === 0, '2: no second order was given (the plan started by itself, P3)', `${secondOrders} further lines of the player`);
             check(f.furnaces.length > 0, '2: within 3 minutes a furnace stands within 3 blocks of where the bot stood (server)', JSON.stringify(anywhere.map((x) => x.pos)));
             check((f.inv.iron_pickaxe || 0) > 0, '2: the bag holds an iron_pickaxe (server)', itemsText(f.inv));
-            check(lines.some((l) => PLAN_SAID.test(l)), '2: the plan text was said: `I have no iron ingot. I get ..., then I go on.`', JSON.stringify(said.filter((l) => /^I have no/.test(l)).slice(0, 3)));
-            check(lines.some((l) => STEP_SAID.test(l)), '2: the step text was said: `Step 1 of N: !...(...).`', JSON.stringify(said.filter((l) => /^Step \d/.test(l)).slice(0, 3)));
+            // The lead, round 1 (DECISIONS R1-2): !getTool of v0.1.4.12 already leads through the smelt in one call when the
+            // raw iron lies in a known chest, so no plan is needed and none is made; the plan texts are asserted only
+            // when the model was asked for a plan (P3 itself is proven by the unit tests xp_plan_starts and W109)
+            if (plans.length > 0) {
+                check(lines.some((l) => PLAN_SAID.test(l)), '2: the plan text was said: `I have no iron ingot. I get ..., then I go on.`', JSON.stringify(said.filter((l) => /^I have no/.test(l)).slice(0, 3)));
+                check(lines.some((l) => STEP_SAID.test(l)), '2: the step text was said: `Step 1 of N: !...(...).`', JSON.stringify(said.filter((l) => /^Step \d/.test(l)).slice(0, 3)));
+            } else {
+                note('2: the order was done in one call without a plan; the plan and step texts are not asked for');
+            }
             check(Boolean(placed) && await blockIs({ x: Number(placed[1]), y: Number(placed[2]), z: Number(placed[3]) }, 'furnace'),
                 '2: `I placed my furnace at (x, y, z).` was said and names a furnace that stands', placed ? placed[0] : JSON.stringify(said.filter((l) => /furnace/i.test(l)).slice(0, 4)));
             check(!lines.some((l) => NO_FURNACE.test(l)), '2: `I know no furnace within 64 blocks and carry none` was not said (the bot carried one)', JSON.stringify(lines.filter((l) => NO_FURNACE.test(l)).slice(0, 2)));

@@ -204,7 +204,7 @@ describe('P1: prepareMiningTrip gets the food from the chest beside the tunnel, 
         worn.ctx.tools = tools;
         const r = await M.prepareMiningTrip(worn.bot, worn.ctx, 'coal', { ...worn.opts, mine: MINE, level: 40, wayDownTo: 40, hasBase: true });
         assert.equal(r.ok, true, r.text);
-        assert.equal(worn.said[0], 'I get my supplies: a second stone pickaxe.');
+        assert.equal(worn.said[0], 'I get my supplies: a second pickaxe.');
         assert.equal(asked.length, 1);
         assert.deepEqual([asked[0].kind, asked[0].material, asked[0].options.count, asked[0].options.collect], ['pickaxe', 'stone', 2, false]);
         assert.equal(asked[0].storage, null, 'no chest for the spare');

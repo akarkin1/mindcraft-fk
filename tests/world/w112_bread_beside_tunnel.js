@@ -49,7 +49,9 @@ await scenarioMain({
         await buildChest(chest, { bread: BREAD }, { facing: 'west' });
         const toTunnel = Math.hypot(chest.x - t.start.x, chest.z - t.start.z);
         note(`the bread chest at (${chest.x}, ${chest.y}, ${chest.z}) with ${BREAD} bread, ${toTunnel.toFixed(1)} blocks from the start of the tunnel at (${t.start.x}, ${t.start.y}, ${t.start.z})`);
-        const SUPPLY = new RegExp(`^I get my supplies: (\\d+) bread from the chest at \\(${chest.x}, ${chest.y}, ${chest.z}\\)\\.$`);
+        // The lead, round 1 (DECISIONS R1-2): the supply text lists every chest it takes from, so the bread is one entry of
+        // `I get my supplies: 2 torches from the chest at (...), 8 bread from the chest at (...).`
+        const SUPPLY = new RegExp(`^I get my supplies: .*\\b(\\d+) bread from the chest at \\(${chest.x}, ${chest.y}, ${chest.z}\\)[,.]`);
         let agent = null, orders = null, trace = null;
         try {
             const c = b.house.chest;

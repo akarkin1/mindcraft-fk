@@ -152,7 +152,7 @@ describe('texts (E4)', () => {
         assert.equal(T.suppliesText([{ name: 'chest', count: 1 }, { name: 'food', count: 8 }, { name: 'cobblestone', count: 32 },
             { name: 'pickaxe', material: 'stone', count: 1 }, { name: 'ladder', count: 1 }, { name: 'torch', count: 1 }]),
         'I get my supplies: a stone pickaxe, 1 ladder, 1 torch, 8 food, a chest.', 'cobblestone comes with the way down');
-        assert.equal(T.suppliesText([{ name: 'pickaxe', material: 'iron', count: 1, spare: true }]), 'I get my supplies: a second iron pickaxe.');
+        assert.equal(T.suppliesText([{ name: 'pickaxe', material: 'iron', count: 1, spare: true }]), 'I get my supplies: a second pickaxe.');
         assert.equal(T.suppliesText([{ name: 'cobblestone', count: 32 }]), '');
         assert.equal(T.suppliesText(null), '');
         assert.equal(T.suppliesStoppedText([{ name: 'ladder', count: 16 }, { name: 'chest', count: 1 }]),
