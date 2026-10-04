@@ -35,15 +35,15 @@ The same loop runs in a session on the owner's machine and in a session in the c
 
 | | On the owner's machine (Windows) | In the cloud |
 |---|---|---|
-| The MCP server `mindcraft` | From the repository's `.mcp.json`: the URL is `http://127.0.0.1:8090/mcp` unless `MC_WATCH_URL` says otherwise, the token is `MC_WATCH_TOKEN` of the shell that started the session | The same file; `MC_WATCH_URL` must be the tunnel's URL with `/mcp`, `MC_WATCH_TOKEN` set in the environment |
-| The client | `fnm exec --using=v20.20.2 -- node scripts/watch.js <tool>` in PowerShell (`npm` is `npm.cmd`); the URL defaults to `http://127.0.0.1:8090/mcp` | `node scripts/watch.js <tool>` with `MC_WATCH_URL` and `MC_WATCH_TOKEN` |
+| The MCP server `mindcraft` | From the repository's `.mcp.json`: the URL is `http://127.0.0.1:8090/mcp`; with `watch_local_only` on the bot needs no token | The same file; `MC_WATCH_URL` must be the tunnel's URL with `/mcp`, `MC_WATCH_TOKEN` set in the environment |
+| The client | `fnm exec --using=v20.20.2 -- node scripts/watch.js <tool>` in PowerShell (`npm` is `npm.cmd`); the URL defaults to `http://127.0.0.1:8090/mcp`, no token | `node scripts/watch.js <tool>` with `MC_WATCH_URL` and `MC_WATCH_TOKEN` |
 | No tunnel, no network rule | Needed: the tunnel the owner opens, its host allowed in the environment | |
 
-Before the start, check the way: call `server`. When the tools are missing or answer `unauthorized`, the token did
-not reach the session. Never read the vault or any secret yourself, never ask for the token in the chat: tell the
-owner the one thing to do, then stop. On his machine that is: close the session and start it again from a shell
-where the token is set (`docs/SUPERVISOR.md`, section 4). A refused connection means the bot or its watch server is
-not running: `watch_server` on, the launch script with the token.
+Before the start, check the way: call `server`. A refused connection means the bot or its watch server is not
+running: `watch_server` on, and on the owner's machine `watch_local_only` on. `unauthorized` means the server asks
+for a token: on his machine `watch_local_only` is off; in the cloud the token did not reach the session. Never read
+the vault or any secret yourself, never ask for the token in the chat: tell the owner the one thing to change, then
+stop.
 
 On the owner's machine you share it with him: kill only processes you started, never touch his settings
 or profiles, never commit anything under `bots/`.

@@ -476,7 +476,7 @@ export class Agent {
         // never printed. Without it the text says so once and the agent goes on.
         try {
             const watch = settings.watch_server ? await import('./watch/server.js') : null;
-            this.watch = watch ? await watch.startWatchServer(this, { port: settings.watch_port, token: process.env.MC_WATCH_TOKEN }) : null;
+            this.watch = watch ? await watch.startWatchServer(this, { port: settings.watch_port, token: process.env.MC_WATCH_TOKEN, localOnly: settings.watch_local_only === true }) : null;
             if (this.watch?.text)
                 console.log(this.watch.text);
         } catch (error) {

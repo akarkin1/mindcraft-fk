@@ -180,6 +180,43 @@ export function unauthorizedAnswer() {
     return { status: 401, body: rpcError(null, ERRORS.unauthorized, TEXTS.unauthorized) };
 }
 
+// v0.1.4.13 (the owner, 2026-10-04): watch_local_only, the server for this machine only, without a token. A tunnel
+// (cloudflared, ngrok) also reaches the server from 127.0.0.1, so its requests are told apart by the headers it adds;
+// a browser page by the Host and the Content-Type it can send without a preflight.
+export const TUNNEL_HEADERS = Object.freeze(['cf-connecting-ip', 'cf-ray', 'cf-ipcountry', 'x-forwarded-for', 'x-forwarded-host',
+    'x-forwarded-proto', 'x-real-ip', 'forwarded', 'ngrok-trace-id']);
+const LOCAL_HOSTS = Object.freeze(['127.0.0.1', 'localhost', '[::1]']);
+
+/**
+ * Why a request may not reach the server for this machine only, or null when it may: a header of a tunnel, a Host
+ * that is not this machine, a POST whose Content-Type is not JSON. Never throws.
+ * @param {object} headers the request's headers (lower-case names, as node:http gives them)
+ * @param {string} method the request's method
+ * @returns {string|null}
+ */
+export function localRefusal(headers, method = 'POST') {
+    try {
+        const h = headers && typeof headers === 'object' ? headers : {};
+        const tunnel = TUNNEL_HEADERS.find((name) => h[name] !== undefined);
+        if (tunnel)
+            return `the request came through a tunnel (${tunnel})`;
+        const host = String(h.host ?? '').toLowerCase().replace(/:\d+$/, '');
+        if (!LOCAL_HOSTS.includes(host))
+            return `the host "${host}" is not this machine`;
+        const type = String(h['content-type'] ?? '').toLowerCase();
+        if (String(method).toUpperCase() === 'POST' && !type.startsWith('application/json'))
+            return 'the body is not JSON';
+        return null;
+    } catch {
+        return 'the request could not be read';
+    }
+}
+
+/** The answer to a request that the server for this machine only refuses (403). */
+export function localOnlyAnswer(why) {
+    return { status: 403, body: rpcError(null, ERRORS.unauthorized, TEXTS.localOnly(why)) };
+}
+
 /** The answer to a body over 64 KB. */
 export function tooLargeAnswer() {
     return { status: 413, body: rpcError(null, ERRORS.invalidRequest, TEXTS.tooLarge) };

@@ -22,6 +22,7 @@ Two library patches changed (the explosion packet of `minecraft-data`, the pen g
 Your switches of v0.1.4.12 stay. New in `settings.js` (or the page's Settings):
 
 ```js
+"watch_local_only": true,
 "supervisor_name": "Opus",
 "supervisor_updates": true,
 "shared_memory": true,
@@ -45,7 +46,7 @@ Your switches of v0.1.4.12 stay. New in `settings.js` (or the page's Settings):
 
 | Step | What you do | What should happen |
 |---|---|---|
-| 5 | Start a bot with the watch server, open the tunnel as in v0.1.4.12, and start a fresh Claude Code session in the repo with `/supervise` and one sentence, e.g. "diamonds for a full set, avoid lava, stop at 36". `docs/SUPERVISOR.md` has the steps. | The supervisor waits for changes instead of polling. |
+| 5 | Start a bot with the watch server (`watch_local_only` on: no token, no tunnel), start `claude` in the repo folder (`/mcp` shows `mindcraft` connected) and give it `/supervise` and one sentence, e.g. "diamonds for a full set, avoid lava, stop at 36". `docs/SUPERVISOR.md` has the steps. | The supervisor waits for changes instead of polling. |
 | 6 | "Opus, how is it going?" in the game chat or by voice. | No bot answers; within 5 to 30 s `[Opus] ...` in chat, spoken in another voice than the bot's. |
 | 7 | Let it mine for 20 minutes. | Short updates from Opus only when something happens (`supervisor_updates`), never over a bot's answer. |
 | 8 | After the session: the cost line of each bot's log and the supervisor's own report. | The supervisor's cost should be about a cent a turn; the bot's line shows the cache reads and writes. |

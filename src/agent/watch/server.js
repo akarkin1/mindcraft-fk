@@ -9,7 +9,7 @@
 // listeners, so the owner's commands wait behind the queue). A request whose connection closes aborts its
 // wait. tools/list comes from toolList() (the table and the tools of registerTool).
 import http from 'node:http';
-import { MAX_BODY, MCP_PATH, authorized, handleRpc, tokenHash, tooLargeAnswer, unauthorizedAnswer } from './mcp_logic.js';
+import { MAX_BODY, MCP_PATH, authorized, handleRpc, localOnlyAnswer, localRefusal, tokenHash, tooLargeAnswer, unauthorizedAnswer } from './mcp_logic.js';
 import { EVENT_RULES, Ring, restartEvent } from './events_logic.js';
 import { startListeners } from './events.js';
 import { createWaits, runTool, toolList } from './tools.js';
@@ -92,7 +92,9 @@ function readBody(req) {
 export async function startWatchServer(agent, options = {}) {
     const noop = async () => {};
     const wanted = tokenHash(options?.token);
-    if (!wanted)
+    // v0.1.4.13 (watch_local_only): without a token the server answers this machine only; with a token as before
+    const localOnly = options?.localOnly === true;
+    if (!wanted && !localOnly)
         return { ok: false, reason: 'no_token', text: TEXTS.noToken, close: noop };
     const port = options?.port === undefined || options?.port === null ? 8090 : options.port;
     if (!validPort(port))
@@ -149,7 +151,14 @@ export async function startWatchServer(agent, options = {}) {
 
         const server = http.createServer(async (req, res) => {
             try {
-                if (!authorized(req.headers.authorization, wanted)) {
+                const local = localOnly ? localRefusal(req.headers, req.method) : null;
+                if (local) {
+                    req.resume();
+                    const answer = localOnlyAnswer(local);
+                    sendJson(res, answer.status, answer.body);
+                    return;
+                }
+                if (wanted && !authorized(req.headers.authorization, wanted)) {
                     req.resume();
                     const answer = unauthorizedAnswer();
                     sendJson(res, answer.status, answer.body, { 'WWW-Authenticate': 'Bearer' });
@@ -232,7 +241,7 @@ export async function startWatchServer(agent, options = {}) {
             });
             return closing;
         };
-        return { ok: true, reason: null, text: TEXTS.started(actual), port: actual, close, push, watch };
+        return { ok: true, reason: null, text: wanted ? TEXTS.started(actual) : TEXTS.startedLocal(actual), port: actual, close, push, watch };
     } catch (error) {
         try {
             stopListeners();

@@ -12,6 +12,7 @@ In `settings.js`, or in Settings of the bot on the page of the mindserver:
 |---|---|---|
 | `watch_server` | `true` | The watch server in the bot's process, on 127.0.0.1 only |
 | `watch_port` | `8090` | Its port |
+| `watch_local_only` | `true` on your machine | The server answers this machine only and needs no token. A request through a tunnel is refused. Leave it `false` only for a session in the cloud (section 3). |
 | `supervisor_name` | `"Opus"` | The name you call the supervisor by. A line that starts with it ("Opus, why is it going up?") goes to the supervisor, and no bot answers it. The supervisor's lines come back as `[Opus] ...`. Empty: no supervisor in the chat. |
 | `supervisor_updates` | `false` | `true`: the supervisor also says a short line when something happened (a step done, the job done, an intervention), at most one per 2 minutes. |
 | `supervisor_voice` | `"supertonic:M1"` | With `voice_ui`: the voice the page gives the supervisor's lines. Each bot keeps its `voice_voice`. |
@@ -20,7 +21,9 @@ In `settings.js`, or in Settings of the bot on the page of the mindserver:
 
 ## 2. The token
 
-The watch server starts only with a token in the environment of the bot. Put one in your vault once:
+On your machine with `watch_local_only` on: no token, skip this section.
+
+For a session in the cloud the token keeps strangers out of the tunnel. The watch server starts only with a token in the environment of the bot. Put one in your vault once:
 
 ```
 Set-Secret -Name MindcraftWatchToken -Secret (-join ((48..57)+(97..122) | Get-Random -Count 32 | % {[char]$_}))
@@ -52,19 +55,11 @@ it, on your machine and in the cloud alike. It holds no secret: the URL is `MC_W
 `http://127.0.0.1:8090/mcp`) and the token is `MC_WATCH_TOKEN`, both read from the environment of the session. The
 first time, Claude Code asks whether to trust the project's server: say yes.
 
-**On your machine.** Start the session from a shell that has the token. Put this once in your PowerShell profile
-(`notepad $PROFILE`):
-
-```
-function claude-mc {
-    $env:MC_WATCH_TOKEN = Get-Secret -Name MindcraftWatchToken -AsPlainText
-    try { claude @args } finally { Remove-Item Env:MC_WATCH_TOKEN -ErrorAction SilentlyContinue }
-}
-```
-
-Then, in the folder of the repository, with the bot running: `claude-mc`, and `/mcp` lists `mindcraft` as
-connected with its tools: `wait`, `digest`, `run`, `reply`, `note`, `look`, `server`, `state`, `inventory`, `chat`,
-`places`, `events`, `say` (`reply` and `note` only with `supervisor_name` set). No tunnel.
+**On your machine.** With `watch_local_only` on and the bot running, start `claude` in the folder of the repository.
+`/mcp` lists `mindcraft` as connected with its tools: `wait`, `digest`, `run`, `reply`, `note`, `look`, `server`,
+`state`, `inventory`, `chat`, `places`, `events`, `say` (`reply` and `note` only with `supervisor_name` set). No
+token, no tunnel. The bot's console says `The watch server listens on 127.0.0.1:8090, for this machine only,
+without a token.`
 
 **In the cloud.** The same file, with two variables in the environment of the cloud session (its settings, as
 environment variables): `MC_WATCH_TOKEN` (the token of step 2) and `MC_WATCH_URL` (the tunnel's URL with `/mcp`). A

@@ -103,6 +103,7 @@ const settings = {
     "voice_ui": false, // talk with the bot in the page of the mindserver: whisper hears you, Supertonic speaks the bot's lines, the system voice is silent. needs npm run voice:setup (about 1.6 GB)
     "voice_voice": "supertonic:F1", // with voice_ui: the voice of the bot, supertonic:F1 to F5 or M1 to M5 (kokoro:af_heart needs kokoro-js)
     "voice_language": "en", // with voice_ui: the language whisper hears ("auto" for any) and Supertonic speaks
+    "watch_local_only": false, // with watch_server: true = the server answers this machine only and needs no token (a request through a tunnel is refused); false = the token of MC_WATCH_TOKEN, for a session elsewhere through a tunnel
     "watch_report_seconds": 0, // with watch_server: every N seconds an event report with the digest since the last one, even when nothing happened; 0: none
     "mine_other_ores": false, // with mining_pack: the other ores the mining takes from the tunnel's walls, floor and ceiling while it mines one ore are counted in its text ("and 11 redstone and 4 lapis_lazuli on the way")
     "supervisor_name": "", // the name you address the supervisor by ("Opus, why is it going up?"): such a line is an event message of the watch server and no bot answers it; the supervisor's lines come back as "[Opus] ..."; empty: no supervisor in the chat, no help or message events, no notes

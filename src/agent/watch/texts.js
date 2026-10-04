@@ -13,6 +13,9 @@ export const TEXTS = Object.freeze({
     // spec 4.1, word for word
     noToken: 'The watch server does not start: MC_WATCH_TOKEN is not set.',
     started: (port) => `The watch server listens on 127.0.0.1:${port}.`,
+    // v0.1.4.13 (watch_local_only)
+    startedLocal: (port) => `The watch server listens on 127.0.0.1:${port}, for this machine only, without a token.`,
+    localOnly: (why) => `This watch server is for this machine only: ${why}.`,
     noCommands: 'I do not run server commands.',
 
     // the start (decided by E1)
