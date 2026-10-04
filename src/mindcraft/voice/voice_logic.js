@@ -9,6 +9,8 @@ export const SUPERTONIC_REVISION = 'aafc6e32416a594460b32413efc49d7fe4ce6d46';
 export const SUPERTONIC_LANGS = ['en', 'ko', 'ja', 'ar', 'bg', 'cs', 'da', 'de', 'el', 'es', 'et', 'fi', 'fr', 'hi', 'hr',
     'hu', 'id', 'it', 'lt', 'lv', 'nl', 'pl', 'pt', 'ro', 'ru', 'sk', 'sl', 'sv', 'tr', 'uk', 'vi'];
 export const DEFAULT_VOICE = 'supertonic:F1';
+/** v0.1.4.13 (part N2): the second voice, the supervisor's lines, without a valid supervisor_voice. */
+export const SUPERVISOR_DEFAULT_VOICE = 'supertonic:M1';
 /** The size the setup downloads, for the texts. */
 export const SETUP_SIZE = 'about 1.6 GB';
 
@@ -33,8 +35,10 @@ export function voiceDir(env = {}, platform = 'linux', home = '') {
 }
 
 /**
- * Everything the engines need, from the three settings and the demo's environment variables.
- * @param {{voice_voice?: string, voice_language?: string}} options the settings
+ * Everything the engines need, from the three settings and the demo's environment variables. v0.1.4.13 (part N2):
+ * supervisorVoice, the voice of the supervisor's lines from supervisor_voice (SUPERVISOR_DEFAULT_VOICE when it is no
+ * valid id); a kokoro voice there loads Kokoro too.
+ * @param {{voice_voice?: string, voice_language?: string, supervisor_voice?: string}} options the settings
  * @param {object} env process.env
  * @param {string} platform process.platform
  * @param {string} home os.homedir()
@@ -44,12 +48,14 @@ export function voiceConfig(options = {}, env = {}, platform = 'linux', home = '
     const dir = voiceDir(env, platform, home);
     const language = text(options?.voice_language, 'en').toLowerCase();
     const defaultVoice = /^(supertonic|kokoro):\S+$/.test(text(options?.voice_voice, '')) ? options.voice_voice.trim() : DEFAULT_VOICE;
+    const supervisorVoice = /^(supertonic|kokoro):\S+$/.test(text(options?.supervisor_voice, '')) ? options.supervisor_voice.trim() : SUPERVISOR_DEFAULT_VOICE;
     // whisper takes "auto"; Supertonic needs one language, and English when it does not speak the one asked for
     const ttsLang = text(env.SUPERTONIC_LANG, language).toLowerCase();
     const whisperModel = text(env.WHISPER_MODEL, 'large-v3-turbo-q5_0');
     return {
         dir,
         defaultVoice,
+        supervisorVoice,
         language,
         stt: {
             binDir: p.join(dir, 'bin', 'whisper'),
@@ -70,8 +76,9 @@ export function voiceConfig(options = {}, env = {}, platform = 'linux', home = '
             threads: num(env.SUPERTONIC_THREADS, 6, 1),
         },
         kokoro: {
-            // loaded only when its voice is asked for: the default voice, or VOICE_KOKORO=true for the dropdown
-            wanted: defaultVoice.startsWith('kokoro:') || flag(env.VOICE_KOKORO, false),
+            // loaded only when its voice is asked for: the default voice, the supervisor's, or VOICE_KOKORO=true for the
+            // dropdown
+            wanted: defaultVoice.startsWith('kokoro:') || supervisorVoice.startsWith('kokoro:') || flag(env.VOICE_KOKORO, false),
             modelId: 'onnx-community/Kokoro-82M-v1.0-ONNX',
             dtype: text(env.KOKORO_DTYPE, 'fp32'),
             threads: num(env.KOKORO_THREADS, 6, 1),

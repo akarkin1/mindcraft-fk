@@ -72,12 +72,14 @@ export function addressedTo(text, names) {
  * sender outside `onlyChatWith` (`not_listened`); then the address (addressedTo over the own name, `otherBots`,
  * `names` and `supervisor`): another bot addressed (`addressed_other`, not answered), the supervisor addressed
  * (`addressed_supervisor`, not answered; part N2 makes it an event), the own name addressed (`addressed_self`,
- * answered, `text` the line without the address). A line without an address is answered, why null.
+ * answered, `text` the line without the address). A line without an address is answered, why null. v0.1.4.13 (N2):
+ * a relayed line of the supervisor, `[<supervisor>] ...`, whoever said it, and a line from a player named like the
+ * supervisor (the `other_bots` filter with one more name, PLAN 1.11) are not answered (`supervisor`).
  * @param {{from: string, text: string, self: string, otherBots?: string[], onlyChatWith?: string[],
  *   names?: string[], supervisor?: string}} line
  *   names: more names that may be addressed (the other agents of the mindserver); supervisor: `settings.supervisor_name`
- * @returns {{answer: boolean, why: 'self'|'other_bot'|'command_echo'|'bot_result'|'not_listened'|'addressed_other'
- *   |'addressed_supervisor'|'addressed_self'|null, text?: string}}
+ * @returns {{answer: boolean, why: 'self'|'other_bot'|'command_echo'|'bot_result'|'supervisor'|'not_listened'
+ *   |'addressed_other'|'addressed_supervisor'|'addressed_self'|null, text?: string}}
  */
 export function shouldAnswer({ from, text, self, otherBots = [], onlyChatWith = [], names = [], supervisor = '' } = {}) {
     try {
@@ -91,6 +93,11 @@ export function shouldAnswer({ from, text, self, otherBots = [], onlyChatWith = 
             return { answer: false, why: 'command_echo' };
         if (BOT_RESULT.test(line))
             return { answer: false, why: 'bot_result' };
+        // v0.1.4.13 (N2): a relayed line of the supervisor (`[Opus] ...`, said by a bot) or a line of the supervisor
+        // itself is answered by no bot
+        const bossName = typeof supervisor === 'string' ? supervisor.trim() : '';
+        if (bossName !== '' && (lower === bossName.toLowerCase() || line.startsWith(`[${bossName}] `)))
+            return { answer: false, why: 'supervisor' };
         const listened = nameList(onlyChatWith);
         if (listened.length > 0 && !listened.includes(from))
             return { answer: false, why: 'not_listened' };

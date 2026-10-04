@@ -17,6 +17,11 @@ import { HOLE_RULES, holeAt, escapeSides, walkControls, leftHole } from './refle
 import { sleepIsProgress } from './reflex/wake_logic.js';
 import { keepOutAreas, keptOutBy, itemNameOf, leaveText, mayLeaveText } from './areas/keep_out_logic.js';
 import { collectItems } from './areas/keep_out.js';
+// v0.1.4.13 (part Q): the drops the item reflex leaves (Q5 the bot's own tosses, Q6 death drops and the armour rule) and
+// the pens before anyone saves them (Q8)
+import { watchDrops, leftAlone, takeLeaveText, deathDropAtFeet, stepAwayFrom } from './reflex/drop_watch.js';
+import { leaveThingsText } from './reflex/drop_logic.js';
+import { installPenGuard, pensNear } from './areas/pen_gate.js';
 import { newSenseState, senseTick } from './areas/area_sense.js';
 
 async function say(agent, message) {
@@ -237,6 +242,7 @@ const modes_list = [
         own_drops: new Map(), // entity id -> when the bot dropped it
         left_said_at: null, // v0.1.4.10, R1: when the text about an item left in a pen was said
         left_items: new Set(), // the item entities that text was said for
+        stepped: new Set(), // v0.1.4.13 (Q6): the death drops the bot stepped away from
         update: async function (agent) {
             const now = Date.now();
             forgetItems(this, agent.bot, now);
@@ -244,11 +250,17 @@ const modes_list = [
                 this.noticed_at = -1;
                 return; // the walk takes every item within 8 blocks: nothing while the bot's own drop lies there
             }
+            // v0.1.4.13 (Q6): a player's death drop at the bot's feet: it steps away before the server gives it the item
+            if (stepFromDeathDrop(this, agent)) {
+                this.noticed_at = -1;
+                return;
+            }
             // v0.1.4.10, R1: an item in a pen, a farm or a no_enter area that the bot is outside of is left
             const keepOut = keepOutOf(agent);
             noteLeftItem(this, agent, keepOut, now);
+            // v0.1.4.13 (Q5, Q6): an item the bot tossed in the last 30 s and a player's death drops are left
             let item = world.getNearestEntityWhere(agent.bot, entity => entity.name === 'item' && mayTryItem(this.tries.get(entity.id), now)
-                && !keptOutBy(keepOut, entity.position), 8);
+                && !keptOutBy(keepOut, entity.position) && !leftByRule(agent, entity), 8);
             let empty_inv_slots = agent.bot.inventory.emptySlotCount();
             if (item && await world.isClearPath(agent.bot, item) && empty_inv_slots > 1) {
                 if (this.tries.has(item.id)) {
@@ -641,7 +653,7 @@ function pickUpItem(mode, agent, item) {
     mode.tries.set(id, { tries: record?.tries ?? 0, nextAt: Infinity, done: false }); // no candidate while it runs
     execute(mode, agent, async () => {
         try {
-            await collectItems(bot, { areas: keepOutOf(agent), first: item, log: (text) => skills.log(bot, text) });
+            await collectItems(bot, { areas: keepOutOf(agent), first: item, log: (text) => skills.log(bot, text), allow: (entity) => leftAlone(bot, entity) === null });
         } finally {
             mode.tries.set(id, afterItemTry(record, itemCount(bot) > before, Date.now()));
         }
@@ -649,13 +661,64 @@ function pickUpItem(mode, agent, item) {
 }
 
 // v0.1.4.10, R1: the pens, farms and no_enter areas of the bot's dimension that it is outside of. [] without areas.
+// v0.1.4.13 (Q8): and the pens with animals the scan finds behind a gate within 8 blocks of the bot, saved or not (at most
+// every 2 s; the scan behind a gate is kept 10 s).
+const PEN_LOOK_MS = 2000;
+const pens_seen = new WeakMap(); // bot -> { at, list }
 function keepOutOf(agent) {
     try {
         const bot = agent.bot;
         const areas = agent.area_store?.list?.() ?? [];
-        return keepOutAreas(areas, bot.entity.position, bot.game?.dimension);
+        const now = Date.now();
+        let seen = pens_seen.get(bot);
+        if (!seen || now - seen.at >= PEN_LOOK_MS) {
+            seen = { at: now, list: pensNear(bot) };
+            pens_seen.set(bot, seen);
+        }
+        return keepOutAreas([...areas, ...seen.list], bot.entity.position, bot.game?.dimension);
     } catch (error) {
         return [];
+    }
+}
+
+// v0.1.4.13 (Q5, Q6): true for an item the reflex leaves (tossed by the bot in the last 30 s, a player's death drop); for
+// a death the text is said once, into the chat and the behaviour log. Never throws.
+function leftByRule(agent, entity) {
+    try {
+        const why = leftAlone(agent.bot, entity);
+        if (why?.why === 'death' && takeLeaveText(why.death)) {
+            const text = leaveThingsText(why.death.name, why.death.at);
+            if (typeof agent.sayText === 'function') {
+                agent.bot.modes.behavior_log += text + '\n';
+                agent.sayText(text);
+            }
+            else {
+                say(agent, text);
+            }
+        }
+        return why !== null;
+    } catch (error) {
+        return false;
+    }
+}
+
+// v0.1.4.13 (Q6): a death drop within 2 blocks of the bot: the bot steps 4 blocks away from it, once per item, so that the
+// server does not give it the item when its pickup delay is over. true when it steps.
+function stepFromDeathDrop(mode, agent) {
+    try {
+        const bot = agent.bot;
+        const drop = deathDropAtFeet(bot, mode.stepped);
+        if (!drop)
+            return false;
+        mode.stepped.add(drop.id);
+        leftByRule(agent, drop); // the text of the death, once
+        const from = drop.position.clone ? drop.position.clone() : { x: drop.position.x, y: drop.position.y, z: drop.position.z };
+        execute(mode, agent, async () => {
+            await stepAwayFrom(bot, from, 4, 2000);
+        });
+        return true;
+    } catch (error) {
+        return false;
     }
 }
 
@@ -686,6 +749,12 @@ function noteLeftItem(mode, agent, keepOut, now) {
 
 // Forgets the tries of items that are gone and the drops of the bot that are older than 10 s.
 function forgetItems(mode, bot, now) {
+    if (bot.entities && typeof bot.entities === 'object') {
+        for (const id of mode.stepped ?? []) {
+            if (!bot.entities[id])
+                mode.stepped.delete(id);
+        }
+    }
     for (const [id, at] of mode.own_drops) {
         if (!isRecentOwnDrop(at, now))
             mode.own_drops.delete(id);
@@ -1123,6 +1192,17 @@ export function initModes(agent) {
     addHomeModes(); // v0.1.4.6: before the profile sets which modes are on
     addSenseMode(); // v0.1.4.11 (P2)
     watchOwnDrops(agent.bot); // v0.1.4.8, A8
+    // v0.1.4.13 (Q5, Q6, Q8): the deaths of players, the tosses of a give and the armour rule; the gates of the pens
+    watchDrops(agent.bot);
+    installPenGuard(agent.bot, {
+        areas: () => agent.area_store?.list?.() ?? [],
+        permits: () => agent.area_guard?.permits?.() ?? [],
+        say: (text) => {
+            agent.bot.modes.behavior_log += text + '\n';
+            if (typeof agent.sayText === 'function')
+                agent.sayText(text);
+        },
+    });
     // the mode controller is added to the bot object so it is accessible from anywhere the bot is used
     agent.bot.modes = new ModeController();
     if (agent.task) {

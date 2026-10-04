@@ -8,7 +8,8 @@ export const EVENT_KINDS = Object.freeze(['explosion', 'health', 'animals_missin
 
 // v0.1.4.13 (part S): a text of the bot that asks the player something: it ends with "?", or holds `Say "` or
 // `Tell me`. With settings.supervisor_name set, such a text becomes an event of kind help.
-export const HELP_PATTERNS = Object.freeze([/\?\s*$/, /Say "/, /Tell me/]);
+// v0.1.4.13 (T1-help-1, the lead): `tell me` in any case, as in the spec's own example (`... or tell me to dig a new mine.`)
+export const HELP_PATTERNS = Object.freeze([/\?\s*$/, /Say "/, /\btell me\b/i]);
 
 export const EVENT_RULES = Object.freeze({
     ringSize: 200,         // the events kept in memory

@@ -80,7 +80,8 @@ installLogTime(settings.log_timestamps ?? false);
 
 // v0.1.4.13: the live voice of the page (off by default)
 Mindcraft.init(false, settings.mindserver_port, settings.auto_open_ui,
-    { voice_ui: settings.voice_ui === true, voice_voice: settings.voice_voice, voice_language: settings.voice_language });
+    { voice_ui: settings.voice_ui === true, voice_voice: settings.voice_voice, voice_language: settings.voice_language,
+        supervisor_voice: settings.supervisor_voice }); // v0.1.4.13 (N2): the fallback when the page sent none
 
 for (let profile of settings.profiles) {
     const profile_json = JSON.parse(readFileSync(profile, 'utf8'));

@@ -65,13 +65,29 @@ function validateChest(chest, seen) {
 export class ChestIndex {
     /**
      * @param {string|null} filePath usually <worldDir>/chests.json; without it the index lives in memory only
-     * @param {{now?: () => Date}} [options]
+     * @param {{now?: () => Date, shared?: {changed: (fresh?: boolean) => boolean, mark: (stamp?: string|null) => void, stamp?: () => string|null}|null}} [options]
+     *   shared (v0.1.4.13, M1): a SharedFile of memory_paths.js when another bot writes the same file: the index
+     *   re-reads the file before a read or a write when it changed; without it the file is read once, as before
      */
     constructor(filePath, options = {}) {
         this.filePath = typeof filePath === 'string' && filePath.length > 0 ? filePath : null;
         const now = options?.now;
         this.now = typeof now === 'function' ? now : () => new Date();
+        const shared = options?.shared;
+        this._shared = this.filePath !== null && shared && typeof shared.changed === 'function' && typeof shared.mark === 'function' ? shared : null;
         this._chests = new Map();
+    }
+
+    // v0.1.4.13 (M1): the file as another bot left it; `fresh` before a write (a read looks at most once a second).
+    // Never throws.
+    _refresh(fresh = false) {
+        try {
+            if (this._shared !== null && this._shared.changed(fresh)) {
+                this.load();
+            }
+        } catch (err) {
+            console.warn(`Could not re-read the chest file ${this.filePath}:`, err?.message ?? err);
+        }
     }
 
     _nowIso() {
@@ -85,6 +101,7 @@ export class ChestIndex {
      * @returns {number} number of chests
      */
     load() {
+        const seen = this._shared?.stamp?.(); // v0.1.4.13 (M1): the file as it was before the read
         this._chests = new Map();
         if (this.filePath === null) {
             return 0;
@@ -114,6 +131,7 @@ export class ChestIndex {
             console.warn(`Chest file ${this.filePath} could not be read:`, err?.message ?? err);
             this._chests = new Map();
         }
+        this._shared?.mark(seen);
         return this._chests.size;
     }
 
@@ -127,6 +145,7 @@ export class ChestIndex {
      */
     update(chest) {
         const clean = validateChest(chest, this._nowIso());
+        this._refresh(true);
         this._chests.set(chestKey(clean), clean);
         this._save();
         return copyChest(clean);
@@ -138,6 +157,7 @@ export class ChestIndex {
      * @returns {object|null} a copy
      */
     get(pos) {
+        this._refresh();
         const chest = this._chests.get(chestKey(pos));
         return chest === undefined ? null : copyChest(chest);
     }
@@ -149,6 +169,7 @@ export class ChestIndex {
      */
     remove(pos) {
         const key = chestKey(pos);
+        this._refresh(true);
         if (!this._chests.has(key)) {
             return false;
         }
@@ -163,6 +184,12 @@ export class ChestIndex {
      * @returns {object[]} copies
      */
     list(dimension) {
+        this._refresh();
+        return this._sorted(dimension);
+    }
+
+    // the chests of a dimension (all without one) in the order of list, as copies; no re-read (a save uses it)
+    _sorted(dimension) {
         const all = [...this._chests.values()];
         const wanted = dimension === undefined || dimension === null ? null : normalizeDimension(dimension);
         return all.filter(c => wanted === null || c.dimension === wanted).sort(comparePositions).map(copyChest);
@@ -222,12 +249,13 @@ export class ChestIndex {
 
     /** Number of chests. */
     get size() {
+        this._refresh();
         return this._chests.size;
     }
 
     _toJson() {
         const chests = {};
-        for (const chest of this.list()) {
+        for (const chest of this._sorted()) {
             chests[chestKey(chest)] = chest;
         }
         return { version: FILE_VERSION, chests };
@@ -239,6 +267,7 @@ export class ChestIndex {
         }
         try {
             writeJsonAtomic(this.filePath, this._toJson(), { indent: 2 });
+            this._shared?.mark();
             return true;
         } catch (err) {
             console.warn(`Could not write the chest file ${this.filePath}:`, err?.message ?? err);

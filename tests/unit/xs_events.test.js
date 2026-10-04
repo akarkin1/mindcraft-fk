@@ -15,7 +15,8 @@ describe('the help patterns', () => {
         assert.equal(asksThePlayer('Which chest do you mean?'), true);
         assert.equal(asksThePlayer('Say "mine 3 iron" first.'), true);
         assert.equal(asksThePlayer('I know no mine here. Tell me its name.'), true);
-        assert.equal(asksThePlayer('Your mine "deep" has no tunnel where diamond is found. Show me a tunnel at that depth, or tell me to dig a new mine.'), false);
+        // v0.1.4.13 (T1-help-1, the lead): `tell me` in any case, the spec's own example is a help
+        assert.equal(asksThePlayer('Your mine "deep" has no tunnel where diamond is found. Show me a tunnel at that depth, or tell me to dig a new mine.'), true);
         assert.equal(asksThePlayer('I mined 6 of 6 iron.'), false);
         assert.equal(asksThePlayer(''), false);
         assert.equal(asksThePlayer(null), false);

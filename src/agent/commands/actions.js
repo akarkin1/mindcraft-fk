@@ -13,6 +13,9 @@ import { REMEMBER_RULE_DESCRIPTION, rememberRuleReply, forgetRuleReply } from '.
 import { areaFlagOf } from '../rules/rule_logic.js';
 import { isDiggingRequest, digRefusalText, oreOfRequest } from '../dig_request_logic.js';
 import { oreInSight, sightRange } from '../library/ore_sight_logic.js';
+// v0.1.4.13 (part Q, Q8): "open the pen" for a pen nobody saved
+import { isPenWord, penAllowedText, noPenText } from '../areas/keep_out_logic.js';
+import { permitPenNear } from '../areas/pen_gate.js';
 
 
 // v0.1.4.8, I5 (S3, S4): a command that was stopped starts no turn of the model. What it did so far goes
@@ -1227,6 +1230,16 @@ export const actionsList = [
         perform: async function (agent, name, minutes) {
             const store = agent.area_store;
             const guard = agent.area_guard; // the full guard: bot.areaGuard has no permit (Amendment 2, F2)
+            // v0.1.4.13 (Q8, "open the pen"): with no saved area of that name, the kind word "pen" or the name the sense gave
+            // an enclosure ("the pen", "chicken pen") permits the nearest unsaved pen with animals within 16 blocks
+            try {
+                if (!store?.get?.(name) && isPenWord(name)) {
+                    const pen = permitPenNear(agent.bot, minutes);
+                    return pen ? penAllowedText(pen.animals, pen.gate, minutes) : noPenText(name);
+                }
+            } catch (error) {
+                console.warn('Could not allow the gate of the pen:', error);
+            }
             if (!store || !guard)
                 return AREAS_OFF;
             try {
@@ -1635,7 +1648,11 @@ export const actionsList = [
             if (!settings.mining_pack)
                 return MINING_OFF;
             // v0.1.4.8 (E4): without a known mine the pack asks; with new_mine it digs a new one
-            return await runPack(agent, 'mineOre', agent.work_packs?.mining, 'mining', (pack, bot, ctx) => pack.mineOre(bot, ctx, ore, num, { newMine: new_mine === true }));
+            // v0.1.4.13 (Q1): underground in no mine it knows, the place where the bot stands becomes a mine first
+            return await runPack(agent, 'mineOre', agent.work_packs?.mining, 'mining', (pack, bot, ctx) => {
+                const here = typeof pack.mineHere === 'function' ? pack.mineHere(bot, ctx, ore) : null;
+                return pack.mineOre(bot, ctx, ore, num, { newMine: new_mine === true, ...(here?.made && here.mine ? { mine: here.mine } : {}) });
+            });
         }
     },
     {

@@ -111,6 +111,11 @@ export async function startWatchServer(agent, options = {}) {
         } catch {
             // the waits are gone
         }
+        try {
+            watch?.supervisor?.close?.(); // v0.1.4.13 (N2): a reply still held answers when the server closes
+        } catch {
+            // the supervisor is gone
+        }
     };
     try {
         const startedAt = Date.now();

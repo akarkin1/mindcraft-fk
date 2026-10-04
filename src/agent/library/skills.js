@@ -12,6 +12,12 @@ import { GIVE_TEXTS, SURFACE_TEXTS } from "./skill_texts.js";
 import { sideOf } from "../packs/home/door_logic.js";
 import { acquireEatLock } from "../packs/home/eat_lock.js";
 import { wakeUp } from "../packs/home/wake.js";
+// v0.1.4.13 (part Q): the way and the safety (Q2, Q5, Q7), the drops left alone (Q5, Q6), the gate of a pen (Q8)
+import { KIT_TEXT, SHAFT_RULES, dropOf, isKit, isShaftPath, kindsGiven, routeText, shaftText, surfaceRoutes } from "./way_logic.js";
+import { leftAlone, startTossing, takeLeaveText } from "../reflex/drop_watch.js";
+import { leaveThingsText } from "../reflex/drop_logic.js";
+import { penGateRefusal, takePenText } from "../areas/pen_gate.js";
+import { penAgainText } from "../areas/keep_out_logic.js";
 
 const blockPlaceDelay = settings.block_place_delay == null ? 0 : settings.block_place_delay;
 const useDelay = blockPlaceDelay > 0;
@@ -896,7 +902,15 @@ export async function pickupNearbyItems(bot) {
      * await skills.pickupNearbyItems(bot);
      **/
     const distance = 8;
-    const getNearestItem = bot => bot.nearestEntity(entity => entity.name === 'item' && bot.entity.position.distanceTo(entity.position) < distance);
+    // v0.1.4.13 (Q5, Q6): an item the bot tossed in the last 30 s and a player's death drops (within 4 blocks of where he
+    // died, for 5 minutes) are left; for a death the text is said once
+    const leave = (entity) => {
+        const why = leftAlone(bot, entity);
+        if (why?.why === 'death' && takeLeaveText(why.death))
+            log(bot, leaveThingsText(why.death.name, why.death.at));
+        return why !== null;
+    };
+    const getNearestItem = bot => bot.nearestEntity(entity => entity.name === 'item' && bot.entity.position.distanceTo(entity.position) < distance && !leave(entity));
     let nearestItem = getNearestItem(bot);
     let pickedUp = 0;
     while (nearestItem) {
@@ -1539,35 +1553,29 @@ export async function giveToPlayer(bot, itemType, username, num=1) {
         log(bot, `You cannot give items to yourself.`);
         return false;
     }
-    let player = bot.players[username].entity
+    // v0.1.4.13 (Q5, a correction, no switch): a kit (more than 8 of one kind, or more than 3 kinds within a minute) is
+    // not thrown: the player's things go into a chest
+    const now = Date.now();
+    const given = (givenKinds.get(bot) ?? []).filter(g => now - g.at < 60000);
+    if (isKit(num, kindsGiven(given, itemType, now))) {
+        log(bot, KIT_TEXT);
+        return false;
+    }
+    let player = bot.players[username]?.entity
     if (!player) {
         log(bot, `Could not find ${username}.`);
         return false;
     }
-    await goToPlayer(bot, username, 3);
+    givenKinds.set(bot, [...given, { item: itemType, at: now }]);
+    // Q5: the toss from 2 blocks (v0.1.4.12: 3, then at least 5 when the bot stood too close)
+    await goToPlayer(bot, username, GIVE_RULES.tossFrom);
     // if we are 2 below the player
     if (bot.entity.position.y < player.position.y - 1) {
         await goToPlayer(bot, username, 1);
     }
-    // if we are too close, make some distance
-    if (bot.entity.position.distanceTo(player.position) < 2) {
-        let too_close = true;
-        let start_moving_away = Date.now();
-        await moveAwayFromEntity(bot, player, 2);
-        while (too_close && !bot.interrupt_code) {
-            await new Promise(resolve => setTimeout(resolve, 500));
-            too_close = bot.entity.position.distanceTo(player.position) < 5;
-            if (too_close) {
-                await moveAwayFromEntity(bot, player, 5);
-            }
-            if (Date.now() - start_moving_away > 3000) {
-                break;
-            }
-        }
-        if (too_close) {
-            log(bot, `Failed to give ${itemType} to ${username}, too close.`);
-            return false;
-        }
+    // too close: one step to 2 blocks
+    if (bot.entity.position.distanceTo(player.position) < GIVE_RULES.tooClose && !bot.interrupt_code) {
+        await moveAwayFromEntity(bot, player, GIVE_RULES.tossFrom);
     }
 
     await bot.lookAt(player.position);
@@ -1584,11 +1592,17 @@ export async function giveToPlayer(bot, itemType, username, num=1) {
         taken += Number.isFinite(item?.count) && item.count > 0 ? item.count : Math.max(1, dropped - taken);
     };
     bot.on('playerCollect', onCollect);
+    // Q5: the items of this toss are left alone by the item reflex for 30 s
+    const tossing = startTossing(bot);
     try {
         // F3: the toss says nothing itself; the texts of W5 below say what the player took
-        if ((await tossItems(bot, itemType, num)) > 0) {
+        const thrown = await tossItems(bot, itemType, num);
+        tossing();
+        if (thrown > 0) {
             dropped = Math.max(0, before - (world.getInventoryCounts(bot)[itemType] ?? 0)) || num;
             let start = Date.now();
+            // Q5: 3 blocks back, so that the server does not give the items back to the bot when they may be picked up
+            await stepBackFrom(bot, player, GIVE_RULES.stepBack);
             while (taken < dropped && !bot.interrupt_code) {
                 await new Promise(resolve => setTimeout(resolve, 500));
                 if (Date.now() - start > 3000) {
@@ -1603,10 +1617,42 @@ export async function giveToPlayer(bot, itemType, username, num=1) {
             return taken > 0;
         }
     } finally {
+        tossing();
         bot.removeListener('playerCollect', onCollect);
     }
     log(bot, `Failed to give ${itemType} to ${username}, it was never received.`);
     return false;
+}
+
+// v0.1.4.13 (Q5): the distances of the give: the toss from 2 blocks, a bot nearer than 1.5 steps back to 2 first, after
+// the toss 3 blocks back (the server gives a thrown item to whoever stands on it once 2 s have passed); the step back
+// takes at most 2 s. The kinds given in the last minute, per bot, for the kit rule.
+const GIVE_RULES = Object.freeze({ tossFrom: 2, tooClose: 1.5, stepBack: 3, stepBackMs: 2000 });
+const givenKinds = new WeakMap();
+
+// Q5: walks `blocks` further away from the player (the cell that far behind the bot on the line from the player), at
+// most 2 s, without digging. Never throws.
+async function stepBackFrom(bot, player, blocks) {
+    try {
+        const me = bot.entity.position;
+        const from = player?.position;
+        if (!from || bot.interrupt_code)
+            return;
+        let dx = me.x - from.x;
+        let dz = me.z - from.z;
+        const len = Math.hypot(dx, dz);
+        if (len < 0.01) {
+            dx = 1;
+            dz = 0;
+        } else {
+            dx /= len;
+            dz /= len;
+        }
+        const goal = new pf.goals.GoalNear(Math.floor(me.x + dx * blocks), Math.floor(me.y), Math.floor(me.z + dz * blocks), 1);
+        await walkWith(bot, goal, noDigMovements(bot), GIVE_RULES.stepBackMs);
+    } catch (err) {
+        // the bot stays where it stands
+    }
 }
 
 // The item of a dropped item entity ({ name, count }), or null when it cannot be read.
@@ -1976,8 +2022,15 @@ export async function goToPosition(bot, x, y, z, min_distance=2) {
         log(bot, `Teleported to ${x}, ${y}, ${z}.`);
         return true;
     }
-    
+
     const target = new Vec3(x, y, z);
+    // v0.1.4.13 (Q7, a correction, no switch): a target more than 3 blocks below is never reached by a shaft dug straight
+    // down (the shaft of 2026-10-04 killed the owner); stairs, a ladder or a slope are walked
+    const drop = dropOf(bot.entity.position, target);
+    if (drop > SHAFT_RULES.maxDrop && !bot.interrupt_code && await digsShaft(bot, target, min_distance)) {
+        log(bot, shaftText(drop));
+        return false;
+    }
     let nearest = bot.entity.position.distanceTo(target);
     const checkDigProgress = () => {
         if (bot.targetDigBlock) {
@@ -2050,6 +2103,33 @@ export async function goToPosition(bot, x, y, z, min_distance=2) {
 }
 
 const WALK_PROGRESS_STEP = 0.5; // blocks nearer to the goal than before
+
+// v0.1.4.13 (Q7): true when the walk to the target would dig a shaft: the path the walk of goToGoal would take (the
+// search with digging made dear first, then the one with digging, each at most 1 s; without a complete path the partial
+// one) breaks blocks and stays within 1 block of the vertical line through the feet (isShaftPath of way_logic.js).
+// Never throws: a search that fails counts as no shaft (the walk of v0.1.4.12 decides).
+const SHAFT_SEARCH_MS = 1000;
+async function digsShaft(bot, target, minDistance) {
+    try {
+        const goal = new pf.goals.GoalNear(target.x, target.y, target.z, minDistance);
+        const careful = new pf.Movements(bot);
+        careful.placeCost = 2;
+        careful.digCost = 10;
+        let last = null;
+        for (const movements of [careful, new pf.Movements(bot)]) {
+            if (bot.interrupt_code)
+                return false;
+            const result = await Promise.resolve(bot.pathfinder.getPathTo(movements, goal, SHAFT_SEARCH_MS));
+            if (result?.status === 'success')
+                return isShaftPath(bot.entity.position, target, result.path);
+            if (Array.isArray(result?.path) && result.path.length > 0)
+                last = result;
+        }
+        return isShaftPath(bot.entity.position, target, last?.path ?? []);
+    } catch (err) {
+        return false;
+    }
+}
 
 function positionText(bot) {
     const p = bot.entity.position;
@@ -3682,6 +3762,54 @@ function nearestEntrance(bot, feet) {
     }
 }
 
+// v0.1.4.13 (Q2): true when a cell is at the surface: under the open sky, or under a roof that is built (the first block
+// above it that is not air is no natural rock). Never throws.
+function atSurface(bot, p) {
+    try {
+        const c = { x: Math.floor(p.x), y: Math.floor(p.y), z: Math.floor(p.z) };
+        return underOpenSky(bot, c) || !underRock(bot, c.x, c.y + 2, c.z);
+    } catch (err) {
+        return false;
+    }
+}
+
+// v0.1.4.13 (Q2): walks the nearest route of the routes pack (ctx.routes) whose start lies within 8 blocks of the bot and
+// whose end is at the surface and higher than the bot, in the way it leads up (surfaceRoutes of way_logic.js); the text
+// names it (`I take the route "basement_to_surface".`) and a failed walk adds its own text. true when it was walked.
+// Never throws.
+const SURFACE_ROUTES_MAX = 3; // routes walked one after the other (the room of the mine, the basement, the house)
+async function walkSurfaceRoute(bot, ctx) {
+    let walkedAny = false;
+    try {
+        const routes = ctx?.routes;
+        const dimension = typeof bot.game?.dimension === 'string' ? bot.game.dimension.replace(/^minecraft:/, '') : 'overworld';
+        const list = routes?.store?.list?.(dimension) ?? [];
+        if (typeof routes?.walkRoute !== 'function' || !Array.isArray(list) || list.length === 0)
+            return false;
+        const done = new Set();
+        for (let i = 0; i < SURFACE_ROUTES_MAX && !bot.interrupt_code; i++) {
+            const feet = feetCell(bot);
+            if (!feet || underOpenSky(bot, feet))
+                break;
+            const pick = surfaceRoutes(list.filter(r => !done.has(r)), feet, (p) => atSurface(bot, p))[0];
+            if (!pick)
+                break;
+            done.add(pick.route);
+            log(bot, routeText(pick.route.name ?? 'route'));
+            const walked = await routes.walkRoute(bot, pick.route, { reverse: pick.reverse });
+            if (!walked?.ok) {
+                if (typeof walked?.text === 'string' && walked.text !== '' && !bot.interrupt_code)
+                    log(bot, walked.text);
+                break;
+            }
+            walkedAny = true;
+        }
+    } catch (err) {
+        // the search for open sky goes on
+    }
+    return walkedAny && !bot.interrupt_code;
+}
+
 export async function goToSurface(bot, ctx = null) {
     /**
      * Go out under the open sky (no block above the bot up to the top of the world). Inside a building the bot
@@ -3713,6 +3841,18 @@ export async function goToSurface(bot, ctx = null) {
             if (out && out.ok === false && typeof out.text === 'string' && out.text !== '')
                 log(bot, out.text);
         }
+        // v0.1.4.13 (Q2, a correction, no switch): a known route up from here (its start within 8 blocks, its end under the
+        // sky or on the floor of a building, at most 3 one after the other) counts as a way to the open sky; the door of the
+        // building follows below
+        if (await walkSurfaceRoute(bot, ctx)) {
+            const here = feetCell(bot);
+            if (here && underOpenSky(bot, here)) {
+                log(bot, SURFACE_TEXTS.climbed(here));
+                return true;
+            }
+        }
+        if (bot.interrupt_code)
+            return false;
         const from = feetCell(bot) ?? start;
         if (inBuildingHere(bot, from)) {
             const door = nearestEntrance(bot, from);
@@ -3818,6 +3958,13 @@ export async function useToolOn(bot, toolName, targetName) {
     const openable = openableKind(block);
     if (openable?.iron) {
         log(bot, `The ${openable.label} at ${openableCell(block)} does not open by hand.`); // v0.1.4.12 (G4)
+        return false;
+    }
+    // v0.1.4.13 (Q8, a correction, no switch): the gate of a pen (saved, or a fence with animals behind the gate) is not
+    // opened before the player says "open the pen"
+    const pen = openable?.kind === 'gate' ? penGateRefusal(bot, block) : null;
+    if (pen) {
+        log(bot, takePenText(bot) ? pen.text : penAgainText(pen.pen.gate)); // the pen text at most once a minute
         return false;
     }
     const distance = toolName === 'water_bucket' && block.name !== 'lava' ? 1.5 : 2;

@@ -44,7 +44,9 @@ await scenarioMain({
         }
         await commands([`kill @e[tag=${pen.tag}_cow]`, ...extra]);
         const chickens = () => countEntities(penChickenSelector(b));
-        const farInside = { x: gate.x, y: g + 1, z: pen.inner.max.z }; // the far side of the pen, 7 blocks south of the gate
+        // the lead, round 2 (DECISIONS R2-2): the middle of the pen, so that following the player needs the gate; from the
+        // far fence the bot was within 3 blocks outside the fence and never had to go in
+        const farInside = { x: gate.x, y: g + 1, z: pen.inner.min.z + 3 };
         const justInside = { x: gate.x, y: g + 1, z: gate.z + 1 };
         const outsideGate = { x: gate.x, y: g + 1, z: gate.z - 1 };
         // the player walks through the gate (the control opens and closes it for him), to a cell inside

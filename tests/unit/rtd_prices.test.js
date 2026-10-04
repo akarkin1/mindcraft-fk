@@ -12,7 +12,7 @@ describe('prices of OpenAI models', () => {
         assert.equal(price.input, 0.10);
         assert.equal(price.output, 0.50);
         assert.equal(price.cache_read, 0.01);
-        assert.deepEqual(P.DEFAULT_PRICES['gpt-6-luna'], { input: 0.10, output: 0.50, cache_read: 0.01 });
+        assert.deepEqual(P.DEFAULT_PRICES['gpt-6-luna'], { input: 0.10, output: 0.50, cache_read: 0.01, cache_write: 0.125 }); // v0.1.4.13 (M3)
     });
 
     test('a dated id of gpt-6-luna finds its price', () => {

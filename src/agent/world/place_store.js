@@ -31,13 +31,29 @@ function lookupName(name) {
 export class PlaceStore {
     /**
      * @param {string} filePath
-     * @param {{now?: () => Date}} options
+     * @param {{now?: () => Date, shared?: {changed: (fresh?: boolean) => boolean, mark: (stamp?: string|null) => void, stamp?: () => string|null}|null}} options
+     *   shared (v0.1.4.13, M1): a SharedFile of memory_paths.js when another bot writes the same file: the store
+     *   re-reads the file before a read or a write when it changed; without it the file is read once, as before
      */
     constructor(filePath, options = {}) {
         this.filePath = filePath;
         const now = options?.now;
         this.now = typeof now === 'function' ? now : () => new Date();
+        const shared = options?.shared;
+        this._shared = shared && typeof shared.changed === 'function' && typeof shared.mark === 'function' ? shared : null;
         this._places = new Map();
+    }
+
+    // v0.1.4.13 (M1): the file as another bot left it; `fresh` before a write (a read looks at most once a second).
+    // Never throws.
+    _refresh(fresh = false) {
+        try {
+            if (this._shared !== null && this._shared.changed(fresh)) {
+                this.load();
+            }
+        } catch (err) {
+            console.warn(`Could not re-read the place file ${this.filePath}:`, err?.message ?? err);
+        }
     }
 
     /**
@@ -46,6 +62,7 @@ export class PlaceStore {
      * @returns {number} number of places
      */
     load() {
+        const seen = this._shared?.stamp?.(); // v0.1.4.13 (M1): the file as it was before the read
         this._places = new Map();
         try {
             const result = readJsonSafe(this.filePath, { expect: 'object', now: this.now });
@@ -79,6 +96,7 @@ export class PlaceStore {
             console.warn(`Place file ${this.filePath} could not be read:`, err?.message ?? err);
             this._places = new Map();
         }
+        this._shared?.mark(seen);
         return this._places.size;
     }
 
@@ -104,6 +122,7 @@ export class PlaceStore {
             dimension: normaliseDimension(dimension),
             saved_at: this.now().toISOString(),
         };
+        this._refresh(true);
         this._places.set(clean, entry);
         this._save();
         return { ...entry };
@@ -111,6 +130,7 @@ export class PlaceStore {
 
     /** @returns {object|undefined} a copy of the entry */
     recall(name) {
+        this._refresh();
         const entry = this._places.get(lookupName(name));
         return entry === undefined ? undefined : { ...entry };
     }
@@ -118,6 +138,7 @@ export class PlaceStore {
     /** Removes a place and writes the file. @returns {boolean} true if it existed */
     forget(name) {
         const key = lookupName(name);
+        this._refresh(true);
         if (!this._places.has(key)) {
             return false;
         }
@@ -128,26 +149,35 @@ export class PlaceStore {
 
     /** @returns {{name: string, x: number, y: number, z: number, dimension: string|null, saved_at: string|null}[]} */
     list() {
-        return this.names().map(name => ({ name, ...this._places.get(name) }));
+        this._refresh();
+        return this._sortedNames().map(name => ({ name, ...this._places.get(name) }));
     }
 
     /** @returns {string[]} sorted names */
     names() {
+        this._refresh();
+        return this._sortedNames();
+    }
+
+    // the names in the order of names(); no re-read (a save uses it)
+    _sortedNames() {
         return [...this._places.keys()].sort(compareNames);
     }
 
     get size() {
+        this._refresh();
         return this._places.size;
     }
 
     _toJson() {
-        const places = Object.fromEntries(this.names().map(name => [name, this._places.get(name)]));
+        const places = Object.fromEntries(this._sortedNames().map(name => [name, this._places.get(name)]));
         return { version: FILE_VERSION, places };
     }
 
     _save() {
         try {
             writeJsonAtomic(this.filePath, this._toJson(), { indent: 2 });
+            this._shared?.mark();
             return true;
         } catch (err) {
             console.warn(`Could not write the place file ${this.filePath}:`, err?.message ?? err);

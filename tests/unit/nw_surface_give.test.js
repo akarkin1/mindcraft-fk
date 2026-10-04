@@ -129,6 +129,7 @@ describe('W5: the texts of giveToPlayer, word for word', () => {
 
 // The bot of stb_fake_bot.test.js with events: it stays where it is (4 blocks from the player), tosses the stack,
 // and the player picks up `taken` of it 100 ms later; the rest lies at (6, 64, 1).
+// v0.1.4.13 (Q5): more than 8 of one kind is a kit, nothing is thrown; the give is counted with 8
 function giveScene(taken) {
     const bot = makeBot();
     bot.gotoImpl = () => {};
@@ -136,7 +137,7 @@ function giveScene(taken) {
     bot.on = events.on.bind(events);
     bot.once = events.once.bind(events);
     bot.removeListener = events.removeListener.bind(events);
-    bot.inventory.put('wheat', 44);
+    bot.inventory.put('wheat', 8);
     const player = { id: 7, name: 'player', type: 'player', username: 'MartyByrde2', position: new Vec3(4.5, 64, 0.5) };
     bot.entities[7] = player;
     bot.players.MartyByrde2 = { username: 'MartyByrde2', entity: player };
@@ -144,8 +145,8 @@ function giveScene(taken) {
     bot.toss = async (...args) => {
         await toss(...args);
         setTimeout(() => {
-            if (taken < 44)
-                bot.entities[8] = { id: 8, name: 'item', type: 'object', position: new Vec3(6.2, 64, 1.7), getDroppedItem: () => ({ name: 'wheat', count: 44 - taken }) };
+            if (taken < 8)
+                bot.entities[8] = { id: 8, name: 'item', type: 'object', position: new Vec3(6.2, 64, 1.7), getDroppedItem: () => ({ name: 'wheat', count: 8 - taken }) };
             if (taken > 0)
                 events.emit('playerCollect', player, { id: 9, name: 'item', getDroppedItem: () => ({ name: 'wheat', count: taken }) });
         }, 100);
@@ -154,23 +155,23 @@ function giveScene(taken) {
 }
 
 describe('W5: giveToPlayer counts what the player took', () => {
-    test('all 44 taken: "Gave 44 wheat to MartyByrde2.", true, no listener left', async () => {
-        const { bot, events } = giveScene(44);
-        assert.equal(await skills.giveToPlayer(bot, 'wheat', 'MartyByrde2', 44), true);
-        assert.ok(bot.output.endsWith('Gave 44 wheat to MartyByrde2.\n'), bot.output);
+    test('all 8 taken: "Gave 8 wheat to MartyByrde2.", true, no listener left', async () => {
+        const { bot, events } = giveScene(8);
+        assert.equal(await skills.giveToPlayer(bot, 'wheat', 'MartyByrde2', 8), true);
+        assert.ok(bot.output.endsWith('Gave 8 wheat to MartyByrde2.\n'), bot.output);
         assert.equal(events.listenerCount('playerCollect'), 0);
     });
 
-    test('40 of 44 taken: the rest and where it lies, true (some were given)', async () => {
-        const { bot, events } = giveScene(40);
-        assert.equal(await skills.giveToPlayer(bot, 'wheat', 'MartyByrde2', 44), true);
-        assert.ok(bot.output.endsWith('MartyByrde2 took 40 of 44 wheat; 4 lie on the ground at (6, 64, 1).\n'), bot.output);
+    test('6 of 8 taken: the rest and where it lies, true (some were given)', async () => {
+        const { bot, events } = giveScene(6);
+        assert.equal(await skills.giveToPlayer(bot, 'wheat', 'MartyByrde2', 8), true);
+        assert.ok(bot.output.endsWith('MartyByrde2 took 6 of 8 wheat; 2 lie on the ground at (6, 64, 1).\n'), bot.output);
         assert.equal(events.listenerCount('playerCollect'), 0);
     });
 
-    test('none taken: 0 of 44, false', async () => {
+    test('none taken: 0 of 8, false', async () => {
         const { bot } = giveScene(0);
-        assert.equal(await skills.giveToPlayer(bot, 'wheat', 'MartyByrde2', 44), false);
-        assert.ok(bot.output.endsWith('MartyByrde2 took 0 of 44 wheat; 44 lie on the ground at (6, 64, 1).\n'), bot.output);
+        assert.equal(await skills.giveToPlayer(bot, 'wheat', 'MartyByrde2', 8), false);
+        assert.ok(bot.output.endsWith('MartyByrde2 took 0 of 8 wheat; 8 lie on the ground at (6, 64, 1).\n'), bot.output);
     });
 });

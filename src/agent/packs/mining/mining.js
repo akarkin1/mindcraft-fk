@@ -25,6 +25,8 @@ import {
     logicName, nameReader, patchAll, placeInto, placeTorch, stepInto, walkTo, REACH,
 } from './dig.js';
 import { SUPPLY_NEAR_RANGE, applySpareRule, supplyPlan } from './supply_logic.js';
+import { storeFullBag } from './bag.js';
+import { otherOresWords, storeKinds, withOtherOres } from './bag_logic.js';
 import { followDown, followUp, placeLadder, waitStanding } from './ladder.js';
 import {
     BRANCH_LENGTH, addPassedEntry, addTunnel, backOf, branchCells, branchPlan, cellOf, chooseEntrance, classify, faceNeighbours, insideShaft, isDirection, leftOf,
@@ -2364,6 +2366,9 @@ export async function mineOre(bot, ctx = {}, ore = '', count = 8, options = {}) 
     const startCount = countOf(bot, row.item);
     const stored = {};
     const left = [];
+    const ores = {}; // Q9 (v0.1.4.13): the ore items the digging collected, every kind
+    // Q4 (v0.1.4.13): no free slot and something the trip stores
+    const bagFull = () => freeSlots(bot) === 0 && storeKinds(inventoryList(bot), { ore: row.item, foods: bot.registry?.foodsByName ?? {} }).length > 0;
     let mine = null;
     let tunnel = null;
     let reason = null;
@@ -2379,14 +2384,14 @@ export async function mineOre(bot, ctx = {}, ore = '', count = 8, options = {}) 
     };
     const finish = (ok, why, extra = '') => {
         report();
-        return {
-            ok, reason: why, mined: mined(), stored, mine,
-            text: mineOreText({
-                item: row.item, mined: mined(), wanted, reason: why, mine: shownMine(mine, tunnel),
-                stored: Object.fromEntries(Object.entries(stored).filter(([k]) => k !== row.item)),
-                extra: [passedText(leftOnTrip(mine, left)), dark ? NO_TORCHES_TEXT : '', extra].filter(t => t.length > 0).join(' '),
-            }),
-        };
+        const text = mineOreText({
+            item: row.item, mined: mined(), wanted, reason: why, mine: shownMine(mine, tunnel),
+            stored: Object.fromEntries(Object.entries(stored).filter(([k]) => k !== row.item)),
+            extra: [passedText(leftOnTrip(mine, left)), dark ? NO_TORCHES_TEXT : '', extra].filter(t => t.length > 0).join(' '),
+        });
+        // Q9 (v0.1.4.13, mine_other_ores): the other ores of the trip at the end of its first sentence
+        const others = ctx?.settings?.mine_other_ores === true ? otherOresWords(ores, row.item) : '';
+        return { ok, reason: why, mined: mined(), stored, mine, text: withOtherOres(text, others) };
     };
     // P2: the pickaxe in hand is nearly worn: replaced from the bag or crafted; false when the trip must stop
     const replaceWorn = async (worn) => (await replaceWornPickaxe(bot, tripCtx, row, worn ?? wornPickaxe(bot, tripPickaxe(row)) ?? { name: 'pickaxe', uses: 0 }, { mined: mined(), wanted })).ok;
@@ -2545,7 +2550,6 @@ export async function mineOre(bot, ctx = {}, ore = '', count = 8, options = {}) 
         dark = countOf(bot, 'torch') === 0;
         const depth = mine.entrance.y - (shownMine(mine, tunnel)?.level ?? mine.level);
         const tunnelLength = () => shownMine(mine, tunnel)?.length ?? mine.length;
-        let depositsWithoutProgress = 0;
         for (;;) {
             if (bot.interrupt_code) {
                 reason = 'interrupted';
@@ -2575,23 +2579,28 @@ export async function mineOre(bot, ctx = {}, ore = '', count = 8, options = {}) 
                 break;
             }
             if (back.go) {
-                const dep = await depositAtBase(bot, tripCtx, { ...pass, mine, keep: { [row.item]: -1 } });
-                addCounts(stored, dep.stored);
-                mine = dep.mine ?? mine;
-                if (freeSlots(bot) <= 3 && ++depositsWithoutProgress >= 1) {
-                    reason = 'inventory_full';
+                // Q4 (v0.1.4.13): the full bag goes into the chest of the mine or the nearest chest within 32 blocks and
+                // the mining goes on; with nothing to store and a slot free the digging goes on; the stop text is said
+                // only when no chest has room
+                const bag = await storeFullBag(bot, tripCtx, mine, row, { mined: mined(), wanted });
+                addCounts(stored, bag.stored);
+                if (!bag.ok) {
+                    reason = bag.reason === 'interrupted' ? 'interrupted' : 'inventory_full';
                     break;
                 }
-                continue;
+                if (bag.action === 'store') {
+                    continue;
+                }
             }
-            depositsWithoutProgress = 0;
             const digOptions = {
                 ...pass, mine, material, deadline: deadline - returnTimeMs(depth, tunnelLength() + TUNNEL_CHUNK),
-                shouldStop: () => (mined() >= wanted ? 'done' : null), onProgress: report,
+                // Q4: a chunk ends when the bag fills with something to store, so that the trip stores it and goes on
+                shouldStop: () => (mined() >= wanted ? 'done' : bagFull() ? 'bag' : null), onProgress: report,
             };
             const t = routes && tunnel !== null ? await digOnce(bot, tripCtx, mine, tunnel, digOptions) : await digTunnel(bot, tripCtx, TUNNEL_CHUNK, digOptions);
             mine = t.mine ?? mine;
             left.push(...(t.left ?? []));
+            addCounts(ores, t.collected); // Q9: the ore items of every kind the dig collected
             report();
             if (!t.ok && t.reason === 'worn') {
                 if (await replaceWorn(t.worn)) {

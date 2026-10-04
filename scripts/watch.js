@@ -6,6 +6,8 @@
 //   node scripts/watch.js wait idle 30
 //   node scripts/watch.js run '!takeFromChest("bread", 10)' '!mineOre("diamond", 28)'
 //   node scripts/watch.js --follow
+//   node scripts/watch.js reply update 'The mining is at 2 of 6.'   (v0.1.4.13, part N2; kind answer by default)
+//   node scripts/watch.js note 'the chest at (15, -59, -99) has bread' 30
 //
 // MC_WATCH_URL (default http://127.0.0.1:8090/mcp) and MC_WATCH_TOKEN come from the environment; the token is
 // never printed. Prints the text of the answer; a refusal is one line and exit code 1; bad arguments exit 2.

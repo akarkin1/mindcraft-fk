@@ -5,15 +5,24 @@
 // The socket protocol is the demo's: utterance, settings, interrupt, reset, preview_voice; hello, status,
 // transcript, audio, turn_done, error_msg. Added: voice-join and voice-config (the state of the engines).
 // The bot's own work cannot be stopped from here; a new utterance stops only the speaking.
+// v0.1.4.13 (part N2, spec 4.5): one speech queue for every speaker, one line at a time: the lines of every bot, each
+// in its own voice (settings.voices from the page: voice_voice, or the page's choice), and the supervisor's lines
+// (bot-output of SUPERVISOR_OUTPUT, or a bot line `[<supervisor_name>] ...`) in supervisor_voice (the voice the line
+// came with, else the page's, else config.supervisorVoice); a bot's line
+// first, then the supervisor's answer, then its update (nextSpeech of chat_logic.js); an update that waited over
+// 20 s is not spoken; the owner's speech interrupts everything. The next line is taken shortly before the audio sent
+// so far ends on the page. A recognised line goes where routeLine says: the chosen bot with its name in front, or
+// every bot plain with "everyone" (settings.agent EVERYONE).
 import os from 'node:os';
 import path from 'node:path';
 import express from 'express';
 import { fileURLToPath } from 'node:url';
 import { voiceConfig, splitSentences, routeTranscript, turnStep, problemText } from './voice_logic.js';
-import { speechText } from '../public/chat_logic.js';
+import { chatEntry, nextSpeech, routeLine, speechItem } from '../public/chat_logic.js';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 const TICK_MS = 250;
+const LEAD_MS = 300; // the next line of the queue is made this long before the page has played the last one
 
 /**
  * @param {{app: import('express').Express, options: object, sendToAgent: (name: string, data: object) => boolean,
@@ -107,12 +116,28 @@ export function startVoice({ app, options, sendToAgent, agents }) {
     return { join, onBotOutput, close, config };
 }
 
-function createSession(socket, { engine, config, publicState, sendToAgent, agents }) {
-    const settings = { voice: null, speed: 1, agent: null, from: null, speak: true };
-    let turn = null; // { id, kind: 'voice'|'free', abort, t0, sentAt, firstLineAt, lastLineAt, pending, seq, timings, chain }
+/**
+ * One page that joined the voice (exported for the tests of the speech queue, v0.1.4.13 part N2).
+ * @param {{on: Function, emit: Function}} socket
+ * @param {{engine: object, config: object, publicState: () => object, sendToAgent: (name: string, data: object) => boolean,
+ *          agents: () => {name: string, in_game: boolean}[]}} ctx
+ */
+export function createSession(socket, { engine, config, publicState, sendToAgent, agents }) {
+    // voices: the voice of each bot (the page sends it); supervisor, supervisorVoice: supervisor_name and
+    // supervisor_voice as the page knows them (v0.1.4.13, part N2); agent: a bot, or EVERYONE
+    const settings = { voice: null, speed: 1, agent: null, from: null, speak: true, voices: {}, supervisor: null, supervisorVoice: null };
+    let turn = null; // { id, kind: 'voice', abort, t0, sentAt, firstLineAt, lastLineAt, pending, seq, timings, targets }
     let nextTurnId = 1;
     let clock = null;
     let helloSent = false;
+    // the one speech queue (part N2): the lines waiting, the line being made, when the audio sent so far ends
+    const waiting = [];
+    let lineSeq = 0;
+    let making = false;
+    let playedUntil = 0;
+    let pumpTimer = null;
+    let epoch = 0; // a new epoch after an interrupt: the audio of the lines of the old one is stale on the page
+    let freeSeq = 0;
 
     const status = (stage, extra = {}) => socket.emit('status', { stage, ...extra });
     const tts = () => (engine.tts.state === 'ready' ? engine.tts.impl : null);
@@ -144,7 +169,17 @@ function createSession(socket, { engine, config, publicState, sendToAgent, agent
         turn = null;
     }
 
+    // The owner's speech interrupts everything: the lines waiting go, the line being made stops.
+    function silence() {
+        epoch++;
+        waiting.length = 0;
+        playedUntil = 0;
+        if (pumpTimer) clearTimeout(pumpTimer);
+        pumpTimer = null;
+    }
+
     function cancelTurn() {
+        silence();
         if (!turn) return;
         turn.abort.abort();
         endTurn(turn);
@@ -153,7 +188,7 @@ function createSession(socket, { engine, config, publicState, sendToAgent, agent
     function newTurn(kind) {
         cancelTurn();
         turn = {
-            id: kind === 'voice' ? nextTurnId++ : `bot-${nextTurnId++}`,
+            id: nextTurnId++,
             kind,
             abort: new AbortController(),
             t0: performance.now(),
@@ -163,7 +198,7 @@ function createSession(socket, { engine, config, publicState, sendToAgent, agent
             pending: 0,
             seq: 0,
             timings: {},
-            chain: Promise.resolve(),
+            targets: [],
         };
         return turn;
     }
@@ -183,7 +218,8 @@ function createSession(socket, { engine, config, publicState, sendToAgent, agent
             });
             if (step === 'wait') return;
             if (step === 'give_up') {
-                status('idle', { turnId: current.id, note: `${settings.agent} said nothing in ${Math.round(config.waitMs / 1000)} s.` });
+                const who = current.targets.length === 1 ? current.targets[0] : 'Nobody';
+                status('idle', { turnId: current.id, note: `${who} said nothing in ${Math.round(config.waitMs / 1000)} s.` });
             } else {
                 current.timings.totalMs = Math.round(performance.now() - current.t0);
                 socket.emit('turn_done', { turnId: current.id, timings: current.timings });
@@ -193,64 +229,91 @@ function createSession(socket, { engine, config, publicState, sendToAgent, agent
         }, TICK_MS);
     }
 
-    // One sentence after the other, in order; an aborted turn speaks no more.
-    function speakSentence(current, sentence) {
-        const t = tts();
-        if (!t) return;
-        const { signal } = current.abort;
-        current.pending++;
-        current.chain = current.chain.then(async () => {
-            if (signal.aborted) return;
+    const voiceOf = (t, id) => (typeof id === 'string' && t.voices.some((v) => v.id === id) ? id : (settings.voice ?? t.defaultVoice));
+
+    // One line of the queue: its sentences one after the other in its speaker's voice; stops when the owner speaks.
+    async function speakLine(t, item) {
+        const mine = epoch;
+        const current = item.turn;
+        const turnId = current ? current.id : `line-${mine}`;
+        const voice = voiceOf(t, item.voice);
+        for (const sentence of splitSentences(item.text)) {
+            if (mine !== epoch || current?.abort.signal.aborted) return;
             const ts = performance.now();
             try {
-                const { samples: pcm, sampleRate } = await t.synthesize(sentence, settings);
-                if (signal.aborted) return;
-                if (current.seq === 0) {
+                const { samples: pcm, sampleRate } = await t.synthesize(sentence, { voice, speed: settings.speed });
+                if (mine !== epoch || current?.abort.signal.aborted) return;
+                if (current && current.seq === 0) {
                     current.timings.firstAudioMs = Math.round(performance.now() - current.t0);
-                    status('speaking', { turnId: current.id });
+                    status('speaking', { turnId });
                 }
                 socket.emit('audio', {
-                    turnId: current.id,
-                    seq: current.seq++,
+                    turnId,
+                    seq: current ? current.seq++ : freeSeq++,
                     text: sentence,
+                    speaker: item.speaker,
                     sampleRate,
                     ttsMs: Math.round(performance.now() - ts),
                     pcm: Buffer.from(pcm.buffer, pcm.byteOffset, pcm.byteLength),
                 });
+                const ms = sampleRate > 0 ? (pcm.length / sampleRate) * 1000 : 0;
+                playedUntil = Math.max(playedUntil, performance.now()) + ms;
             } catch (err) {
-                if (!signal.aborted) socket.emit('error_msg', { message: `The voice failed: ${err.message}` });
+                if (mine === epoch) socket.emit('error_msg', { message: `The voice failed: ${err.message}` });
             }
-        }).finally(() => {
-            current.pending--;
+        }
+    }
+
+    // Takes the next line of the queue when the page has (nearly) played the last one: one line at a time.
+    function pump() {
+        if (making) return;
+        const t = tts();
+        if (!t) {
+            for (const item of waiting.splice(0)) if (item.turn) item.turn.pending--;
+            return;
+        }
+        const now = performance.now();
+        if (playedUntil - now > LEAD_MS) {
+            if (!pumpTimer) pumpTimer = setTimeout(() => { pumpTimer = null; pump(); }, playedUntil - now - LEAD_MS);
+            return;
+        }
+        const { next, rest, dropped } = nextSpeech(waiting, now);
+        for (const item of dropped) if (item.turn) item.turn.pending--;
+        waiting.splice(0, waiting.length, ...rest);
+        if (!next) return;
+        making = true;
+        speakLine(t, next).finally(() => {
+            making = false;
+            if (next.turn) next.turn.pending--;
+            pump();
         });
     }
 
-    // A line of a bot (bot-output). Lines of the chosen bot are spoken; in a voice turn they are its answer.
+    // A line of a bot or of the supervisor (bot-output). Every speaker goes into the one queue; in a voice turn the
+    // lines of the bots it was sent to are its answer.
     function botLine(agentName, message) {
-        if (!settings.agent || agentName !== settings.agent) return;
-        const said = speechText(message);
+        const entry = chatEntry(agentName, message, settings.supervisor ?? '');
+        if (!entry || (entry.kind !== 'bot' && entry.kind !== 'supervisor' && entry.kind !== 'command')) return;
         const now = performance.now();
-        let current = turn;
-        if (current && current.kind === 'voice' && current.sentAt !== null) {
+        const current = turn;
+        const answers = Boolean(current && current.sentAt !== null && entry.kind !== 'supervisor' && current.targets.includes(agentName));
+        if (answers) {
             if (current.firstLineAt === null) {
                 current.firstLineAt = now;
                 current.timings.firstLineMs = Math.round(now - current.t0);
             }
             current.lastLineAt = now;
         }
-        if (!said || !settings.speak || !tts()) return;
-        if (!current || current.sentAt === null) {
-            // not waiting for an answer (a typed line, or the bot speaks on its own): a turn of its own
-            if (current && current.kind === 'voice') return; // the owner is being transcribed; the line is shown, not spoken
-            if (!current) {
-                current = newTurn('free');
-                current.sentAt = now;
-                current.firstLineAt = now;
-                startClock(current);
-            }
-            current.lastLineAt = now;
-        }
-        for (const sentence of splitSentences(said)) speakSentence(current, sentence);
+        if (!settings.speak || !tts()) return;
+        if (current && current.sentAt === null) return; // the owner is being transcribed; the line is shown, not spoken
+        const item = speechItem(entry, {
+            at: now, seq: lineSeq++, voices: settings.voices, supervisorVoice: settings.supervisorVoice ?? config.supervisorVoice, fallback: settings.voice,
+        });
+        if (!item) return;
+        item.turn = answers ? current : null;
+        if (item.turn) item.turn.pending++;
+        waiting.push(item);
+        pump();
     }
 
     async function runTurn(samples) {
@@ -273,12 +336,22 @@ function createSession(socket, { engine, config, publicState, sendToAgent, agent
                 endTurn(current);
                 return;
             }
+            // where the line goes and how it reads: the chosen bot's name in front, or every bot with "everyone"
+            const known = agents();
+            const line = routeLine({ selected: settings.agent, text, agents: known, supervisor: settings.supervisor ?? '' });
             socket.emit('transcript', {
-                turnId: current.id, text, sttMs: current.timings.sttMs, audioSec: +(samples.length / 16000).toFixed(1),
+                turnId: current.id, text, sent: line.ok ? line.message : null, to: line.ok ? line.targets : [],
+                sttMs: current.timings.sttMs, audioSec: +(samples.length / 16000).toFixed(1),
             });
-            const route = routeTranscript({ agent: settings.agent, from: settings.from, text, agents: agents() });
-            if (!route.ok || !sendToAgent(settings.agent, route.data)) {
-                socket.emit('error_msg', { message: route.ok ? `${settings.agent} is not in the game.` : route.text });
+            let problem = line.ok ? null : line.text;
+            for (const target of line.ok ? line.targets : []) {
+                const route = routeTranscript({ agent: target, from: settings.from, text: line.message, agents: known });
+                if (!route.ok) { problem = route.text; continue; }
+                if (sendToAgent(target, route.data)) current.targets.push(target);
+                else problem = `${target} is not in the game.`;
+            }
+            if (current.targets.length === 0) {
+                socket.emit('error_msg', { message: problem ?? 'No bot is chosen.' });
                 status('idle', { turnId: current.id });
                 endTurn(current);
                 return;
@@ -295,6 +368,13 @@ function createSession(socket, { engine, config, publicState, sendToAgent, agent
         }
     }
 
+    const voiceTable = (value) => {
+        const out = {};
+        if (value && typeof value === 'object')
+            for (const [name, voice] of Object.entries(value)) if (typeof voice === 'string') out[name] = voice;
+        return out;
+    };
+
     socket.on('settings', (s = {}) => {
         const t = tts();
         if (typeof s.voice === 'string' && (!t || t.voices.some((v) => v.id === s.voice))) settings.voice = s.voice;
@@ -306,8 +386,11 @@ function createSession(socket, { engine, config, publicState, sendToAgent, agent
         if (typeof s.from === 'string' || s.from === null) settings.from = s.from;
         if (typeof s.speak === 'boolean') {
             settings.speak = s.speak;
-            if (!s.speak && turn?.kind === 'free') cancelTurn();
+            if (!s.speak) silence();
         }
+        if (s.voices !== undefined) settings.voices = voiceTable(s.voices);
+        if (typeof s.supervisor === 'string' || s.supervisor === null) settings.supervisor = s.supervisor;
+        if (typeof s.supervisorVoice === 'string' || s.supervisorVoice === null) settings.supervisorVoice = s.supervisorVoice;
     });
 
     socket.on('utterance', (buf) => {

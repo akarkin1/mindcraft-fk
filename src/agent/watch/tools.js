@@ -25,6 +25,7 @@ import {
 } from './digest_logic.js';
 import { createQueue, runRefusal } from './queue.js';
 import { lookAround, lookRadius } from './look_logic.js';
+import { registerSupervisorTools } from './supervisor.js'; // v0.1.4.13 (part N2): reply and note
 
 export { chatLine };
 
@@ -715,3 +716,7 @@ export async function runTool(agent, watch, name, args = {}, request = {}) {
         return { text: TEXTS.toolFailed(name, error?.message ?? String(error)), isError: true };
     }
 }
+
+// v0.1.4.13 (part N2): the tools of the supervisor in the chat (spec 4.5), reply and note, registered when the
+// server is loaded (after the settings of the agent are set) and only with supervisor_name set
+registerSupervisorTools(registerTool, settingsOfAgent);

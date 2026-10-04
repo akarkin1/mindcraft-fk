@@ -1855,3 +1855,53 @@ export function findFencedGroundNear(getBlockName, pos, range = NEAR_DEFAULT, op
     }
     return fail(unloaded ? 'not_loaded' : 'no_ground');
 }
+
+// --- the pen behind a gate (v0.1.4.13, part Q, SPEC 4.6 Q8) ------------------------------------
+
+/**
+ * The fenced ground behind a fence gate (v0.1.4.13, Q8): the ground on each side of the gate (the cells beside it that are
+ * no fence) is flooded as findFencedGroundNear floods it; the first side whose ground is closed by the fence that holds
+ * this gate, and is a pen by the rules of scanPen (a fence bounds half of it or more, no farmland), is the enclosure.
+ * Whether animals stand in it is for the caller (countContents of area_sense.js). The scan reads at most SCAN_READ_LIMIT
+ * cells. Pure, like the other scans; never throws for a bad gate (found false).
+ * @param {(x: number, y: number, z: number) => string|null} getBlockName
+ * @param {{x: number, y: number, z: number}} gate the cell of the gate
+ * @returns {{found: boolean, reason: string|null, gate: {x: number, y: number, z: number}|null, min: object|null,
+ *   max: object|null, cells: number, entrances: object[], side: {x: number, y: number, z: number}|null}}
+ *   reason when not found: no_gate (no fence gate at the cell), not_enclosed (no side is closed ground of a pen)
+ */
+export function scanPenBehindGate(getBlockName, gate) {
+    const none = (reason) => ({ found: false, reason, gate: null, min: null, max: null, cells: 0, entrances: [], side: null });
+    try {
+        checkArgs(getBlockName, gate, 'scanPenBehindGate');
+        const read = reader(cachedNames(getBlockName));
+        const gx = Math.floor(gate.x);
+        const gy = Math.floor(gate.y);
+        const gz = Math.floor(gate.z);
+        const name = read(gx, gy, gz);
+        if (name === null || !name.endsWith('_fence_gate')) {
+            return none('no_gate');
+        }
+        for (const [dx, dz] of SIDES) {
+            const side = { x: gx + dx, y: gy, z: gz + dz };
+            const beside = read(side.x, gy, side.z);
+            if (beside === null || isFenceLike(beside)) {
+                continue;
+            }
+            const flood = floodFenced(read, side, MAX_SPAN, MAX_SPAN, { maxCells: FLOOD_MAX_CELLS });
+            if (flood.reason !== null || !flood.gates.has(`${gx},${gz}`)) {
+                continue;
+            }
+            const stats = groundStats(read, flood.cells);
+            if (typeFailure(flood, stats, 'pen')) {
+                continue;
+            }
+            const found = fencedFound(flood, stats);
+            return { found: true, reason: null, gate: { x: gx, y: gy, z: gz }, min: found.min, max: found.max, cells: found.cells,
+                entrances: found.entrances, side };
+        }
+        return none('not_enclosed');
+    } catch {
+        return none('not_enclosed');
+    }
+}

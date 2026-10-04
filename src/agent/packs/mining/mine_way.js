@@ -13,10 +13,11 @@ import { containsPos } from '../home/box_math.js';
 import { botPos, clockOf, dimensionOf, listAreas, logTo } from '../home/context.js';
 import { walkNear } from '../home/motion.js';
 import { blockAt, digClear, isFree, logicName, walkTo } from './dig.js';
-import { followDown, followUp } from './ladder.js';
+import { followDown, followUp, footOf } from './ladder.js';
 import { classify, faceNeighbours, isNaturalBlock, knownCells, legEnd, mineAt, nearestLeg, posKey, tunnelFor, tunnelsOf, wayBack } from './mine_logic.js';
 import { mineId } from './mine_store.js';
 import { TEXTS, mineLabel, posText, wayBlockedText } from './texts.js';
+import { noWayOutText, wayInUnknown } from './here_logic.js';
 
 /** How far the choice of a mine for mineOre looks (spec B4). */
 export const MINE_RANGE = 64;
@@ -641,6 +642,32 @@ async function digToward(bot, ctx, ours, mineAreas, hop, clock) {
     return null;
 }
 
+// v0.1.4.13 (Q3, the handoff of round 1): the last hop of the way back is the bottom of a column of ladders, the end of
+// the way in; a column that ends above the floor (the second ladder of the owner's base, 2 blocks above the room floor)
+// cannot be walked into, and the bot was "blocked" twice on its way to the bottom rung. The hop goes to the foot of
+// the column on the floor instead (footOf of ladder.js); the climb of the route (ladderLeg: enterColumn places the
+// missing ladders) starts there.
+function footHops(bot, mine, hops, leg) {
+    try {
+        const l = (Array.isArray(mine?.route) ? mine.route : [])[leg];
+        if (l?.kind !== 'ladder' || hops.length === 0) {
+            return hops;
+        }
+        const last = hops[hops.length - 1];
+        const end = legEnd(l);
+        if (!end || last.x !== end.x || last.y !== end.y || last.z !== end.z || !isFree(blockAt(bot, { x: end.x, y: end.y - 1, z: end.z }))) {
+            return hops; // a column that stands on the floor is walked into as before
+        }
+        const foot = footOf(bot, l);
+        if (!foot || (foot.x === end.x && foot.y === end.y && foot.z === end.z)) {
+            return hops;
+        }
+        return [...hops.slice(0, -1), { x: foot.x, y: foot.y, z: foot.z }];
+    } catch {
+        return hops;
+    }
+}
+
 /**
  * The walk back to the way in of a mine (fix round F24): hop by hop along the cells the bot knows
  * (wayBack: the branch to its junction, the tunnel along its corners to its start, the end of the
@@ -666,6 +693,7 @@ export async function walkBack(bot, ctx, mine, options = {}) {
             return { ok: false, reason: 'error', text: 'I do not know where I am.', at: null, leg: -1 };
         }
         let { hops, leg } = wayBack(mine, feet);
+        hops = footHops(bot, mine, hops, leg);
         if (bySearchOn(ctx) && hops.length > 0) {
             // v0.1.4.11 (I7): the hops as waypoints with the path search; where that fails, the hops of the bot's
             // cell as before (with the digging of F24)
@@ -684,6 +712,7 @@ export async function walkBack(bot, ctx, mine, options = {}) {
                 return { ok: false, reason: 'interrupted', text: `I was stopped on my way out of the mine at ${posText(feetOf(bot) ?? feet)}.`, at: null };
             }
             ({ hops, leg } = wayBack(mine, feetOf(bot) ?? feet));
+            hops = footHops(bot, mine, hops, leg);
         }
         const ours = knownCells(mine);
         const mineAreas = listAreas(ctx, dimensionOf(bot)).filter(a => a.type === 'mine');
@@ -738,6 +767,10 @@ export async function wayOut(bot, ctx, mine, options = {}) {
         const feet = feetOf(bot);
         if (!feet || !mine) {
             return { ok: false, reason: 'error', text: 'I do not know where I am.' };
+        }
+        if (wayInUnknown(mine) && feet.y < (mine.entrance?.y ?? -Infinity) - 1) {
+            // v0.1.4.13 (Q1): a mine made underground where the bot stood; nobody showed its way in
+            return { ok: false, reason: 'no_way', text: noWayOutText(mineLabel(mine)) };
         }
         if (bySearchOn(ctx)) {
             // v0.1.4.11 (I7): the waypoints with the path search, a dry scan first

@@ -2,9 +2,17 @@ import Anthropic from '@anthropic-ai/sdk';
 import { strictFormat } from '../utils/text.js';
 import { getKey } from '../utils/keys.js';
 import { reportUsage } from '../agent/cost/usage_context.js';
+import { systemBlocks } from './prompt_parts.js';
 
 export class Claude {
     static prefix = 'anthropic';
+
+    // v0.1.4.13 (M2): the prompter may hand the system prompt as two parts [fixed, changing] with prompt_cache;
+    // sendRequest sends them as two text blocks with the cache mark on the first. A string is sent as before.
+    get acceptsSystemParts() {
+        return true;
+    }
+
     constructor(model_name, url, params) {
         this.model_name = model_name;
         this.params = params || {};
@@ -32,9 +40,11 @@ export class Claude {
                 }
             }
             const model = this.model_name || "claude-sonnet-4-20250514";
+            // v0.1.4.13 (M2): two parts become two blocks, cache_control ephemeral on the first; a string stays a string
+            const system = Array.isArray(systemMessage) ? systemBlocks(systemMessage) : systemMessage;
             const resp = await this.anthropic.messages.create({
                 model: model,
-                system: systemMessage,
+                system: Array.isArray(system) && system.length === 0 ? '' : system,
                 messages: messages,
                 ...(this.params || {})
             });
@@ -76,7 +86,7 @@ export class Claude {
             content: [
                 {
                     type: "text",
-                    text: systemMessage
+                    text: Array.isArray(systemMessage) ? systemMessage.join('') : systemMessage
                 },
                 {
                     type: "image",

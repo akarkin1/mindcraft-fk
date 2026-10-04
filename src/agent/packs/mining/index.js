@@ -39,4 +39,8 @@ export { BRANCH_BLOCKED, DEFAULT_MAX_MINUTES, MAX_SHAFT_MOVES, PROPOSAL_MS, TUNN
     descendToLevel, digTunnel, extendTunnel, goToMine, leaveMine, mineOre, prepareMiningTrip, replaceWornPickaxe, setupMineBase, takePassedOre,
     TRIP_FILLER_KEEP, TRIP_FOOD_KEEP, tripKeep } from './mining.js';
 export { MINE_RANGE, chooseMine, fromInsideOn, hasDoorLeg, mineRoutesOn, parentMine, routeEndOf, senseRangeOf, walkBack, walksRoute, wayIn, wayOut } from './mine_way.js';
-export { MIN_TUNNEL_AHEAD, MIN_TUNNEL_CELLS, ROOM_RANGE, SAME_TUNNEL, collectPassedOre, findRoom, forgetMine, minesText, rememberMine, rememberTunnel } from './mine_player.js';
+export { MIN_TUNNEL_AHEAD, MIN_TUNNEL_CELLS, ROOM_RANGE, SAME_TUNNEL, collectPassedOre, findRoom, forgetMine, minesText, rememberMine, rememberTunnel,
+    mineHere } from './mine_player.js';
+// v0.1.4.13 (part Q): the mine made where the bot stands (Q1), the full bag (Q4), the other ores (Q9)
+export { HERE_ROOM_RANGE, madeMineText, nextMineName, noWayOutText, wayInUnknown } from './here_logic.js';
+export { WIDENED_TUNNEL_WIDTH } from './mine_logic.js';

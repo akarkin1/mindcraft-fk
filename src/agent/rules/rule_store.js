@@ -55,14 +55,29 @@ function messageOf(error) {
 export class RuleStore {
     /**
      * @param {string} filePath
-     * @param {{now?: () => Date, max?: number}} options
+     * @param {{now?: () => Date, max?: number, shared?: {changed: (fresh?: boolean) => boolean, mark: (stamp?: string|null) => void, stamp?: () => string|null}|null}} options
+     *   shared (v0.1.4.13, M1): a SharedFile of memory_paths.js when another bot writes the same file: the store
+     *   re-reads the file before a read or a write when it changed; without it the file is read once, as before
      */
     constructor(filePath, options = {}) {
         this.filePath = filePath;
         const opts = isPlainObject(options) ? options : {};
         this.now = typeof opts.now === 'function' ? opts.now : () => new Date();
         this._max = normalizeMax(opts.max);
+        const shared = opts.shared;
+        this._shared = shared && typeof shared.changed === 'function' && typeof shared.mark === 'function' ? shared : null;
         this._rules = new Map();
+    }
+
+    // v0.1.4.13 (M1): the file as another bot left it; `fresh` before a write (a read looks at most once a second).
+    // Never throws.
+    _refresh(fresh = false) {
+        try {
+            if (this._shared !== null && this._shared.changed(fresh))
+                this.load();
+        } catch (error) {
+            console.warn(`Could not re-read the rule file ${describePath(this.filePath)}:`, messageOf(error));
+        }
     }
 
     /**
@@ -72,6 +87,7 @@ export class RuleStore {
      * @returns {number} the number of rules
      */
     load() {
+        const seen = this._shared?.stamp?.(); // v0.1.4.13 (M1): the file as it was before the read
         this._rules = new Map();
         try {
             const result = readJsonSafe(this.filePath, { expect: 'object', now: this.now });
@@ -103,6 +119,7 @@ export class RuleStore {
             console.warn(`Rule file ${describePath(this.filePath)} could not be read:`, messageOf(error));
             this._rules = new Map();
         }
+        this._shared?.mark(seen);
         return this._rules.size;
     }
 
@@ -116,6 +133,7 @@ export class RuleStore {
             return { ok: false, id: null, reason: 'empty' };
         if (clean.length > RULE_TEXT_MAX)
             return { ok: false, id: null, reason: 'too_long' };
+        this._refresh(true);
         const key = sameRuleKey(clean);
         for (const rule of this._rules.values()) {
             if (sameRuleKey(rule.text) === key)
@@ -138,7 +156,10 @@ export class RuleStore {
      */
     remove(id) {
         const number = typeof id === 'string' && /^\s*\d+\s*$/.test(id) ? Number(id) : id;
-        if (!isId(number) || !this._rules.has(number))
+        if (!isId(number))
+            return false;
+        this._refresh(true);
+        if (!this._rules.has(number))
             return false;
         this._rules.delete(number);
         this._save();
@@ -147,10 +168,17 @@ export class RuleStore {
 
     /** @returns {{id: number, text: string, created: string|null}[]} copies, in order of the id */
     list() {
+        this._refresh();
+        return this._sorted();
+    }
+
+    // the rules in the order of list, as copies; no re-read (a save uses it)
+    _sorted() {
         return [...this._rules.values()].sort((a, b) => a.id - b.id).map(rule => ({ ...rule }));
     }
 
     get size() {
+        this._refresh();
         return this._rules.size;
     }
 
@@ -161,7 +189,8 @@ export class RuleStore {
 
     _save() {
         try {
-            writeJsonAtomic(this.filePath, { version: FILE_VERSION, rules: this.list() }, { indent: 2 });
+            writeJsonAtomic(this.filePath, { version: FILE_VERSION, rules: this._sorted() }, { indent: 2 });
+            this._shared?.mark();
             return true;
         } catch (error) {
             console.warn(`Could not write the rule file ${describePath(this.filePath)}:`, messageOf(error));

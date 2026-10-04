@@ -1,7 +1,10 @@
 // The page of the mindserver (v0.1.4.13): the chat of one bot first, the live voice of the demo beside the input
 // (only with voice_ui), and every control of the old page in the drawer of the agents.
+// v0.1.4.13 (part N2, spec 4.5): the chat holds the lines of every bot and the supervisor's relayed lines, each with
+// its name in front; the dropdown has "everyone"; a line of the owner goes where routeLine says (the chosen bot with
+// its name in front, every bot plain); the voice of the mindserver gets the voice of every bot and the supervisor.
 /* global io, vad */
-import { lineKind, speakerName } from './chat_logic.js';
+import { EVERYONE, chatEntry, routeLine, speakerName, supervisorOf, voiceMap } from './chat_logic.js';
 
 const $ = (id) => document.getElementById(id);
 const els = {
@@ -46,34 +49,35 @@ const agentSettings = {}; // name -> settings of the agent (only_chat_with gives
 const inventoryOpen = {};
 let currentAgents = [];
 let selected = store.get('mindcraft-agent');
-const chats = {}; // name -> [{ kind, text, note }]
+const chat = []; // the one chat of the page: [{ kind, speaker, text, note }] of every bot, the supervisor and the owner
 const CHAT_LIMIT = 300;
 
 // ---------- the chat ----------
 
-function chatOf(name) {
-    return (chats[name] ||= []);
+// The supervisor as the settings of the bots name it ({ name, voice }), or null.
+function supervisor() {
+    return supervisorOf(currentAgents, agentSettings);
 }
 
 function renderEntry(entry) {
     const div = el('div', { class: `msg ${entry.kind}` });
+    // the name in front: a bot's name, or the supervisor's in brackets as it is said in the game
+    if (entry.speaker && (entry.kind === 'bot' || entry.kind === 'supervisor'))
+        div.append(el('span', { class: 'who', text: entry.kind === 'supervisor' ? `[${entry.speaker}]` : entry.speaker }));
     div.append(el('span', { text: entry.text }));
     if (entry.note) div.append(el('span', { class: 't', text: entry.note }));
     entry.node = div;
     return div;
 }
 
-function addLine(name, entry) {
-    if (!name) return null;
-    const list = chatOf(name);
-    list.push(entry);
-    if (list.length > CHAT_LIMIT) list.splice(0, list.length - CHAT_LIMIT);
-    if (name === selected) {
-        els.log.querySelector('.hint')?.remove();
-        els.log.append(renderEntry(entry));
-        while (els.log.children.length > CHAT_LIMIT) els.log.firstChild.remove();
-        entry.node.scrollIntoView({ block: 'end', behavior: 'smooth' });
-    }
+function addLine(entry) {
+    if (!entry) return null;
+    chat.push(entry);
+    if (chat.length > CHAT_LIMIT) chat.splice(0, chat.length - CHAT_LIMIT);
+    els.log.querySelector('.hint')?.remove();
+    els.log.append(renderEntry(entry));
+    while (els.log.children.length > CHAT_LIMIT) els.log.firstChild.remove();
+    entry.node.scrollIntoView({ block: 'end', behavior: 'smooth' });
     return entry;
 }
 
@@ -88,15 +92,14 @@ function addNote(entry, note) {
 
 function renderLog() {
     els.log.innerHTML = '';
-    const list = selected ? chatOf(selected) : [];
-    if (!list.length) {
+    if (!chat.length) {
         const hint = !selected ? 'No bot yet: create one under Agents.'
             : voice.enabled ? 'Write to the bot below, or press Talk / Live and speak. A short pause ends your turn.'
                 : 'Write to the bot below.';
         els.log.append(el('p', { class: 'hint', text: hint }));
         return;
     }
-    for (const entry of list) els.log.append(renderEntry(entry));
+    for (const entry of chat) els.log.append(renderEntry(entry));
     els.log.lastChild?.scrollIntoView({ block: 'end' });
 }
 
@@ -114,39 +117,58 @@ function sendMessage(name, message, { show = true } = {}) {
     if (!name || !message || !message.trim()) return false;
     const from = ownerName(name, { ask: true });
     if (!from) {
-        addLine(name, { kind: 'error', text: 'Your name is not set.' });
+        addLine({ kind: 'error', text: 'Your name is not set.' });
         return false;
     }
     socket.emit('send-message', name, { from, message: message.trim() });
-    if (show) addLine(name, { kind: 'user', text: message.trim() });
+    if (show) addLine({ kind: 'user', text: message.trim() });
     sendVoiceSettings();
     return true;
+}
+
+// The bots in the game the dropdown stands for: the chosen one, or every one with "everyone".
+function chosenBots() {
+    if (selected === EVERYONE) return currentAgents.filter((a) => a.in_game).map((a) => a.name);
+    return selected ? [selected] : [];
+}
+
+// A typed line goes where routeLine says (v0.1.4.13, part N2): the chosen bot with its name in front, every bot
+// plain with "everyone", the bot a line names; a line for the supervisor to the chosen bot.
+function sendLine(text) {
+    const route = routeLine({ selected, text, agents: currentAgents, supervisor: supervisor()?.name ?? '' });
+    if (!route.ok) {
+        addLine({ kind: 'error', text: route.text });
+        return false;
+    }
+    let sent = false;
+    for (const name of route.targets) sent = sendMessage(name, route.message, { show: false }) || sent;
+    if (sent) addLine({ kind: 'user', text: route.message });
+    return sent;
 }
 
 els.msg.addEventListener('input', () => { els.send.disabled = !(els.msg.value.trim() && selected); });
 els.msg.addEventListener('keydown', (e) => { if (e.key === 'Enter') els.send.click(); });
 els.send.addEventListener('click', () => {
     player.ensure(); // a click unlocks the audio of the page
-    if (sendMessage(selected, els.msg.value)) {
+    if (sendLine(els.msg.value)) {
         els.msg.value = '';
         els.send.disabled = true;
     }
 });
-els.quickStop.addEventListener('click', () => sendMessage(selected, '!stop'));
+els.quickStop.addEventListener('click', () => {
+    for (const name of chosenBots()) sendMessage(name, '!stop');
+});
 els.clearChat.addEventListener('click', () => {
-    if (!selected) return;
-    chats[selected] = [];
+    chat.length = 0;
     if (voice.enabled) { interruptBot(); socket.emit('reset'); }
     renderLog();
 });
 
+// Every bot's line and the supervisor's, with the name in front; a note of the system in the middle.
 socket.on('bot-output', (agentName, message) => {
-    const text = String(message ?? '');
-    if (agentName === 'system') {
-        addLine(selected, { kind: 'note', text });
-        return;
-    }
-    addLine(agentName, { kind: lineKind(text) === 'command' ? 'command' : 'bot', text });
+    const entry = chatEntry(agentName, message, supervisor()?.name ?? '');
+    if (!entry) return;
+    addLine({ kind: entry.kind, speaker: entry.speaker, text: entry.text });
 });
 
 // ---------- the chosen bot ----------
@@ -160,11 +182,12 @@ function chooseAgent(name) {
     selected = name || null;
     store.set('mindcraft-agent', selected);
     if (selected) els.agentSelect.value = selected;
-    els.msg.placeholder = selected ? `Message to ${selected}...` : 'Message to the bot...';
+    els.msg.placeholder = selected === EVERYONE ? 'Message to every bot...' : selected ? `Message to ${selected}...` : 'Message to the bot...';
     els.send.disabled = !(els.msg.value.trim() && selected);
     if (voice.enabled) interruptBot();
     renderLog();
     renderBotLine();
+    showVoiceOfSelected();
     sendVoiceSettings();
 }
 els.agentSelect.addEventListener('change', () => chooseAgent(els.agentSelect.value));
@@ -174,8 +197,11 @@ function renderAgentSelect() {
     els.agentSelect.innerHTML = '';
     for (const a of currentAgents)
         els.agentSelect.append(new Option(`${a.in_game ? '●' : '○'} ${a.name}`, a.name));
+    // v0.1.4.13 (N2): with two bots or more, "everyone": a line goes to every bot in the game, without a name
+    const everyone = names.length > 1;
+    if (everyone) els.agentSelect.append(new Option('everyone', EVERYONE));
     els.agentSelect.hidden = names.length === 0;
-    if (!names.includes(selected)) {
+    if (!names.includes(selected) && !(everyone && selected === EVERYONE)) {
         const next = currentAgents.find((a) => a.in_game)?.name ?? names[0] ?? null;
         chooseAgent(next);
     } else {
@@ -185,6 +211,13 @@ function renderAgentSelect() {
 }
 
 function renderBotLine() {
+    if (selected === EVERYONE) {
+        const inGame = currentAgents.filter((a) => a.in_game).map((a) => a.name);
+        els.botDot.className = `dot-status ${inGame.length > 0 ? 'online' : 'offline'}`;
+        els.quickStop.disabled = inGame.length === 0;
+        els.botSummary.replaceChildren(el('b', { text: 'everyone' }), ` · ${inGame.length > 0 ? `${inGame.join(', ')} in the game` : 'no bot in the game'}`);
+        return;
+    }
     const a = agentState(selected);
     els.botDot.className = `dot-status ${!a ? 'offline' : a.in_game ? 'online' : a.socket_connected ? 'joining' : 'offline'}`;
     els.quickStop.disabled = !a?.in_game;
@@ -577,6 +610,8 @@ applyBtn.addEventListener('click', () => {
     const card = cardOf(currentAgentName);
     if (a && card) card.replaceWith(renderAgentCard(a)); // the viewer follows render_bot_view
     closeAgentSettings();
+    showVoiceOfSelected(); // v0.1.4.13 (N2): voice_voice, supervisor_name and supervisor_voice may have changed
+    sendVoiceSettings();
 });
 $('closeAgentSettingsBtn').addEventListener('click', closeAgentSettings);
 
@@ -611,20 +646,35 @@ function sayStatus(text) {
     els.voiceStatus.textContent = text || '';
 }
 
+// v0.1.4.13 (N2): the voice of every bot (the page's choice for it, else its voice_voice) and the supervisor's name
+// and voice go to the voice of the mindserver, which speaks every speaker in its own voice; the dropdown "Voice" is
+// the voice of the chosen bot.
 function sendVoiceSettings() {
     if (!voice.enabled) return;
+    const sup = supervisor();
+    const first = chosenBots()[0] ?? null;
     socket.emit('settings', {
         voice: els.voice.value || undefined,
         speed: Number(els.speed.value),
         agent: selected,
-        from: selected ? ownerName(selected) : null,
+        from: first ? ownerName(first) : null,
         speak: els.speak.checked,
+        voices: voiceMap(currentAgents, agentSettings, prefs.voices || {}),
+        supervisor: sup?.name ?? null,
+        supervisorVoice: sup?.voice ?? null,
     });
+}
+
+// The dropdown "Voice" shows the voice of the chosen bot (nothing changes with "everyone").
+function showVoiceOfSelected() {
+    if (!voice.hello || !selected || selected === EVERYONE) return;
+    const id = voiceMap(currentAgents, agentSettings, prefs.voices || {})[selected];
+    if (id && [...els.voice.options].some((o) => o.value === id)) els.voice.value = id;
 }
 
 function savePrefs() {
     store.set('voice-demo-prefs', {
-        voice: els.voice.value, speed: Number(els.speed.value), barge: els.barge.checked, speak: els.speak.checked,
+        voice: els.voice.value, voices: prefs.voices || {}, speed: Number(els.speed.value), barge: els.barge.checked, speak: els.speak.checked,
     });
 }
 
@@ -707,7 +757,7 @@ function interruptBot() {
 async function startLive() {
     player.ensure(); // unlock audio output on this user gesture
     if (!selected) throw new Error('No bot is chosen.');
-    if (!ownerName(selected, { ask: true })) throw new Error('Your name is not set.');
+    if (!ownerName(chosenBots()[0] ?? selected, { ask: true })) throw new Error('Your name is not set.');
     sendVoiceSettings();
     if (!micVad) {
         els.talkLabel.textContent = 'Starting mic...';
@@ -776,14 +826,19 @@ els.talk.addEventListener('click', async () => {
         live ? await stopLive() : await startLive();
     } catch (err) {
         console.error(err);
-        addLine(selected, { kind: 'error', text: `Microphone: ${err.message || err}` });
+        addLine({ kind: 'error', text: `Microphone: ${err.message || err}` });
         els.talkLabel.textContent = 'Talk / Live';
     } finally {
         els.talk.disabled = !voice.sttReady;
     }
 });
 
-els.voice.addEventListener('change', () => { sendVoiceSettings(); savePrefs(); });
+els.voice.addEventListener('change', () => {
+    // the voice of the chosen bot on this page (v0.1.4.13, N2); with "everyone" only the voice of a bot without one
+    if (selected && selected !== EVERYONE) (prefs.voices ||= {})[selected] = els.voice.value;
+    sendVoiceSettings();
+    savePrefs();
+});
 els.speed.addEventListener('input', () => {
     els.speedOut.textContent = `${Number(els.speed.value).toFixed(2)}×`;
     sendVoiceSettings();
@@ -846,6 +901,7 @@ socket.on('hello', ({ voices, settings }) => {
     els.barge.checked = prefs.barge ?? true;
     els.speak.checked = prefs.speak ?? true;
     voice.hello = true;
+    showVoiceOfSelected();
     sendVoiceSettings();
     refreshStage();
 });
@@ -858,9 +914,10 @@ socket.on('status', ({ stage, note }) => {
     refreshStage();
 });
 
-socket.on('transcript', ({ turnId, text, sttMs, audioSec }) => {
+socket.on('transcript', ({ turnId, text, sent, sttMs, audioSec }) => {
     currentTurn = turnId;
-    heardEntry = addLine(selected, { kind: 'user', text, note: `spoken, ${audioSec} s · whisper ${ms(sttMs)}` });
+    // the line as it was sent (v0.1.4.13, N2: with the chosen bot's name in front), else as it was heard
+    heardEntry = addLine({ kind: 'user', text: sent || text, note: `spoken, ${audioSec} s · whisper ${ms(sttMs)}` });
     sayStatus(`Heard: "${text}"`);
 });
 
@@ -880,7 +937,7 @@ socket.on('turn_done', ({ turnId, timings = {} }) => {
 });
 
 socket.on('error_msg', ({ message }) => {
-    addLine(selected, { kind: 'error', text: message });
+    addLine({ kind: 'error', text: message });
     serverStage = 'idle';
     sayStatus(live ? 'Live: just talk. A short pause ends your turn.' : '');
     refreshStage();

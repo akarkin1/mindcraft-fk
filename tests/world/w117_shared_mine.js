@@ -101,7 +101,9 @@ await scenarioMain({
 
             // ---------------------------------------------------------- 2. !goToMine
             const t2 = Date.now();
-            const go = orders.orderInfo(`!goToMine("${MINE}")`, 120000);
+            // The lead, round 2 (DECISIONS R2-1): !goToMine takes an ore, not a mine's name (the spec's error); bot B knows
+            // one mine, the shared "deep", so the nearest mine is that one
+            const go = orders.orderInfo('!goToMine()', 120000);
             const there = await waitFor(async () => { const p = await entityPos(B); return inBox(p, room) ? p : null; }, { ms: 90000, every: 500 });
             const end = await entityPos(B);
             note(`2: !goToMine("${MINE}"): bot B ${there.ok ? `is in the room after ${(there.ms / 1000).toFixed(1)} s` : 'is NOT in the room within 90 s'}, at ${fmt(end)}`);

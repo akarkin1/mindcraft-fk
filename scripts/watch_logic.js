@@ -9,10 +9,12 @@ export const DEFAULT_URL = 'http://127.0.0.1:8090/mcp';
 export const EXIT = Object.freeze({ OK: 0, REFUSED: 1, USAGE: 2 });
 
 export const WAIT_FOR = Object.freeze(['event', 'idle', 'done', 'any']);
+/** v0.1.4.13 (part N2): the kinds of a reply. */
+export const REPLY_KINDS = Object.freeze(['answer', 'update']);
 
 export const USAGE = [
     'Usage: node scripts/watch.js <tool> [json args]',
-    '  tools: state, inventory, chat, places, events, say, digest, wait, run, look, server',
+    '  tools: state, inventory, chat, places, events, say, digest, wait, run, look, server, reply, note',
     '  node scripts/watch.js state',
     '  node scripts/watch.js chat \'{"lines": 20}\'   (or: chat 20)',
     '  node scripts/watch.js say "come here"',
@@ -21,6 +23,8 @@ export const USAGE = [
     '  node scripts/watch.js run \'!takeFromChest("bread", 10)\' \'!mineOre("diamond", 28)\'',
     '  node scripts/watch.js look [radius]            4 to 32, default 16',
     '  node scripts/watch.js server',
+    '  node scripts/watch.js reply [kind] \'<text>\'    your line into the chat as [<supervisor_name>] ...; kind answer (default) or update',
+    '  node scripts/watch.js note \'<text>\' [minutes]  one line in the bot\'s prompt for N minutes (default 30); an empty text clears it',
     '  node scripts/watch.js --follow                 a loop of wait any; replaces events --follow of v0.1.4.12',
     'Environment: MC_WATCH_URL (default http://127.0.0.1:8090/mcp), MC_WATCH_TOKEN.',
 ].join('\n');
@@ -75,6 +79,10 @@ export function parseCliArgs(argv) {
             args = { commands: rest };
         else if (tool === 'look')
             args = { radius: integer(rest[0]) };
+        else if (tool === 'reply')
+            args = replyArgs(rest);
+        else if (tool === 'note')
+            args = noteArgs(rest);
     }
     if (follow)
         args = { ...args, for: 'any' };
@@ -93,6 +101,22 @@ export function waitArgs(words) {
             args.since = word;
     }
     return args;
+}
+
+/** v0.1.4.13 (part N2): `reply [kind] '<text>'`: `reply "It is in the tunnel."`, `reply update "The mining is at 2 of 6."`. */
+export function replyArgs(words) {
+    const list = Array.isArray(words) ? words.filter((w) => typeof w === 'string') : [];
+    if (list.length > 1 && REPLY_KINDS.includes(list[0]))
+        return { kind: list[0], text: list.slice(1).join(' ') };
+    return { text: list.join(' ') };
+}
+
+/** v0.1.4.13 (part N2): `note '<text>' [minutes]`: `note "the chest at (15, -59, -99) has bread" 45`; `note ''` clears it. */
+export function noteArgs(words) {
+    const list = Array.isArray(words) ? words.filter((w) => typeof w === 'string') : [];
+    if (list.length > 1 && /^\d+$/.test(list[list.length - 1].trim()))
+        return { text: list.slice(0, -1).join(' '), minutes: Number(list[list.length - 1]) };
+    return { text: list.join(' ') };
 }
 
 /** The JSON-RPC body of a call of a tool. */

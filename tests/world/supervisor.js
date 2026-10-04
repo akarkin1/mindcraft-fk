@@ -189,12 +189,12 @@ export class Supervisor {
     }
 
     reply(text) {
-        return this.call('reply', { text });
+        return this.call('reply', { text }, { ms: 25000 }); // the reply waits up to 20 s while a bot speaks (N2)
     }
 
     /** `reply` of kind `update`: an unprompted line of the supervisor (SPEC 4.5, `supervisor_updates`). */
     update(text) {
-        return this.call('reply', { text, kind: 'update' });
+        return this.call('reply', { text, kind: 'update' }, { ms: 25000 });
     }
 
     note(text, minutes = 30) {

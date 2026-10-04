@@ -17,6 +17,16 @@ export const QUEUE_RULES = Object.freeze({
     commandsMax: 10,
 });
 
+// v0.1.4.13 (T1-run-long, the lead): the long skills of spec 4.1 that count as started after longSkillMs; every
+// other command answers with its result
+export const LONG_SKILLS = Object.freeze(['!mineOre', '!farmCycle', '!followPlayer']);
+
+/** True for a command text whose command is one of LONG_SKILLS. */
+export function isLongSkill(text) {
+    const name = typeof text === 'string' ? /^\s*(!\w+)/.exec(text)?.[1] : null;
+    return Boolean(name) && LONG_SKILLS.includes(name);
+}
+
 // the failure texts of the spec, at the start of a line of the output
 export const FAILURE_STARTS = Object.freeze([/^Failed\b/, /^I could not\b/, /^I cannot\b/, /^Path not found\b/]);
 
@@ -215,7 +225,7 @@ export function createQueue(agent, options = {}) {
         };
         item.poll = setInterval(findEntry, pollMs);
         item.poll.unref?.();
-        item.longTimer = setTimeout(() => {
+        item.longTimer = !isLongSkill(item.text) ? null : setTimeout(() => {
             if (item.status !== 'running')
                 return;
             findEntry();
@@ -227,7 +237,7 @@ export function createQueue(agent, options = {}) {
             if (item.batch)
                 settleBatch(item.batch);
         }, longSkillMs);
-        item.longTimer.unref?.();
+        item.longTimer?.unref?.();
         let handed;
         try {
             handed = innerHandle ? Promise.resolve(innerHandle.call(agent, item.by, item.text)) : Promise.reject(new Error('the agent has no handleMessage'));

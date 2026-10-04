@@ -32,6 +32,8 @@ const BY_SESSION = 'session';
 const RESTRICTED = new Set(['coding', 'skill_review', 'self_prompt']);
 
 const warnText = (rate, warn) => `I am costing about $${rate} per hour. That is above the warning level of $${warn}.`;
+// v0.1.4.13 (M3): the prompt tokens as the bill counts them, said only when a call read or wrote the cache
+const cacheText = (prompt, writes, reads) => `Prompt tokens: ${tokensText(prompt)}, of them ${tokensText(writes)} cache writes and ${tokensText(reads)} cache reads.`;
 const limitText = (reason) => `I reached the cost limit (${reason}). I stop working on goals by myself and writing new code. Chat and commands still work.`;
 const BACK_TEXT = 'My cost is back below the limit. I can write code and work on goals again.';
 
@@ -84,6 +86,21 @@ function formatPico(pico) {
     return centsText(Math.round(pico / PICO_PER_CENT));
 }
 
+function groupDigits(value) {
+    return String(value).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+}
+
+/**
+ * A count of tokens as the bill of the owner writes it (v0.1.4.13, M3): below 1,000 the number, else thousands
+ * rounded with a k: 512 gives '512', 79020 gives '79k', 1131400 gives '1,131k'.
+ * @param {number} count
+ * @returns {string}
+ */
+export function tokensText(count) {
+    const n = countOf(count);
+    return n < 1000 ? String(Math.round(n)) : `${groupDigits(Math.round(n / 1000))}k`;
+}
+
 // A configured limit as in the spec's example: '$3', '$10', but '$2.50'.
 function formatLimit(dollars) {
     return Number.isInteger(dollars) ? String(dollars) : formatDollars(dollars);
@@ -116,9 +133,12 @@ function picoOf(dollars) {
 }
 
 // The sessions of earlier processes of the same launch, summed: { sessions, calls, unpriced, pico,
-// byPurpose: Map name -> { calls, pico } }. Values that are not numbers count as 0.
+// byPurpose: Map name -> { calls, pico }, tokens: { input_tokens, cache_read_tokens, cache_write_tokens } }.
+// Values that are not numbers count as 0. v0.1.4.13 (M3): the input tokens are those of the purposes, the cache
+// tokens those a session wrote (a session of an older version has none).
 function sumLaunch(history, launchId) {
-    const base = { sessions: 0, calls: 0, unpriced: 0, pico: 0, byPurpose: new Map() };
+    const base = { sessions: 0, calls: 0, unpriced: 0, pico: 0, byPurpose: new Map(),
+        tokens: { input_tokens: 0, cache_read_tokens: 0, cache_write_tokens: 0 } };
     for (const session of history) {
         if (session.launch_id !== launchId) {
             continue;
@@ -127,6 +147,8 @@ function sumLaunch(history, launchId) {
         base.calls += countOf(session.calls);
         base.unpriced += countOf(session.unpriced_calls);
         base.pico += picoOf(session.dollars);
+        base.tokens.cache_read_tokens += countOf(session.cache_read_tokens);
+        base.tokens.cache_write_tokens += countOf(session.cache_write_tokens);
         if (!isPlainObject(session.by_purpose)) {
             continue;
         }
@@ -138,12 +160,14 @@ function sumLaunch(history, launchId) {
             sum.calls += countOf(bucket.calls);
             sum.pico += picoOf(bucket.dollars);
             base.byPurpose.set(name, sum);
+            base.tokens.input_tokens += countOf(bucket.input_tokens);
         }
     }
     return base;
 }
 
-const NO_LAUNCH = Object.freeze({ sessions: 0, calls: 0, unpriced: 0, pico: 0, byPurpose: new Map() });
+const NO_LAUNCH = Object.freeze({ sessions: 0, calls: 0, unpriced: 0, pico: 0, byPurpose: new Map(),
+    tokens: Object.freeze({ input_tokens: 0, cache_read_tokens: 0, cache_write_tokens: 0 }) });
 
 function addToBucket(map, key, usage, pico) {
     let bucket = map.get(key);
@@ -338,6 +362,8 @@ export class CostMeter {
      * Purposes ordered by dollars (then calls, then name). Without a rate the rate part is left
      * out, without calls the parentheses. Unpriced calls add
      * ` 12 calls of models without a price are not included.`
+     * v0.1.4.13 (M3): when calls read or wrote the cache,
+     * ` Prompt tokens: 1,131k, of them 997k cache writes and 79k cache reads.` (input, reads and writes).
      * With earlier processes of the same launch (F2) their dollars and calls are in the numbers
      * (the rate is of this process), and ` It includes 2 earlier processes since the start of the
      * bot.` is added.
@@ -369,6 +395,12 @@ export class CostMeter {
         const unpriced = this._unpricedCalls + launch.unpriced;
         if (unpriced > 0) {
             line += ` ${unpriced} calls of models without a price are not included.`;
+        }
+        // v0.1.4.13 (M3): the cache writes and reads, when there were any
+        const reads = this._tokens.cache_read_tokens + launch.tokens.cache_read_tokens;
+        const writes = this._tokens.cache_write_tokens + launch.tokens.cache_write_tokens;
+        if (reads + writes > 0) {
+            line += ` ${cacheText(this._tokens.input_tokens + launch.tokens.input_tokens + reads + writes, writes, reads)}`;
         }
         if (launch.sessions > 0) {
             line += ` It includes ${launch.sessions} earlier process${launch.sessions === 1 ? '' : 'es'} since the start of the bot.`;
@@ -607,6 +639,12 @@ export class CostMeter {
         };
         if (this._launchId !== null) {
             session.launch_id = this._launchId;
+        }
+        // v0.1.4.13 (M3): the cache tokens, only for a session that read or wrote the cache (the file stays as before
+        // without them); the next process of the same launch counts them in its report line
+        if (totals.cache_read_tokens + totals.cache_write_tokens > 0) {
+            session.cache_read_tokens = totals.cache_read_tokens;
+            session.cache_write_tokens = totals.cache_write_tokens;
         }
         try {
             writeJsonAtomic(this._filePath, { version: FILE_VERSION, sessions: [...history, session] });
