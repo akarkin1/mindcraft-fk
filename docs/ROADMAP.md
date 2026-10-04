@@ -18,7 +18,7 @@ Rules that hold for every release:
 | 0.1.4.10 | Goals | Released |
 | 0.1.4.11 | Navigation and words | Released |
 | 0.1.4.12 | Understanding and watching | Released |
-| 0.1.4.13 | Routines | Planned: routines first, then the local embedding model |
+| 0.1.4.13 | Supervision and routines | Planned: `docs/releases/0.1.4.13/PLAN.md` |
 | Later | See the backlog | Not decided |
 
 ## 0.1.4.9 The mine, the routes of the player, and the model comparison
@@ -151,20 +151,25 @@ cost a play yet.
 
 Two bots of the owner in one world answered each other's command echoes and results (2026-10-03). Until this part, `only_chat_with` names the owner in each bot's settings and `MINDSERVER_PORT` gives the second bot its own port. The part: a bot recognises the other bots of the owner by name (the launch script passes them), never answers their echoes or results, and a role per bot ("you farm, you mine") in the settings; a question to both ("where are you?") gets one line from each.
 
-## 0.1.4.13 Routines
+## 0.1.4.13 Supervision and routines
 
-Decided by the owner on 2026-10-03, during the gate of v0.1.4.12: "something like maintain the base cannot be expressed as a function, but can easily be described with words". A rule is a constraint; a routine is a procedure in the owner's words, kept per world like the rules, that the bot works through when the owner names it.
+Scope decided by the owner on 2026-10-04 after the supervised play of that day (Claude on Haiku and gpt on Luna mining
+diamonds, the tech lead as the supervisor through the watch server): supervision is the main feature, routines the
+second, and the corrections the play found come with them. The plan is `docs/releases/0.1.4.13/PLAN.md`.
 
-| Step | Content |
+| Part | Content |
 |---|---|
-| The store | `!rememberRoutine("maintain the base", "Farm the wheat and store it. Feed the chickens if any are missing. Keep 32 torches. At night mine iron in the mine. Stay within 100 blocks of home.")`, `!routines`, `!forgetRoutine`, in `bots/<name>/routines.json`; at most 20, one paragraph each. |
-| Running one | `!doRoutine("maintain the base")`, or the name in a sentence: the text becomes the goal of a job of v0.1.4.10; the model turns the sentences into steps (commands only, never code), code checks each step, errands do not end it, it survives a restart, a routine that maintains runs again when its steps are done until "stop". One line per step done; the knowledge block names the running routine and its step. |
-| The supervisor's lever | A routine is what the watch server's `say` hands the bot when the owner is away: `say "maintain the base"`. |
-| What it is not | No new commands, no code written, no rule changed: a library of well-written prompts, each with a name. |
+| Supervision | The watch server gets `digest`, `wait`, `run`, `note`, `look`, `server`, a report every N seconds and a `help` event, so a supervisor wakes only on a change and orders in one call. One channel, two names: a line that names the supervisor is a message for it and nothing the bot answers; the supervisor's `reply` goes into the chat; the voice page speaks both. A `/supervise` skill and `docs/SUPERVISOR.md` make a supervision session cheap (about a cent a turn against $7 an hour on 2026-10-04). |
+| Routines | Decided on 2026-10-03: "something like maintain the base cannot be expressed as a function, but can easily be described with words". `!rememberRoutine`, `!routines`, `!forgetRoutine`, `!doRoutine`: a paragraph in the owner's words becomes a job of v0.1.4.10, the model plans the steps, code checks them, a maintaining routine runs again until "stop". The supervisor's lever when the owner is away. |
+| The corrections | Supplies from the chest beside the bot, tool wear, the plan that starts, the furnace in the bag, the job counter, no cancel by the model's follow-up, `!mineOre` from where the bot stands, `!goToSurface` by a known route, two ladder places, the full bag, death drops and armour, `!givePlayer`, no shaft downwards. `mine_other_ores` as a setting. |
+| Two bots, one memory | `shared_memory`: the places, chests, routes, mines, rules and routines of a world shared by the bots. |
+| Cost | `prompt_cache` on the Anthropic API: Haiku's hour from about $1.70 to about $0.60. The price of Luna checked against the bill. |
+| The creeper loop | F10 of v0.1.4.12: the keep-away loop that about once in 30 runs after an explosion runs until the process is out of memory (W47). A profiling run finds it. |
+| The model comparison | `npm run test:play -- --situations`: six situations in plain words, the same for each model, with the first command, the follow-ups and the time. |
 
-Setting `routines` (off). After it, part A of v0.1.4.12 (the local embedding model), measured by the routing check first.
-
-Also in 0.1.4.13: the keep-away loop of the creeper reflex, which about once in 30 runs after an explosion that leaves the bot near death runs on until the process is out of memory (W47, seen 2026-10-01 and 2026-10-03; not of a part of 0.1.4.12, bisected). A profiling run inside the agent process finds the loop; the fix gets a repeated W47.
+Voice (the demo's page, whisper and Supertonic in the mindserver, `voice_ui`) is built by a local session on
+`release/v0.1.4.13-voice` and merges in when it works on the owner's machine. After this release: the supervisor and the
+bot as one mind, and part A of v0.1.4.12 (the local embedding model) after the routing check measures it.
 
 ## Backlog
 
