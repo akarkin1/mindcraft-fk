@@ -59,7 +59,7 @@ or profiles, never commit anything under `bots/`.
 ## The loop
 
 1. `wait` for `done` while a long skill runs (`!mineOre`, `!farmCycle`), else `any`; timeout 55; the cursor of the last
-   answer.
+   answer. An event wakes either wait at once, so a line of the owner to you is never left waiting.
 2. Read the digest. Only the lines that changed are there. `Woke: timeout.` with `Nothing changed.`: wait again, no
    other call.
 3. Decide (below). When the digest is not enough to decide, read what you need first: `look`, `inventory`, `chat`,

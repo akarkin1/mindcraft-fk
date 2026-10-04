@@ -490,6 +490,10 @@ export function wakeReason(rule, state = {}) {
         case 'idle':
             return !state.running && typeof state.idleMs === 'number' && state.idleMs >= DIGEST_RULES.idleMs ? 'idle' : null;
         case 'done':
+            // v0.1.4.13 (the lead): an event (the owner's message to the supervisor, a help, a death, an explosion)
+            // wakes a wait for done too, so the supervisor answers the owner while a long skill runs
+            if (newEvents > 0)
+                return 'event';
             if (!state.runningAtStart)
                 return 'done';
             return sameRunning(state.runningAtStart, state.running) ? null : 'done';

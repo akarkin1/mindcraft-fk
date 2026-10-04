@@ -76,6 +76,8 @@ describe('the setting', () => {
         assert.equal(spec.watch_report_seconds.default, 0);
         assert.equal(typeof spec.watch_report_seconds.description, 'string');
         const keys = Object.keys(spec);
-        assert.equal(keys[keys.indexOf('voice_language') + 1], 'watch_report_seconds');
+        // watch_local_only of v0.1.4.13 sits between them
+        assert.equal(keys[keys.indexOf('voice_language') + 1], 'watch_local_only');
+        assert.equal(keys[keys.indexOf('watch_local_only') + 1], 'watch_report_seconds');
     });
 });
