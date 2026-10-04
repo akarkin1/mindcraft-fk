@@ -433,6 +433,11 @@
         "description": "With voice_ui: the language whisper hears ('auto' for any) and Supertonic speaks (English when it does not speak it)",
         "default": "en"
     },
+    "watch_report_seconds": {
+        "type": "number",
+        "description": "With watch_server: every N seconds an event 'report' with the digest since the last report, even when nothing happened. 0: no report",
+        "default": 0
+    },
     "code_timeout_mins": {
         "type": "number",
         "description": "Number of minutes to allow code execution. -1 for no timeout",

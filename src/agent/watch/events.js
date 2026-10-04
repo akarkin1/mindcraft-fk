@@ -9,12 +9,17 @@
 //     without a repeat guard the lines of the bot that read as a failure (looksLikeFailure)
 //   far_from_home and job_stalled every 5 s, animals_missing once a minute (agent.area_store, bot.entities)
 // startListeners returns stop(), which removes every listener, the timer and the wrappers. Nothing here throws.
+// v0.1.4.13 (part S): help: a line of the bot that asks the player (HELP_PATTERNS), with settings.supervisor_name
+//   set; report: every watch_report_seconds the digest since the last report (digest_logic); the tick lag from
+//   bot.on('time') for the server tool (watch.tickLag).
+import settingsOfAgent from '../settings.js';
 import { looksLikeFailure, READ_ONLY_COMMANDS } from '../repeat_guard.js';
 import { recallHome } from '../packs/home/context.js';
 import {
     EVENT_RULES, createAnimalsWatch, createFailureWatch, createHealthWatch, createHomeWatch, createJobWatch, createNightWatch,
-    deathEvent, explosionEvent,
+    createTickLagWatch, deathEvent, explosionEvent, helpEvent, reportEvent,
 } from './events_logic.js';
+import { digestLines, snapshotOf } from './digest_logic.js';
 
 export const TICK_MS = 5000;
 
@@ -52,12 +57,14 @@ function failedOf(result, failed) {
  * @param {object} agent
  * @param {object} watch the state of the server: chat (Ring), lastSpeaker, lastLine, now()
  * @param {(event: object|null) => void} push takes an event into the ring and the streams
- * @param {{tickMs?: number, animalsEveryMs?: number}} [options] for tests
+ * @param {{tickMs?: number, animalsEveryMs?: number, reportMs?: number}} [options] for tests; reportMs: the report
+ *   every this many ms instead of settings.watch_report_seconds
  * @returns {() => void} stop
  */
 export function startListeners(agent, watch, push, options = {}) {
     const undo = [];
     const now = () => (typeof watch?.now === 'function' ? watch.now() : Date.now());
+    const settings = () => watch?.settings ?? settingsOfAgent;
     const emit = (event) => {
         try {
             if (event)
@@ -132,6 +139,8 @@ export function startListeners(agent, watch, push, options = {}) {
             chatLine(name(), message);
             if (!guard && typeof message === 'string')
                 emit(failureWatch.record(message, looksLikeFailure(message), now()));
+            if (typeof message === 'string')
+                emit(helpEvent(message, settings()?.supervisor_name, now())); // v0.1.4.13 (S): null without a supervisor
         } catch (error) {
             warn('could not note a line of the bot', error);
         }
@@ -166,7 +175,13 @@ export function startListeners(agent, watch, push, options = {}) {
     on(bot, 'health', () => emit(healthWatch.update(bot.health, pos(), now())));
     on(bot, 'death', () => emit(deathEvent(name(), pos(), now())));
     on(bot, 'sleep', () => nightWatch.slept());
-    on(bot, 'time', () => emit(nightWatch.update(bot.time?.timeOfDay, bot.isSleeping === true, now())));
+    const tickLag = createTickLagWatch();
+    if (watch && typeof watch === 'object')
+        watch.tickLag = tickLag;
+    on(bot, 'time', () => {
+        tickLag.update(now());
+        emit(nightWatch.update(bot.time?.timeOfDay, bot.isSleeping === true, now()));
+    });
 
     // the timer
     const tickMs = Number.isFinite(options.tickMs) && options.tickMs > 0 ? options.tickMs : TICK_MS;
@@ -201,6 +216,33 @@ export function startListeners(agent, watch, push, options = {}) {
     const timer = setInterval(tick, tickMs);
     timer.unref?.();
     undo.push(() => clearInterval(timer));
+
+    // v0.1.4.13 (S): the report every watch_report_seconds (0: none): the digest since the last report
+    const seconds = Number(settings()?.watch_report_seconds);
+    const reportMs = Number.isFinite(options.reportMs) && options.reportMs > 0 ? options.reportMs : (Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : 0);
+    if (reportMs > 0) {
+        let lastReport = null;
+        const report = () => {
+            try {
+                const current = snapshotOf(agent, watch);
+                const lines = lastReport ? digestLines(lastReport, current, { cursor: 0, chat: watch?.chat, events: watch?.events }).slice(1) : [];
+                lastReport = current;
+                emit(reportEvent(lines, now()));
+                if (Number.isFinite(watch?.events?.total))
+                    lastReport.eventIndex = watch.events.total; // the report is no news of the next report
+            } catch (error) {
+                warn('could not make the report', error);
+            }
+        };
+        try {
+            lastReport = snapshotOf(agent, watch);
+        } catch {
+            lastReport = null;
+        }
+        const reporter = setInterval(report, reportMs);
+        reporter.unref?.();
+        undo.push(() => clearInterval(reporter));
+    }
 
     let stopped = false;
     return () => {

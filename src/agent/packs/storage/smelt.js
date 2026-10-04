@@ -9,8 +9,8 @@ import { Vec3 } from 'vec3';
 import { botPos, clockOf, dimensionOf, listAreas, logTo } from '../home/context.js';
 import { walkNear } from '../home/motion.js';
 import { cleanName } from './storage_logic.js';
-import { BATCH_MAX, FURNACE_FAR_RANGE, FURNACE_RANGE, PLACE_RANGE, POLL_MS, batchesOf, chooseFuel, chooseFurnaceSpot, fuelPer, productOf,
-    timeLimitMs, usableFurnaces, walkLimitMs } from './smelt_logic.js';
+import { BATCH_MAX, FURNACE_FAR_RANGE, FURNACE_PLACE_NEAR, FURNACE_RANGE, PLACE_RANGE, POLL_MS, batchesOf, chooseFuel, chooseFurnaceSpot, fuelPer,
+    inKnownMine, productOf, timeLimitMs, usableFurnaces, walkLimitMs } from './smelt_logic.js';
 import { TEXTS, posText } from './texts.js';
 
 /** The bot walks to within this many blocks of a furnace before it opens it. */
@@ -138,14 +138,29 @@ function freeFloorCells(bot) {
     return cells;
 }
 
-// A furnace from the inventory on the nearest allowed cell (spec 4.2, 1); its position, or null.
+// v0.1.4.13 (P4): the bot is underground in a mine it knows: whereAmI of the glue names the mine (with mine_routes),
+// else a mine of the mine store at the level of the bot. Never throws.
+function underground(bot, ctx) {
+    try {
+        const where = typeof ctx?.whereAmI === 'function' ? ctx.whereAmI() : null;
+        const mines = typeof ctx?.mines?.list === 'function' ? ctx.mines.list(dimensionOf(bot) ?? undefined) : null;
+        return inKnownMine(where, mines, botPos(bot));
+    } catch {
+        return false;
+    }
+}
+
+// A furnace from the inventory on the nearest allowed cell (spec v0.1.4.12 4.2, 1; v0.1.4.13 P4: within 3 blocks of
+// the bot, in a saved area of kind storage, building, home or mine, or anywhere underground in a mine it knows);
+// its position, or null.
 async function placeFurnace(bot, ctx) {
     if (countOf(bot, 'furnace') === 0 || typeof ctx?.skills?.placeBlock !== 'function') {
         return null;
     }
     const guard = bot.areaGuard;
     const canPlace = guard && typeof guard.canPlace === 'function' ? (c, item) => guard.canPlace(c, item) : null;
-    const spot = chooseFurnaceSpot(freeFloorCells(bot), listAreas(ctx, dimensionOf(bot)), botPos(bot), canPlace);
+    const spot = chooseFurnaceSpot(freeFloorCells(bot), listAreas(ctx, dimensionOf(bot)), botPos(bot), canPlace,
+        { range: FURNACE_PLACE_NEAR, inMine: underground(bot, ctx) });
     if (!spot) {
         return null;
     }
@@ -366,7 +381,11 @@ function mainFuel(fuelPut, fuelBack, lastName) {
  * 2 s and the output taken as it comes, the count is what came out. A stop (bot.interrupt_code) takes
  * what is done and leaves the furnace empty of the bot's items. Time limit: 12 s per item plus 10 s, from the
  * open furnace (the walk has its own limit: 20 s plus 0.5 s per block, at most 60 s). Without a furnace:
- * `I know no furnace within 64 blocks and carry none.`
+ * `I know no furnace within 64 blocks and carry none.`, only when none is carried either.
+ * Since v0.1.4.13 (P4) the furnace of the bag goes on a free solid cell within 3 blocks of the bot, in a saved
+ * area of kind storage, building, home or mine, or where the bot stands when it is underground in a mine it
+ * knows (ctx.whereAmI, ctx.mines): `I placed my furnace at (16, -59, -99).` then the smelt text; a furnace
+ * carried with no cell for it: reason `no_spot`, TEXTS.noFurnaceSpot.
  * Never throws.
  * @param {object} bot
  * @param {object} ctx { areas, log, now, skills }
@@ -374,7 +393,7 @@ function mainFuel(fuelPut, fuelBack, lastName) {
  * @param {number} [count] 1
  * @param {{now?: Function, wait?: Function, stallMs?: number}} [options]
  * @returns {Promise<{ok: boolean, reason: string|null, text: string, smelted: number, fuel: {name: string, count: number}|null}>}
- *   reason: null, not_smeltable, no_item, no_fuel, no_furnace, unreachable, busy, interrupted, timeout,
+ *   reason: null, not_smeltable, no_item, no_fuel, no_furnace, no_spot, unreachable, busy, interrupted, timeout,
  *   stalled, little_fuel, short or error; smelted: the items of the product taken out of the furnace
  */
 export async function smeltItem(bot, ctx = {}, item, count = 1, options = {}) {
@@ -391,9 +410,11 @@ export async function smeltItem(bot, ctx = {}, item, count = 1, options = {}) {
         deadline: 0,
         stallMs: isFiniteNumber(options?.stallMs) && options.stallMs > 0 ? options.stallMs : STALL_MS,
     };
+    let placedAt = null; // P4: the furnace of the bag, placed in this call; its text comes first
     const finish = (ok, reason, text, fuel = null) => {
-        const result = { ok, reason, text, smelted: run.smelted, fuel };
-        logTo(ctx, text);
+        const said = placedAt ? [TEXTS.placedFurnace(placedAt), text].filter(t => t.length > 0).join(' ') : text;
+        const result = { ok, reason, text: said, smelted: run.smelted, fuel };
+        logTo(ctx, said);
         return result;
     };
     if (!run.product) {
@@ -431,6 +452,7 @@ export async function smeltItem(bot, ctx = {}, item, count = 1, options = {}) {
         if (!window) {
             const placed = await placeFurnace(bot, ctx);
             if (placed) {
+                placedAt = placed;
                 const use = await useFurnace(bot, placed, name, run.product, run.clock);
                 if (use.ok) {
                     window = use.window;
@@ -448,6 +470,10 @@ export async function smeltItem(bot, ctx = {}, item, count = 1, options = {}) {
             }
             if (failed) {
                 return finish(false, 'unreachable', `I could not get to the furnace at ${posText(failed.at)}.`);
+            }
+            // P4: the old text only when both hold: no furnace within 64 blocks and none in the bag
+            if (countOf(bot, 'furnace') > 0) {
+                return finish(false, 'no_spot', TEXTS.noFurnaceSpot(FURNACE_FAR_RANGE, FURNACE_PLACE_NEAR));
             }
             return finish(false, 'no_furnace', TEXTS.noFurnace(FURNACE_FAR_RANGE));
         }

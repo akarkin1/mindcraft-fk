@@ -103,6 +103,7 @@ const settings = {
     "voice_ui": false, // talk with the bot in the page of the mindserver: whisper hears you, Supertonic speaks the bot's lines, the system voice is silent. needs npm run voice:setup (about 1.6 GB)
     "voice_voice": "supertonic:F1", // with voice_ui: the voice of the bot, supertonic:F1 to F5 or M1 to M5 (kokoro:af_heart needs kokoro-js)
     "voice_language": "en", // with voice_ui: the language whisper hears ("auto" for any) and Supertonic speaks
+    "watch_report_seconds": 0, // with watch_server: every N seconds an event report with the digest since the last one, even when nothing happened; 0: none
     "allow_vision": false, // allows vision model to interpret screenshots as inputs
     "blocked_actions" : ["!checkBlueprint", "!checkBlueprintLevel", "!getBlueprint", "!getBlueprintLevel", "!restart"] , // commands to disable and remove from docs. Ex: ["!setMode"]
     "code_timeout_mins": -1, // minutes code is allowed to run. -1 for no timeout

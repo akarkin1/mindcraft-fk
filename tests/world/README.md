@@ -13,6 +13,7 @@ npm run test:world                       all scenarios (about 90 minutes since v
 node tests/world/run.js doors shelter    only scenarios whose name contains one of the words
 node tests/world/run.js all_modes_on     a group: the work scenarios w15 to w28 (W30 of v0.1.4.8)
 node tests/world/run.js journeys         a group: the journey scenarios W59 and W80 to W84 (below)
+node tests/world/run.js journeys13       a group: the journeys W109 to W118 of v0.1.4.13 (about 45 minutes)
 node tests/world/run.js --verbose        the whole output of every scenario while it runs
 node tests/world/run.js --server-log     also the server lines of every scenario
 ```
@@ -464,6 +465,40 @@ waits for the bot (`waitBot`), and the parts A (W80) and B (W81) that W84 chains
 | `scan_underground` | w106 | the mine taught, `!leaveMine`, `!goToMine`, a typed walk into the tunnel: `I am in a tunnel 1 wide and N long, heading ..., of the mine "mine".`; never "storage" or "Tell me its name"; a cave dug beside the room tunnel: no line of the sense; `!rememberArea("x")` there answers `I am in a cave ...`/`I am in a tunnel; ...` and saves nothing |
 | `spawn_and_bed` | w107 | A: the agent started without the 3.5 s wait (`startRealAgent`), `!collectBlocks("oak_log", 1)` 1 s after the spawn: the log 2 blocks away is gone within 10 s; B: asleep after `!goToBed`, `!stop` and `!goToCoordinates` 5 blocks away: out of the bed within 4 s, there within 30 s |
 | `two_bots` | w108 | `w_farmer` here and `w_miner` in the phase `miner` (a second process), `other_bots`, `bot_role`, `only_chat_with` the player: "where are you?" gets exactly one line from each and no line in the 10 s after; "mine 4 iron": the farmer `That is w_miner's job. I farm.` and no `!mineOre`, the miner runs `!mineOre`; the role line in every prompt of each |
+
+### Journeys of v0.1.4.13 "Supervision"
+
+The group `journeys13` (`node tests/world/run.js journeys13`, each scenario under 6 minutes): the scripted supervisor, one
+channel for two names, the corrections of the play of 2026-10-04 and the shared memory, written from `PLAN.md` and section 5
+of the spec before the build, failing on v0.1.4.12. Every scenario runs with the owner's switches of v0.1.4.12 and the
+switches of this release on (`journey.js`, `SUPERVISION_SETTINGS`: `supervisor_name` "Opus", `prompt_cache`,
+`mine_other_ores`; `watch_report_seconds` 0 and `shared_memory` only in W117, see the comment there), the modes of his
+profile, an empty memory; the bot is never moved by the control.
+
+- **`tests/world/supervisor.js`**: the scripted supervisor, a client of the watch server in the test process that plays the
+  owner's Claude session: `wait({ for, timeout })`, `digest()`, `run(commands)`, `look(radius)`, `reply(text)`, `note`,
+  `say`, `server`, every call counted (`calls`, `count(tool)`), every wait that did not time out a wake (`wakes`), the
+  digests folded into `state` (`parseDigest`, `parseRun` are pure). It speaks the protocol of `scripts/watch.js` and knows
+  no code of the server; the token never leaves it (`redact`).
+- **`partTeachMineInRoom(ctx, { name, tunnel })`** (`journey.js`): the quick teach of W91 and W92, "follow me" down both
+  ladders into the room, "this is the mine"; with the room tunnel of `base_world.js` the player then says "dig here" at its
+  rock face and walks back into the room. The mining journeys W109, W112, W114 and W118 start from it.
+- `countEntities(selector)`, `penChickenSelector(b)`, `readSharedWorldFile(name)` (`journey.js`); `itemDamages(name,
+  item)` (the damage of every such item the player carries, server) and `foodTo(name, level)` (the hunger effect down to a
+  food level) (`helpers.js`).
+
+| Id | File | What it proves |
+|---|---|---|
+| W109 | `w109_supervised_mining.js` | `watch_server`, the supervisor: `run ['!mineOre("iron", 6)']` is accepted (`Ran 1 of 1.`, `started.`); the supervisor loops `wait` (for the command to end, re-armed on a timeout) and acts by two rules (a `help` or failure line: `run` of the fix; nothing running with the job unfinished: the job's command again; the owner types `!stop` after 20 s to make the second fire): 6 raw_iron in the bag within 200 s, 6 wakes or fewer, no `wait` answered later than 60 s, every `run` accepted, the token nowhere |
+| W110 | `w110_two_bots_names.js` | the bots `claude` and `gpt` 6 blocks from the player: "claude, come here" brings claude within 2 blocks in 20 s while gpt moves at most 1 block, says nothing and its model is not asked; "come here" brings both within 20 s |
+| W111 | `w111_supervisor_chat.js` | `supervisor_name` "Opus": "Opus, where is it?" gets no bot line and no model request, the supervisor's `wait event` wakes with `Message: "where is it?"`; `reply "It is in the tunnel."` is heard by the player as `[Opus] It is in the tunnel.` and answered by no bot; an update (`reply` of kind `update`) sent 300 ms after "where are you?" with `supervisor_updates` on is heard after the bot's answer, never between; after 61 s without a call "Opus, hello" gets exactly one line, `The supervisor is not here.`; phase `updates_off`: the update answers `Updates are off.` and nothing appears in the chat |
+| W112 | `w112_bread_beside_tunnel.js` | the house chest (12 bread) known from a typed `!viewChest`, the mine taught with its tunnel, a chest with 20 bread in the room 4 blocks from the tunnel's start, the bot at its rock face (typed walk), food 12 of 20 and no food carried: `!mineOre("iron", 6)` takes bread from the chest beside the tunnel within 60 s (its count fell, the bag's rose), the feet never above the room's level + 3, `I get my supplies: N bread from the chest at (x, y, z).`; 6 raw_iron within 3 minutes |
+| W113 | `w113_furnace_in_bag.js` | the room's furnace removed, the mine saved as an area of kind mine, 3 raw_iron in the room chest known from a typed `!viewChest`, a furnace, 4 planks and 1 coal in the bag: "make me an iron pickaxe" (the plan prompt answered with fetch, smelt, getTool) with no second order: within 3 minutes a furnace within 3 blocks of where the bot stood, an iron_pickaxe in the bag, the plan text, the step text, `I placed my furnace at (x, y, z).` naming it, never `I know no furnace within 64 blocks and carry none` |
+| W114 | `w114_worn_pickaxe.js` | an iron pickaxe at 12 uses (damage 238), 3 iron_ingot and 2 sticks: `!mineOre("iron", 6)` ends with 6 raw_iron, the bag holds the old and a new iron_pickaxe (the damages read from the server), `My iron_pickaxe is nearly worn: N uses left. I made a new one.` with N 10 or fewer, no "nearly broken" stop |
+| W115 | `w115_shaft_and_drops.js` | A: `!goToCoordinates` 20 blocks straight down answers `I do not dig a shaft 20 blocks down. Say "dig down" if you mean it, or show me stairs.`, the bot within 2 blocks of where it stood after 20 s, no block of the 3 x 3 columns under it broken; B: the player dies 3 blocks away with iron boots and 5 ingots: after 60 s they lie within 4 blocks of the death, the bot wears no boots and carries no ingot, `I leave w_player's things at (x, y, z).` once |
+| W116 | `w116_unsaved_pen.js` | the pen with 6 chickens, unsaved; the player walks through the gate (the control opens and closes it for him) to the far side and says "follow me": for 60 s the gate stays closed, the 6 chickens inside, the bot never inside, `That is a pen with 6 chickens; I do not open its gate. Say "open the pen" if you mean it.`; "open the pen" (the fake model: `!allowChanges("pen")`) and "follow me": the bot is inside within 60 s and the gate is closed within 10 s after |
+| W117 | `w117_shared_mine.js` | `shared_memory` with two bots, each with its own player (`only_chat_with`): bot A's `!rememberMine("deep")` in the room lands in `bots/shared/worlds/<seed>/mines.json`; bot B (a phase, started outside the house) answers `!mines` with "deep" and reaches the room within 90 s of `!goToMine("deep")` |
+| W118 | `w118_full_bag.js` | the bag full but 2 slots (30 stacks of torches, a kind the trip keeps), the room chest with 20 free slots, the tunnel beyond the rock face seeded with gravel, iron ore and cobblestone: `!mineOre("iron", 6)` ends with 6 raw_iron, the chest holds more cobblestone, `I stored ... in the chest at (x, y, z) and go on.`, never `My bag is full` |
 
 ## Tools of v0.1.4.10
 

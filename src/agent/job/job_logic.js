@@ -201,6 +201,35 @@ export const OVERRIDABLE_ACTIONS = Object.freeze(['action:followPlayer']);
 export const JOB_STATES = Object.freeze(['running', 'paused', 'done', 'left']);
 
 /**
+ * The commands the model may give while a skill of the job runs (v0.1.4.13, P6): the stop and the two
+ * queries that are actions of the original project. Every query (a command that is no action) is free too.
+ */
+export const MODEL_FREE_COMMANDS = Object.freeze(['!stop', '!stats', '!inventory']);
+
+/**
+ * The roles of a command that is a skill of the job: its own command, the resumed command, a step of the plan.
+ */
+export const JOB_SKILL_ROLES = Object.freeze(['job', 'resume', 'step']);
+
+/**
+ * True when a command the model picks is refused because a skill of the job runs (spec v0.1.4.13, P6): `by` is
+ * `model`, a skill of the job runs (`running`: true, or the role of the running command, one of JOB_SKILL_ROLES),
+ * the command is no query (`query` false) and none of MODEL_FREE_COMMANDS. The owner's typed command and a
+ * system order are never refused.
+ * @param {string} commandName with or without `!`
+ * @param {{by?: string, running?: boolean|string, query?: boolean}} state
+ * @returns {boolean}
+ */
+export function refusedWhileRunning(commandName, { by, running, query } = {}) {
+    const name = cleanCommandName(commandName);
+    if (name === null || by !== 'model' || query === true) {
+        return false;
+    }
+    const runs = running === true || (typeof running === 'string' && JOB_SKILL_ROLES.includes(running));
+    return runs && !MODEL_FREE_COMMANDS.includes(name);
+}
+
+/**
  * The entry of JOB_COMMANDS for a command name, with or without `!`; null for any other command.
  * @param {string} commandName
  * @returns {object|null}

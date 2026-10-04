@@ -202,9 +202,12 @@ describe('W86: a blocker becomes steps', () => {
         await w.run('!mineOre("iron", 4)', 'Steve');
         assert.equal(w.prompts.length, 1);
         assert.match(w.prompts[0], /!mineOre\("iron", 4\)/);
-        assert.equal(w.said.at(-1), 'I have no torches. I get wood, planks, sticks and torches, then I go on.');
-        assert.equal(w.job.status(), 'Job: the mining, 0 of 4 iron, step 1 of 4.');
-        for (let i = 0; i < 4; i++) {
+        // v0.1.4.13 (P3): the plan text, then the first step at once, in the same call
+        assert.ok(w.said.includes('I have no torches. I get wood, planks, sticks and torches, then I go on.'), w.said.join(' | '));
+        assert.ok(w.said.includes('Step 1 of 4: !chopTrees(4).'), w.said.join(' | '));
+        assert.equal(w.said.at(-1), 'Step 1 of 4 done: 4 logs.');
+        assert.equal(w.job.status(), 'Job: the mining, 0 of 4 iron, step 2 of 4.');
+        for (let i = 0; i < 3; i++) {
             w.wait(5);
             await w.job.tick(); // no wait of job_resume_seconds: the bot goes on by itself
         }
@@ -222,9 +225,7 @@ describe('W86: a blocker becomes steps', () => {
 
     test('an order between the steps brings back the wait', async () => {
         const w = makeWorld({ answers: [ANSWER], handlers: { ...handlers, '!mineOre': () => ({ result: { ok: false, reason: 'no_supplies', text: 'I have no torches.' } }) } });
-        await w.run('!mineOre("iron", 4)', 'Steve');
-        w.wait(5);
-        await w.job.tick();
+        await w.run('!mineOre("iron", 4)', 'Steve'); // v0.1.4.13 (P3): the first step ran at once
         assert.equal(w.ran.length, 2);
         w.wait(1);
         w.job.onCommand('!goToPlayer', ['Steve'], 'model');
@@ -259,9 +260,7 @@ describe('W86: a blocker becomes steps', () => {
                 '!chopTrees': () => ({ result: { ok: false, reason: 'no_path', text: 'I found no trees.' } }),
             },
         });
-        await w.run('!mineOre("iron", 4)', 'Steve');
-        w.wait(5);
-        await w.job.tick();
+        await w.run('!mineOre("iron", 4)', 'Steve'); // v0.1.4.13 (P3): the first step ran at once and failed once
         assert.equal(w.prompts.length, 1, 'the first failure of the step plans nothing');
         assert.equal(w.job.get().steps[0].state, 'todo');
         assert.equal(w.job.get().steps[0].fails, 1);
@@ -304,7 +303,9 @@ describe('W86: a blocker becomes steps', () => {
         assert.equal((await job.tick()).reason, 'busy', 'no resume while the model plans');
         release('!craftSupplies("torch", 16)');
         await job.settled();
-        assert.equal(w.said.at(-1), 'I have no torches. I get torches, then I go on.');
+        // v0.1.4.13 (P3): the plan text, then the first step at once
+        assert.ok(w.said.includes('I have no torches. I get torches, then I go on.'), w.said.join(' | '));
+        assert.equal(w.said.at(-1), 'Step 1 of 1: !craftSupplies("torch", 16).');
         assert.equal(job.get().steps.length, 1);
     });
 
@@ -358,14 +359,14 @@ describe('T3-1: the prompt names the chests, every missing supply and where the 
         assert.ok(lines.includes('the chest at (1803, 61, 4): 64 leaf_litter, 20 oak_log, 12 bread, 9 coal'), w.prompts[0]);
         assert.ok(lines.includes('the chest at (1810, 41, 0): 64 cobblestone'), w.prompts[0]);
         assert.equal(lines[8], 'The commands you may use:');
-        assert.equal(w.said.at(-1), 'I have no stone pickaxe. I get wood, coal, torches and a stone pickaxe, then I go on.');
+        // v0.1.4.13 (P3): the plan text, then the first step at once (the way out first, underground)
+        assert.ok(w.said.includes('I have no stone pickaxe. I get wood, coal, torches and a stone pickaxe, then I go on.'), w.said.join(' | '));
+        assert.equal(w.said.at(-1), 'Step 1 of 4 done: 8 oak_log.');
     });
 
     test('underground, a surface step runs after !leaveMine as a system order; on the surface no way out', async () => {
         const w = underground();
-        await w.run('!mineOre("iron", 4)', 'Steve');
-        w.wait(5);
-        await w.job.tick();
+        await w.run('!mineOre("iron", 4)', 'Steve'); // v0.1.4.13 (P3): the first step ran at once, the way out before it
         assert.deepEqual(w.ran.slice(1), [{ text: '!leaveMine', by: 'system' }, { text: '!fetchItem("oak_log", 8)', by: 'system' }]);
         assert.equal(w.said.at(-1), 'Step 1 of 4 done: 8 oak_log.');
         for (let i = 0; i < 3; i++) {
@@ -379,18 +380,18 @@ describe('T3-1: the prompt names the chests, every missing supply and where the 
 
     test('a step that does not need the surface runs underground without the way out', async () => {
         const w = underground(['!smeltItem("raw_iron", 1)'], { '!smeltItem': () => ({ result: { ok: true, reason: null, text: 'I smelted 1 raw_iron.' } }) });
-        await w.run('!mineOre("iron", 4)', 'Steve');
-        w.wait(5);
-        await w.job.tick();
+        await w.run('!mineOre("iron", 4)', 'Steve'); // v0.1.4.13 (P3): the step ran at once, no way out before it
         assert.deepEqual(w.ran.slice(1).map(r => r.text), ['!smeltItem("raw_iron", 1)']);
     });
 
     test('a way out that is stopped, or an order of the player during it: the step waits', async () => {
         const w = underground([STEPS], { '!leaveMine': () => ({ result: undefined }) });
-        await w.run('!mineOre("iron", 4)', 'Steve');
+        await w.run('!mineOre("iron", 4)', 'Steve'); // v0.1.4.13 (P3): the way out ran at once and was stopped
+        assert.deepEqual(w.ran.slice(1).map(r => r.text), ['!leaveMine']);
+        assert.equal(w.job.get().steps[0].state, 'todo');
         w.wait(5);
         assert.equal((await w.job.tick()).reason, 'way_out');
-        assert.deepEqual(w.ran.slice(1).map(r => r.text), ['!leaveMine']);
+        assert.deepEqual(w.ran.slice(1).map(r => r.text), ['!leaveMine', '!leaveMine'], 'tried again by the tick');
         assert.equal(w.job.get().steps[0].state, 'todo');
         w.handlers['!leaveMine'] = (args, world) => {
             world.job.onCommand('!goToPlayer', ['Steve'], 'Steve', '!goToPlayer("Steve")');

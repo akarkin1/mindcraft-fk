@@ -1047,6 +1047,8 @@ export class Agent {
             tools: null,
             wood: null,
             home: { passThrough, enterBuilding, doorIsSafe, foodItems }, // as they are, not bound (Amendment 1, part F; v0.1.4.8, I7)
+            // v0.1.4.13 (P5): a skill of a job reports its own count; the job's counter follows it
+            job: this.job ? { progress: (got) => this.job.progress?.(got) } : null,
         };
         const packs = this.work_packs;
         if (!packs)
@@ -1228,20 +1230,26 @@ export class Agent {
         const respondFunc = async (username, message) => {
             if (message === "") return;
             // v0.1.4.12, D2: the bot itself, the owner's other bots, a command echo or a result of a bot, a name
-            // outside only_chat_with: dropped, with one console line behind verbose_commands (not for its own lines)
+            // outside only_chat_with: dropped, with one console line behind verbose_commands (not for its own lines).
+            // v0.1.4.13, N1: a line that addresses another bot (other_bots, the other agents of the mindserver) or
+            // the supervisor by name is dropped the same way, with no call of the model; a line that addresses this
+            // bot goes on without the address ("claude, come here" is handled as "come here")
             const verdict = shouldAnswer({ from: username, text: message, self: this.name,
-                otherBots: settings.other_bots, onlyChatWith: settings.only_chat_with });
+                otherBots: settings.other_bots, onlyChatWith: settings.only_chat_with,
+                names: convoManager.getInGameAgents(), supervisor: settings.supervisor_name });
             if (!verdict.answer) {
                 if (settings.verbose_commands && verdict.why !== 'self')
                     console.log(`${this.name} does not answer ${username} (${verdict.why}): ${message}`);
                 return;
             }
+            // the line without the address; the address alone ("claude?") is handed on as it is
+            const text = typeof verdict.text === 'string' && verdict.text !== '' ? verdict.text : message;
             try {
                 if (ignore_messages.some((m) => message.startsWith(m))) return;
 
                 this.shut_up = false;
 
-                console.log(this.name, 'received message from', username, ':', message);
+                console.log(this.name, 'received message from', username, ':', text);
 
                 if (convoManager.isOtherAgent(username)) {
                     // a bot of the mindserver: its lines come through the conversation, never through the chat
@@ -1249,7 +1257,7 @@ export class Agent {
                         console.log(`${this.name} does not answer ${username} (other_bot): ${message}`);
                 }
                 else {
-                    let translation = await handleEnglishTranslation(message);
+                    let translation = await handleEnglishTranslation(text);
                     this.handleMessage(username, translation);
                 }
             } catch (error) {

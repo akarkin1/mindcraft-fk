@@ -4,7 +4,11 @@
 import { TEXTS } from './texts.js';
 
 export const EVENT_KINDS = Object.freeze(['explosion', 'health', 'animals_missing', 'night_awake', 'job_stalled',
-    'failure_repeated', 'far_from_home', 'death', 'restart']);
+    'failure_repeated', 'far_from_home', 'death', 'restart', 'report', 'help']);
+
+// v0.1.4.13 (part S): a text of the bot that asks the player something: it ends with "?", or holds `Say "` or
+// `Tell me`. With settings.supervisor_name set, such a text becomes an event of kind help.
+export const HELP_PATTERNS = Object.freeze([/\?\s*$/, /Say "/, /Tell me/]);
 
 export const EVENT_RULES = Object.freeze({
     ringSize: 200,         // the events kept in memory
@@ -85,15 +89,20 @@ export function eventLine(event) {
     return `[${clockText(event?.t)}] ${event?.kind ?? 'event'}: ${event?.text ?? ''}`;
 }
 
-/** A ring of the newest `size` entries, oldest first. */
+/**
+ * A ring of the newest `size` entries, oldest first. v0.1.4.13 (part S): `total` counts every entry ever
+ * pushed, so the digest can ask for the entries since an index (`since(index)`).
+ */
 export class Ring {
     constructor(size = EVENT_RULES.ringSize) {
         this.size = Number.isInteger(size) && size > 0 ? size : EVENT_RULES.ringSize;
         this.items = [];
+        this.total = 0;
     }
 
     push(item) {
         this.items.push(item);
+        this.total++;
         if (this.items.length > this.size)
             this.items.splice(0, this.items.length - this.size);
         return item;
@@ -103,6 +112,13 @@ export class Ring {
     last(n) {
         const count = Number.isInteger(n) && n > 0 ? n : 0;
         return count === 0 ? [] : this.items.slice(-count);
+    }
+
+    /** The entries pushed after the first `index` ones (index: a `total` seen earlier), oldest first. */
+    since(index) {
+        const seen = Number.isFinite(index) && index > 0 ? Math.floor(index) : 0;
+        const fresh = Math.max(0, this.total - seen);
+        return fresh === 0 ? [] : this.items.slice(-Math.min(fresh, this.items.length));
     }
 
     get length() {
@@ -441,4 +457,62 @@ export function deathEvent(name, pos, now = Date.now()) {
 
 export function restartEvent(name, now = Date.now()) {
     return makeEvent('restart', TEXTS.restart(name), {}, now);
+}
+
+// ---- help, report (v0.1.4.13, part S) ----
+
+/** True for a text of the bot that asks the player something (HELP_PATTERNS). */
+export function asksThePlayer(text) {
+    if (typeof text !== 'string' || text.trim() === '')
+        return false;
+    const clean = text.replace(/\s+/g, ' ').trim();
+    return HELP_PATTERNS.some((pattern) => pattern.test(clean));
+}
+
+/**
+ * The event of kind help for a text that asks the player, null for any other text and without a supervisor.
+ * @param {string} text the line of the bot
+ * @param {string} supervisorName settings.supervisor_name; '' or anything that is no name: no event
+ * @param {number} [now]
+ */
+export function helpEvent(text, supervisorName, now = Date.now()) {
+    if (typeof supervisorName !== 'string' || supervisorName.trim() === '' || !asksThePlayer(text))
+        return null;
+    const clean = text.replace(/\s+/g, ' ').trim();
+    return makeEvent('help', TEXTS.help(clean), { text: clean }, now);
+}
+
+/**
+ * The event of kind report: the lines of the digest since the last report, one line joined with `; `, or
+ * `Nothing changed.`
+ * @param {string[]} lines the lines of digestLines without the Cursor line
+ * @param {number} [now]
+ */
+export function reportEvent(lines, now = Date.now()) {
+    const list = (Array.isArray(lines) ? lines : []).filter((line) => typeof line === 'string' && line !== '' && !line.startsWith('Cursor: '));
+    const text = list.length === 0 ? TEXTS.nothingChanged : list.join('; ');
+    return makeEvent('report', text, { lines: list.length }, now);
+}
+
+/**
+ * Watches the tick lag: the server sends the time every 20 ticks, one second; what the time packet comes
+ * later than one second after the last one is the lag. update() with the clock at each time packet; lag()
+ * is the lag of the last packet in ms, 0 while on time or before the second packet.
+ */
+export function createTickLagWatch() {
+    let last = null;
+    let lag = 0;
+    return {
+        update(now = Date.now()) {
+            if (!isFiniteNumber(now))
+                return lag;
+            if (last !== null)
+                lag = Math.max(0, Math.round(now - last - 1000));
+            last = now;
+            return lag;
+        },
+        lag() {
+            return lag;
+        },
+    };
 }

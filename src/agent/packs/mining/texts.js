@@ -2,7 +2,7 @@
 // texts of mineOre word for word, tests compare them; v0.1.4.9 (B2, B3, B4, B6) the texts of the
 // mine of the player and of the ore list; v0.1.4.11 (W2, W3) the tunnel and the new mine underground. Pure.
 import { countsText, posText } from '../storage/texts.js';
-import { ORES, ORE_NAMES, PICKAXE_LEVELS, oreOf } from './ore_table.js';
+import { ORES, ORE_NAMES, PICKAXE_LEVELS, oreOf, pickaxeMaterial } from './ore_table.js';
 
 export { countsText, posText };
 
@@ -25,6 +25,8 @@ export const STOP_REASONS = Object.freeze({
     no_entrance: 'I found no place for a mine',
     underground: 'I am underground and start a new mine only from the surface',
     error: 'something went wrong',
+    // v0.1.4.13 (P2): the pickaxe in hand reached 10 uses and no other could be taken or made
+    worn: 'my pickaxe is nearly worn',
 });
 
 /** Fixed texts. */
@@ -167,18 +169,102 @@ function supplyWords(m) {
     }
 }
 
+// An item taken from a chest as words: `10 bread`, `16 ladders`, `1 torch`, `a chest`, `an iron pickaxe`.
+function takeWords(name, n) {
+    const material = pickaxeMaterial(name);
+    if (material) {
+        return n === 1 ? `${article(material)} ${material} pickaxe` : `${n} ${material} pickaxes`;
+    }
+    if (name === 'ladder' || name === 'torch' || name === 'chest') {
+        return supplyWords({ name, count: n });
+    }
+    return `${n} ${name}`;
+}
+
 /**
  * What the bot gets before a trip (spec v0.1.4.8 E4), from the missing list of tripNeeds:
  * `I get my supplies: 16 ladders, 8 torches, a chest.` Cobblestone is left out (the way down
- * gives it). '' when nothing is missing.
+ * gives it). '' when nothing is missing. Since v0.1.4.13 (P1) the text names the chest a supply comes from
+ * (`takes` of supplyPlan), those first: `I get my supplies: 10 bread from the chest at (15, -59, -99), 16 ladders.`;
+ * a supply a chest gives in full is not named again among the rest.
  * @param {{name: string, count: number, material?: string, spare?: boolean}[]} missing
+ * @param {{chest: {x,y,z}, items: Object<string, number>}[]} [takes]
  * @returns {string}
  */
-export function suppliesText(missing) {
+export function suppliesText(missing, takes = []) {
     const order = ['pickaxe', 'ladder', 'torch', 'food', 'chest'];
-    const words = (Array.isArray(missing) ? missing : []).filter(m => order.includes(m?.name))
+    const given = {};
+    const fromChests = [];
+    for (const take of Array.isArray(takes) ? takes : []) {
+        const items = Object.entries(take?.items ?? {}).filter(([, n]) => Number.isFinite(n) && n > 0);
+        if (items.length === 0 || !take?.chest) {
+            continue;
+        }
+        for (const [name, n] of items) {
+            const key = pickaxeMaterial(name) ? 'pickaxe' : (order.includes(name) ? name : 'food');
+            given[key] = (given[key] ?? 0) + n;
+        }
+        fromChests.push(`${items.map(([name, n]) => takeWords(name, n)).join(' and ')} from the chest at ${posText(take.chest)}`);
+    }
+    const rest = (Array.isArray(missing) ? missing : []).filter(m => order.includes(m?.name))
+        .map(m => {
+            const n = Number.isFinite(m.count) && m.count > 0 ? Math.ceil(m.count) : 1;
+            const got = given[m.name] ?? 0;
+            if (got <= 0) {
+                return m;
+            }
+            given[m.name] = got - n;
+            return got >= n ? null : { ...m, count: n - got };
+        })
+        .filter(Boolean)
         .sort((a, b) => order.indexOf(a.name) - order.indexOf(b.name)).map(supplyWords).filter(w => w.length > 0);
+    const words = [...fromChests, ...rest];
     return words.length > 0 ? `I get my supplies: ${words.join(', ')}.` : '';
+}
+
+// The word of the material a pickaxe is made of, for the wear texts: `iron`, `stone`, `wood`, `gold`, `diamond`.
+function materialWord(name) {
+    const material = pickaxeMaterial(name) ?? 'iron';
+    return { wooden: 'wood', golden: 'gold' }[material] ?? material;
+}
+
+/**
+ * The pickaxe in hand is nearly worn and a new one was made (spec v0.1.4.13, P2):
+ * `My iron_pickaxe is nearly worn: 8 uses left. I made a new one.`
+ * @param {string} name the pickaxe item
+ * @param {number} uses its uses left
+ * @returns {string}
+ */
+export function wornMadeText(name, uses) {
+    return `My ${name} is nearly worn: ${Number.isFinite(uses) ? uses : 0} uses left. I made a new one.`;
+}
+
+/**
+ * The pickaxe in hand is nearly worn and another one was taken from the bag (v0.1.4.13, P2; the spec gives no
+ * text for this case): `My iron_pickaxe is nearly worn: 8 uses left. I take my spare one.`
+ * @param {string} name the pickaxe item
+ * @param {number} uses its uses left
+ * @returns {string}
+ */
+export function wornSpareText(name, uses) {
+    return `My ${name} is nearly worn: ${Number.isFinite(uses) ? uses : 0} uses left. I take my spare one.`;
+}
+
+/**
+ * The pickaxe in hand is nearly worn and nothing can be made (spec v0.1.4.13, P2):
+ * `My iron_pickaxe is nearly worn: 8 uses left. I have no iron for a new one. I stop the mining at 7 of 28 diamond.`
+ * @param {string} name the pickaxe item
+ * @param {number} uses its uses left
+ * @param {number} mined what the trip mined
+ * @param {number} wanted what was asked
+ * @param {string|object} ore
+ * @returns {string}
+ */
+export function wornStopText(name, uses, mined, wanted, ore) {
+    const row = oreOf(ore);
+    const thing = row ? row.ore : String(ore ?? 'ore');
+    return `My ${name} is nearly worn: ${Number.isFinite(uses) ? uses : 0} uses left. I have no ${materialWord(name)} for a new one. `
+        + `I stop the mining at ${Number.isFinite(mined) ? mined : 0} of ${Number.isFinite(wanted) ? wanted : 0} ${thing}.`;
 }
 
 /**

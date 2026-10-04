@@ -74,5 +74,79 @@ export const TEXTS = Object.freeze({
     // the client (scripts/watch.js)
     refused: (cause) => `The watch server refused the call: ${cause}.`,
     noAnswer: (url, cause) => `The watch server at ${url} does not answer: ${cause}.`,
-    streamEnded: 'The stream of events ended.',
+
+    // v0.1.4.13 (part S): the digest (spec 4.1, word for word)
+    cursor: (n) => `Cursor: ${n}.`,
+    nothingChanged: 'Nothing changed.',
+    at: (pos, dimension) => `At ${pos} in ${dimension}.`,
+    atMoved: (pos, dimension, blocks) => `At ${pos} in ${dimension}, moved ${blocks} ${plural(blocks, 'block')}.`,
+    healthFood: (health, food) => `Health ${health} of 20, food ${food} of 20.`,
+    inventoryChanges: (list) => `Inventory: ${list}.`,
+    hand: (name, uses) => `Hand: ${name}, ${uses} ${plural(uses, 'use')} left.`,
+    handPlain: (name) => `Hand: ${name}.`,
+    handEmpty: 'Hand: empty.',
+    chatNew: (n) => `Chat: ${n} new ${plural(n, 'line')}.`,
+    eventsNew: (n) => `Events: ${n} new.`,
+    hazards: (list) => `Hazards: ${list}.`,
+    hazard: (kind, blocks, pos) => `${kind} ${blocks} ${plural(blocks, 'block')} away at ${pos}`,
+    hazardDrop: (count, name, blocks, pos) => `${count} ${name} on the ground ${blocks} ${plural(blocks, 'block')} away at ${pos}`,
+    noHazards: 'Hazards: none.',
+    chest: (pos, free, blocks) => `Chest: ${pos}, ${free} free ${plural(free, 'slot')}, ${blocks} ${plural(blocks, 'block')} away.`,
+    noChest: 'Chest: none.',
+
+    // wait
+    woke: (reason) => `Woke: ${reason}.`,
+    tooManyWaits: (n) => `Too many waits: ${n} are open.`,
+    badWaitFor: (value) => `wait takes for: event, idle, done or any, not "${value}".`, // decided by E1
+    badTimeout: (value) => `wait takes a timeout of 1 to 55 seconds, not "${value}".`, // decided by E1
+
+    // run
+    ran: (done, total) => `Ran ${done} of ${total}.`,
+    ranLine: (n, command, text) => `${n}. ${command}: ${text}`,
+    runStarted: 'started.',
+    stillRunning: (n, total) => `Still running: ${n} of ${total}.`,
+    commandsOnly: 'run takes commands only; use say for words.',
+    badCommands: 'run takes commands: an array of 1 to 10 strings.', // decided by E1
+    stoppedAt: (n, total) => `Stopped at ${n} of ${total}.`, // decided by E1: the stop rule
+    stoppedBy: (who, n, total) => `Stopped by ${who} at ${n} of ${total}.`, // decided by E1: !stop of the owner
+    queued: (n) => `Queued: I run it after ${n} ${plural(n, 'command')}.`, // decided by E1: the owner's command behind the queue
+    notRun: 'not run', // decided by E1: the line of a command the queue never reached
+    runFailed: (cause) => `The command was not handed to the bot: ${cause}.`, // decided by E1
+
+    // look
+    ores: (list) => `Ores: ${list}.`,
+    oreVein: (name, count, pos) => `${name} ${count} at ${pos}`,
+    oreSpread: (name, count, pos) => `${name} ${count} nearest at ${pos}`,
+    lava: (blocks, pos) => `Lava: ${blocks} ${plural(blocks, 'block')} away at ${pos}.`,
+    noLava: (radius) => `Lava: none within ${radius}.`,
+    water: (blocks, pos) => `Water: ${blocks} ${plural(blocks, 'block')} away at ${pos}.`,
+    noWater: (radius) => `Water: none within ${radius}.`,
+    chests: (list) => `Chests: ${list}.`,
+    chestEntry: (pos, free) => `${pos} ${free} free ${plural(free, 'slot')}`,
+    chestUnknown: (pos) => `${pos}`, // decided by E1: a chest the index does not know
+    furnaces: (list) => `Furnaces: ${list}.`,
+    ladders: (list) => `Ladders: ${list}.`,
+    ladder: (pos, height) => `${pos} up to ${height}`,
+    doors: (list) => `Doors and gates: ${list}.`,
+    door: (name, pos, state) => `${name} at ${pos}, ${state}`,
+    drops: (list) => `Drops: ${list}.`,
+    drop: (count, name, pos) => `${count} ${name} at ${pos}`,
+    players: (list) => `Players: ${list}.`,
+    player: (name, pos, blocks) => `${name} at ${pos}, ${blocks} ${plural(blocks, 'block')} away`,
+    badRadius: (value) => `look takes a radius of 4 to 32, not "${value}".`, // decided by E1
+
+    // server
+    up: (minutes, heap, limit, lag) => `Up ${minutes}, heap ${heap} of ${limit} MB, tick lag ${lag} ms.`,
+    playersOnline: (list) => `Players: ${list}.`,
+    noPlayers: 'Players: none.', // decided by E1
+    timeWeather: (time, phase, weather) => `Time ${time} (${phase}), weather ${weather}.`,
+    modelCalls: (calls, session) => `Model calls ${calls}, session ${session}.`,
+    noCostMeter: 'Model calls: no cost meter.', // decided by E1
+    switchesOn: (list) => `Switches on: ${list}.`,
+    noSwitches: 'Switches on: none.', // decided by E1
+    supervisorConnected: (ago) => `Supervisor: connected ${ago}.`,
+    noSupervisor: 'Supervisor: none.',
+
+    // the help event
+    help: (text) => `Help: "${text}"`,
 });

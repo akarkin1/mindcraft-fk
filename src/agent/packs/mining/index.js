@@ -27,14 +27,16 @@ export { BRANCH_EVERY, BRANCH_FROM, BRANCH_LENGTH, CORRIDOR_LIMIT, MAX_PASSED, M
     removePassedAt, roomBox, senseCut, NATURAL_NAMES, WAY_BACK_HOP, WAY_BACK_REACH, isNaturalBlock, knownCells, wayBack, wayBackHops, TORCH_NAMES, torchDue, senseOres, tunnelCells, tunnelDirection, tunnelFor, tunnelsOf, veinParts } from './mine_logic.js';
 export { NO_TORCHES_TEXT, STOP_REASONS, TEXTS, TRAIL_MAX_STEPS, article, askMineText, cannotMineText, collectPassedText, descendText, mineLabel, mineOreText, mineText,
     noEntranceText, noTunnelText, passedText, rememberMineText, rememberTunnelText, suppliesStoppedText, suppliesText, tunnelText,
-    unknownOreText, wayBlockedText, wayWords } from './texts.js';
+    unknownOreText, wayBlockedText, wayWords, wornMadeText, wornSpareText, wornStopText } from './texts.js';
+// v0.1.4.13 (part P): the supply order and the spare pickaxe (P1), the wear rule (P2)
+export { SPARE_PICKAXE_USES, SUPPLY_NEAR_RANGE, applySpareRule, supplyPlan } from './supply_logic.js';
 export { DOOR_KINDS, MINE_FILE, MineStore, NEAREST_RANGE, SHAFT_KINDS, cleanMineName, mineId, mineKey } from './mine_store.js';
-export { FALL_TRIES, FILLERS, REACH, blockAt, collectDrops, countOf, digBlock, digClear, equipPickaxe, fillerCount, fillerOf, freeSlots,
+export { FALL_TRIES, FILLERS, REACH, WEAR_LIMIT, blockAt, collectDrops, countOf, digBlock, digClear, equipPickaxe, fillerCount, fillerOf, fitsBlock, freeSlots,
     inventoryList, isDroppedItem, isFree, isSolid, logicName, nameReader, patchAll, placeInto, placeTorch, race, referenceFor, usesLeftOf,
-    walkTo } from './dig.js';
+    walkTo, wornTool } from './dig.js';
 export { climbUp, followDown, followUp, placeLadder, slideDown, waitStanding, yawOf } from './ladder.js';
 export { BRANCH_BLOCKED, DEFAULT_MAX_MINUTES, MAX_SHAFT_MOVES, PROPOSAL_MS, TUNNEL_CHUNK, climbToSurface, currentMine, depositAtBase,
-    descendToLevel, digTunnel, extendTunnel, goToMine, leaveMine, mineOre, prepareMiningTrip, setupMineBase, takePassedOre, TRIP_FILLER_KEEP,
-    TRIP_FOOD_KEEP, tripKeep } from './mining.js';
+    descendToLevel, digTunnel, extendTunnel, goToMine, leaveMine, mineOre, prepareMiningTrip, replaceWornPickaxe, setupMineBase, takePassedOre,
+    TRIP_FILLER_KEEP, TRIP_FOOD_KEEP, tripKeep } from './mining.js';
 export { MINE_RANGE, chooseMine, fromInsideOn, hasDoorLeg, mineRoutesOn, parentMine, routeEndOf, senseRangeOf, walkBack, walksRoute, wayIn, wayOut } from './mine_way.js';
 export { MIN_TUNNEL_AHEAD, MIN_TUNNEL_CELLS, ROOM_RANGE, SAME_TUNNEL, collectPassedOre, findRoom, forgetMine, minesText, rememberMine, rememberTunnel } from './mine_player.js';

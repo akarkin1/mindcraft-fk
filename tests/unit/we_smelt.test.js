@@ -377,21 +377,23 @@ describe('smeltItem: a furnace from the inventory', () => {
         assert.equal(y, 64);
         assert.ok(x >= 3 && x <= 7 && z >= -2 && z <= 2, `placed at ${x} ${z}`);
         assert.equal(x, 3, 'the nearest cell of the storage');
-        assert.equal(r.text, `I smelted 1 raw_iron into 1 iron_ingot in the furnace at (${x}, 64, ${z}) with 1 coal.`);
+        // v0.1.4.13 (P4): the placement is said in front of the result
+        assert.equal(r.text, `I placed my furnace at (${x}, 64, ${z}). I smelted 1 raw_iron into 1 iron_ingot in the furnace at (${x}, 64, ${z}) with 1 coal.`);
     });
 
     test('areas exist but no allowed cell within 8: nothing placed', async () => {
         const areas = [box('pen', 'pen', 'pen', [-3, 60, -3], [1, 70, 3]), box('far', 'storage', 'building', [30, 60, 30], [35, 70, 35])];
         const s = scene({ items: { raw_iron: 1, coal: 1, furnace: 1 }, furnace: null, areas });
         const r = await S.smeltItem(s.bot, s.ctx, 'raw_iron', 1, s.opts);
-        assert.deepEqual([r.reason, r.text], ['no_furnace', 'I know no furnace within 64 blocks and carry none.']);
+        // v0.1.4.13 (P4): "carry none" is said only when none is carried; here one is, and no cell within 3 is allowed
+        assert.deepEqual([r.reason, r.text], ['no_spot', 'I know no furnace within 64 blocks. I carry one but find no free cell for it within 3 blocks. Stand where I may build and tell me again.']);
         assert.deepEqual(s.placed, []);
         assert.equal(s.bot.count('furnace'), 1);
     });
 
     test('the guard refuses every cell: nothing placed; without any area the nearest free cell', async () => {
         let s = scene({ items: { raw_iron: 1, coal: 1, furnace: 1 }, furnace: null, guard: { canUse: () => true, canPlace: () => false } });
-        assert.equal((await S.smeltItem(s.bot, s.ctx, 'raw_iron', 1, s.opts)).reason, 'no_furnace');
+        assert.equal((await S.smeltItem(s.bot, s.ctx, 'raw_iron', 1, s.opts)).reason, 'no_spot'); // v0.1.4.13 (P4)
         assert.deepEqual(s.placed, []);
         s = scene({ items: { raw_iron: 1, coal: 1, furnace: 1 }, furnace: null });
         const r = await S.smeltItem(s.bot, s.ctx, 'raw_iron', 1, s.opts);

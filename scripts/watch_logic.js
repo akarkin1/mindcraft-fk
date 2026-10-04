@@ -1,19 +1,27 @@
 // v0.1.4.12 (part C): the pure parts of the client of the watch server (scripts/watch.js): the arguments, the
-// request bodies, the parsing of the answers and of the stream of events. No socket, no environment here.
+// request bodies, the parsing of the answers. No socket, no environment here.
+// v0.1.4.13 (part S): the arguments of digest, wait, run, look and server; --follow is a loop of `wait any`
+// (the stream of events of v0.1.4.12 is gone), and the cursor of an answer feeds the next call.
 import { TEXTS } from '../src/agent/watch/texts.js';
-import { eventLine } from '../src/agent/watch/events_logic.js';
 
 export const DEFAULT_URL = 'http://127.0.0.1:8090/mcp';
 
 export const EXIT = Object.freeze({ OK: 0, REFUSED: 1, USAGE: 2 });
 
+export const WAIT_FOR = Object.freeze(['event', 'idle', 'done', 'any']);
+
 export const USAGE = [
     'Usage: node scripts/watch.js <tool> [json args]',
-    '  tools: state, inventory, chat, places, events, say',
+    '  tools: state, inventory, chat, places, events, say, digest, wait, run, look, server',
     '  node scripts/watch.js state',
     '  node scripts/watch.js chat \'{"lines": 20}\'   (or: chat 20)',
     '  node scripts/watch.js say "come here"',
-    '  node scripts/watch.js events --follow',
+    '  node scripts/watch.js digest [since]           what changed since the cursor of the last digest',
+    '  node scripts/watch.js wait [for] [timeout]     for: event, idle, done, any (default); timeout 1 to 55 s',
+    '  node scripts/watch.js run \'!takeFromChest("bread", 10)\' \'!mineOre("diamond", 28)\'',
+    '  node scripts/watch.js look [radius]            4 to 32, default 16',
+    '  node scripts/watch.js server',
+    '  node scripts/watch.js --follow                 a loop of wait any; replaces events --follow of v0.1.4.12',
     'Environment: MC_WATCH_URL (default http://127.0.0.1:8090/mcp), MC_WATCH_TOKEN.',
 ].join('\n');
 
@@ -28,9 +36,14 @@ function jsonObject(text) {
     }
 }
 
+function integer(text) {
+    return typeof text === 'string' && /^\d+$/.test(text.trim()) ? Number(text) : text;
+}
+
 /**
  * The arguments of the command line: `<tool> [json args]`, `say <words ...>`, `chat <n>`, `events <since>`,
- * `events --follow`.
+ * `digest [since]`, `wait [for] [timeout]`, `run '<cmd>' '<cmd>' ...`, `look [radius]`, `--follow` (alone or
+ * with wait: a loop of wait any).
  * @param {string[]} argv process.argv.slice(2)
  * @returns {{tool: string, args: object, follow: boolean}|{error: string}}
  */
@@ -38,11 +51,11 @@ export function parseCliArgs(argv) {
     const list = Array.isArray(argv) ? argv.filter((a) => typeof a === 'string') : [];
     const follow = list.includes('--follow');
     const rest = list.filter((a) => a !== '--follow');
-    const tool = rest.shift();
+    const tool = rest.shift() ?? (follow ? 'wait' : undefined);
     if (!tool || tool === '--help' || tool === '-h')
         return { error: USAGE };
-    if (follow && tool !== 'events')
-        return { error: USAGE };
+    if (follow && tool !== 'wait')
+        return { error: tool === 'events' ? `events --follow is gone: use --follow, a loop of wait any.\n${USAGE}` : USAGE };
     const json = jsonObject(rest[0]);
     if (rest.length > 0 && rest[0].trim().startsWith('{') && json === null)
         return { error: `The arguments are no JSON object: ${rest[0]}` };
@@ -51,11 +64,35 @@ export function parseCliArgs(argv) {
         if (tool === 'say')
             args = { text: rest.join(' ') };
         else if (tool === 'chat')
-            args = { lines: /^\d+$/.test(rest[0]) ? Number(rest[0]) : rest[0] };
+            args = { lines: integer(rest[0]) };
         else if (tool === 'events')
             args = { since: rest[0] };
+        else if (tool === 'digest')
+            args = { since: rest[0] };
+        else if (tool === 'wait')
+            args = waitArgs(rest);
+        else if (tool === 'run')
+            args = { commands: rest };
+        else if (tool === 'look')
+            args = { radius: integer(rest[0]) };
     }
+    if (follow)
+        args = { ...args, for: 'any' };
     return { tool, args, follow };
+}
+
+/** `wait [for] [timeout] [since]`: `wait idle 30`, `wait 30`, `wait event`; a second number is the cursor. */
+export function waitArgs(words) {
+    const args = {};
+    for (const word of Array.isArray(words) ? words : []) {
+        if (WAIT_FOR.includes(word))
+            args.for = word;
+        else if (/^\d+$/.test(word) && args.timeout === undefined)
+            args.timeout = Number(word);
+        else if (args.since === undefined)
+            args.since = word;
+    }
+    return args;
 }
 
 /** The JSON-RPC body of a call of a tool. */
@@ -106,40 +143,21 @@ export function parseAnswer(status, body) {
     return { ok: true, text };
 }
 
-/**
- * A parser of a stream of server-sent events: feed(chunk) returns the parsed data of every complete event.
- * Comments (`: ping`) are skipped; data that is no JSON is skipped.
- */
-export function createSseParser() {
-    let buffer = '';
-    return {
-        feed(chunk) {
-            buffer += String(chunk ?? '').replace(/\r\n/g, '\n');
-            const out = [];
-            let at;
-            while ((at = buffer.indexOf('\n\n')) >= 0) {
-                const block = buffer.slice(0, at);
-                buffer = buffer.slice(at + 2);
-                const data = block.split('\n').filter((line) => line.startsWith('data:')).map((line) => line.slice(5).replace(/^ /, '')).join('\n');
-                if (data === '')
-                    continue;
-                try {
-                    out.push(JSON.parse(data));
-                } catch {
-                    // not an event of the server
-                }
-            }
-            return out;
-        },
-    };
+/** The cursor of an answer of digest or wait (`Cursor: 184.`), null without one. */
+export function cursorOf(text) {
+    const match = /(?:^|\n)Cursor: (\d+)\.(?:\n|$)/.exec(String(text ?? ''));
+    return match ? match[1] : null;
 }
 
-/** The printed line of a notification of the stream, null for anything else. */
-export function streamLine(message) {
-    if (message?.method !== 'notifications/message')
-        return null;
-    const event = message.params?.data;
-    if (!event || typeof event !== 'object')
-        return null;
-    return eventLine(event);
+/**
+ * The arguments of the next call of the loop of --follow: `wait any` with the timeout and the cursor of
+ * the last answer.
+ * @param {object} args the arguments of the first call
+ * @param {string|null} cursor the cursor of the last answer
+ */
+export function nextWaitArgs(args, cursor) {
+    const next = { ...(args ?? {}), for: 'any' };
+    if (cursor !== null && cursor !== undefined)
+        next.since = String(cursor);
+    return next;
 }

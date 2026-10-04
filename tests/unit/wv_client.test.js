@@ -41,7 +41,10 @@ describe('4.1 the client: the request', () => {
         assert.deepEqual(W.parseCliArgs(['state']), { tool: 'state', args: {}, follow: false });
         assert.deepEqual(W.parseCliArgs(['chat', '{"lines": 20}']).args, { lines: 20 });
         assert.deepEqual(W.parseCliArgs(['say', '{"text": "come here"}']).args, { text: 'come here' });
-        assert.equal(W.parseCliArgs(['events', '--follow']).follow, true);
+        // v0.1.4.13 (part S): the stream is gone; --follow is a loop of wait any, events --follow is refused with the hint
+        assert.equal(W.parseCliArgs(['wait', '--follow']).follow, true);
+        assert.equal(W.parseCliArgs(['--follow']).tool, 'wait');
+        assert.match(W.parseCliArgs(['events', '--follow']).error, /events --follow is gone: use --follow, a loop of wait any\./);
     });
 });
 
@@ -78,18 +81,9 @@ describe('4.1 the client: the answer', () => {
         assert.equal(W.parseAnswer(200, JSON.stringify({ jsonrpc: '2.0', id: 1, error: { code: -32601, message: 'Unknown method: x.' } })).ok, false);
     });
 
-    test('the stream: a notifications/message of an event is one printed line with its text', () => {
-        const event = { t: new Date().toISOString(), kind: 'death', text: 'Luna died at (1, 2, 3).', data: {} };
-        const line = W.streamLine({ jsonrpc: '2.0', method: 'notifications/message', params: { level: 'info', logger: 'events', data: event } });
-        assert.match(line, /Luna died at \(1, 2, 3\)\./);
-        assert.equal(W.streamLine({ jsonrpc: '2.0', id: 1, result: {} }), null);
-    });
-
-    test('the parser of server-sent events: the data of each event, comments skipped', () => {
-        const p = W.createSseParser();
-        const msg = { jsonrpc: '2.0', method: 'notifications/message', params: { level: 'info', logger: 'events', data: { kind: 'restart', text: 'Luna started.' } } };
-        const out = [...p.feed(': ping\n\n'), ...p.feed(`event: message\ndata: ${JSON.stringify(msg).slice(0, 20)}`), ...p.feed(`${JSON.stringify(msg).slice(20)}\n\n`)];
-        assert.deepEqual(out, [msg]);
+    test('v0.1.4.13 (part S): the stream and its parser are gone; wait replaces them', () => {
+        assert.equal(W.streamLine, undefined);
+        assert.equal(W.createSseParser, undefined);
     });
 });
 

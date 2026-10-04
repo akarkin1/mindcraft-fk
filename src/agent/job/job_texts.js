@@ -181,6 +181,30 @@ export function stepText(i, n, step) {
 }
 
 /**
+ * `Step 1 of 3: !mineOre("iron", 3).` when a step of the plan starts (v0.1.4.13, P3). The command as the
+ * plan holds it.
+ * @param {number} i the number of the step, from 1
+ * @param {number} n the number of steps
+ * @param {{command: string}} step
+ * @returns {string}
+ */
+export function stepStartText(i, n, step) {
+    const command = typeof step?.command === 'string' && step.command.length > 0 ? step.command : 'nothing';
+    return `Step ${i} of ${n}: ${command}.`;
+}
+
+/**
+ * `The mining runs, 7 of 28 diamond. Say !stop first.` (v0.1.4.13, P6): the answer to the model when it picks a
+ * command while a skill of the job runs. Without a count `The farming runs. Say !stop first.`
+ * @param {object} job
+ * @returns {string}
+ */
+export function busyText(job) {
+    const count = countText(job);
+    return count ? `${capital(wordsOf(job))} runs, ${count}. Say !stop first.` : `${capital(wordsOf(job))} runs. Say !stop first.`;
+}
+
+/**
  * `I could not plan the steps for the torches. Tell me what to do.`
  * @param {{kind: string, item: string|null}} blocker
  * @returns {string}

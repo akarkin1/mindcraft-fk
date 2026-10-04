@@ -159,7 +159,7 @@ describe('the server', () => {
         assert.equal(note.text, '');
         assert.deepEqual((await request(port, { body: { jsonrpc: '2.0', id: 2, method: 'ping' } })).json.result, {});
         const list = await request(port, { body: { jsonrpc: '2.0', id: 3, method: 'tools/list' } });
-        assert.equal(list.json.result.tools.length, 6);
+        assert.equal(list.json.result.tools.length, 11); // v0.1.4.13 (S): six of v0.1.4.12 and digest, wait, run, look, server
     });
 
     test('an unknown method: -32601', async () => {
@@ -206,33 +206,18 @@ describe('the server', () => {
         assert.equal(text, 'Areas: pen (pen) (0,64,0)-(6,66,6).\nNo mines.\nNo routes.\nNo rules.');
     });
 
-    test('the stream: an event as notifications/message, and the events tool', async () => {
-        const got = await new Promise((resolve, reject) => {
-            const req = http.request({ host: '127.0.0.1', port, path: '/mcp', method: 'GET', headers: { Authorization: `Bearer ${TOKEN}`, Accept: 'text/event-stream' } }, (res) => {
-                assert.equal(res.statusCode, 200);
-                assert.match(res.headers['content-type'], /text\/event-stream/);
-                let text = '';
-                res.on('data', (c) => {
-                    text += c;
-                    const data = text.split('\n').find((line) => line.startsWith('data: '));
-                    if (data) {
-                        req.destroy();
-                        resolve(JSON.parse(data.slice(6)));
-                    }
-                });
-                setImmediate(() => agent.bot._client.emit('explosion', { x: 10.5, y: 64, z: 3 }));
-            });
-            req.on('error', (error) => {
-                if (error.code !== 'ECONNRESET')
-                    reject(error);
-            });
-            req.end();
-        });
-        assert.equal(got.method, 'notifications/message');
-        assert.equal(got.params.level, 'info');
-        assert.equal(got.params.logger, 'events');
-        assert.equal(got.params.data.kind, 'explosion');
-        assert.equal(got.params.data.text, 'Explosion 4 blocks from the area "pen" at (10, 64, 3).');
+    test('v0.1.4.13 (S): no stream, GET is 405; wait event wakes on an event and answers with the digest', async () => {
+        const get = await request(port, { method: 'GET' });
+        assert.equal(get.status, 405);
+        const waiting = call(port, 'wait', { for: 'event', timeout: 10 });
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        agent.bot._client.emit('explosion', { x: 10.5, y: 64, z: 3 });
+        const woke = await waiting;
+        const text = woke.json.result.content[0].text.split('\n');
+        assert.equal(text[0], 'Woke: event.');
+        assert.match(text[1], /^Cursor: \d+\.$/);
+        assert.ok(text.includes('Events: 1 new.'));
+        assert.ok(text.some((line) => /explosion: Explosion 4 blocks from the area "pen" at \(10, 64, 3\)\.$/.test(line)));
         agent.bot.emit('death');
         const events = (await call(port, 'events')).json.result.content[0].text.split('\n');
         assert.match(events[0], /^\[\d\d:\d\d:\d\d\] restart: Luna started\.$/);

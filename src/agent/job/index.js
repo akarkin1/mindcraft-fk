@@ -11,12 +11,13 @@
 import { isNight } from '../packs/home/night_logic.js';
 import { reflexOn } from '../packs/home/home_settings.js';
 import {
-    JOB_RULES, OVERRIDABLE_ACTIONS, cleanCommandName, endsJob, isDone, jobOf, nextIdleJob, progress, readJobSettings,
-    resultOf, resumeCommand, sameWork, shouldResume, blockerOf,
+    JOB_RULES, JOB_SKILL_ROLES, OVERRIDABLE_ACTIONS, cleanCommandName, endsJob, isDone, jobOf, nextIdleJob, progress, readJobSettings,
+    refusedWhileRunning, resultOf, resumeCommand, sameWork, shouldResume, blockerOf,
 } from './job_logic.js';
 import { PLAN_COMMANDS, PLAN_COMMAND_NAMES, WAY_OUT_COMMAND, needsSurface, planPrompt, parsePlan, stepDone } from './plan_logic.js';
 import {
-    doneText, idleStartText, leaveText, noJobText, noPlanText, planText, restartText, resumeText, statusText, stepText, stopText,
+    busyText, doneText, idleStartText, leaveText, noJobText, noPlanText, planText, restartText, resumeText, statusText, stepStartText, stepText,
+    stopText,
 } from './job_texts.js';
 
 export { JobStore, JOB_FILE } from './job_store.js';
@@ -35,6 +36,15 @@ function errorResult(where, error) {
 
 function isActive(job) {
     return job !== null && typeof job === 'object' && (job.state === 'running' || job.state === 'paused');
+}
+
+function isFiniteNumber(value) {
+    return typeof value === 'number' && Number.isFinite(value);
+}
+
+// v0.1.4.13 (P5): the skill reported its own count during this run (the entry, or the system order behind it).
+function reportedOf(entry) {
+    return entry?.reported === true || entry?.sys?.reported === true;
 }
 
 // The default readers of the state of the bot; each never throws.
@@ -240,13 +250,72 @@ export function createJob(agent, store, options = {}) {
             job.steps = steps;
             job.chainAt = iso();
             setJob(job);
-            return result(true, null, speak(planText(b, steps)));
+            const said = speak(planText(b, steps));
+            // v0.1.4.13 (P3): the plan is made; its first step runs at once, in the same call, as a step
+            state.planning = false;
+            mine = false;
+            await startFirstStep(job);
+            return result(true, null, said);
         } catch (error) {
             return errorResult('plan', error);
         } finally {
             if (mine) {
                 state.planning = false;
             }
+        }
+    }
+
+    // The index of the next step to run: a step whose check the inventory already meets is done before it runs
+    // (v0.1.4.12, T3-1). -1 without a step to do.
+    function nextStep(job) {
+        const steps = Array.isArray(job.steps) ? job.steps : [];
+        let next = steps.findIndex(step => step.state === 'todo');
+        while (next >= 0 && Number.isFinite(steps[next]?.check?.count) && stepDone(steps[next], call(() => inventory(), {}), false)) {
+            steps[next].state = 'done';
+            setJob(job);
+            next = steps.findIndex(step => step.state === 'todo');
+        }
+        return next;
+    }
+
+    // Runs the step `next` of the plan as a system order, after the way out of the mine when the step needs the
+    // surface and the bot is underground (T3-1); says the step text (P3) when the step starts.
+    async function runStep(job, next) {
+        const steps = job.steps;
+        const command = steps[next].command;
+        if (needsSurface(command) && call(() => underground(), false)) {
+            const orderAt = state.lastOrderAt;
+            const out = await runSystem(WAY_OUT_COMMAND, 'way_out', job);
+            const fresh = getJob();
+            const same = fresh?.state === 'running' && fresh.started === job.started && fresh.steps?.[next]?.state === 'todo'
+                && fresh.steps[next].command === command;
+            if (out.reason === 'interrupted' || state.lastOrderAt !== orderAt || !same) {
+                return result(true, 'way_out', '');
+            }
+        }
+        speak(stepStartText(next + 1, steps.length, steps[next]));
+        return await runSystem(command, 'step', job, next);
+    }
+
+    // v0.1.4.13 (P3): the first step of a plan that was just made, at once; tick is busy meanwhile. Never throws.
+    async function startFirstStep(planned) {
+        if (executeCommand === null || state.ticking) {
+            return;
+        }
+        state.ticking = true;
+        try {
+            const job = getJob();
+            if (!job || job.state !== 'running' || job.started !== planned.started) {
+                return;
+            }
+            const next = nextStep(job);
+            if (next >= 0) {
+                await runStep(job, next);
+            }
+        } catch (error) {
+            console.warn('The job could not start its plan:', error?.message ?? error);
+        } finally {
+            state.ticking = false;
         }
     }
 
@@ -262,9 +331,11 @@ export function createJob(agent, store, options = {}) {
         return result(false, 'planning', ''); // plan() set state.planning before it asked the model
     }
 
-    async function jobResult(job, r, gain, detached) {
+    // v0.1.4.13 (P5): when the skill reported its own count (reported), got stays as the skill said it; the gain of
+    // the inventory counts only for a skill that did not report.
+    async function jobResult(job, r, gain, detached, reported = false) {
         const before = job.got;
-        job = progress(job, gain);
+        job = reported ? { ...job } : progress(job, gain);
         if (r.reason === 'interrupted') {
             setJob(job);
             return result(true, 'interrupted', '');
@@ -328,6 +399,10 @@ export function createJob(agent, store, options = {}) {
             return result(r.ok !== false, r.reason === 'interrupted' ? 'interrupted' : 'way_out', r.text);
         }
         const job = getJob();
+        if (job && job.state === 'left' && job.started === entry.started && (entry.leave === true || entry.sys?.leave === true)) {
+            // P5: the leave text deferred at the stop, now with the count the skill reported last
+            return result(true, 'ended', speak(leaveText(job)));
+        }
         if (!job || job.state !== 'running' || job.started !== entry.started) {
             return result(true, 'none', '');
         }
@@ -335,7 +410,24 @@ export function createJob(agent, store, options = {}) {
         if (entry.role === 'step') {
             return await stepResult(job, entry.step, r, true);
         }
-        return await jobResult(job, r, gain, entry.role === 'resume');
+        return await jobResult(job, r, gain, entry.role === 'resume', reportedOf(entry));
+    }
+
+    // v0.1.4.13 (P5, P6): the entry of the command of the job that runs now, with a role of `roles`: the newest of
+    // state.roles for this job, else the system order that tick runs when the glue gave no onCommand for it. null
+    // when none runs.
+    function runningEntry(job, roles) {
+        for (let i = state.roles.length - 1; i >= 0; i--) {
+            const entry = state.roles[i];
+            if (roles.includes(entry.role) && entry.started === job.started) {
+                return entry;
+            }
+        }
+        const s = state.system;
+        if (s && !s.done && roles.includes(s.role) && s.started === job.started) {
+            return s;
+        }
+        return null;
     }
 
     // The order that tick runs now, as the role of the command.
@@ -350,14 +442,15 @@ export function createJob(agent, store, options = {}) {
         const s = state.system;
         if (s && !s.seen && s.name === name) {
             s.seen = true;
-            return { name, role: s.role, started: s.started, step: s.step, sys: s };
+            return { name, role: s.role, started: s.started, step: s.step, base: s.base, sys: s };
         }
         return { name, role: 'other', started: null, step: null };
     }
 
     async function runSystem(text, role, job, stepIndex = null) {
         const name = cleanCommandName(String(text).match(/^!?(\w+)/)?.[1] ?? '');
-        state.system = { name, role, text, started: job?.started ?? null, step: stepIndex, seen: false, done: false };
+        // base (P5): what the job had before a resumed command; the skill counts from there
+        state.system = { name, role, text, started: job?.started ?? null, step: stepIndex, seen: false, done: false, base: isFiniteNumber(job?.got) ? job.got : 0, reported: false };
         const mine = state.system;
         let value;
         try {
@@ -412,8 +505,18 @@ export function createJob(agent, store, options = {}) {
                         return result(true, 'no_job', '');
                     }
                     const wasRunning = job.state === 'running';
+                    // P5 (W109): a skill that counts itself is still running and reports once more when the stop reaches
+                    // it; the leave text waits for its result, so that both numbers agree
+                    const running = wasRunning ? runningEntry(job, ['job', 'resume']) : null;
                     job.state = 'left';
                     setJob(job);
+                    if (running && reportedOf(running)) {
+                        running.leave = true;
+                        if (running.sys) {
+                            running.sys.leave = true;
+                        }
+                        return result(true, 'ended', '');
+                    }
                     return result(true, 'ended', wasRunning ? speak(leaveText(job)) : '');
                 }
                 const next = jobOf(command, args, { by: by === 'model' ? 'model' : 'player', text, now: iso() });
@@ -427,7 +530,7 @@ export function createJob(agent, store, options = {}) {
                     said = speak(leaveText(job));
                 }
                 const saved = setJob(next);
-                pushRole({ name: command, role: 'job', started: saved?.started ?? next.started, step: null });
+                pushRole({ name: command, role: 'job', started: saved?.started ?? next.started, step: null, base: 0, reported: false });
                 return result(true, 'job', said);
             } catch (error) {
                 return errorResult('note the command', error);
@@ -502,28 +605,11 @@ export function createJob(agent, store, options = {}) {
                     if (!shouldResume({ ...view, job, resumeSeconds: chained ? 0 : s.resumeSeconds })) {
                         return result(true, 'wait', '');
                     }
-                    const steps = Array.isArray(job.steps) ? job.steps : [];
-                    // v0.1.4.12 (T3-1): a step whose check the inventory already meets is done before it runs
-                    let next = steps.findIndex(step => step.state === 'todo');
-                    while (next >= 0 && Number.isFinite(steps[next]?.check?.count) && stepDone(steps[next], call(() => inventory(), {}), false)) {
-                        steps[next].state = 'done';
-                        setJob(job);
-                        next = steps.findIndex(step => step.state === 'todo');
-                    }
+                    // v0.1.4.12 (T3-1): a step whose check the inventory already meets is done before it runs; a step
+                    // that needs the surface runs after the way out of the mine
+                    const next = nextStep(job);
                     if (next >= 0) {
-                        const command = steps[next].command;
-                        if (needsSurface(command) && call(() => underground(), false)) {
-                            // T3-1: a step that needs the surface runs after the way out of the mine
-                            const orderAt = state.lastOrderAt;
-                            const out = await runSystem(WAY_OUT_COMMAND, 'way_out', job);
-                            const fresh = getJob();
-                            const same = fresh?.state === 'running' && fresh.started === job.started && fresh.steps?.[next]?.state === 'todo'
-                                && fresh.steps[next].command === command;
-                            if (out.reason === 'interrupted' || state.lastOrderAt !== orderAt || !same) {
-                                return result(true, 'way_out', '');
-                            }
-                        }
-                        return await runSystem(command, 'step', job, next);
+                        return await runStep(job, next);
                     }
                     const text = resumeCommand(job);
                     if (!text) {
@@ -562,6 +648,68 @@ export function createJob(agent, store, options = {}) {
                 return result(true, 'running', speak(restartText(job)));
             } catch (error) {
                 return errorResult('restart', error);
+            }
+        },
+
+        /**
+         * The skill's own count of the job (v0.1.4.13, P5): the pack calls ctx.job?.progress?.(got) each time it
+         * reports progress, with what it got in this run. got of the job becomes what the job had before the run
+         * plus that count, and the gain of the inventory is not added on top. Only for the command of the job or
+         * its resumed command, never for a step. Never throws.
+         * @param {number} got the count of the skill in this run
+         * @returns {{ok: boolean, reason: string|null, text: string}}
+         */
+        progress(got) {
+            try {
+                const n = Number(got);
+                if (!Number.isFinite(n) || n < 0) {
+                    return result(false, 'bad_count', '');
+                }
+                const job = getJob();
+                if (!job || !isFiniteNumber(job.wanted) || (job.state !== 'running' && job.state !== 'left')) {
+                    return result(false, 'no_job', '');
+                }
+                const entry = runningEntry(job, ['job', 'resume']);
+                // a job that was left takes the last report of the skill that still runs (the leave text waits for it)
+                if (!entry || (job.state === 'left' && entry.leave !== true && entry.sys?.leave !== true)) {
+                    return result(false, job.state === 'left' ? 'no_job' : 'not_running', '');
+                }
+                entry.reported = true;
+                if (entry.sys) {
+                    entry.sys.reported = true;
+                }
+                const base = isFiniteNumber(entry.base) ? entry.base : (isFiniteNumber(entry.sys?.base) ? entry.sys.base : 0);
+                job.got = base + Math.floor(n);
+                setJob(job);
+                return result(true, 'progress', '');
+            } catch (error) {
+                return errorResult('note the progress', error);
+            }
+        },
+
+        /**
+         * v0.1.4.13 (P6): the answer to the model for a command it picks while a skill of the job runs (the
+         * command of the job, its resumed command or a step): `The mining runs, 7 of 28 diamond. Say !stop first.`;
+         * null when the command runs: nothing of the job runs, the order is the owner's or a system order, the
+         * command is !stop, !stats, !inventory or a query. Never throws.
+         * @param {string} name the command
+         * @param {string} by 'model', 'system' or the player
+         * @param {boolean} [query] the command is a query, no action
+         * @returns {string|null}
+         */
+        refusal(name, by, query = false) {
+            try {
+                const job = getJob();
+                if (!job || job.state !== 'running') {
+                    return null;
+                }
+                const entry = runningEntry(job, JOB_SKILL_ROLES);
+                if (!entry) {
+                    return null;
+                }
+                return refusedWhileRunning(name, { by, running: entry.role, query: query === true }) ? busyText(job) : null;
+            } catch {
+                return null;
             }
         },
 

@@ -5,7 +5,7 @@
 // The store: chest_index (one file per world, <worldDir>/chests.json).
 // Executing module (it moves the bot and gets `ctx` = { chests, settings, log, now }): storage.
 // v0.1.4.12 (part E): smelt_logic (pure, no imports) and smelt (the executing module of smeltItem).
-import { fetchItem, storeItems } from './storage.js';
+import { fetchItem, lookIntoChests, storeItems } from './storage.js';
 import { smeltItem } from './smelt.js';
 
 export { ARROW_KEEP, CONTAINER_KINDS, DIMENSIONS, FOOD_KEEP, KEEP_LIMITS, MATERIALS, TOOL_KINDS, chestKey, chooseChest, cleanName,
@@ -17,21 +17,22 @@ export { CHEST_FILE, ChestIndex } from './chest_index.js';
 export { FETCH_LOOK_LIMIT, FETCH_LOOK_RANGE, FETCH_TIMEOUT_MS, LOOK_LIMIT, LOOK_RANGE, LOOK_TIMEOUT_MS, OPEN_TIMEOUT_MS, REACH, STORE_LIMIT,
     STORE_RANGE, STORE_TIMEOUT_MS, chestsText, fetchItem, lookIntoChest, lookIntoChests, recordChest, recordContainer, storeItems } from './storage.js';
 // v0.1.4.12 (part E): smelting
-export { BATCH_MAX, EXTRA_MS, FUELS, FURNACE_AREA_KINDS, FURNACE_FAR_RANGE, FURNACE_RANGE, NO_FURNACE_KINDS, PER_ITEM_MS, PLACE_RANGE, POLL_MS, SMELT_PRODUCTS,
-    areaKindOf, batchesOf, cellAllowsFurnace, chooseFuel, chooseFurnace, chooseFurnaceSpot, fuelKindOf, fuelPer, isBurningLog, isBurningPlanks,
-    productOf, timeLimitMs, unitsFor, usableFurnaces, walkLimitMs } from './smelt_logic.js';
+export { BATCH_MAX, EXTRA_MS, FUELS, FURNACE_AREA_KINDS, FURNACE_FAR_RANGE, FURNACE_PLACE_NEAR, FURNACE_RANGE, NO_FURNACE_KINDS, PER_ITEM_MS, PLACE_RANGE, POLL_MS,
+    SMELT_PRODUCTS, areaKindOf, batchesOf, cellAllowsFurnace, chooseFuel, chooseFurnace, chooseFurnaceSpot, fuelKindOf, fuelPer, inKnownMine, isBurningLog,
+    isBurningPlanks, productOf, timeLimitMs, unitsFor, usableFurnaces, walkLimitMs } from './smelt_logic.js';
 export { SMELT_OPEN_TIMEOUT_MS, SMELT_REACH, STALL_MS, smeltItem } from './smelt.js';
 
 /**
  * `ctx.storage` of the pack context (spec section 2): storeItems and fetchItem bound to the bot, and
- * since v0.1.4.12 (part E) smeltItem(item, count, options).
+ * since v0.1.4.12 (part E) smeltItem(item, count, options); since v0.1.4.13 (part P, the supply step of the
+ * mining pack) lookIntoChests(range, options).
  * The context is read when a function runs, so `ctx` may be a function that returns the current
  * context (a context that cannot be read counts as empty). Called with the bot in front, as
  * `storeItems(bot, ctx, options)`, the functions take the bot and ctx given there.
  * @param {object} bot
  * @param {object|(() => object)} ctx
  * @returns {{storeItems: (options?: object) => Promise<object>, fetchItem: (name: string, count?: number, options?: object) => Promise<object>,
- *   smeltItem: (item: string, count?: number, options?: object) => Promise<object>}}
+ *   smeltItem: (item: string, count?: number, options?: object) => Promise<object>, lookIntoChests: (range?: number, options?: object) => Promise<object[]>}}
  */
 export function bindStorage(bot, ctx) {
     const current = () => {
@@ -60,6 +61,12 @@ export function bindStorage(bot, ctx) {
                 return smeltItem(bot, args[1] ?? current(), args[2], args[3], args[4]);
             }
             return smeltItem(bot, current(), args[0], args[1], args[2]);
+        },
+        lookIntoChests(...args) {
+            if (args[0] === bot && bot) {
+                return lookIntoChests(bot, args[1] ?? current(), args[2], args[3]);
+            }
+            return lookIntoChests(bot, current(), args[0], args[1]);
         },
     };
 }

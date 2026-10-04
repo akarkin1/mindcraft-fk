@@ -371,6 +371,18 @@ function inventoryGain(before, after) {
     return gain;
 }
 
+// v0.1.4.13 (P6): the text with which agent.job refuses a command of the model while a skill of the job runs, or null
+// (no job, no refusal, a job without the method). Never throws.
+function jobRefusal(job, name, by) {
+    try {
+        const text = typeof job?.refusal === 'function' ? job.refusal(name, by, !isAction(name)) : null;
+        return typeof text === 'string' && text.length > 0 ? text : null;
+    } catch (error) {
+        console.warn('The job could not judge the command:', error);
+        return null;
+    }
+}
+
 // v0.1.4.10 (I4): onCommand of agent.job (job_memory) before the command runs. Never throws.
 function jobBefore(agent, running, by) {
     try {
@@ -434,9 +446,17 @@ export async function executeCommand(agent, message, options = {}) {
             const by = typed ? typedBy(agent, options) : null;
             if (by)
                 running.by = by;
+            const job = agent?.job ?? null; // v0.1.4.10: null without job_memory
+            // v0.1.4.13 (P6): a command the model picks while a skill of the job runs is not run; the answer goes to the
+            // model as a system line (the caller adds the text to the history). !stop, the queries, the owner's typed
+            // command and a system order pass.
+            const refusal = jobRefusal(job, command.name, orderBy(agent, options, typed));
+            if (refusal !== null) {
+                console.log('Job:', refusal);
+                return refusal;
+            }
             const list = agent && typeof agent === 'object' ? (Array.isArray(agent.running_commands) ? agent.running_commands : (agent.running_commands = [])) : [];
             list.push(running);
-            const job = agent?.job ?? null; // v0.1.4.10: null without job_memory
             const before = job ? inventoryCounts(agent) : null;
             if (job)
                 jobBefore(agent, running, orderBy(agent, options, typed));

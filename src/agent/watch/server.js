@@ -1,17 +1,23 @@
 // v0.1.4.12 (part C): the watch server (spec 4.1). In the process of the agent, behind watch_server, on
-// 127.0.0.1:watch_port only, written on node:http (rule 18). POST /mcp takes JSON-RPC 2.0 (mcp_logic.js), GET /mcp
-// opens a stream of server-sent events with every new event as notifications/message. Every request carries
-// `Authorization: Bearer <token>`; the token comes from the agent, which reads MC_WATCH_TOKEN once, and is kept
-// here only as its SHA-256 (rule 19: never printed, logged or saved). startWatchServer never throws.
+// 127.0.0.1:watch_port only, written on node:http (rule 18). POST /mcp takes JSON-RPC 2.0 (mcp_logic.js). Every
+// request carries `Authorization: Bearer <token>`; the token comes from the agent, which reads MC_WATCH_TOKEN
+// once, and is kept here only as its SHA-256 (rule 19: never printed, logged or saved). startWatchServer never
+// throws.
+// v0.1.4.13 (part S): the stream of GET /mcp is gone: the wait tool holds its answer until something happens.
+// The state of the new tools is made here: watch.cursors (the last 50 snapshots), watch.waits (the open waits,
+// told of every event), watch.queue (the command queue of run; it wraps agent.handleMessage after the
+// listeners, so the owner's commands wait behind the queue). A request whose connection closes aborts its
+// wait. tools/list comes from toolList() (the table and the tools of registerTool).
 import http from 'node:http';
-import { MAX_BODY, MCP_PATH, authorized, handleRpc, sseMessage, tokenHash, tooLargeAnswer, unauthorizedAnswer } from './mcp_logic.js';
+import { MAX_BODY, MCP_PATH, authorized, handleRpc, tokenHash, tooLargeAnswer, unauthorizedAnswer } from './mcp_logic.js';
 import { EVENT_RULES, Ring, restartEvent } from './events_logic.js';
 import { startListeners } from './events.js';
-import { runTool } from './tools.js';
+import { createWaits, runTool, toolList } from './tools.js';
+import { createCursorStore } from './digest_logic.js';
+import { createQueue } from './queue.js';
 import { TEXTS } from './texts.js';
 
 export const HOST = '127.0.0.1';
-export const SSE_PING_MS = 15000;
 
 function validPort(port) {
     return Number.isInteger(port) && port >= 0 && port <= 65535;
@@ -78,8 +84,9 @@ function readBody(req) {
 /**
  * Starts the watch server.
  * @param {object} agent
- * @param {{port?: number, token?: string, now?: () => number, tickMs?: number, animalsEveryMs?: number, settings?: object}} options
- *   port: watch_port (0 for a free port, in tests); token: MC_WATCH_TOKEN as the agent read it
+ * @param {{port?: number, token?: string, now?: () => number, tickMs?: number, animalsEveryMs?: number, reportMs?: number,
+ *   waitTickMs?: number, answerMs?: number, longSkillMs?: number, settings?: object}} options
+ *   port: watch_port (0 for a free port, in tests); token: MC_WATCH_TOKEN as the agent read it; the rest for tests
  * @returns {Promise<{ok: boolean, reason: string|null, text: string, close: () => Promise<void>, port?: number, push?: Function, watch?: object}>}
  */
 export async function startWatchServer(agent, options = {}) {
@@ -92,32 +99,48 @@ export async function startWatchServer(agent, options = {}) {
         return { ok: false, reason: 'bad_port', text: TEXTS.badPort(port), close: noop };
 
     let stopListeners = () => {};
-    let pinger = null;
-    const streams = new Set();
+    let watch = null;
+    const closeState = () => {
+        try {
+            watch?.queue?.close?.();
+        } catch {
+            // the queue is gone
+        }
+        try {
+            watch?.waits?.close?.();
+        } catch {
+            // the waits are gone
+        }
+    };
     try {
-        const watch = {
+        const startedAt = Date.now();
+        watch = {
             chat: new Ring(EVENT_RULES.chatSize),
             events: new Ring(EVENT_RULES.ringSize),
             lastSpeaker: null,
             lastLine: null,
             now: typeof options?.now === 'function' ? options.now : () => Date.now(),
+            uptime: () => (Date.now() - startedAt) / 1000,
+            presence: { seenAt: null },
         };
         if (options?.settings)
             watch.settings = options.settings;
+        watch.cursors = createCursorStore();
+        watch.waits = createWaits(agent, watch, { tickMs: options?.waitTickMs });
         const push = (event) => {
             if (!event)
                 return;
             watch.events.push(event);
-            const message = sseMessage(event);
-            for (const res of streams) {
-                try {
-                    res.write(message);
-                } catch {
-                    streams.delete(res);
-                }
+            try {
+                watch.waits.onEvent();
+            } catch (error) {
+                console.warn('Watch server: the waits were not told of an event:', error?.message ?? error);
             }
         };
-        const handlers = { callTool: (name, args) => runTool(agent, watch, name, args) };
+        const handlers = {
+            tools: () => toolList(),
+            callTool: (name, args, request) => runTool(agent, watch, name, args, request),
+        };
 
         const server = http.createServer(async (req, res) => {
             try {
@@ -140,22 +163,20 @@ export async function startWatchServer(agent, options = {}) {
                         sendJson(res, answer.status, answer.body, { Connection: 'close' });
                         return;
                     }
-                    const answer = await handleRpc(body.text, handlers);
+                    // a closed connection ends the wait of this call
+                    const aborter = new AbortController();
+                    const onClose = () => aborter.abort();
+                    res.on('close', onClose);
+                    const request = { signal: aborter.signal };
+                    const answer = await handleRpc(body.text, { tools: handlers.tools, callTool: (name, args) => handlers.callTool(name, args, request) });
+                    res.off('close', onClose);
+                    if (aborter.signal.aborted)
+                        return;
                     sendJson(res, answer.status, answer.body);
                     return;
                 }
-                if (req.method === 'GET') {
-                    req.resume();
-                    res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
-                    res.write(': the events of the watch server\n\n');
-                    streams.add(res);
-                    const drop = () => streams.delete(res);
-                    res.on('close', drop);
-                    res.on('error', drop);
-                    return;
-                }
                 req.resume();
-                sendJson(res, 405, { jsonrpc: '2.0', id: null, error: { code: -32600, message: `Method not allowed: ${req.method}` } }, { Allow: 'GET, POST' });
+                sendJson(res, 405, { jsonrpc: '2.0', id: null, error: { code: -32600, message: `Method not allowed: ${req.method}` } }, { Allow: 'POST' });
             } catch (error) {
                 sendJson(res, 500, { jsonrpc: '2.0', id: null, error: { code: -32603, message: String(error?.message ?? error) } });
             }
@@ -175,22 +196,15 @@ export async function startWatchServer(agent, options = {}) {
             } catch {
                 // never listened
             }
+            closeState();
             return { ok: false, reason: 'listen_failed', text: TEXTS.listenFailed(port, listened.error?.code ?? 'error'), close: noop };
         }
         server.on('error', (error) => console.warn('Watch server:', error?.message ?? error));
         const actual = server.address()?.port ?? port;
 
-        stopListeners = startListeners(agent, watch, push, { tickMs: options?.tickMs, animalsEveryMs: options?.animalsEveryMs });
-        pinger = setInterval(() => {
-            for (const res of streams) {
-                try {
-                    res.write(': ping\n\n');
-                } catch {
-                    streams.delete(res);
-                }
-            }
-        }, SSE_PING_MS);
-        pinger.unref?.();
+        stopListeners = startListeners(agent, watch, push, { tickMs: options?.tickMs, animalsEveryMs: options?.animalsEveryMs, reportMs: options?.reportMs });
+        // the queue wraps handleMessage after the listeners did, so it is the outermost wrapper
+        watch.queue = createQueue(agent, { now: watch.now, answerMs: options?.answerMs, longSkillMs: options?.longSkillMs });
         push(restartEvent(agent?.name || agent?.bot?.username || 'The bot', watch.now()));
 
         let closing = null;
@@ -198,20 +212,12 @@ export async function startWatchServer(agent, options = {}) {
             if (closing)
                 return closing;
             closing = new Promise((resolve) => {
+                closeState(); // the queue first: its wrapper lies over the one of the listeners
                 try {
                     stopListeners();
                 } catch {
                     // the listeners are gone with the process
                 }
-                clearInterval(pinger);
-                for (const res of streams) {
-                    try {
-                        res.end();
-                    } catch {
-                        // the socket is gone
-                    }
-                }
-                streams.clear();
                 try {
                     server.close(() => resolve());
                     server.closeAllConnections?.();
@@ -228,7 +234,7 @@ export async function startWatchServer(agent, options = {}) {
         } catch {
             // nothing started
         }
-        clearInterval(pinger);
+        closeState();
         return { ok: false, reason: 'error', text: `The watch server does not start: ${error?.message ?? error}.`, close: noop };
     }
 }
