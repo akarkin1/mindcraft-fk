@@ -19,7 +19,7 @@ Based on your decisions of 2026-10-03 (routines) and 2026-10-04 (supervision as 
 |---|---|---|
 | Model calls in an hour of your play | 250 | 256 |
 | Tokens per call | 4,700 in, 70 out | 3,700 in, 95 out |
-| Cost per hour of your play | $1.70 | $0.11 (if the price table is right) |
+| Cost per hour of your play | $1.70 | $0.14 (the bill; the table said $0.11, see 5.2) |
 | Reply time | median 1 s, 9 of 10 under 2 s | median 2 s, 9 of 10 under 4 s |
 | Diamonds | 9 in 29 s once in fresh rock | 7 in 2 min once in fresh rock, after 25 min lost |
 | Restarts of the process | 3 | 2 |
@@ -105,7 +105,7 @@ No switch: each is a defect. The 25 interventions of the supervisor map onto the
 | # | Change |
 |---|---|
 | 5.1 | `prompt_cache` (a setting, off): on the Anthropic API the fixed part of the prompt (the command list, the examples' format) is sent with a cache mark; the cost meter counts cache reads at their price. About 70 percent of Haiku's input tokens; the hour from $1.70 to about $0.60. Nothing the bot does changes. |
-| 5.2 | The price of `gpt-6-luna` in the price table is checked against your bill once and corrected if needed. |
+| 5.2 | The price of `gpt-6-luna` in the price table ($0.10 in, $0.50 out per million) is about 30 percent low: your bill of 2026-10-03 (UTC) says about $0.14 where the meter said $0.107, and 2026-10-04 $0.06 against $0.042; the meter counts OpenAI's `completion_tokens`, reasoning included, so the gap is the price. The table takes the line of the platform's Pricing page when you send it; until then $0.13 in and $0.65 out, which lands on the bill within a cent. |
 
 ### Package 6: The creeper loop
 
