@@ -194,21 +194,16 @@ Ordered by recommendation. Nothing here is decided.
 | 3 | Saved lessons | A recorded round is replayed on order. The bot checks the world before each step. |
 | 4 | Guides of big goals | A short file per big goal, ten lines: the milestones in order, each with the state that code checks (an iron pickaxe in the inventory, 5 diamonds, the portal lit). The model plans only the next milestone; the skills do the work; the player edits the file. The guide is also the list of skills to build: smelting, trading, the Nether. "Beat the game" first. Stashed on 2026-10-01 until the job of v0.1.4.10 and smelting exist. |
 | 5 | Review after the session | A strong model reads the journal after play and proposes rules and corrections. The player approves. |
-| 6 | Smelting | The bot makes iron tools by itself. |
 | 7 | New skills from a record | The strong model writes a skill from what it watched. The player approves each one. Experimental. |
 | 8 | Learned skills on top of the coded ones | The skill library of 0.1.4.4, with approval for each skill. |
 | 9 | Vision | A look on request. An experiment. |
+| 10 | Building from a blueprint | The owner's wish of 2026-10-04. The original project has blueprints for its construction tasks (`src/agent/tasks/construction_tasks.js`: levels of blocks with coordinates, `Blueprint.explain` and `Blueprint.check`), reachable only through the four blocked commands of a task. A skill of the fork: "build me a 5 by 7 house" gets a blueprint from a file under `blueprints/` or from the model once, says the material it needs, places it level by level with every safety rule and checks each level against the world as the task check does, then says what is missing. Next to `!buildWatched` of v0.1.4.12, which builds the rest of what the owner started. |
 
 ### Small items
 
 | Item |
 |---|
-| `bot.wake()` of mineflayer sends the wrong action since Minecraft 1.21.6. The home pack works around it; a patch of the library would correct every caller. |
-| The path search does not centre the points of a path behind a door that it opens, so the bot can stick at the frame. |
-| The bot is ignored for 3 seconds after each spawn, because mineflayer does not send the packet `player_loaded`. |
 | When a chat message is deleted by the server, the network library forgets which messages it has seen. |
-| `!useOn` toggles a door without reading its state. |
-| `!endConversation` answers with a typing error. `!goToPlayer` fails for a player it does not know. |
 | Pull requests for the original project: text-to-speech without a shell, the sandbox, the chat checksum. |
 
 ## Open decisions
