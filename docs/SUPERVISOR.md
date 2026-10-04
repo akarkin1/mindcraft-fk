@@ -47,26 +47,42 @@ add it to the network access of the environment. Close the tunnel when the eveni
 
 ## 4. The tools in the session
 
-In the folder of the repository, once:
+The repository has a `.mcp.json` that declares the MCP server `mindcraft` for every Claude Code session opened in
+it, on your machine and in the cloud alike. It holds no secret: the URL is `MC_WATCH_URL` (default
+`http://127.0.0.1:8090/mcp`) and the token is `MC_WATCH_TOKEN`, both read from the environment of the session. The
+first time, Claude Code asks whether to trust the project's server: say yes.
+
+**On your machine.** Start the session from a shell that has the token. Put this once in your PowerShell profile
+(`notepad $PROFILE`):
+
+```
+function claude-mc {
+    $env:MC_WATCH_TOKEN = Get-Secret -Name MindcraftWatchToken -AsPlainText
+    try { claude @args } finally { Remove-Item Env:MC_WATCH_TOKEN -ErrorAction SilentlyContinue }
+}
+```
+
+Then, in the folder of the repository, with the bot running: `claude-mc`, and `/mcp` lists `mindcraft` as
+connected with its tools: `wait`, `digest`, `run`, `reply`, `note`, `look`, `server`, `state`, `inventory`, `chat`,
+`places`, `events`, `say` (`reply` and `note` only with `supervisor_name` set). No tunnel.
+
+**In the cloud.** The same file, with two variables in the environment of the cloud session (its settings, as
+environment variables): `MC_WATCH_TOKEN` (the token of step 2) and `MC_WATCH_URL` (the tunnel's URL with `/mcp`). A
+quick tunnel gets a new URL at every start, so `MC_WATCH_URL` has to change with it; a named tunnel of cloudflared
+(with an account) keeps one URL. The host must be allowed in the network access of the environment.
+
+**By hand**, instead of the file, for one machine only (kept in Claude Code's own configuration, not in the
+repository):
 
 ```
 claude mcp add --transport http mindcraft <url> --header "Authorization: Bearer <token>"
 ```
 
-`<url>` is `http://127.0.0.1:8090/mcp` or the tunnel's URL with `/mcp`; `<token>` is the token of step 2. In
-PowerShell, without typing the token:
-
-```
-claude mcp add --transport http mindcraft http://127.0.0.1:8090/mcp --header "Authorization: Bearer $(Get-Secret -Name MindcraftWatchToken -AsPlainText)"
-```
-
-Claude Code keeps the header in its own configuration, not in the repository. `claude mcp list` then shows
-`mindcraft` as connected, and in the session `/mcp` lists the tools: `wait`, `digest`, `run`, `reply`, `note`,
-`look`, `server`, `state`, `inventory`, `chat`, `places`, `events`, `say`. `reply` and `note` are there only with
-`supervisor_name` set.
+`<url>` is `http://127.0.0.1:8090/mcp` or the tunnel's URL with `/mcp`; `<token>` is the token of step 2. Such a
+server is not seen by a session in the cloud.
 
 Without the MCP server the session can use the client: `node scripts/watch.js <tool>` with `MC_WATCH_URL` and
-`MC_WATCH_TOKEN` in its environment.
+`MC_WATCH_TOKEN` in its environment (on your machine `fnm exec --using=v20.20.2 -- node scripts/watch.js <tool>`).
 
 ## 5. The one sentence
 

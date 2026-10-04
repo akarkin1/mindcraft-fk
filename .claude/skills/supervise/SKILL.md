@@ -29,6 +29,25 @@ a shell of the repository with `MC_WATCH_URL` and `MC_WATCH_TOKEN` set: `node sc
 You count as connected while you call `wait` or `digest` at least once a minute. Without that the bot answers a line
 for you with `The supervisor is not here.`
 
+## Where you run
+
+The same loop runs in a session on the owner's machine and in a session in the cloud; only the way to the bot differs.
+
+| | On the owner's machine (Windows) | In the cloud |
+|---|---|---|
+| The MCP server `mindcraft` | From the repository's `.mcp.json`: the URL is `http://127.0.0.1:8090/mcp` unless `MC_WATCH_URL` says otherwise, the token is `MC_WATCH_TOKEN` of the shell that started the session | The same file; `MC_WATCH_URL` must be the tunnel's URL with `/mcp`, `MC_WATCH_TOKEN` set in the environment |
+| The client | `fnm exec --using=v20.20.2 -- node scripts/watch.js <tool>` in PowerShell (`npm` is `npm.cmd`); the URL defaults to `http://127.0.0.1:8090/mcp` | `node scripts/watch.js <tool>` with `MC_WATCH_URL` and `MC_WATCH_TOKEN` |
+| No tunnel, no network rule | Needed: the tunnel the owner opens, its host allowed in the environment | |
+
+Before the start, check the way: call `server`. When the tools are missing or answer `unauthorized`, the token did
+not reach the session. Never read the vault or any secret yourself, never ask for the token in the chat: tell the
+owner the one thing to do, then stop. On his machine that is: close the session and start it again from a shell
+where the token is set (`docs/SUPERVISOR.md`, section 4). A refused connection means the bot or its watch server is
+not running: `watch_server` on, the launch script with the token.
+
+On the owner's machine you share it with him: kill only processes you started, never touch his settings
+or profiles, never commit anything under `bots/`.
+
 ## Start
 
 1. `server`: the bot is up, the switches it has on, the players online.
@@ -54,7 +73,7 @@ the poll.
 | The digest says | You do |
 |---|---|
 | `Running: nothing.` and `Job:` names work that is left (`the mining, 7 of 36 diamond`) | `run` the job's command again. |
-| Food 6 of 20 or less and no food in the bag | `look`; `run ['!takeFromChest("bread", 10)']` at the nearest chest that holds food, then the job's command. No chest with food: tell the owner with `reply`. |
+| Food 6 of 20 or less and no food in the bag | `look` (it lists the chests); take the best food the nearest chest holds, in this order: cooked beef (steak) or cooked porkchop, cooked mutton, salmon or chicken, golden carrot, bread, baked potato, then the rest; never rotten flesh, spider eyes, poisonous potatoes or raw chicken while anything else is there. For example `run ['!takeFromChest("cooked_beef", 8)']`, then the job's command. No chest with food: tell the owner with `reply`. |
 | `Hand: <pickaxe>, 10 uses left.` or fewer and the bot did not replace it | `run ['!craftRecipe("iron_pickaxe", 1)']` when it carries the material; else tell the owner what it lacks. |
 | An event `explosion`, `death` or `health`, or `Hazards: lava` 2 blocks away or closer | `run ['!stop']`. Then one line to the owner: what happened, where. |
 | An event `help`: the bot asks the owner something | Answer with `say` when the owner's sentence settles it. Else leave it to the owner. |
