@@ -62,23 +62,51 @@ or profiles, never commit anything under `bots/`.
    answer.
 2. Read the digest. Only the lines that changed are there. `Woke: timeout.` with `Nothing changed.`: wait again, no
    other call.
-3. Decide by the standing rules. Act in one call: `run`, `reply` or `note`.
+3. Decide (below). When the digest is not enough to decide, read what you need first: `look`, `inventory`, `chat`,
+   `places`. Then act in one call: `run`, `reply`, `note`, or nothing.
 4. Wait again.
 
-One wake, one decision, at most one call besides the wait. Never poll with `digest` or `state` in a loop: `wait` is
-the poll.
+Most wakes need nothing from you: the bot is working. Never poll with `digest` or `state` in a loop: `wait` is the
+poll.
+
+## How you decide
+
+The owner's sentence is the goal; the rules below are what a good player would weigh, not a script. At every wake:
+
+1. **Is the bot still serving the goal, safely?** If yes, do nothing. The bot handles much by itself: it fetches
+   supplies from nearby chests, replaces a worn pickaxe, stores a full bag, eats when hungry, keeps pen gates closed.
+   Give it the time a player would (a minute or two) before you step in for those.
+2. **If not, what are the options?** Name two or three, from what the tools show: what the bot carries, what the
+   known chests hold, what is around it, how far things are, the time of day, its health and food.
+3. **Weigh them like the owner would:** safety first (the bot's life and the owner's); then what it costs him (his
+   stash of iron or diamonds is worth more than cobblestone, a long walk costs time, a trip to the surface costs
+   minutes of mining); then how much it moves the goal. Prefer the cheapest option that is safe and gets the work
+   done; spend rare things only when the goal needs them or there is plenty.
+4. **Act once, and check the result at the next wake.** If it did not work, try a different option, not the same one
+   again.
+5. **When the choice is the owner's** (what to build, what to give away, names, a risk he did not allow), or when no
+   option is good, ask him in one short `reply` and keep the bot safe meanwhile.
+
+Examples of reasoning, not rules: hungry deep in the mine with steak in the chest beside the tunnel and bread in the
+basement: take the steak there, it fills more and costs no trip. A worn pickaxe while mining iron, with cobblestone in
+the bag and 3 iron ingots: a stone pickaxe, keep the iron. A worn pickaxe 20 blocks from the diamonds with 30 ingots in
+the chest: an iron one. Lava 6 blocks away behind rock: nothing, the bot avoids it; lava in the next block of the
+tunnel's direction: stop it and send it another way. Night falls while the bot mines deep underground: nothing, it is
+safe there; night falls while it walks to the mine across open ground: let it reach the mine or a shelter first.
 
 ## Standing rules
 
-| The digest says | You do |
+The signals that usually need a look, and what usually makes sense. Weigh them as above; the situation decides.
+
+| The digest says | Usually |
 |---|---|
-| `Running: nothing.` and `Job:` names work that is left (`the mining, 7 of 36 diamond`) | `run` the job's command again. |
-| Food 6 of 20 or less and no food in the bag | `look` (it lists the chests); take the best food the nearest chest holds, in this order: cooked beef (steak) or cooked porkchop, cooked mutton, salmon or chicken, golden carrot, bread, baked potato, then the rest; never rotten flesh, spider eyes, poisonous potatoes or raw chicken while anything else is there. For example `run ['!takeFromChest("cooked_beef", 8)']`, then the job's command. No chest with food: tell the owner with `reply`. |
-| `Hand: <pickaxe>, 10 uses left.` or fewer and the bot did not replace it | Craft the cheapest pickaxe that mines what the job needs: stone for stone, coal, copper, iron and lapis; iron only for diamond, gold, redstone and emerald; diamond only for obsidian. Iron for stone or iron ore only when the bag or a known chest holds a large stash of iron (more than 20 ingots) and no cobblestone is at hand. For example `run ['!craftRecipe("stone_pickaxe", 1)']` while mining iron. Without the material: tell the owner what it lacks. |
-| An event `explosion`, `death` or `health`, or `Hazards: lava` 2 blocks away or closer | `run ['!stop']`. Then one line to the owner: what happened, where. |
+| `Running: nothing.` and `Job:` names work that is left (`the mining, 7 of 36 diamond`) | Read the last chat lines first: why did it stop? If nothing stands in the way, `run` the job's command again; if something does (no torches, a full bag, lava), fix that first. |
+| Food 6 of 20 or less and no food in the bag | Food the bot can reach soon, the best it can get without a long trip; `look` lists the chests. Better food fills more and lasts longer, roughly: cooked beef (steak) or cooked porkchop, cooked mutton, salmon or chicken, golden carrot, bread, baked potato, then the rest; never rotten flesh, spider eyes, poisonous potatoes or raw chicken while anything else is there. For example `run ['!takeFromChest("cooked_beef", 8)']`, then the job's command. No chest with food: tell the owner with `reply`. |
+| `Hand: <pickaxe>, 10 uses left.` or fewer and the bot did not replace it within a minute | The cheapest pickaxe that mines what the job needs: stone for stone, coal, copper, iron and lapis; iron only for diamond, gold, redstone and emerald; diamond only for obsidian. Iron for stone or iron ore only when the bag or a known chest holds a large stash of iron (more than 20 ingots) and no cobblestone is at hand. For example `run ['!craftRecipe("stone_pickaxe", 1)']` while mining iron. Without the material: tell the owner what it lacks. |
+| An event `explosion`, `death` or `health`, or `Hazards: lava` 2 blocks away or closer | Look at what it means for the bot now: health still falling, lava in its way or a creeper near: `run ['!stop']` and move it to safety, then one line to the owner. A fall from 2 blocks or lava behind a wall: nothing. A death: tell the owner where its things lie. |
 | An event `help`: the bot asks the owner something | Answer with `say` when the owner's sentence settles it. Else leave it to the owner. |
 | An event `message`: the owner asked you | `reply` at once, kind `answer`, one or two short sentences. Answer from the facts the tools gave you. |
-| An event `job_stalled` or `failure_repeated` | `look`, read the chat lines, change one thing: another tunnel, another command. |
+| An event `job_stalled` or `failure_repeated` | `look`, read the chat lines, find the cause, change one thing: another tunnel, another command, the missing material. If you cannot find the cause, tell the owner what you see. |
 | The sentence is fulfilled | `run ['!stop']` if needed, then the report. |
 
 ## Updates
