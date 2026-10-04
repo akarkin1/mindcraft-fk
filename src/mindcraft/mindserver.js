@@ -14,6 +14,8 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 let io;
 let server;
+let voice = null; // v0.1.4.13: the live voice of the page, only with voice_ui (./voice/voice_server.js)
+let voiceStart = null;
 const agent_connections = {};
 const agent_listeners = [];
 
@@ -44,15 +46,45 @@ export function logoutAgent(agentName) {
     }
 }
 
+// v0.1.4.13: a line for a bot, down the path of send-message; false when the bot is not connected
+function sendToAgent(agentName, data) {
+    const conn = agent_connections[agentName];
+    if (!conn || !conn.socket) return false;
+    conn.socket.emit('send-message', data);
+    return true;
+}
+
 // Initialize the server
-export function createMindServer(host_public = false, port = 8080) {
+// voice_options: voice_ui, voice_voice and voice_language of settings.js; with voice_ui off nothing of the voice
+// is loaded or started
+export function createMindServer(host_public = false, port = 8080, voice_options = {}) {
     const app = express();
     server = http.createServer(app);
-    io = new Server(server);
+    // with the voice an utterance of the page is up to about 20 s of 16 kHz audio
+    io = voice_options?.voice_ui ? new Server(server, { maxHttpBufferSize: 20e6 }) : new Server(server);
 
     // Serve static files
     const __dirname = path.dirname(fileURLToPath(import.meta.url));
     app.use(express.static(path.join(__dirname, 'public')));
+
+    voice = null;
+    voiceStart = null;
+    if (voice_options?.voice_ui) {
+        voiceStart = import('./voice/voice_server.js')
+            .then(({ startVoice }) => {
+                voice = startVoice({
+                    app,
+                    options: voice_options,
+                    sendToAgent,
+                    agents: () => Object.entries(agent_connections).map(([name, conn]) => ({ name, in_game: conn.in_game })),
+                });
+                return voice;
+            })
+            .catch((err) => {
+                console.error('[voice] The voice could not start:', err.message);
+                return null;
+            });
+    }
 
     // Socket.io connection handling
     io.on('connection', (socket) => {
@@ -188,6 +220,7 @@ export function createMindServer(host_public = false, port = 8080) {
             for (let agentName in agent_connections) {
                 mindcraft.stopAgent(agentName);
             }
+            voice?.close();
             // wait 2 seconds
             setTimeout(() => {
                 console.log('Exiting MindServer');
@@ -210,6 +243,22 @@ export function createMindServer(host_public = false, port = 8080) {
 
         socket.on('bot-output', (agentName, message) => {
             io.emit('bot-output', agentName, message);
+            voice?.onBotOutput(agentName, message);
+        });
+
+        // v0.1.4.13: the page asks for the live voice; with voice_ui off it learns that the voice is off
+        socket.on('voice-join', () => {
+            if (!voiceStart) {
+                socket.emit('voice-config', { enabled: false });
+                return;
+            }
+            voiceStart.then((v) => {
+                if (v) v.join(socket);
+                else {
+                    const failed = { state: 'failed', message: 'The voice could not start.' };
+                    socket.emit('voice-config', { enabled: true, stt: failed, tts: failed });
+                }
+            });
         });
 
         socket.on('listen-to-agents', () => {
@@ -284,3 +333,4 @@ function removeListener(listener_socket) {
 export const getIO = () => io;
 export const getServer = () => server;
 export const numStateListeners = () => agent_listeners.length;
+export const getVoice = () => voice;

@@ -4,6 +4,7 @@ import os from 'os';
 import path from 'path';
 import { TTSConfig as gptTTSConfig } from '../models/gpt.js';
 import { TTSConfig as geminiTTSConfig } from '../models/gemini.js';
+import settings from './settings.js';
 
 let speakingQueue = []; // each item: {text, model, audioData, ready}
 let isSpeaking = false;
@@ -29,7 +30,13 @@ export function systemSpeechCommand(text, platform = process.platform) {
     return { command: platform === 'darwin' ? 'say' : 'espeak', args: ['--', clean], env: {} };
 }
 
+// v0.1.4.13: with voice_ui the page of the mindserver speaks the bot's lines, so speak() says nothing (no line twice)
+export function systemVoiceMuted(s = settings) {
+    return s?.voice_ui === true;
+}
+
 export function speak(text, speak_model) {
+    if (systemVoiceMuted()) return;
     const model = speak_model || 'system';
 
     const item = { text, model, audioData: null, ready: null };

@@ -1538,6 +1538,8 @@ export class Agent {
             for (let username of settings.only_chat_with) {
                 this.bot.whisper(username, message);
             }
+            // v0.1.4.13: the page of the mindserver shows (and with voice_ui speaks) the lines the bot whispers too
+            try { sendOutputToServer(this.name, message); } catch (_) {}
         }
         else {
             if (settings.speak) {

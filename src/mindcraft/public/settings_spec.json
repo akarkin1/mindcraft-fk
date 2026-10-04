@@ -418,6 +418,21 @@
         "description": "One sentence of the bot's role in the conversation prompt, e.g. 'You are the farmer. gpt is the miner.' Empty: no role line",
         "default": ""
     },
+    "voice_ui": {
+        "type": "boolean",
+        "description": "Whether the page of the mindserver has the live voice: whisper hears the owner, Supertonic speaks the bot's lines in the page, the system voice is silent. Read when the mindserver starts; needs npm run voice:setup (about 1.6 GB)",
+        "default": false
+    },
+    "voice_voice": {
+        "type": "string",
+        "description": "With voice_ui: the voice of the bot in the page, supertonic:F1 to F5 or M1 to M5; kokoro:af_heart needs kokoro-js",
+        "default": "supertonic:F1"
+    },
+    "voice_language": {
+        "type": "string",
+        "description": "With voice_ui: the language whisper hears ('auto' for any) and Supertonic speaks (English when it does not speak it)",
+        "default": "en"
+    },
     "code_timeout_mins": {
         "type": "number",
         "description": "Number of minutes to allow code execution. -1 for no timeout",
