@@ -10,7 +10,7 @@ Based on your decisions of 2026-10-03 (routines) and 2026-10-04 (supervision as 
 | "Opus, why is it going to the surface?" in the game chat or by voice: the supervisor answers in chat, in its own voice. "claude, come here": the bot. One channel | Two chats: the game for the bot, this session for me |
 | "Maintain the base": the bot works a routine you wrote once in your words, step by step, until "stop" | A rule constrains; nothing describes a procedure |
 | Out of food in the mine: the bot takes bread from the chest beside it. A furnace in the bag is placed and used. A plan that was made starts. A worn pickaxe is replaced before it breaks | The bot climbs to the basement for bread that lies 3 blocks away, says it carries no furnace while it does, waits after planning, mines with a pickaxe at 2 uses, then wanders for planks |
-| Two bots share the places, chests, routes, mines and rules of a world | gpt learned the mine, four chests and ten rules that Claude already knew |
+| "claude, come here": claude comes, gpt stays quiet. Two bots share the places, chests, routes, mines and rules of a world; a pen is a pen for both before anyone saves it | Both answer every line; gpt learned the mine, four chests and ten rules that Claude already knew; the two opened the pens together |
 | Haiku's hour costs about $0.60 | $1.70: every call carries the whole prompt |
 
 ## 2. What the play of 2026-10-04 measured
@@ -48,17 +48,18 @@ One channel, two names: what you say goes into the game chat, and both of us rea
 
 | # | Change |
 |---|---|
-| 1.10 | `supervisor_name`: a line that names the supervisor ("Opus, why is it going up?") is a `message` event for the supervisor and nothing the bot answers; every line the supervisor writes is a line the bot never answers (the `other_bots` filter of v0.1.4.12 with one more name). A line without a name goes to the bot, as today. |
-| 1.11 | `reply`: the supervisor's answer, which the bot relays into chat as `[Opus] ...`. With nobody connected, "Opus, ..." gets one line from the bot: `The supervisor is not here.` |
-| 1.12 | Voice: when the voice page of the separate branch lands (section 9), the recognised speech goes into the game chat as your line, so the same names apply, and the page speaks the bot's lines in one voice and the supervisor's in another. |
+| 1.10 | Addressing by name, for the bots too (your play of 2026-10-04 with two bots: both answered every line until you told them). A line that starts with a name, or names one in its first words ("claude, come here", "gpt please wait here"), is for that one; the other bot stays quiet and does nothing. A line without a name goes to every bot, as today. The name is matched by code, no model call for the bot that is not meant. |
+| 1.11 | `supervisor_name`: a line that names the supervisor ("Opus, why is it going up?") is a `message` event for the supervisor and nothing a bot answers; every line the supervisor writes is a line no bot answers (the `other_bots` filter of v0.1.4.12 with one more name). |
+| 1.12 | `reply`: the supervisor's answer, which a bot relays into chat as `[Opus] ...`. With nobody connected, "Opus, ..." gets one line: `The supervisor is not here.` |
+| 1.13 | Voice (section 9, built): the recognised speech goes into the game chat as your line, so the same names apply; the page's dropdown of the bot you talk with puts that name in front of your speech; the page speaks each bot in its own voice (`voice_voice` per profile) and the supervisor's `[Opus]` lines in another. |
 
 The supervisor's side, in the repository:
 
 | # | Change |
 |---|---|
-| 1.13 | `.claude/skills/supervise/SKILL.md`: the loop (`wait`, read the digest, decide, `run`, `wait`), the standing rules (idle with a job left: resume; low food: the nearest chest; a worn tool: craft; a lava event: stop and tell), what never to do (`!goToCoordinates` downwards, an order while a command runs), the report at the end. |
-| 1.14 | `docs/SUPERVISOR.md`: the token, the tunnel, `claude mcp add` so the tools are native in a Claude Code session, the one sentence you give the supervisor, what it costs. A fresh session with that prompt costs about a cent a turn. |
-| 1.15 | A journey with a scripted supervisor on the test server: a 10-minute mining job through `wait` and `run` with at most 6 wakes, the food fetched from the chest beside the tunnel, one `help` answered. |
+| 1.14 | `.claude/skills/supervise/SKILL.md`: the loop (`wait`, read the digest, decide, `run`, `wait`), the standing rules (idle with a job left: resume; low food: the nearest chest; a worn tool: craft; a lava event: stop and tell), what never to do (`!goToCoordinates` downwards, an order while a command runs), the report at the end. |
+| 1.15 | `docs/SUPERVISOR.md`: the token, the tunnel, `claude mcp add` so the tools are native in a Claude Code session, the one sentence you give the supervisor, what it costs. A fresh session with that prompt costs about a cent a turn. |
+| 1.16 | A journey with a scripted supervisor on the test server: a 10-minute mining job through `wait` and `run` with at most 6 wakes, the food fetched from the chest beside the tunnel, one `help` answered. |
 
 ### Package 2: Routines
 
@@ -90,13 +91,14 @@ No switch: each is a defect. The 25 interventions of the supervisor map onto the
 | 3.11 | The bot never picks up a player's death drops and never equips armour it did not own: a drop within 4 blocks of where a player died, for 5 minutes, is left; worn items are only what the bot crafted or took from a chest. |
 | 3.12 | `!givePlayer`: the bot throws from 2 blocks and steps back 3, and its item reflex leaves what it just gave alone for 30 seconds; the text says where the rest lies. A pickup the server does when you walk the item onto the bot stays. For a whole kit: `Say "put my stuff in the chest".` |
 | 3.13 | `!goToCoordinates` downwards never digs a shaft: more than 3 blocks down is dug as stairs or with ladders placed, or refused in words. The shaft of 2026-10-04 killed the owner. |
-| 3.14 | `mine_other_ores` (a setting, off): while mining one ore, the redstone, lapis, gold, iron and coal exposed in the tunnel's walls are mined too, with the text counting them. |
+| 3.14 | The pens (your play of 2026-10-04 with two bots: they opened the pens together; one knew the fences, the other had no idea). An enclosure the scan calls a pen (a fence with animals inside, which the sense already says: `I am in a fenced pen 5 x 6 with 26 chickens`) is protected like a saved pen before anyone saves it: the path search never opens its gate, the item reflex never enters it, `!useOn` and the model's code never open its gate. The bot says `That is a pen with 26 chickens; I do not open its gate. Say "open the pen" if you mean it.` A gate opened on your word is closed behind the bot. |
+| 3.15 | `mine_other_ores` (a setting, off): while mining one ore, the redstone, lapis, gold, iron and coal exposed in the tunnel's walls are mined too, with the text counting them. |
 
 ### Package 4: Two bots, one memory
 
 | # | Change |
 |---|---|
-| 4.1 | `shared_memory` (a setting, off): the areas, places, routes, mines, chests, rules and routines of a world live in `bots/shared/worlds/<seed>/` and both bots read and write them; the chat memory and the job stay per bot. |
+| 4.1 | `shared_memory` (a setting, off): the areas, places, routes, mines, chests, rules and routines of a world live in `bots/shared/worlds/<seed>/` and both bots read and write them; the chat memory and the job stay per bot. With it, a pen one bot saved and a rule you gave one bot hold for the other; 3.14 holds before anything is saved. |
 
 ### Package 5: Cost
 
@@ -115,7 +117,7 @@ No switch: each is a defect. The 25 interventions of the supervisor map onto the
 
 | # | Change |
 |---|---|
-| 7.1 | Journeys, black box, written before the build and failing on v0.1.4.12: the scripted supervisor (1.15); "Opus, where is it" answered and not answered by the bot; a routine of three steps run to the end and again; food from the chest beside the tunnel; the furnace from the bag; the plan that starts; the worn pickaxe; the shaft refused; the shared mine known to the second bot. They gate the release with the 30 of v0.1.4.9 to v0.1.4.12. |
+| 7.1 | Journeys, black box, written before the build and failing on v0.1.4.12: the scripted supervisor (1.16); "claude, come here" with two bots and only claude moving; "Opus, where is it" answered and not answered by the bots; a routine of three steps run to the end and again; food from the chest beside the tunnel; the furnace from the bag; the plan that starts; the worn pickaxe; the shaft refused; the unsaved pen whose gate stays closed under `!followPlayer` through it; the shared mine known to the second bot. They gate the release with the 30 of v0.1.4.9 to v0.1.4.12. |
 | 7.2 | Unit tests of every text, of the digest from staged facts, of the addressing rule, of the routine store, of the tool wear rule, of the shared memory paths. |
 | 7.3 | The model comparison: `npm run test:play -- --situations`: six situations in plain words, the same for each model ("you are stuck, get back to your tunnel", "your bag is full, deal with it", "there is lava ahead", "go get bread", "give me the rest of my stuff", a two-step order), on your machine only, about 20 cents a model; the table says the first command, the follow-ups and the time. |
 
@@ -131,8 +133,9 @@ All off by default, as always.
 | `shared_memory` | Each bot its own memory | One memory of the world for all bots |
 | `prompt_cache` | The prompt sent as today | The fixed part marked for the cache on the Anthropic API |
 | `mine_other_ores` | Only the ore asked for | The other ores in the tunnel's walls too |
+| `voice_ui`, `voice_voice`, `voice_language` | No voice on the page | The live voice of section 9 (`false`, `"supertonic:F1"`, `"en"`) |
 
-The tools of the watch server, the corrections, the creeper loop and the tests have no switch.
+The tools of the watch server, the addressing by name, the corrections, the creeper loop and the tests have no switch.
 
 ## 5. Cost
 
@@ -165,14 +168,14 @@ The tools of the watch server, the corrections, the creeper loop and the tests h
 | 6 The creeper loop | Small | 2 |
 | 7 Tests, journeys, three full runs, the fix round | Large | 4 |
 
-About 32 hours with three engineers at a time. Round 1: packages 3 and 6, and the tools of package 1 (1.1 to 1.9). Round 2: package 2, the channel and the skill of package 1 (1.10 to 1.15), packages 4 and 5. Round 3: the journeys, the fix round, your findings of v0.1.4.12.
+About 32 hours with three engineers at a time, plus the voice branch, which is built. Round 1: the voice branch merged, packages 3 and 6, the tools of package 1 (1.1 to 1.9) and the addressing (1.10). Round 2: package 2, the channel and the skill of package 1 (1.11 to 1.16), packages 4 and 5. Round 3: the journeys, the fix round, your findings of v0.1.4.12.
 
 ## 8. What I cannot test
 
-- **The tunnel and the voice.** The supervisor's tools are tested on the test server with a scripted supervisor; the tunnel is yours, for an evening, and the voice page is the work of your local session on `release/v0.1.4.13-voice`. If it lands before the gate, 1.12 ships; if not, the chat side ships and the voice follows.
+- **The tunnel and the voice.** The supervisor's tools are tested on the test server with a scripted supervisor; the tunnel is yours, for an evening. The voice runs on your GPU only: its unit tests run here, the round trips of `npm run voice:smoke` and the page are yours, as on 2026-10-04.
 - **Your name for the supervisor.** `supervisor_name` is yours to choose; the plan says "Opus" where it needs a name.
 - **The price of Luna.** Package 5.2 needs your bill.
 
 ## 9. The voice branch
 
-`release/v0.1.4.13-voice`, from `main` at v0.1.4.12, with `docs/releases/0.1.4.13/HANDOFF-voice.md` for your local session: the demo's page, `whisper-server.exe` and Supertonic into the mindserver, behind `voice_ui`. It merges into this release branch when it works on your machine, before round 3; its `voice_ui`, `voice_voice` and `voice_language` join the settings table of the changelog then.
+`release/v0.1.4.13-voice`: the live voice, built by your local session on 2026-10-04 from `HANDOFF-voice.md` and the demo's docs, proven in a game session. Commit 80f1f69 holds the code and the tests, `docs/releases/0.1.4.13/VOICE.md` the hand-back: the page in the demo's design with the Agents drawer, whisper-server and Supertonic as services of the mindserver, `speak()` silent while `voice_ui` is on, the bot's lines sent to the page also with `only_chat_with` set (a correction), `npm run voice:setup` (about 1.6 GB) and `npm run voice:smoke`. It merges into this branch in round 1; 1.13 builds on it.

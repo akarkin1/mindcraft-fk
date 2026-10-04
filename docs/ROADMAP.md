@@ -159,17 +159,18 @@ second, and the corrections the play found come with them. The plan is `docs/rel
 
 | Part | Content |
 |---|---|
-| Supervision | The watch server gets `digest`, `wait`, `run`, `note`, `look`, `server`, a report every N seconds and a `help` event, so a supervisor wakes only on a change and orders in one call. One channel, two names: a line that names the supervisor is a message for it and nothing the bot answers; the supervisor's `reply` goes into the chat; the voice page speaks both. A `/supervise` skill and `docs/SUPERVISOR.md` make a supervision session cheap (about a cent a turn against $7 an hour on 2026-10-04). |
+| Supervision | The watch server gets `digest`, `wait`, `run`, `note`, `look`, `server`, a report every N seconds and a `help` event, so a supervisor wakes only on a change and orders in one call. One channel, names: a line that names one bot is for that bot and the other stays quiet; a line that names the supervisor is a message for it and nothing a bot answers; the supervisor's `reply` goes into the chat; the voice page speaks each. A `/supervise` skill and `docs/SUPERVISOR.md` make a supervision session cheap (about a cent a turn against $7 an hour on 2026-10-04). |
 | Routines | Decided on 2026-10-03: "something like maintain the base cannot be expressed as a function, but can easily be described with words". `!rememberRoutine`, `!routines`, `!forgetRoutine`, `!doRoutine`: a paragraph in the owner's words becomes a job of v0.1.4.10, the model plans the steps, code checks them, a maintaining routine runs again until "stop". The supervisor's lever when the owner is away. |
-| The corrections | Supplies from the chest beside the bot, tool wear, the plan that starts, the furnace in the bag, the job counter, no cancel by the model's follow-up, `!mineOre` from where the bot stands, `!goToSurface` by a known route, two ladder places, the full bag, death drops and armour, `!givePlayer`, no shaft downwards. `mine_other_ores` as a setting. |
+| The corrections | Supplies from the chest beside the bot, tool wear, the plan that starts, the furnace in the bag, the job counter, no cancel by the model's follow-up, `!mineOre` from where the bot stands, `!goToSurface` by a known route, two ladder places, the full bag, death drops and armour, `!givePlayer`, no shaft downwards, an unsaved pen protected like a saved one (two bots opened the pens together on 2026-10-04). `mine_other_ores` as a setting. |
 | Two bots, one memory | `shared_memory`: the places, chests, routes, mines, rules and routines of a world shared by the bots. |
 | Cost | `prompt_cache` on the Anthropic API: Haiku's hour from about $1.70 to about $0.60. The price of Luna checked against the bill. |
 | The creeper loop | F10 of v0.1.4.12: the keep-away loop that about once in 30 runs after an explosion runs until the process is out of memory (W47). A profiling run finds it. |
 | The model comparison | `npm run test:play -- --situations`: six situations in plain words, the same for each model, with the first command, the follow-ups and the time. |
 
-Voice (the demo's page, whisper and Supertonic in the mindserver, `voice_ui`) is built by a local session on
-`release/v0.1.4.13-voice` and merges in when it works on the owner's machine. After this release: the supervisor and the
-bot as one mind, and part A of v0.1.4.12 (the local embedding model) after the routing check measures it.
+Voice (the demo's page, whisper and Supertonic in the mindserver, `voice_ui`, `voice_voice`, `voice_language`) was built
+by a local session on `release/v0.1.4.13-voice` on 2026-10-04 and proven in a game session; it merges in with round 1.
+After this release: the supervisor and the bot as one mind, and part A of v0.1.4.12 (the local embedding model) after
+the routing check measures it.
 
 ## Backlog
 
