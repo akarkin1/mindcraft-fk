@@ -18,7 +18,7 @@ Rules that hold for every release:
 | 0.1.4.10 | Goals | Released |
 | 0.1.4.11 | Navigation and words | Released |
 | 0.1.4.12 | Understanding and watching | Released |
-| 0.1.4.13 | Supervision | In work: `docs/releases/0.1.4.13/PLAN.md` |
+| 0.1.4.13 | Supervision | Released: `CHANGELOG.md` |
 | 0.1.4.14 | Routines | Planned: after the play of 0.1.4.13 |
 | Later | See the backlog | Not decided |
 

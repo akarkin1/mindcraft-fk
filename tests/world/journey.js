@@ -701,7 +701,8 @@ export function runWatchClient(args, { url, token, ms = 30000 } = {}) {
 export function followWatchEvents({ url, token }) {
     const childEnv = { ...process.env, MC_WATCH_URL: url, MC_WATCH_TOKEN: token };
     const s = { text: '', err: '', exited: false };
-    const child = spawn(process.execPath, [WATCH_CLIENT, 'events', '--follow'], { cwd: ROOT, env: childEnv, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+    // v0.1.4.13 (part S): the stream is gone; `--follow` is a loop of `wait any` whose digests list the new events
+    const child = spawn(process.execPath, [WATCH_CLIENT, '--follow'], { cwd: ROOT, env: childEnv, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
     child.stdout.setEncoding('utf8');
     child.stderr.setEncoding('utf8');
     child.stdout.on('data', (c) => { s.text += c; });
