@@ -151,6 +151,27 @@ export function ladderColumns(cells, center) {
     return columns;
 }
 
+// v0.1.4.13 fix1, the owner: the bot and its supervisor see only what is open to view, never ore behind a wall (the
+// setting that sees through walls is a cheat). An ore, lava or water counts when one of its six sides is open.
+const OPEN_BLOCKS = Object.freeze(['air', 'cave_air', 'void_air', 'water', 'lava']);
+const SIDES = Object.freeze([[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]]);
+
+/** True when a side of the block at (x, y, z) is open: air, cave air, water or lava (not the block's own kind). */
+export function isExposed(reader, x, y, z, ownName = null) {
+    for (const [dx, dy, dz] of SIDES) {
+        let side = null;
+        try {
+            side = reader.blockAt(x + dx, y + dy, z + dz);
+        } catch {
+            side = null;
+        }
+        const name = side?.name;
+        if (typeof name === 'string' && name !== ownName && OPEN_BLOCKS.includes(name))
+            return true;
+    }
+    return false;
+}
+
 /**
  * The lines of the look tool.
  * @param {{blockAt: Function, entities?: () => Array<{kind: 'item'|'player', name: string, count?: number, position: {x, y, z}}>}} reader
@@ -171,6 +192,8 @@ export function lookAround(reader, center, radius, options = {}) {
     scanBox(reader, center, r, (block, x, y, z, d) => {
         const name = block.name;
         const pos = { x, y, z };
+        if ((isOre(name) || name === 'lava' || name === 'water') && !isExposed(reader, x, y, z, name))
+            return; // behind a wall: not seen
         if (isOre(name)) {
             if (!ores.has(name))
                 ores.set(name, []);

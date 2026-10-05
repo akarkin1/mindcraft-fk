@@ -44,6 +44,26 @@ bots, the prompt cache, the creeper crash found.
 - **The cost meter** counts OpenAI's cache writes ($0.125 per million for `gpt-6-luna`; your bill of 2026-10-03 was 997k writes, 79k reads): the session line says `Prompt tokens: 1,131k, of them 997k cache writes and 79k cache reads.` and the scorecard shows it.
 - **The creeper crash** (F10 of v0.1.4.12) is fixed: the 1.21.8 server sends an explosion's knockback as doubles and the pinned `minecraft-data` read floats, so now and then the bot got a velocity of 5·10^14 and the physics step ran until the memory was gone. The patch of `minecraft-data` 3.98.0 reads doubles, as the library does since 3.117.0 (no version bump). 36 runs of the scenario after it, no crash.
 
+### Fixed after the play of 2026-10-05
+
+- **The supervisor's commands are quiet**: what the bot says for a command of the supervisor's `run` or `say` (the echo
+  `*MartyByrde2 used mineOre*`, the result, the texts of the skill) goes to the supervisor's answer and the bot's log
+  as `[quiet] ...`, never to the game chat, the page or the voice. The bot's answers to you, its reflexes and the
+  commands you type are said as before. In the play 391 of 811 lines in the chat were such echoes and results.
+- **No code in the chat**: the code a code action wrote is left out of every line the bot says, also for your own
+  `!newAction`; its output stays.
+- **No kick for the chat of generated code**: `bot.chat` in the model's code goes to the code's output, not to the
+  server. Three kicks `chat_validation_failed` came from code that called it several times in a row.
+- **`!stop` through `run`** stops the running command at once; it waited behind it and answered `Ran 0 of 1.`
+- **The loop guard** no longer ends the process under a `run` of quick failures (10 commands, each after the last
+  one's result).
+- **The supervisor sees no ore behind walls**: `look` lists ore, lava and water, and the digest's hazards lava, only
+  with an open side (air, cave air or a liquid next to it), as a player sees them; they listed every block within the
+  radius, through the rock.
+- **`/supervise`**: the supervisor speaks in the chat only when the bot is in danger, when the goal is done or stuck,
+  and when you ask; never `!collectBlocks` or code actions to fetch ore underground; the bot stays out of caves; "check"
+  never moves your things; nothing is claimed before a tool showed it.
+
 ### Settings
 
 | Key | Default |

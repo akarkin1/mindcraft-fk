@@ -39,6 +39,7 @@ import { autoEatOptions, passThrough, enterBuilding, doorIsSafe, foodItems, move
 import * as homePack from './packs/home/index.js';
 import { whereAmI as whereAmIOf } from './reflex/where_am_i.js';
 import { installChatLimit } from './reflex/chat_limit.js';
+import { chatText, isQuiet, installCodeChat } from './chat_gate.js'; // v0.1.4.13 fix1
 import { WAKE_RULES, shouldWakeFor } from './reflex/wake_logic.js';
 import { knowledgeText, whereLine, KNOWLEDGE_HEADER } from './knowledge/knowledge_text.js';
 import { unsavedEnclosure, enclosureKnowledge, ENCLOSURE_KNOWLEDGE_MS } from './areas/area_sense.js';
@@ -727,6 +728,12 @@ export class Agent {
                 this.chat_limiter = installChatLimit(bot, { log: (...args) => console.warn(...args) });
             } catch (error) {
                 console.warn('Could not limit the chat of the bot:', error);
+            }
+            try {
+                // v0.1.4.13 fix1: the chat of generated code goes to its output, outside the limit's queue
+                installCodeChat(bot, (text) => skills.log(bot, text));
+            } catch (error) {
+                console.warn('Could not keep the chat of the code in its output:', error);
             }
         };
         try {
@@ -1569,6 +1576,14 @@ export class Agent {
     }
 
     async openChat(message) {
+        // v0.1.4.13 fix1: no code in the chat; a line of a quiet command (the supervisor's) goes to the log only
+        message = chatText(message);
+        if (message === '')
+            return;
+        if (isQuiet()) {
+            console.log(`[quiet] ${message}`);
+            return;
+        }
         let to_translate = message;
         let remaining = '';
         let command_name = containsCommand(message);

@@ -1,5 +1,6 @@
 import { writeFile, readFile, mkdirSync } from 'fs';
 import { makeCompartment, initSandbox } from './library/lockdown.js';
+import { runAsCode } from './chat_gate.js';
 import * as skills from './library/skills.js';
 import * as world from './library/world.js';
 import { Vec3 } from 'vec3';
@@ -104,7 +105,7 @@ export class Coder {
             try {
                 console.log('Executing code...');
                 const before = manager ? manager.snapshot(this.agent.bot) : null;
-                await executionModule.main(this.agent.bot);
+                await runAsCode(() => executionModule.main(this.agent.bot)); // v0.1.4.13 fix1: its bot.chat goes to its output
 
                 const code_output = this.agent.actions.getBotOutputSummary();
                 const summary = "Agent wrote this code: \n```" + this._sanitizeCode(code) + "```\nCode Output:\n" + code_output;

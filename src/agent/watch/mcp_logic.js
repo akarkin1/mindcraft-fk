@@ -94,7 +94,7 @@ export const TOOLS = Object.freeze([
     },
     {
         name: 'run',
-        description: 'Runs commands as the owner, one after the other, each after the previous one ended; a failure stops the queue when stop_on_failure. A skill that ran 2 s counts as started. The result lines come back together, at most 55 s after the call; a longer queue answers with what is done and the rest comes through digest. A command of the owner while the queue runs waits behind it; !stop empties the queue.',
+        description: 'Runs commands as the owner, one after the other, each after the previous one ended; a failure stops the queue when stop_on_failure. A skill that ran 2 s counts as started. The result lines come back together, at most 55 s after the call; a longer queue answers with what is done and the rest comes through digest. A command of the owner while the queue runs waits behind it; !stop empties the queue. !stop first stops the running command at once. Quiet: nothing of it goes to the game chat.',
         inputSchema: {
             type: 'object',
             properties: {

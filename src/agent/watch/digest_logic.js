@@ -4,6 +4,7 @@
 // keeps the last 50 snapshots under a counter; wakeReason is the rule of the wait tool. Nothing here throws.
 import { TEXTS } from './texts.js';
 import { clockText, distance, eventLine, plainDimension, pointsText, posText } from './events_logic.js';
+import { isExposed } from './look_logic.js'; // v0.1.4.13 fix1: no lava behind a wall
 
 export const DIGEST_RULES = Object.freeze({
     cursorSize: 50,     // the snapshots the server keeps
@@ -142,7 +143,7 @@ function droppedItemOf(entity) {
 }
 
 /**
- * The hazards within 8 blocks: the nearest lava block, the nearest water block at the bot's feet, one
+ * The hazards within 8 blocks: the nearest lava block with an open side (v0.1.4.13 fix1: none behind a wall), the nearest water block at the bot's feet, one
  * below or one above (a block the bot could walk into), the nearest dropped items (at most 3). Nearest first.
  * @param {object} bot
  * @param {{x, y, z}} cell the cell of the bot
@@ -155,6 +156,7 @@ export function hazardsOf(bot, cell) {
     const r = DIGEST_RULES.hazardRange;
     let lava = null;
     let water = null;
+    const reader = { blockAt: (x, y, z) => ({ name: blockNameAt(bot, x, y, z) }) };
     for (let dy = -r; dy <= r; dy++) {
         for (let dx = -r; dx <= r; dx++) {
             for (let dz = -r; dz <= r; dz++) {
@@ -162,7 +164,7 @@ export function hazardsOf(bot, cell) {
                 if (d > r)
                     continue;
                 const name = blockNameAt(bot, cell.x + dx, cell.y + dy, cell.z + dz);
-                if (name === 'lava' && (lava === null || d < lava.d))
+                if (name === 'lava' && (lava === null || d < lava.d) && isExposed(reader, cell.x + dx, cell.y + dy, cell.z + dz, 'lava'))
                     lava = { d, pos: { x: cell.x + dx, y: cell.y + dy, z: cell.z + dz } };
                 else if (name === 'water' && dy >= -1 && dy <= 1 && (water === null || d < water.d))
                     water = { d, pos: { x: cell.x + dx, y: cell.y + dy, z: cell.z + dz } };

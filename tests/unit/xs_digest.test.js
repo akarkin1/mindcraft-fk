@@ -160,7 +160,8 @@ function vec(x, y, z) {
 }
 
 function fixtureAgent(overrides = {}) {
-    const blocks = new Map([['34,-59,-101', 'lava'], ['12,-60,-99', 'water'], ['19,-52,-99', 'water']]);
+    // v0.1.4.13 fix1: the lava has an open side (the air at 33, -59, -101); lava behind a wall is no hazard
+    const blocks = new Map([['34,-59,-101', 'lava'], ['33,-59,-101', 'air'], ['12,-60,-99', 'water'], ['19,-52,-99', 'water']]);
     return {
         name: 'Luna',
         bot: {
@@ -211,6 +212,14 @@ describe('the snapshot of the agent', () => {
         assert.deepEqual(hazardsOf(bot, { x: 0, y: -59, z: 0 }), [{ kind: 'water', pos: { x: 3, y: -60, z: 0 }, blocks: 3 }]);
         assert.deepEqual(hazardsOf({ entities: {} }, { x: 0, y: 0, z: 0 }), []);
         assert.deepEqual(hazardsOf(bot, null), []);
+    });
+
+    test('v0.1.4.13 fix1: lava behind a wall is no hazard; with an open side it is', () => {
+        const sealed = new Map([['3,-59,0', 'lava']]);
+        const bot = { blockAt: (p) => ({ name: sealed.get(`${p.x},${p.y},${p.z}`) ?? 'stone' }), entities: {} };
+        assert.deepEqual(hazardsOf(bot, { x: 0, y: -59, z: 0 }), []);
+        sealed.set('2,-59,0', 'cave_air');
+        assert.deepEqual(hazardsOf(bot, { x: 0, y: -59, z: 0 }), [{ kind: 'lava', pos: { x: 3, y: -59, z: 0 }, blocks: 3 }]);
     });
 
     test('usesLeft and runningOf', () => {

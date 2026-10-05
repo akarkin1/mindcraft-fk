@@ -24,6 +24,7 @@ import {
     wakeReason,
 } from './digest_logic.js';
 import { createQueue, runRefusal } from './queue.js';
+import { runQuiet } from '../chat_gate.js'; // v0.1.4.13 fix1
 import { lookAround, lookRadius } from './look_logic.js';
 import { registerSupervisorTools } from './supervisor.js'; // v0.1.4.13 (part N2): reply and note
 
@@ -290,7 +291,8 @@ export async function say(agent, args = {}, watch = {}) {
     try {
         watch?.chat?.push?.({ t: nowOf(watch), name: `${owner} (by watch)`, text });
         agent.shut_up = false; // as a typed line
-        Promise.resolve(agent.handleMessage(owner, text)).catch((error) => console.warn('The line of the watch failed:', error?.message ?? error));
+        // v0.1.4.13 fix1: quiet, the bot's answer goes to the digest and the log, not to the game chat
+        Promise.resolve(runQuiet(() => agent.handleMessage(owner, text))).catch((error) => console.warn('The line of the watch failed:', error?.message ?? error));
     } catch (error) {
         return TEXTS.sayFailed(error?.message ?? String(error));
     }

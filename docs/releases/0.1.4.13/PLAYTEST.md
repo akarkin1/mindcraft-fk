@@ -66,6 +66,19 @@ Your switches of v0.1.4.12 stay. New in `settings.js` (or the page's Settings):
 | 17 | Down in the mine: "get to the surface". | It takes your route up: `I take the route "basement_to_surface".` |
 | 18 | Let a creeper blow near the bot. | The bot lives on or dies; the process does not crash. |
 
+## 5b. Fix 1 (after the play of 2026-10-05)
+
+Get it as in section 1 (no library changed: no `Remove-Item` needed). The supervisor reads the skill at its start:
+begin a new Claude Code session.
+
+| Step | What you do | What should happen |
+|---|---|---|
+| 19 | Give the supervisor a job ("mine 10 iron, stop at 10") and play for 20 minutes. | In the chat only your own lines, the bots' answers to you, and an `[Opus]` line when the bot is in danger, the job is done or stuck, or you ask. No `*MartyByrde2 used ...*`, no `Action output`, no code. The terminal of the bot shows them as `[quiet] ...`. |
+| 20 | "Opus, how is it going?" | One short `[Opus]` answer. |
+| 21 | Type `!newAction("tell me where you are")` yourself. | The bot's answer has no code in it. No kick. |
+| 22 | Tell Opus "stop the bot" while it mines. | It stops within a few seconds. |
+| 23 | Ask Opus what ore is around. | It names only ore you could see: on the walls of the tunnel or a cave, none behind the rock. |
+
 ## 6. What I would like to know
 
 - Each bot's log and the server log; the supervisor session's report.

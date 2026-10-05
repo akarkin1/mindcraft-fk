@@ -46,3 +46,27 @@ Unit: 8,405 tests, 8,404 pass, 0 fail, 1 skipped. The world set: the ten journey
 | R3-7 | W115 part B, 1 run of 2: a walk over the owner's drops took them after the leave text. | `drop_watch.js` `deathNearBot`, `modes.js` | The item mode takes nothing within 8 blocks of a recent death of another player. A later failure of the check had the bot right (nothing taken, the text once): the death had scattered the boots 5.1 blocks away, so W115 counts the drops within 8 blocks. After it W115 passed 5 of 5 runs, W114 1 of 1. | lead |
 
 The unit suite after round 3: 8,441 tests, 8,439 pass, 0 fail, 2 skipped. The `!digDown` description was cut to keep the conversing prompt with every switch on under 17,000 characters (16,987).
+
+## Fix 1: the play of 2026-10-05
+
+The owner's play with a supervisor: 1 h 50 min, 38 of 37 diamonds stored, 2 of 32 raw iron, 1 death in a cave, the
+process restarted 4 times, 811 lines of the bot in the chat. The data: the bot's log, the server's log, the bot's
+memory and histories (not in the repository).
+
+| Id | Finding | Cause | Decision | By |
+|---|---|---|---|---|
+| F1-1 | 811 lines of the bot in the owner's chat in under 2 hours; the chat covered the screen. | The supervisor's `run` hands its commands to `agent.handleMessage(owner, ...)`: 236 echoes `*MartyByrde2 used X*`, 155 results. 35 lines were the supervisor's own. | A command of `run` and the line of `say` run quiet (`chat_gate.js`, AsyncLocalStorage): `openChat` writes `[quiet] ...` to the log; the watch still records the line, so the digest has it. | lead |
+| F1-2 | Code in the chat, 24 dumps up to 312 characters, spoken by the voice. | The result of `!newAction` starts with `Agent wrote this code: ...`. | `chatText` leaves every code block out of a line of the chat; the model's history keeps it. | lead |
+| F1-3 | 3 kicks `chat_validation_failed`. | Each time generated code called `bot.chat` several times in a row; none of about 800 whispers did. | `bot.chat` and `bot.whisper` inside generated code go to the code's output; a server command still goes out. | lead |
+| F1-4 | The process ended at 03:27, `Infinite action loop detected`. | A `run` of 10 quick commands (repeated `!putInChest`, `!craftRecipe("torch", 1)`) started 6 actions within 20 ms each. | The loop guard does not count quiet actions; a run is bounded to 10 commands, each after the last one's result. | lead |
+| F1-5 | `!stop` through `run` answered `Ran 0 of 1.` | It waited in the queue behind the running skill. | `!stop` first in a run stops at once, as the owner's typed one; the rest of the call runs after it. | lead |
+| F1-6 | The supervisor reported routine work; used `!collectBlocks` and code near caves; took the owner's diamonds when asked to check; said the bed was back before it checked. | The skill. | The skill: the chat only for danger, the goal done or stuck, and the owner's questions, at most one line per 5 minutes; underground only `!mineOre`; out of caves; "check" never moves things; nothing claimed before a tool showed it. | lead |
+| F1-7 | "Home was set to the bed in the cave." | No place "home" changed: the supervisor placed the owner's bed at (16, 14, 26) and the bot slept in it, which sets the respawn point (vanilla). | No change of code; the skill: never sleep in a placed bed underground. | lead |
+| F1-9 | The supervisor counted "66 diamond ore within 32 blocks" and "41 iron ore within 12 blocks" and sent the bot toward them, into a cave. | `look` listed every ore within the radius, through the rock. The owner: the bot sees only what is open to his or the player's view; seeing through walls is a cheat. | `look` lists ore, lava and water only with an open side. | lead |
+| F1-8 | `start-gpt.ps1` loaded the watch token while `start-claude.ps1` no longer did (the owner's commit b6639e8 for `watch_local_only`). | | The same two lines commented out in `start-gpt.ps1`. | lead |
+
+Not a defect: the mining digs only ore that its tunnel exposes; the bot sees no ore behind walls, as the owner intends
+(the setting that sees through walls is a cheat and stays off). The rest of the play's findings (caves, the supplies, the mine and its route, a full bag
+far from the chest, chests by position, `!craftRecipe` with a count, a ladder through a trapdoor, orders that the
+bot's model overrides, code that cannot be stopped) are planned for 0.1.4.14 in
+`docs/ROADMAP.md`; the load of the laptop only if it remains after this fix.

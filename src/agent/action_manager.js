@@ -1,5 +1,6 @@
 import assert from 'node:assert';
 import { MAX_OUT, outputSummary, stopperText } from './reflex/output_logic.js';
+import { isQuiet } from './chat_gate.js'; // v0.1.4.13 fix1
 
 // v0.1.4.8, I5: who stopped an action when nobody said it (for example the death of the bot)
 const UNKNOWN_STOPPER = 'an interrupt';
@@ -122,7 +123,9 @@ export class ActionManager {
     async _executeAction(actionLabel, actionFn, timeout = 10) {
         let TIMEOUT;
         try {
-            if (this.last_action_time > 0) {
+            // v0.1.4.13 fix1: the supervisor's run (quiet) is no loop: at most 10 commands, each after the last one's
+            // result; 6 quick failures of it killed the process in the play of 2026-10-05
+            if (this.last_action_time > 0 && !isQuiet()) {
                 let time_diff = Date.now() - this.last_action_time;
                 if (time_diff < 20) {
                     this.recent_action_counter++;
