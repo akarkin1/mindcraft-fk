@@ -1,18 +1,18 @@
 const settings = {
     "minecraft_version": "auto", // or specific version like "1.21.6"
     "host": "127.0.0.1", // or "localhost", "your.ip.address.here"
-    "port": 55916, // set to -1 to automatically scan for open ports
+    "port": 55914, // set to -1 to automatically scan for open ports
     "auth": "offline", // or "microsoft"
 
     // the mindserver manages all agents and hosts the UI
-    "mindserver_port": 8080,
+    "mindserver_port": 8082,
     "auto_open_ui": true, // opens UI in browser on startup
     
     "base_profile": "assistant", // survival, assistant, creative, or god_mode
     "profiles": [
         // "./andy.json",
-        // "./profiles/gpt.json",
-        "./profiles/claude.json",
+        "./profiles/gpt.json",
+        // "./profiles/claude.json",
         // "./profiles/gemini.json",
         // "./profiles/llama.json",
         // "./profiles/qwen.json",
@@ -32,7 +32,7 @@ const settings = {
     "resume_goal": "after_crash", // when to resume a goal loaded from memory: "always", "after_crash" or "never"
     "goal_resume_limit": 3, // stop a goal that was resumed this many times within 15 minutes. 0 for no limit
     "init_message": "Respond with hello world and your name", // sends to all on spawn
-    "only_chat_with": [], // users that the bots listen to and send general messages to. if empty it will chat publicly
+    "only_chat_with": ["MartyByrde2"], // users that the bots listen to and send general messages to. if empty it will chat publicly
 
     "speak": true,
     // allows all bots to speak through text-to-speech. 
@@ -91,26 +91,26 @@ const settings = {
     "idle_jobs": [], // with job_memory: commands the bot runs in order when it has no job, e.g. ["!farmCycle(\"farm\")", "!craftSupplies(\"torch\", 32)"]
     "idle_jobs_minutes": 15, // with job_memory: an entry of idle_jobs runs at most once per this many minutes, 1 or more
     "area_floors": true, // !rememberArea in a building with floors saves only the floor the bot stands on, so the house and the basement are two areas
-    "mine_from_inside": false, // with mining_pack: a new shaft may start from the room or a tunnel of a known mine (a second level), not only from the surface
-    "routes_by_search": false, // with routes_pack: a route is walked by the path search from waypoint to waypoint, from the nearest one, after a dry scan; off: leg by leg
-    "area_sense": false, // with protected_areas: the bot scans an unsaved enclosure it enters and says what it thinks it is (a pen, a farm, a home ...)
-    "smelting": false, // !smeltItem of the storage pack (a furnace in a saved room, the fuel it needs, the result read from the furnace) and the step smelt in a plan; off: !smeltItem of the original project
-    "watch_server": false, // the watch server for a Claude session (MCP over HTTP) on 127.0.0.1:watch_port; it starts only with MC_WATCH_TOKEN in the environment
+    "mine_from_inside": true, // with mining_pack: a new shaft may start from the room or a tunnel of a known mine (a second level), not only from the surface
+    "routes_by_search": true, // with routes_pack: a route is walked by the path search from waypoint to waypoint, from the nearest one, after a dry scan; off: leg by leg
+    "area_sense": true, // with protected_areas: the bot scans an unsaved enclosure it enters and says what it thinks it is (a pen, a farm, a home ...)
+    "smelting": true, // !smeltItem of the storage pack (a furnace in a saved room, the fuel it needs, the result read from the furnace) and the step smelt in a plan; off: !smeltItem of the original project
+    "watch_server": true, // the watch server for a Claude session (MCP over HTTP) on 127.0.0.1:watch_port; it starts only with MC_WATCH_TOKEN in the environment
     "watch_port": 8090, // with watch_server: the port of the watch server, on 127.0.0.1 only
-    "watch_and_learn": false, // !watchMe, !continueLike, !buildWatched: the bot watches the blocks you place or break, says the pattern it understood and builds the rest after your yes
-    "other_bots": [], // the names of your other bots: the bot never answers their chat; a command echo (*x used y*) or a result of a bot is never answered, whoever sent it
+    "watch_and_learn": true, // !watchMe, !continueLike, !buildWatched: the bot watches the blocks you place or break, says the pattern it understood and builds the rest after your yes
+    "other_bots": ["gpt", "claude"], // the names of your other bots: the bot never answers their chat; a command echo (*x used y*) or a result of a bot is never answered, whoever sent it
     "bot_role": "", // one sentence in the prompt, e.g. "You are the farmer. gpt is the miner."; empty: no role line
-    "voice_ui": false, // talk with the bot in the page of the mindserver: whisper hears you, Supertonic speaks the bot's lines, the system voice is silent. needs npm run voice:setup (about 1.6 GB)
+    "voice_ui": true, // talk with the bot in the page of the mindserver: whisper hears you, Supertonic speaks the bot's lines, the system voice is silent. needs npm run voice:setup (about 1.6 GB)
     "voice_voice": "supertonic:F1", // with voice_ui: the voice of the bot, supertonic:F1 to F5 or M1 to M5 (kokoro:af_heart needs kokoro-js)
     "voice_language": "en", // with voice_ui: the language whisper hears ("auto" for any) and Supertonic speaks
-    "watch_local_only": false, // with watch_server: true = the server answers this machine only and needs no token (a request through a tunnel is refused); false = the token of MC_WATCH_TOKEN, for a session elsewhere through a tunnel
+    "watch_local_only": true, // with watch_server: true = the server answers this machine only and needs no token (a request through a tunnel is refused); false = the token of MC_WATCH_TOKEN, for a session elsewhere through a tunnel
     "watch_report_seconds": 0, // with watch_server: every N seconds an event report with the digest since the last one, even when nothing happened; 0: none
-    "mine_other_ores": false, // with mining_pack: the other ores the mining takes from the tunnel's walls, floor and ceiling while it mines one ore are counted in its text ("and 11 redstone and 4 lapis_lazuli on the way")
-    "supervisor_name": "", // the name you address the supervisor by ("Opus, why is it going up?"): such a line is an event message of the watch server and no bot answers it; the supervisor's lines come back as "[Opus] ..."; empty: no supervisor in the chat, no help or message events, no notes
+    "mine_other_ores": true, // with mining_pack: the other ores the mining takes from the tunnel's walls, floor and ceiling while it mines one ore are counted in its text ("and 11 redstone and 4 lapis_lazuli on the way")
+    "supervisor_name": "Opus", // the name you address the supervisor by ("Opus, why is it going up?"): such a line is an event message of the watch server and no bot answers it; the supervisor's lines come back as "[Opus] ..."; empty: no supervisor in the chat, no help or message events, no notes
     "supervisor_voice": "supertonic:M1", // with voice_ui: the voice the page gives the supervisor's lines, supertonic:F1 to F5 or M1 to M5
-    "supervisor_updates": false, // the supervisor's unprompted updates ("[Opus] The mining is at 2 of 6.") are shown and spoken; off: only its answers
-    "shared_memory": false, // with world_memory: the areas, places, routes, mines, chests and rules of a world live in bots/shared/worlds/<seed>/ and every bot reads and writes them; the chat memory and the job stay per bot
-    "prompt_cache": false, // the prompt is sent in two parts: the fixed part first (the introduction, the command list), then what changes (memory, stats, inventory, knowledge, examples); on the Anthropic API the fixed part carries a cache mark
+    "supervisor_updates": true, // the supervisor's unprompted updates ("[Opus] The mining is at 2 of 6.") are shown and spoken; off: only its answers
+    "shared_memory": true, // with world_memory: the areas, places, routes, mines, chests and rules of a world live in bots/shared/worlds/<seed>/ and every bot reads and writes them; the chat memory and the job stay per bot
+    "prompt_cache": true, // the prompt is sent in two parts: the fixed part first (the introduction, the command list), then what changes (memory, stats, inventory, knowledge, examples); on the Anthropic API the fixed part carries a cache mark
     "allow_vision": false, // allows vision model to interpret screenshots as inputs
     "blocked_actions" : ["!checkBlueprint", "!checkBlueprintLevel", "!getBlueprint", "!getBlueprintLevel", "!restart"] , // commands to disable and remove from docs. Ex: ["!setMode"]
     "code_timeout_mins": -1, // minutes code is allowed to run. -1 for no timeout
