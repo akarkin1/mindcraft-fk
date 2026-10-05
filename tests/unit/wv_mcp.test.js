@@ -14,20 +14,22 @@ const S = await loadSrc('src/agent/watch/server.js');
 
 const TOKEN = `wv-${process.pid}-${Date.now()}`;
 const SIX = ['state', 'inventory', 'chat', 'places', 'events', 'say'];
+// v0.1.4.13 (part S): the five tools of the supervisor join the six
+const ELEVEN = [...SIX, 'digest', 'wait', 'run', 'look', 'server'];
 
 // ------------------------------------------------------------------------------------------------ pure answers
 
 const rpc = (method, params, id = 1) => JSON.stringify({ jsonrpc: '2.0', id, method, ...(params === undefined ? {} : { params }) });
 
 describe('4.1 mcp_logic: initialize', () => {
-    test('the protocol version as the client sent it, capabilities tools, serverInfo mindcraft-watch 0.1.4.12', async () => {
+    test('the protocol version as the client sent it, capabilities tools, serverInfo mindcraft-watch 0.1.4.13', async () => {
         const a = await L.handleRpc(rpc('initialize', { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'x', version: '1' } }, 7));
         assert.equal(a.status, 200);
         assert.equal(a.body.jsonrpc, '2.0');
         assert.equal(a.body.id, 7);
         assert.equal(a.body.result.protocolVersion, '2024-11-05');
         assert.deepEqual(a.body.result.capabilities, { tools: {} });
-        assert.deepEqual(a.body.result.serverInfo, { name: 'mindcraft-watch', version: '0.1.4.12' });
+        assert.deepEqual(a.body.result.serverInfo, { name: 'mindcraft-watch', version: '0.1.4.13' });
     });
 
     test('without a protocol version: "2025-03-26"', async () => {
@@ -52,11 +54,11 @@ describe('4.1 mcp_logic: initialize', () => {
 });
 
 describe('4.1 mcp_logic: tools/list', () => {
-    test('exactly six tools: state, inventory, chat, places, events, say', async () => {
+    test('the six tools of v0.1.4.12 and the five of v0.1.4.13: eleven', async () => {
         const a = await L.handleRpc(rpc('tools/list', {}));
         const tools = a.body.result.tools;
-        assert.equal(tools.length, 6);
-        assert.deepEqual(tools.map((t) => t.name).sort(), [...SIX].sort());
+        assert.equal(tools.length, 11);
+        assert.deepEqual(tools.map((t) => t.name).sort(), [...ELEVEN].sort());
     });
 
     test('each with a description and a JSON schema of type object', async () => {
@@ -226,9 +228,9 @@ describe('4.1 the server on 127.0.0.1: the same answers over HTTP', () => {
         assert.equal(r.json.result.protocolVersion, '2025-03-26');
     });
 
-    test('tools/list over HTTP: six tools', async () => {
+    test('tools/list over HTTP: the eleven tools', async () => {
         const r = await post(server.port, { body: { jsonrpc: '2.0', id: 2, method: 'tools/list' } });
-        assert.deepEqual(r.json.result.tools.map((t) => t.name).sort(), [...SIX].sort());
+        assert.deepEqual(r.json.result.tools.map((t) => t.name).sort(), [...ELEVEN].sort());
     });
 
     test('tools/call say "/kill": isError and "I do not run server commands."; nothing handed to the bot', async () => {

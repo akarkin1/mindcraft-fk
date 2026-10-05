@@ -12,8 +12,9 @@ const pen = { name: 'pen', type: 'pen', dimension: 'overworld', min: { x: 0, y: 
 const home = { name: 'home', type: 'home', dimension: 'overworld', min: { x: 20, y: 64, z: 0 }, max: { x: 26, y: 70, z: 6 } };
 
 describe('the kinds', () => {
-    test('the nine kinds of the table', () => {
-        assert.deepEqual(EVENT_KINDS, ['explosion', 'health', 'animals_missing', 'night_awake', 'job_stalled', 'failure_repeated', 'far_from_home', 'death', 'restart']);
+    test('the nine kinds of the table, and report and help of v0.1.4.13', () => {
+        assert.deepEqual(EVENT_KINDS.slice(0, 9), ['explosion', 'health', 'animals_missing', 'night_awake', 'job_stalled', 'failure_repeated', 'far_from_home', 'death', 'restart']);
+        assert.deepEqual(EVENT_KINDS.slice(9), ['report', 'help']); // v0.1.4.13 (S): the two kinds of spec 4.1
     });
 
     test('an event is { t: ISO, kind, text, data }', () => {

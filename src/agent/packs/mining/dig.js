@@ -15,6 +15,8 @@ export const FILLERS = Object.freeze(['cobblestone', 'cobbled_deepslate', 'stone
 export const REACH = 4.5;
 /** Tries to dig one place free of falling gravel or sand (spec: up to 16). */
 export const FALL_TRIES = 16;
+/** A pickaxe with this many uses left or fewer is nearly worn: it is put away before the next dig (spec v0.1.4.13, P2). */
+export const WEAR_LIMIT = 10;
 
 const EYE = 1.62;
 // blocks that open or react when clicked: never used as the block to place against
@@ -143,6 +145,57 @@ export function usesLeftOf(item) {
 }
 
 /**
+ * The pickaxe as `{ name, uses }` when it is nearly worn (spec v0.1.4.13, P2): a pickaxe with WEAR_LIMIT uses
+ * left or fewer. null for another item or a pickaxe with more uses.
+ * @param {object} item
+ * @param {number} [limit] WEAR_LIMIT
+ * @returns {{name: string, uses: number}|null}
+ */
+export function wornTool(item, limit = WEAR_LIMIT) {
+    if (!item || pickaxeMaterial(item.name) === null) {
+        return null;
+    }
+    const uses = usesLeftOf(item);
+    const max = typeof limit === 'number' && Number.isFinite(limit) ? limit : WEAR_LIMIT;
+    return uses !== null && uses <= max ? { name: item.name, uses } : null;
+}
+
+/**
+ * True when the item breaks the block with its drop: the block names no harvest tools, or the item is one of
+ * them (`block.harvestTools` of minecraft-data, keyed by item id). An item without an id fits only a block
+ * without harvest tools.
+ * @param {object} block
+ * @param {object} item
+ * @returns {boolean}
+ */
+export function fitsBlock(block, item) {
+    const tools = block?.harvestTools;
+    if (!tools || typeof tools !== 'object') {
+        return true;
+    }
+    const id = item?.type;
+    return typeof id === 'number' && Boolean(tools[id]);
+}
+
+// P2: the pickaxe in hand is nearly worn: the best pickaxe of the bag that has more uses and fits the block is
+// equipped instead. Returns the pickaxe equipped, or null when there is none. Never throws.
+async function equipFreshPickaxe(bot, block) {
+    try {
+        const held = bot.heldItem;
+        const items = bot.inventory.items().filter(i => i !== held && pickaxeMaterial(i.name) !== null && wornTool(i) === null && fitsBlock(block, i))
+            .sort((a, b) => PICKAXE_LEVELS[pickaxeMaterial(b.name)] - PICKAXE_LEVELS[pickaxeMaterial(a.name)]
+                || (usesLeftOf(b) ?? 0) - (usesLeftOf(a) ?? 0));
+        if (items.length === 0) {
+            return null;
+        }
+        await bot.equip(items[0], 'hand');
+        return items[0];
+    } catch {
+        return null;
+    }
+}
+
+/**
  * The inventory as a list of { name, count, slot, uses_left }. Never throws.
  * @param {object} bot
  * @returns {object[]}
@@ -263,6 +316,16 @@ async function equipFor(bot, block) {
     try {
         const tool = bot.pathfinder?.bestHarvestTool?.(block);
         if (tool) {
+            // the correction of 2026-10-04: the fastest tool may be the nearly worn iron pickaxe; a fresh one that fits goes first
+            if (wornTool(tool) !== null) {
+                const held = bot.heldItem;
+                if (held && pickaxeMaterial(held.name) !== null && wornTool(held) === null && fitsBlock(block, held)) {
+                    return;
+                }
+                if (await equipFreshPickaxe(bot, block)) {
+                    return;
+                }
+            }
             if (bot.heldItem !== tool) {
                 await bot.equip(tool, 'hand');
             }
@@ -280,7 +343,10 @@ async function equipFor(bot, block) {
  * @param {object} bot
  * @param {{x,y,z}} p
  * @param {{clock?: object}} [options]
- * @returns {Promise<{ok: boolean, reason: string|null, name?: string, dug: number}>} reasons: unknown, liquid, protected, unbreakable, interrupted, timeout, failed
+ * Since v0.1.4.13 (P2), before the dig the uses left of the pickaxe in hand are read: at WEAR_LIMIT or fewer a
+ * pickaxe of the bag with more uses that fits the block is equipped instead; without one the dig is not done and
+ * the result is `{ ok: false, reason: 'worn', worn: { name, uses } }` (the old pickaxe stays in the bag).
+ * @returns {Promise<{ok: boolean, reason: string|null, name?: string, dug: number, worn?: {name: string, uses: number}}>} reasons: unknown, liquid, protected, unbreakable, interrupted, timeout, failed, worn
  */
 export async function digBlock(bot, p, options = {}) {
     const clock = options.clock ?? clockOf(null);
@@ -305,6 +371,10 @@ export async function digBlock(bot, p, options = {}) {
         return { ok: false, reason: 'interrupted', name, dug: 0 };
     }
     await equipFor(bot, block);
+    const worn = wornTool(bot.heldItem);
+    if (worn && !(await equipFreshPickaxe(bot, block))) {
+        return { ok: false, reason: 'worn', name, dug: 0, worn };
+    }
     let expected = 1000;
     try {
         expected = bot.digTime(block);
@@ -356,7 +426,7 @@ export async function digClear(bot, p, options = {}) {
         const r = await digBlock(bot, p, { clock });
         dug += r.dug;
         if (!r.ok) {
-            return { ok: false, reason: r.reason, dug };
+            return r.worn ? { ok: false, reason: r.reason, dug, worn: r.worn } : { ok: false, reason: r.reason, dug };
         }
         const above = logicName(blockAt(bot, { x: p.x, y: p.y + 1, z: p.z }));
         if (!isFalling(aboveBefore) && !isFalling(above) && !fallingNear(bot, p)) {

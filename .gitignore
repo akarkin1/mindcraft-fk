@@ -7,6 +7,13 @@ scratch.js
 bots/**/action-code/**
 bots/**/
 keys.json
+# v0.1.4.13, the live voice: the binaries and models (about 2.5 GB with the CUDA DLLs) live outside the checkout
+# (npm run voice:setup); never commit them if a copy lands here
+/bin/
+/models/
+*.dll
+*.onnx
+ggml-*.bin
 services/viaproxy/jars/**
 services/viaproxy/logs/**
 services/viaproxy/plugins/**

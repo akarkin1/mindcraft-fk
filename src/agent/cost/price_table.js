@@ -11,7 +11,8 @@ export const DEFAULT_PRICES = Object.freeze({
     'claude-opus-5': Object.freeze({ input: 5, output: 25 }),
     'claude-opus-5-5': Object.freeze({ input: 4, output: 20 }),
     // v0.1.4.9 (I9): OpenAI; cached input has its own price there. No price for the speech model.
-    'gpt-6-luna': Object.freeze({ input: 0.10, output: 0.50, cache_read: 0.01 }),
+    // v0.1.4.13 (M3): the cache writes of a prompt of 1,024 tokens or more, from the bill of the owner of 2026-10-03.
+    'gpt-6-luna': Object.freeze({ input: 0.10, output: 0.50, cache_read: 0.01, cache_write: 0.125 }),
     'text-embedding-3-small': Object.freeze({ input: 0.02, output: 0 }),
 });
 

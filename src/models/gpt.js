@@ -7,19 +7,29 @@ function tokenCount(value) {
     return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : 0;
 }
 
+// OpenAI caches a prompt of this many tokens or more by itself (v0.1.4.13, M3): the prompt tokens of such a
+// prompt that were not read from the cache are written to it, and the bill prices them as cache writes.
+export const CACHE_MIN_PROMPT_TOKENS = 1024;
+
 // cost meter (v0.1.4.9, I9): the usage of a successful request, reported like claude.js does.
 // OpenAI counts the cached input tokens inside the input tokens; the meter counts them apart.
 // The reasoning tokens are inside the output tokens. Without a usage object nothing is reported.
-function reportOpenAIUsage(model, usage, input, output, cached) {
+// v0.1.4.13 (M3): with `writes` (a chat or responses request, not an embedding) and a prompt of
+// CACHE_MIN_PROMPT_TOKENS or more, the prompt tokens that were not cached are cache_write_tokens,
+// not input_tokens, as the bill of the owner of 2026-10-03 counts them.
+function reportOpenAIUsage(model, usage, input, output, cached, writes = true) {
     if (usage === null || typeof usage !== 'object')
         return;
-    const cache_read_tokens = tokenCount(cached);
+    const prompt = tokenCount(input);
+    const cache_read_tokens = Math.min(tokenCount(cached), prompt);
+    const rest = Math.max(0, prompt - cache_read_tokens);
+    const written = writes === true && prompt >= CACHE_MIN_PROMPT_TOKENS;
     reportUsage({
         model: model,
-        input_tokens: Math.max(0, tokenCount(input) - cache_read_tokens),
+        input_tokens: written ? 0 : rest,
         output_tokens: tokenCount(output),
         cache_read_tokens: cache_read_tokens,
-        cache_write_tokens: 0,
+        cache_write_tokens: written ? rest : 0,
     });
 }
 
@@ -146,8 +156,8 @@ export class GPT {
             input: text,
             encoding_format: "float",
         });
-        // usage_context has no purpose for embeddings: the purpose is the one of the caller
-        reportOpenAIUsage(model, embedding?.usage, embedding?.usage?.prompt_tokens, 0, 0);
+        // usage_context has no purpose for embeddings: the purpose is the one of the caller; an embedding writes no cache
+        reportOpenAIUsage(model, embedding?.usage, embedding?.usage?.prompt_tokens, 0, 0, false);
         return embedding.data[0].embedding;
     }
 

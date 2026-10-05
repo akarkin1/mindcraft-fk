@@ -26,6 +26,11 @@
 //   node tests/world/run.js --server-log     also print the server lines of every scenario
 // Environment: MC_TEST_SERVER_DIR, MC_TEST_JAVA, MCW_LOG_DIR (a folder where the runner copies the
 // output of every scenario and the server log; nothing is copied without it).
+// MCW_PROFILE (v0.1.4.13, part K): the scenario process, which holds the agent, is started with the
+// profiler of node: `cpu` or `1` writes a `.cpuprofile` (--cpu-prof), `heap` a `.heapprofile`
+// (--heap-prof), into MCW_LOG_DIR/profile (the run directory without MCW_LOG_DIR). With `1` a heap
+// snapshot is also written there when the heap is nearly full (--heapsnapshot-near-heap-limit), for a
+// process that dies of "heap out of memory". A profile is written only when the process ends by itself.
 //
 // Exit code: 0 only if every selected scenario passed and nothing was left behind.
 import { spawn } from 'node:child_process';
@@ -163,6 +168,18 @@ const SCENARIOS = [
     ['scan_underground', 'w106_scan_underground.js', 1500, false, 'base'],
     ['spawn_and_bed', 'w107_spawn_and_bed.js', 600, false, 'base'],
     ['two_bots', 'w108_two_bots.js', 600, false, 'base'],
+    // v0.1.4.13 "Supervision" (tester T3): the scripted supervisor, the names of two bots, the supervisor in the chat,
+    // the corrections of the play of 2026-10-04, the shared memory; each under 6 minutes
+    ['supervised_mining', 'w109_supervised_mining.js', 350, false, 'base'],
+    ['two_bots_names', 'w110_two_bots_names.js', 300, false, 'base'],
+    ['supervisor_chat', 'w111_supervisor_chat.js', 340, false, 'base'],
+    ['bread_beside_tunnel', 'w112_bread_beside_tunnel.js', 350, false, 'base'],
+    ['furnace_in_bag', 'w113_furnace_in_bag.js', 300, false, 'base'],
+    ['worn_pickaxe', 'w114_worn_pickaxe.js', 350, false, 'base'],
+    ['shaft_and_drops', 'w115_shaft_and_drops.js', 300, false, 'base'],
+    ['unsaved_pen', 'w116_unsaved_pen.js', 330, false, 'base'],
+    ['shared_mine', 'w117_shared_mine.js', 350, false, 'base'],
+    ['full_bag', 'w118_full_bag.js', 350, false, 'base'],
 ];
 
 // Words that select a group of scenarios (spec v0.1.4.8, W30: the work scenarios of v0.1.4.7, which run
@@ -182,6 +199,11 @@ const GROUPS = {
         'watch_server', 'watch_events', 'watch_line', 'watch_fence', 'watch_tunnel', 'iron_pickaxe', 'scan_underground', 'spawn_and_bed',
         'two_bots',
     ],
+    // v0.1.4.13 "Supervision": the journeys W109 to W118 (README, "Journeys of v0.1.4.13")
+    journeys13: [
+        'supervised_mining', 'two_bots_names', 'supervisor_chat', 'bread_beside_tunnel', 'furnace_in_bag', 'worn_pickaxe',
+        'shaft_and_drops', 'unsaved_pen', 'shared_mine', 'full_bag',
+    ],
 };
 
 const args = process.argv.slice(2);
@@ -191,6 +213,7 @@ const words = args.filter((a) => !a.startsWith('-'));
 const selected = SCENARIOS.filter(([name]) => words.length === 0
     || words.some((w) => (GROUPS[w] ? GROUPS[w].includes(name) : name.includes(w))));
 const logDir = process.env.MCW_LOG_DIR ? path.resolve(process.env.MCW_LOG_DIR) : null;
+const profile = (process.env.MCW_PROFILE || '').trim();
 
 const loc = locateServer();
 if (loc.missing) {
@@ -356,6 +379,17 @@ function makeScenarioDir() {
 let regionIndex = 0;
 let groundY = null;
 
+// The node flags of MCW_PROFILE (part K of v0.1.4.13), none without it.
+function profileArgs() {
+    if (!profile) return [];
+    const dir = path.join(logDir ?? runDir, 'profile');
+    fs.mkdirSync(dir, { recursive: true });
+    if (profile === 'heap') return ['--heap-prof', `--heap-prof-dir=${dir}`];
+    const args = ['--cpu-prof', `--cpu-prof-dir=${dir}`];
+    if (profile === '1') args.push('--heapsnapshot-near-heap-limit=1', `--diagnostic-dir=${dir}`);
+    return args;
+}
+
 function runScenarioOnce(name, file, timeoutS, run) {
     return new Promise((resolve) => {
         const tmp = makeScenarioDir();
@@ -365,7 +399,7 @@ function runScenarioOnce(name, file, timeoutS, run) {
         const t0 = Date.now();
         const lines = [];
         const serverFrom = server.lines.length;
-        const child = spawn(process.execPath, [path.join(WORLD_DIR, file)], {
+        const child = spawn(process.execPath, [...profileArgs(), path.join(WORLD_DIR, file)], {
             cwd: tmp,
             env: {
                 ...process.env,

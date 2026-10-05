@@ -10,10 +10,11 @@
 import { containsPos } from '../home/box_math.js';
 import { botPos, dimensionOf, listAreas, logTo } from '../home/context.js';
 import { blockAt, nameReader } from './dig.js';
-import { addTunnel, cellOf, mineAt, tunnelAt, tunnelsOf } from './mine_logic.js';
+import { WIDENED_TUNNEL_WIDTH, addTunnel, cellOf, classify, mineAt, tunnelAt, tunnelsOf } from './mine_logic.js';
 import { NEAREST_RANGE, cleanMineName, mineId } from './mine_store.js';
 import { climbToSurface, descendToLevel, takePassedOre } from './mining.js';
-import { walksRoute, wayIn } from './mine_way.js';
+import { mineRoutesOn, walksRoute, wayIn } from './mine_way.js';
+import { HERE_ROOM_RANGE, madeMineText, nextMineName } from './here_logic.js';
 import { oreOf } from './ore_table.js';
 import { TEXTS, collectPassedText, forgetMineText, mineEntryText, minesListText, noEntranceText, rememberMineText, rememberTunnelText,
     unknownOreText } from './texts.js';
@@ -159,7 +160,8 @@ function playerCell(pos) {
  * @returns {{tunnel: object|null, width: number, fromPlayer: boolean, cause: object|null}}
  */
 function corridorTunnel(get, feet, options = {}) {
-    const look = { yaw: options.yaw, anchor: options.anchor, minCells: MIN_TUNNEL_CELLS };
+    // v0.1.4.13 (Q1): a tunnel that earlier mining widened (up to 4, floor level, ceiling closed) counts too
+    const look = { yaw: options.yaw, anchor: options.anchor, minCells: MIN_TUNNEL_CELLS, maxWidth: WIDENED_TUNNEL_WIDTH };
     const first = tunnelAt(get, feet, look);
     if (first.ok) {
         return { tunnel: tunnelRecord(first.tunnel), width: first.tunnel.width, fromPlayer: false, cause: null };
@@ -332,6 +334,121 @@ function rememberTunnelNow(bot, ctx, name, options) {
         console.warn('Mining pack: measuring the tunnel failed:', err?.stack ?? err);
         return { ok: false, reason: 'error', text: `I could not measure the tunnel: ${errText(err)}`, mine: null, tunnel: null };
     }
+}
+
+// v0.1.4.13 (Q1): the room of a mine made where the bot stands: a chest or a crafting table within 8 blocks (the
+// nearest), with the furnace, chest and table near it; null when there is none. The center is the feet.
+function roomNear(bot, feet) {
+    const first = blocksNear(bot, feet, [...ROOM_THINGS.chest, ...ROOM_THINGS.table], HERE_ROOM_RANGE)[0];
+    if (!first) {
+        return null;
+    }
+    const pick = names => blocksNear(bot, first, names)[0] ?? null;
+    return { center: { ...feet }, chest: pick(ROOM_THINGS.chest), table: pick(ROOM_THINGS.table), furnace: pick(ROOM_THINGS.furnace) };
+}
+
+// The anchor of the tunnel of a mine made underground: its room (a chest or table), else the far end of the longest
+// open run at the feet, so that the digging goes on at the end nearer to the bot.
+function hereAnchor(get, feet, room) {
+    const block = room?.chest ?? room?.table ?? null;
+    if (block) {
+        return block;
+    }
+    let best = null;
+    for (const [dx, dz] of [[0, -1], [1, 0], [0, 1], [-1, 0]]) {
+        let n = 0;
+        const open = (k) => classify(get(feet.x + dx * k, feet.y, feet.z + dz * k)) === 'air'
+            && classify(get(feet.x + dx * k, feet.y + 1, feet.z + dz * k)) === 'air';
+        while (n < 64 && open(n + 1)) {
+            n++;
+        }
+        if (n > 0 && (!best || n > best.n)) {
+            best = { n, at: { x: feet.x + dx * n, y: feet.y, z: feet.z + dz * n } };
+        }
+    }
+    return best?.at ?? null;
+}
+
+/**
+ * `!mineOre` from where the bot stands (v0.1.4.13, Q1). Underground, in no mine the bot knows, with mine_routes on:
+ * - no known mine within 64 blocks: the room within 8 blocks that has a chest or a crafting table (else the bot's cell)
+ *   becomes the mine `mine N` (the next free name) with the way in unknown, and the tunnel the bot stands in (1 to 4
+ *   wide, a widened one with a level floor and a closed ceiling) becomes its tunnel; the text of Q1 is said;
+ * - a known mine within 64 blocks and a tunnel that earlier mining widened (3 or 4 wide): the tunnel is added to that
+ *   mine as "dig here" adds it, with its text (a tunnel 1 or 2 wide is left to mineOre, as in v0.1.4.11).
+ * The mine made has its entrance 2 blocks above the floor of the bot's cell: the climb of the trip then asks for the
+ * way out, which says it is unknown (noWayOutText), instead of taking the bot for one on the surface.
+ * Nothing happens (made false) on the surface, in a known mine, without mine_routes or without a store; and in open
+ * rock with no tunnel at the feet, where mineOre gives its refusal of v0.1.4.11.
+ * @param {object} bot
+ * @param {object} ctx the pack context (mines, whereAmI, settings, routes, say, log)
+ * @param {string} ore
+ * @returns {{ok: boolean, reason: string|null, text: string, made: boolean, mine: object|null}}
+ */
+export function mineHere(bot, ctx = {}, ore = '') {
+    const none = { ok: true, reason: null, text: '', made: false, mine: null };
+    try {
+        const row = oreOf(ore);
+        const store = storeOf(ctx);
+        const feet = feetOf(bot);
+        if (!row || !store || !feet || !mineRoutesOn(ctx) || ctx?.whereAmI?.()?.underground !== true) {
+            return none;
+        }
+        const dimension = dimensionOf(bot) ?? 'overworld';
+        const mines = store.list(dimension);
+        if (mineAt(mines, feet)) {
+            return none; // in a known mine: the rules of v0.1.4.11 (I4)
+        }
+        const get = nameReader(bot);
+        const near = store.nearest?.(feet, dimension, NEAREST_RANGE) ?? null;
+        if (near) {
+            // a known mine near: v0.1.4.11 measures a tunnel 1 or 2 wide (measureHere); Q1 adds a widened one
+            const anchor = near.room?.center ?? near.base ?? near.entrance;
+            if (tunnelAt(get, feet, { anchor, minCells: MIN_TUNNEL_CELLS }).ok) {
+                return none;
+            }
+            const wide = tunnelAt(get, feet, { anchor, minCells: MIN_TUNNEL_CELLS, maxWidth: WIDENED_TUNNEL_WIDTH });
+            if (!wide.ok) {
+                return none;
+            }
+            const saved = store.set(addTunnel(near, tunnelRecord(wide.tunnel), SAME_TUNNEL));
+            const text = measuredText(tunnelRecord(wide.tunnel), wide.tunnel.width, false);
+            sayOrLog(ctx, text);
+            return { ok: true, reason: null, text, made: true, mine: saved };
+        }
+        const room = roomNear(bot, feet);
+        const found = tunnelAt(get, feet, { anchor: hereAnchor(get, feet, room), minCells: MIN_TUNNEL_CELLS, maxWidth: WIDENED_TUNNEL_WIDTH });
+        if (!found.ok) {
+            return none; // open rock with no tunnel: the old refusal of mineOre
+        }
+        const name = nextMineName(mines.map(m => m.name).filter(Boolean));
+        const tunnel = tunnelRecord(found.tunnel);
+        const saved = store.set({
+            name, source: 'player', ore: row.ore, entrance: { x: feet.x, y: feet.y + 2, z: feet.z }, level: feet.y, base: null, chest: null,
+            direction: null, length: 0, shaft: 'ladder', dimension, end: null, tunnel: [], route: [],
+            room: room ?? { center: { ...feet }, chest: null, table: null, furnace: null }, tunnels: [tunnel], passed: [],
+            area: mineAreaName(bot, ctx, feet),
+        });
+        const text = madeMineText(name, tunnel);
+        sayOrLog(ctx, text);
+        return { ok: true, reason: null, text, made: true, mine: saved };
+    } catch (err) {
+        console.warn('Mining pack: making the mine here failed:', err?.stack ?? err);
+        return none;
+    }
+}
+
+// A text for the player now (ctx.say), else into the log of the command.
+function sayOrLog(ctx, text) {
+    try {
+        if (typeof ctx?.say === 'function') {
+            ctx.say(text);
+            return;
+        }
+    } catch {
+        // the log below
+    }
+    logTo(ctx, text);
 }
 
 // An empty ore, `all` or `ore`: every ore of the list.

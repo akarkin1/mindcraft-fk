@@ -12,7 +12,7 @@ import {
 } from '../e2e/helpers.js';
 import { env, haveControl, command, commands } from './control.js';
 import { OWNER_PORT } from './mc_server.js';
-import { entityPos, positions, fmt, tp, inBox } from './world.js';
+import { entityPos, positions, fmt, tp, inBox, entityNumber } from './world.js';
 
 export {
     check, note, scenarioMain, sleep, withTimeout, errText, importProject, stopRealAgent, runCommand, runPhase,
@@ -714,6 +714,36 @@ export async function resetBot(name, { gamemode = 'survival' } = {}) {
         `gamemode ${gamemode} ${name}`, `clear ${name}`, `effect clear ${name}`,
         `effect give ${name} minecraft:instant_health 1 10 true`, `effect give ${name} minecraft:saturation 1 10 true`,
     ]);
+}
+
+// v0.1.4.13 (T3): the damage of every `item` the player carries (server, the component minecraft:damage of each
+// stack; 0 for an item without it), for example [238, 0] for a worn and a new iron_pickaxe.
+export async function itemDamages(name, item) {
+    const out = await command(`data get entity ${name} Inventory`);
+    const line = out.find((l) => /has the following entity data: /.test(l));
+    if (!line) return [];
+    const text = line.slice(line.indexOf('entity data: ') + 13);
+    const found = [];
+    const re = /\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}/g; // every item object (components nest one level)
+    let m;
+    while ((m = re.exec(text))) {
+        const obj = m[0];
+        if (!new RegExp(`id: "(?:minecraft:)?${item}"`).test(obj)) continue;
+        const d = /"minecraft:damage": (\d+)/.exec(obj);
+        found.push(d ? Number(d[1]) : 0);
+    }
+    return found;
+}
+
+// v0.1.4.13 (T3): brings the food level of a player down to `level` or just under it with the hunger effect (the
+// difficulty must not be peaceful, which fills the food bar). Resolves with the level reached.
+export async function foodTo(name, level, { ms = 60000, amplifier = 30 } = {}) {
+    const food = () => entityNumber(name, 'foodLevel');
+    if ((await food()) <= level) return food();
+    await command(`effect give ${name} minecraft:hunger ${Math.ceil(ms / 1000)} ${amplifier} true`);
+    await waitFor(async () => (await food()) <= level, { ms, every: 100 });
+    await command(`effect clear ${name} minecraft:hunger`);
+    return food();
 }
 
 // The labels of the actions the agent ran, from the console lines of the action manager.

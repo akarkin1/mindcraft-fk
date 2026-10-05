@@ -21,9 +21,12 @@ import { botPos, clockOf, dimensionOf, listAreas, logTo, recallHome } from '../h
 import { chooseFood, isEdibleFood } from '../home/food_logic.js';
 import { walkNear } from '../home/motion.js';
 import {
-    FILLERS, blockAt, collectDrops, countOf, digClear, equipPickaxe, fillerCount, freeSlots, inventoryList, isFree, isSolid,
+    FILLERS, WEAR_LIMIT, blockAt, collectDrops, countOf, digClear, equipPickaxe, fillerCount, freeSlots, inventoryList, isFree, isSolid,
     logicName, nameReader, patchAll, placeInto, placeTorch, stepInto, walkTo, REACH,
 } from './dig.js';
+import { SUPPLY_NEAR_RANGE, applySpareRule, pickaxeToCraft, supplyPlan } from './supply_logic.js';
+import { storeFullBag } from './bag.js';
+import { otherOresWords, storeKinds, withOtherOres } from './bag_logic.js';
 import { followDown, followUp, placeLadder, waitStanding } from './ladder.js';
 import {
     BRANCH_LENGTH, addPassedEntry, addTunnel, backOf, branchCells, branchPlan, cellOf, chooseEntrance, classify, faceNeighbours, insideShaft, isDirection, leftOf,
@@ -36,7 +39,7 @@ import { MINE_RANGE, chooseMine, fromInsideOn, mineRoutesOn, senseRangeOf, walks
 import { ORES, isOreBlock, oreOf, pickaxeMaterial, targetLevel, tripPickaxe } from './ore_table.js';
 import {
     NO_TORCHES_TEXT, STOP_REASONS, TEXTS, askMineText, cannotMineText, descendText, mineLabel, mineOreText, noTunnelText, passedText, posText,
-    rememberTunnelText, suppliesStoppedText, suppliesText, tunnelText, unknownOreText,
+    rememberTunnelText, suppliesStoppedText, suppliesText, tunnelText, unknownOreText, wornMadeText, wornSpareText, wornStopText,
 } from './texts.js';
 // v0.1.4.11: the texts of W2 and W3 that part W adds to texts.js, reached at run time with the words of the
 // spec as the fallback (a named import of a name that does not exist yet would break the loading of the pack)
@@ -391,7 +394,18 @@ function makeJob(bot, ctx, options = {}) {
     return {
         bot, ctx, clock, start, deadline, areas: areasOf(bot, ctx), stats: newStats(), memoryStore: options.memoryStore ?? null,
         mineRoutes: mineRoutesOn(ctx), senseRange: senseRangeOf(ctx),
+        // P5 (v0.1.4.13): the trip's report of its count, called after every ore picked up (options.onProgress)
+        onProgress: typeof options.onProgress === 'function' ? options.onProgress : null,
     };
+}
+
+// P5: the trip reports its count after every ore picked up. Never throws.
+function noteProgress(job) {
+    try {
+        job.onProgress?.();
+    } catch {
+        // the job of the glue is optional
+    }
 }
 
 function overdue(job) {
@@ -477,6 +491,40 @@ function foodNamesInChests(ctx, bot) {
     return [...names];
 }
 
+// The chests of the chest index in the dimension of the bot (ctx.chests); [] without an index. Never throws.
+function knownChests(ctx, bot) {
+    try {
+        const list = ctx?.chests?.list?.(dimensionOf(bot) ?? undefined);
+        return Array.isArray(list) ? list : [];
+    } catch {
+        return [];
+    }
+}
+
+/** The containers the supply step looks into when the index does not know them (P1). */
+const CONTAINER_NAMES = Object.freeze(['chest', 'trapped_chest', 'barrel']);
+
+// True when a container within 16 blocks of the bot is not in the chest index (either half of a double chest
+// counts as known when the index knows the other half). Never throws.
+function unknownContainerNear(bot, ctx) {
+    try {
+        const known = new Set(knownChests(ctx, bot).map(c => posKey(c)));
+        const found = bot.findBlocks({ matching: b => Boolean(b) && CONTAINER_NAMES.includes(b.name), maxDistance: SUPPLY_NEAR_RANGE, count: 32 }) ?? [];
+        return found.some(p => {
+            const here = { x: p.x, y: p.y, z: p.z };
+            const beside = [{ x: 1, z: 0 }, { x: -1, z: 0 }, { x: 0, z: 1 }, { x: 0, z: -1 }].map(d => ({ x: here.x + d.x, y: here.y, z: here.z + d.z }));
+            return !known.has(posKey(here)) && !beside.some(q => known.has(posKey(q)) && blockAt(bot, q)?.name === blockAt(bot, here)?.name);
+        });
+    } catch {
+        return false;
+    }
+}
+
+// The supply plan of P1 from what is missing, the feet of the bot and the chests it knows.
+function supplyOf(bot, ctx, missing) {
+    return supplyPlan({ missing, from: feetOf(bot), chests: knownChests(ctx, bot), foods: bot.registry?.foodsByName });
+}
+
 /**
  * Gets ready for a trip for the ore (spec M4): computes tripNeeds and gets what is missing,
  * from chests through ctx.storage and crafted through ctx.tools. Cobblestone is collected on the
@@ -485,6 +533,12 @@ function foodNamesInChests(ctx, bot) {
  * gets (ctx.say), takes ladders only for the part of the way down that has none yet, and ends
  * with `interrupted` when it is stopped. Since v0.1.4.9 (B4) a trip to a tunnel of a known mine
  * gives `level` (the level of the tunnel), `wayDownTo` (the way reaches it) and `hasBase` (the room).
+ * Since v0.1.4.13 (P1) the order is: the chests within 16 blocks of the bot first (the chest index, and the
+ * containers the bot sees that the index does not know, looked into through ctx.storage.lookIntoChests), then
+ * the chests the index knows, nearest first (supplyPlan), then crafting from what the bot carries, the surface
+ * last; the text names the chest a supply comes from. A spare pickaxe is wanted only when the one in hand has
+ * fewer than 50 uses left (applySpareRule), and it is crafted from carried material, never fetched from the
+ * surface; without any pickaxe the first one is got as before (chests, then crafted, the surface if it must).
  * @param {object} bot
  * @param {object} ctx
  * @param {string} ore
@@ -505,21 +559,49 @@ export async function prepareMiningTrip(bot, ctx = {}, ore = '', options = {}) {
         const way = mine && Array.isArray(mine.route) && mine.route.length > 0 ? routeEnd(mine) : null;
         const wayDownTo = isFiniteNumber(options.wayDownTo) ? options.wayDownTo : way?.y;
         const hasBase = typeof options.hasBase === 'boolean' ? options.hasBase : Boolean(mine?.base);
-        const needs = () => tripNeeds(row, surfaceY, level, tripInventory(bot), {
-            foods: bot.registry?.foodsByName, shaftExists: Boolean(way) || isFiniteNumber(options.wayDownTo), wayDownTo, hasBase,
-        });
+        const needs = () => {
+            const plan = tripNeeds(row, surfaceY, level, tripInventory(bot), {
+                foods: bot.registry?.foodsByName, shaftExists: Boolean(way) || isFiniteNumber(options.wayDownTo), wayDownTo, hasBase,
+            });
+            // P1: the spare pickaxe by the uses of the one in hand, not by the blocks of the trip
+            plan.missing = material ? applySpareRule(plan.missing, usablePickaxes(tripInventory(bot), material), material) : plan.missing;
+            return plan;
+        };
         let plan = needs();
         const notes = [];
         const lack = name => plan.missing.find(m => m.name === name && !m.spare);
         const stopped = () => (bot.interrupt_code
             ? { ok: false, reason: 'interrupted', missing: plan.missing, level, text: suppliesStoppedText(plan.missing) } : null);
-        const say = suppliesText(plan.missing);
+        const canFetch = typeof ctx?.storage?.fetchItem === 'function';
+        const canCraft = typeof ctx?.tools?.craftSupplies === 'function';
+        // P1: the containers within 16 blocks the index does not know are looked into first, so the plan can name them
+        let supply = supplyOf(bot, ctx, plan.missing);
+        if (plan.missing.length > 0 && typeof ctx?.storage?.lookIntoChests === 'function' && unknownContainerNear(bot, ctx)) {
+            await callTool(ctx, 'storage', 'lookIntoChests', bot, SUPPLY_NEAR_RANGE);
+            if (stopped()) {
+                return stopped();
+            }
+            supply = supplyOf(bot, ctx, plan.missing);
+        }
+        const say = suppliesText(plan.missing, supply.takes);
         if (say) {
             sayTo(ctx, say);
         }
-        if (lack('pickaxe') || plan.missing.find(m => m.name === 'pickaxe' && m.spare)) {
-            const count = plan.needs.find(n => n.name === 'pickaxe')?.count ?? 1;
-            await callTool(ctx, 'tools', 'ensureTool', bot, 'pickaxe', material, { count });
+        // the chests first, the near ones before the known ones (fetchItem takes from the nearest chest that holds the item)
+        if (canFetch) {
+            for (const take of supply.takes) {
+                for (const [name, n] of Object.entries(take.items)) {
+                    await callTool(ctx, 'storage', 'fetchItem', bot, name, n);
+                    if (stopped()) {
+                        return stopped();
+                    }
+                }
+            }
+            plan = needs();
+        }
+        if (lack('pickaxe')) {
+            // without any pickaxe the trip cannot start: the chests, then crafted, the surface if it must
+            await callTool(ctx, 'tools', 'ensureTool', bot, 'pickaxe', material, { count: 1 });
             plan = needs();
             if (stopped()) {
                 return stopped();
@@ -529,8 +611,16 @@ export async function prepareMiningTrip(bot, ctx = {}, ore = '', options = {}) {
             const best = usablePickaxes(inventoryList(bot), 'wooden')[0]?.name ?? null;
             return { ok: false, reason: 'pickaxe', missing: plan.missing, level, text: cannotMineText(row.ore, material, best) };
         }
-        const canFetch = typeof ctx?.storage?.fetchItem === 'function';
-        const canCraft = typeof ctx?.tools?.craftSupplies === 'function';
+        const spareOf = plan.missing.find(m => m.name === 'pickaxe' && m.spare) ? pickaxeToCraft(material, inventoryList(bot)) : null;
+        if (spareOf) {
+            // P1: the spare from carried material only; never a walk to the surface while the mining can go on. The correction
+            // of 2026-10-04: the cheapest material that mines the ore (pickaxeToCraft), never a better one
+            await callTool({ ...ctx, storage: null, chests: null }, 'tools', 'ensureTool', bot, 'pickaxe', spareOf, { count: 2, collect: false, exact: true });
+            plan = needs();
+            if (stopped()) {
+                return stopped();
+            }
+        }
         for (const name of ['ladder', 'torch', 'chest']) {
             const m = lack(name);
             if (!m) {
@@ -757,7 +847,7 @@ async function digDown(job, mine, level, ours) {
             const dug = await digClear(bot, target, { clock });
             job.stats.dug += dug.dug;
             if (!dug.ok) {
-                return { ok: false, reason: dug.reason === 'interrupted' ? 'interrupted' : 'blocked' };
+                return { ok: false, reason: dug.reason === 'interrupted' ? 'interrupted' : dug.reason === 'worn' ? 'worn' : 'blocked', worn: dug.worn };
             }
             ours.add(posKey(target));
             await waitFeet(job, target.y);
@@ -834,7 +924,7 @@ async function digDown(job, mine, level, ours) {
             const r = await digClear(bot, p, { clock });
             job.stats.dug += r.dug;
             if (!r.ok) {
-                return { ok: false, reason: r.reason === 'interrupted' ? 'interrupted' : 'blocked' };
+                return { ok: false, reason: r.reason === 'interrupted' ? 'interrupted' : r.reason === 'worn' ? 'worn' : 'blocked', worn: r.worn };
             }
             ours.add(posKey(p));
         }
@@ -1019,8 +1109,10 @@ export async function descendToLevel(bot, ctx = {}, y = 16, options = {}) {
                 interrupted: 'I stopped going down.', time: 'The time for going down is over.', bottom: 'I reached the bottom of the world.',
                 blocked: 'Lava, water or caves block the way down, and I found no way around them.', unknown: 'I cannot see the blocks under me.',
                 ladder: 'I could not place a ladder.', area: 'The way down would come too near a protected area.', stuck: 'I got stuck in the shaft.',
+                worn: 'My pickaxe is nearly worn.',
             }[r.reason] ?? 'I could not go on down.';
-            return done(false, r.reason, mine, `${why} I am at ${posText(feetOf(bot))}, ${descendText({ level, mine, ...job.stats }).replace(/^I went down to level -?\d+/, 'on the way to level ' + level)}`);
+            const out = done(false, r.reason, mine, `${why} I am at ${posText(feetOf(bot))}, ${descendText({ level, mine, ...job.stats }).replace(/^I went down to level -?\d+/, 'on the way to level ' + level)}`);
+            return r.worn ? { ...out, worn: r.worn } : out;
         }
         return done(true, null, mine, descendText({ level, mine, ...job.stats }));
     } catch (err) {
@@ -1073,7 +1165,7 @@ async function openCells(job, cells, ours, allowed) {
         const r = await digClear(bot, cell, { clock });
         job.stats.dug += r.dug;
         if (!r.ok) {
-            return { ok: false, reason: r.reason === 'interrupted' ? 'interrupted' : 'blocked' };
+            return { ok: false, reason: r.reason === 'interrupted' ? 'interrupted' : r.reason === 'worn' ? 'worn' : 'blocked', worn: r.worn };
         }
         ours.add(posKey(cell));
     }
@@ -1108,7 +1200,8 @@ export async function setupMineBase(bot, ctx = {}, options = {}) {
         ours.add(posKey(base));
         const opened = await openCells(job, plan.cells, ours, p => tunnelAllowed(p, job.areas));
         if (!opened.ok) {
-            return done(false, opened.reason, mine, `I could not clear the room at ${posText(base)}: ${STOP_REASONS[opened.reason] ?? opened.reason}.`);
+            const out = done(false, opened.reason, mine, `I could not clear the room at ${posText(base)}: ${STOP_REASONS[opened.reason] ?? opened.reason}.`);
+            return opened.worn ? { ...out, worn: opened.worn } : out;
         }
         let chest = null;
         const there = blockAt(bot, plan.chest);
@@ -1233,6 +1326,17 @@ async function mineVeins(job, blocks, ours, tunnelFeet, report = null, options =
         const r = await digClear(bot, v, { clock });
         job.stats.dug += r.dug;
         if (!r.ok) {
+            if (r.reason === 'worn') {
+                // P2: the pickaxe in hand is nearly worn and no other fits: the trip replaces it before the next dig
+                job.worn = r.worn;
+                for (const rest of blocks.slice(i)) {
+                    const n = logicName(blockAt(bot, rest));
+                    if (isOreBlock(n)) {
+                        note(rest, n, 'stopped');
+                    }
+                }
+                break;
+            }
             continue;
         }
         mined++;
@@ -1244,6 +1348,7 @@ async function mineVeins(job, blocks, ours, tunnelFeet, report = null, options =
     }
     if (mined > 0) {
         await collectDrops(bot, tunnelFeet, { clock, radius: 6, timeoutMs: 20000, dig: true, areas: job.areas });
+        noteProgress(job);
         await walkTo(bot, tunnelFeet, { clock, timeoutMs: 10000 });
     }
     if (toClose.length > 0) {
@@ -1296,7 +1401,7 @@ function veinsOf(job, ores, seen, skip, report) {
 async function takeSensed(job, feet, dir, sensed, ours, seen, report) {
     const { bot, clock } = job;
     for (const s of sensed) {
-        if (bot.interrupt_code || overdue(job)) {
+        if (bot.interrupt_code || overdue(job) || job.worn) {
             return;
         }
         if (seen.has(posKey(s)) || !isOreBlock(logicName(blockAt(bot, s)))) {
@@ -1362,6 +1467,67 @@ function notePassed(job, mine, report, feet) {
 function pickaxeState(bot, material) {
     const list = usablePickaxes(inventoryList(bot), material);
     return { uses: list[0]?.uses ?? null, spare: list.length >= 2 };
+}
+
+// P2 (v0.1.4.13): the best pickaxe of the trip as { name, uses } when it is nearly worn (WEAR_LIMIT uses or fewer)
+// and no other usable pickaxe has more; null when a pickaxe with more uses is there or none at all.
+function wornPickaxe(bot, material) {
+    const list = usablePickaxes(inventoryList(bot), material);
+    if (list.length === 0 || list.some(p => p.uses > WEAR_LIMIT)) {
+        return null;
+    }
+    const best = list.sort((a, b) => b.uses - a.uses)[0];
+    return { name: best.name, uses: best.uses };
+}
+
+/**
+ * The pickaxe in hand is nearly worn (spec v0.1.4.13, P2): a pickaxe of the bag with more uses that breaks the
+ * ore is equipped (`I take my spare one.`), else one is crafted from carried material through ctx.tools.ensureTool
+ * at the crafting table of the bag or within 16 blocks, with no walk to a chest or the surface (`I made a new
+ * one.`); when nothing can be made the trip stops with the stop text of P2. The old pickaxe stays in the bag.
+ * The correction of 2026-10-04 (no switch): the new one is of the cheapest material that mines the ore
+ * (pickaxeToCraft: stone from cobblestone for iron ore, iron for diamond; iron for an ore that needs stone only from a
+ * stash of more than 20 ingots and no cobblestone; never diamond for an ore that needs less); with nothing to craft it
+ * from, the stop text names that material (`I have no stone for a new one.`).
+ * Every text is said through ctx.say. Never throws.
+ * @param {object} bot
+ * @param {object} ctx
+ * @param {object} row the ore
+ * @param {{name: string, uses: number}} worn the pickaxe that is nearly worn
+ * @param {{mined: number, wanted: number}} count the count of the trip for the stop text
+ * @returns {Promise<{ok: boolean, text: string}>}
+ */
+export async function replaceWornPickaxe(bot, ctx, row, worn, count = {}) {
+    const material = tripPickaxe(row) ?? 'stone';
+    const fresh = () => usablePickaxes(inventoryList(bot), material).some(p => p.uses > WEAR_LIMIT);
+    const name = worn?.name ?? 'pickaxe';
+    const uses = isFiniteNumber(worn?.uses) ? worn.uses : 0;
+    let make = null;
+    try {
+        if (fresh()) {
+            await equipPickaxe(bot, material);
+            const text = wornSpareText(name, uses);
+            sayTo(ctx, text);
+            return { ok: true, text };
+        }
+        // from carried material only: no chest, no tree, no stone of the surface; the cheapest material that mines the ore
+        make = pickaxeToCraft(material, inventoryList(bot));
+        if (make) {
+            await callTool({ ...ctx, storage: null, chests: null }, 'tools', 'ensureTool', bot, 'pickaxe', make,
+                { count: 1, minUses: WEAR_LIMIT + 1, collect: false, exact: true });
+        }
+        if (make && fresh()) {
+            await equipPickaxe(bot, material);
+            const text = wornMadeText(name, uses);
+            sayTo(ctx, text);
+            return { ok: true, text };
+        }
+    } catch (err) {
+        console.warn('Mining pack: replacing the worn pickaxe failed:', errText(err));
+    }
+    const text = wornStopText(name, uses, count.mined ?? 0, count.wanted ?? 0, row, make ? null : material);
+    sayTo(ctx, text);
+    return { ok: false, text };
 }
 
 // Goes 3 blocks to the side of a tunnel that cannot go on, right first.
@@ -1558,6 +1724,16 @@ export async function takePassedOre(bot, ctx = {}, mine = null, entries = [], op
             }
             const veins = veinParts(e, nameReader(bot), 12).take;
             await mineVeins(job, veins, ours, feetOf(bot) ?? stand ?? e, report);
+            if (job.worn) {
+                // P2: the pickaxe is nearly worn and no other fits; the rest stays for a pickaxe
+                for (const rest of (Array.isArray(entries) ? entries : []).slice(entries.indexOf(e))) {
+                    if (!stay.some(s => s.x === rest.x && s.y === rest.y && s.z === rest.z) && (mine.passed ?? []).some(p => p.x === rest.x && p.y === rest.y && p.z === rest.z)) {
+                        keep(rest, 'pickaxe');
+                    }
+                }
+                save();
+                break;
+            }
             for (const p of report.taken.splice(0)) {
                 mine.passed = removePassedAt(mine.passed, p);
                 collected[row.ore] = (collected[row.ore] ?? 0) + 1;
@@ -1623,6 +1799,9 @@ export async function digTunnel(bot, ctx = {}, length = 8, options = {}) {
         if (target?.kind === 'branch' || target?.kind === 'line') {
             r.line = { ...target.record };
         }
+        if (job.worn) {
+            r.worn = job.worn; // P2: the pickaxe that is nearly worn, for the trip to replace it
+        }
         return { ...r, text: tunnelText({ ...r, reason: ok ? null : reason }) };
     };
     try {
@@ -1660,6 +1839,9 @@ export async function digTunnel(bot, ctx = {}, length = 8, options = {}) {
             }
             left.push(...notePassed(job, mine, report, feet));
             save();
+            if (job.worn) {
+                return done(false, 'worn');
+            }
         }
         while (steps < length) {
             if (bot.interrupt_code) {
@@ -1732,15 +1914,18 @@ export async function digTunnel(bot, ctx = {}, length = 8, options = {}) {
                 job.stats.dug += r.dug;
                 if (!r.ok) {
                     blocked = r.reason;
+                    if (r.worn) {
+                        job.worn = r.worn;
+                    }
                     break;
                 }
                 ours.add(posKey(slots[key]));
             }
-            if (blocked === 'interrupted') {
+            if (blocked === 'interrupted' || blocked === 'worn') {
                 report.left.push(...veins.map(v => ({ ore: v.name, x: v.x, y: v.y, z: v.z, reason: 'stopped' })));
                 left.push(...notePassed(job, mine, report, feet));
                 save();
-                return done(false, 'interrupted');
+                return done(false, blocked);
             }
             if (blocked) {
                 if (++looks > 6) {
@@ -1776,8 +1961,12 @@ export async function digTunnel(bot, ctx = {}, length = 8, options = {}) {
             }
             await collectDrops(bot, feet, { clock: job.clock, radius: 2, timeoutMs: 3000 });
             addCounts(collected, diffCounts(before, oreCounts(bot)));
+            noteProgress(job);
             left.push(...notePassed(job, mine, report, feet));
             save();
+            if (job.worn) {
+                return done(false, 'worn');
+            }
         }
         return done(true, null);
     } catch (err) {
@@ -2188,19 +2377,35 @@ export async function mineOre(bot, ctx = {}, ore = '', count = 8, options = {}) 
     const startCount = countOf(bot, row.item);
     const stored = {};
     const left = [];
+    const ores = {}; // Q9 (v0.1.4.13): the ore items the digging collected, every kind
+    // Q4 (v0.1.4.13): no free slot and something the trip stores
+    const bagFull = () => freeSlots(bot) === 0 && storeKinds(inventoryList(bot), { ore: row.item, foods: bot.registry?.foodsByName ?? {} }).length > 0;
     let mine = null;
     let tunnel = null;
     let reason = null;
     let dark = false; // fix round F24 (item 3): the tunnel was dug without a torch
     const mined = () => Math.max(0, countOf(bot, row.item) - startCount) + (stored[row.item] ?? 0);
-    const finish = (ok, why, extra = '') => ({
-        ok, reason: why, mined: mined(), stored, mine,
-        text: mineOreText({
+    // P5 (v0.1.4.13): the job counts what the skill counts; ctx.job is the job of the glue, optional
+    const report = () => {
+        try {
+            ctx?.job?.progress?.(mined());
+        } catch {
+            // the job is optional
+        }
+    };
+    const finish = (ok, why, extra = '') => {
+        report();
+        const text = mineOreText({
             item: row.item, mined: mined(), wanted, reason: why, mine: shownMine(mine, tunnel),
             stored: Object.fromEntries(Object.entries(stored).filter(([k]) => k !== row.item)),
             extra: [passedText(leftOnTrip(mine, left)), dark ? NO_TORCHES_TEXT : '', extra].filter(t => t.length > 0).join(' '),
-        }),
-    });
+        });
+        // Q9 (v0.1.4.13, mine_other_ores): the other ores of the trip at the end of its first sentence
+        const others = ctx?.settings?.mine_other_ores === true ? otherOresWords(ores, row.item) : '';
+        return { ok, reason: why, mined: mined(), stored, mine, text: withOtherOres(text, others) };
+    };
+    // P2: the pickaxe in hand is nearly worn: replaced from the bag or crafted; false when the trip must stop
+    const replaceWorn = async (worn) => (await replaceWornPickaxe(bot, tripCtx, row, worn ?? wornPickaxe(bot, tripPickaxe(row)) ?? { name: 'pickaxe', uses: 0 }, { mined: mined(), wanted })).ok;
     // the clock of the tests goes to every step
     const pass = { now: options.now, wait: options.wait };
     try {
@@ -2317,22 +2522,29 @@ export async function mineOre(bot, ctx = {}, ore = '', count = 8, options = {}) 
                 return { ok: false, reason: inside.reason, text: inside.text, mined: 0, stored, mine };
             }
         } else {
-            const down = await descendToLevel(bot, tripCtx, level, {
+            const descend = (into) => descendToLevel(bot, tripCtx, level, {
                 ...pass, ore: row.ore, deadline: deadline - 60000, entrance, ...(routes && known ? { mine: known } : {}),
-                ...(insideStart ? { inside: insideStart } : {}),
+                ...(insideStart ? { inside: insideStart } : {}), ...(into ? { mine: into } : {}),
             });
+            let down = await descend(null);
+            if (!down.ok && down.reason === 'worn' && (await replaceWorn(down.worn))) {
+                down = await descend(down.mine ?? null); // P2: once more with the new pickaxe, in the mine begun
+            }
             mine = down.mine;
             if (!down.ok) {
-                reason = down.reason;
+                reason = down.reason === 'worn' ? 'pickaxe' : down.reason;
                 if (reason !== 'interrupted' && mine) {
                     await climbToSurface(bot, tripCtx, { ...pass, mine, toParent });
                 }
                 return finish(false, reason, down.text);
             }
             if (!mine.base) {
-                const base = await setupMineBase(bot, tripCtx, { ...pass, mine, deadline: deadline - 60000 });
+                let base = await setupMineBase(bot, tripCtx, { ...pass, mine, deadline: deadline - 60000 });
+                if (!base.ok && base.reason === 'worn' && (await replaceWorn(base.worn))) {
+                    base = await setupMineBase(bot, tripCtx, { ...pass, mine: base.mine ?? mine, deadline: deadline - 60000 });
+                }
                 if (!base.ok) {
-                    reason = base.reason === 'interrupted' || base.reason === 'time' ? base.reason : 'blocked';
+                    reason = base.reason === 'interrupted' || base.reason === 'time' ? base.reason : base.reason === 'worn' ? 'pickaxe' : 'blocked';
                     if (reason !== 'interrupted') {
                         await climbToSurface(bot, tripCtx, { ...pass, mine: base.mine ?? mine, toParent });
                     }
@@ -2349,13 +2561,23 @@ export async function mineOre(bot, ctx = {}, ore = '', count = 8, options = {}) 
         dark = countOf(bot, 'torch') === 0;
         const depth = mine.entrance.y - (shownMine(mine, tunnel)?.level ?? mine.level);
         const tunnelLength = () => shownMine(mine, tunnel)?.length ?? mine.length;
-        let depositsWithoutProgress = 0;
         for (;;) {
             if (bot.interrupt_code) {
                 reason = 'interrupted';
                 break;
             }
             await eatIfHungry(bot, tripCtx);
+            report();
+            // P2: the pickaxe in hand at 10 uses or fewer is replaced before the next dig; without a replacement the
+            // stop text of P2 comes first, then the old stop text of the trip
+            const worn = wornPickaxe(bot, material);
+            if (worn) {
+                if (!(await replaceWorn(worn))) {
+                    reason = 'pickaxe';
+                    break;
+                }
+                continue;
+            }
             const pick = pickaxeState(bot, material);
             const state = {
                 collected: mined(), wanted, health: bot.health, food: bot.food, hasFood: haveFood(bot, tripCtx),
@@ -2368,23 +2590,36 @@ export async function mineOre(bot, ctx = {}, ore = '', count = 8, options = {}) 
                 break;
             }
             if (back.go) {
-                const dep = await depositAtBase(bot, tripCtx, { ...pass, mine, keep: { [row.item]: -1 } });
-                addCounts(stored, dep.stored);
-                mine = dep.mine ?? mine;
-                if (freeSlots(bot) <= 3 && ++depositsWithoutProgress >= 1) {
-                    reason = 'inventory_full';
+                // Q4 (v0.1.4.13): the full bag goes into the chest of the mine or the nearest chest within 32 blocks and
+                // the mining goes on; with nothing to store and a slot free the digging goes on; the stop text is said
+                // only when no chest has room
+                const bag = await storeFullBag(bot, tripCtx, mine, row, { mined: mined(), wanted });
+                addCounts(stored, bag.stored);
+                if (!bag.ok) {
+                    reason = bag.reason === 'interrupted' ? 'interrupted' : 'inventory_full';
                     break;
                 }
-                continue;
+                if (bag.action === 'store') {
+                    continue;
+                }
             }
-            depositsWithoutProgress = 0;
             const digOptions = {
                 ...pass, mine, material, deadline: deadline - returnTimeMs(depth, tunnelLength() + TUNNEL_CHUNK),
-                shouldStop: () => (mined() >= wanted ? 'done' : null),
+                // Q4: a chunk ends when the bag fills with something to store, so that the trip stores it and goes on
+                shouldStop: () => (mined() >= wanted ? 'done' : bagFull() ? 'bag' : null), onProgress: report,
             };
             const t = routes && tunnel !== null ? await digOnce(bot, tripCtx, mine, tunnel, digOptions) : await digTunnel(bot, tripCtx, TUNNEL_CHUNK, digOptions);
             mine = t.mine ?? mine;
             left.push(...(t.left ?? []));
+            addCounts(ores, t.collected); // Q9: the ore items of every kind the dig collected
+            report();
+            if (!t.ok && t.reason === 'worn') {
+                if (await replaceWorn(t.worn)) {
+                    continue;
+                }
+                reason = 'pickaxe';
+                break;
+            }
             if (!t.ok) {
                 reason = t.reason === 'time' ? 'time' : t.reason === 'interrupted' ? 'interrupted' : t.reason === 'no_pickaxe' ? 'pickaxe' : t.reason;
                 break;

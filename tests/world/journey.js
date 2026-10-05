@@ -8,12 +8,13 @@
 //
 // The memory of the bot is empty at the start: every scenario runs in a fresh working directory with an empty
 // bots/ folder (run.js), and a journey saves no place, area or route itself (no saveHomePlace).
+import fs from 'node:fs';
 import http from 'node:http';
 import net from 'node:net';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import {
-    check, note, startAgent, settings0149, resetBot, orderChannel, commands, placeBot, waitFor, entityPos, sleep, tp, fmt,
+    check, note, startAgent, settings0149, resetBot, orderChannel, command, commands, placeBot, waitFor, entityPos, sleep, tp, fmt,
     setTrapdoor, startTrace, printTrace, readWorldFile, giveItems, recordMoves, ROOT,
 } from './helpers.js';
 import { inBox, isOpen, dist, setOpen, chestItems, findBlocks, blockNames } from './world.js';
@@ -700,7 +701,8 @@ export function runWatchClient(args, { url, token, ms = 30000 } = {}) {
 export function followWatchEvents({ url, token }) {
     const childEnv = { ...process.env, MC_WATCH_URL: url, MC_WATCH_TOKEN: token };
     const s = { text: '', err: '', exited: false };
-    const child = spawn(process.execPath, [WATCH_CLIENT, 'events', '--follow'], { cwd: ROOT, env: childEnv, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+    // v0.1.4.13 (part S): the stream is gone; `--follow` is a loop of `wait any` whose digests list the new events
+    const child = spawn(process.execPath, [WATCH_CLIENT, '--follow'], { cwd: ROOT, env: childEnv, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
     child.stdout.setEncoding('utf8');
     child.stderr.setEncoding('utf8');
     child.stdout.on('data', (c) => { s.text += c; });
@@ -740,6 +742,101 @@ export function rawMcp(url, body, { token = null, ms = 10000 } = {}) {
         req.on('error', (e) => resolve({ status: null, text: String(e?.message ?? e), json: null }));
         req.end(data);
     });
+}
+
+// ------------------------------------------------------------------ v0.1.4.13 "Supervision" (W109 to W118)
+
+// The owner's switches of v0.1.4.12 (PLAYTEST.md of that release: watch_server per scenario, watch_and_learn, smelting)
+// and the switches of this release on, as the owner will play: supervisor_name "Opus" (the example name of the docs;
+// the `help` and `message` events need it), prompt_cache, mine_other_ores. watch_report_seconds stays 0 (a report
+// every N seconds would wake every `wait event` of W109 and W111 for nothing) and shared_memory is on only in W117
+// (the other journeys have one bot). A key the code does not know yet is ignored, so the journeys run on v0.1.4.12 and
+// fail there for the right reason.
+export const SUPERVISION_SETTINGS = (extra = {}) => RELEASE_SETTINGS({
+    watch_and_learn: true, smelting: true,
+    supervisor_name: 'Opus', watch_report_seconds: 0, shared_memory: false, prompt_cache: true, mine_other_ores: true,
+    ...extra,
+});
+
+// The player teaches the bot the mine in its room, the quick way of W91 and W92: the bot and the player stand outside
+// in front of the house door; "follow me" !followPlayer("w_player", 3); the player walks into the house, down ladder 1,
+// down ladder 2 into the room, waiting for the bot after every ladder (60 s each); "this is the mine" !rememberMine(name)
+// in the room; !stop. With `tunnel` (roomTunnelPlan of base_world.js, built by the scenario) the player then walks to its
+// rock face, looks west and types !rememberTunnel ("dig here": the tunnel is measured from where he stands, W91), and
+// walks back into the room (roomWait) so that he does not stand in the way of the digging. Resolves with { ok, said,
+// tunnelSaid } (ok: every leg followed, the mine names 2 ladders, and with `tunnel` the answer says it measured it).
+export async function partTeachMineInRoom(ctx, { name = 'mine', tunnel = null } = {}) {
+    const { agent, orders, b } = ctx;
+    const sp = spots(b);
+    const trace = journeyTrace(agent, b);
+    let ok = true;
+    let said = '', tunnelSaid = '';
+    const leg = async (label, pred) => {
+        if (!ok) return;
+        const w = await waitBot(agent, label, pred, 60000);
+        check(w.ok, `${label} within 60 s, by itself (precondition)`, fmt(w.bot));
+        ok = w.ok;
+    };
+    try {
+        const follow = await orders.orderInfo(`!followPlayer("${PLAYER}", 3)`, 5000);
+        note(`teach: !followPlayer answered ${JSON.stringify(follow.reply)}`);
+        await sleep(2000);
+        await playerIntoHouse(b, sp.outside);
+        await sleep(2000);
+        await playerDownToBasement(b);
+        await leg('teach: the bot followed down ladder 1 into the basement', (a) => inBasement(b, a));
+        if (ok) await playerDownToRoom(b, sp.basementWait);
+        await leg('teach: the bot followed down ladder 2 into the room', inside(b.room.box));
+        if (!ok) return { ok, said, tunnelSaid };
+        await sleep(1500);
+        said = await orders.order(`!rememberMine("${name}")`, 30000);
+        note(`teach: !rememberMine("${name}") in the room answered ${JSON.stringify(said)}`);
+        ok = new RegExp(`I remember the mine "${name}":`).test(said) && /\b2 ladders\b/.test(said);
+        check(ok, `teach: "this is the mine" in the room remembers the mine "${name}" with 2 ladders (precondition)`, JSON.stringify(said));
+        note(`teach: !stop answered ${JSON.stringify(await orders.order('!stop', 20000))}`);
+        if (ok && tunnel) {
+            await walkPlayer(line(sp.roomWait, tunnel.end), 300);
+            await tp(PLAYER, tunnel.end, 90, 0); // the yaw of the server: 90 looks west, along the room tunnel
+            await sleep(1500);
+            tunnelSaid = await orders.order('!rememberTunnel', 30000);
+            note(`teach: !rememberTunnel with the player at the rock face answered ${JSON.stringify(tunnelSaid)}`);
+            ok = /I measured the tunnel/.test(tunnelSaid) && /goes west/.test(tunnelSaid);
+            check(ok, 'teach: "dig here" at the rock face of the room tunnel measures it (`I measured the tunnel ...`, west) (precondition)', JSON.stringify(tunnelSaid));
+            await tp(PLAYER, tunnel.end, -90, 0);
+            await sleep(300);
+            await walkPlayer(line(tunnel.end, sp.roomWait), 300);
+        }
+    } finally {
+        printJourney('the player teaches the mine in the room', await trace.stop());
+    }
+    return { ok, said, tunnelSaid };
+}
+
+// How many entities a selector matches (server): `execute if entity` answers "Test passed, count: N".
+export async function countEntities(selector) {
+    const out = await command(`execute if entity ${selector}`);
+    const m = /count: (\d+)/.exec(out.join(' '));
+    return m ? Number(m[1]) : 0;
+}
+
+// The chickens of the pen of the base (inside its fence, server): the selector and the count.
+export function penChickenSelector(b) {
+    const pen = b.pen;
+    const g = b.g;
+    return `@e[type=minecraft:chicken,x=${pen.box.min.x},y=${g - 1},z=${pen.box.min.z},dx=${pen.box.max.x - pen.box.min.x},dy=5,dz=${pen.box.max.z - pen.box.min.z}]`;
+}
+
+// A JSON file of the shared memory of the world (PLAN 4.1: bots/shared/worlds/<seed>/), relative to the working
+// directory of the scenario: { file, json } (json null when no shared world folder or no such file exists).
+export function readSharedWorldFile(name) {
+    const root = path.join(process.cwd(), 'bots', 'shared', 'worlds');
+    let worlds = [];
+    try { worlds = fs.readdirSync(root); } catch { return { file: null, json: null, worlds: [] }; }
+    for (const w of worlds) {
+        const file = path.join(root, w, name);
+        try { return { file, json: JSON.parse(fs.readFileSync(file, 'utf8')), worlds }; } catch { /* not this one */ }
+    }
+    return { file: null, json: null, worlds };
 }
 
 // Samples the action of the agent every `every` ms: resolves stop() with the runs of the same label

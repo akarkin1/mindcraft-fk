@@ -1613,6 +1613,33 @@ export function corridorWidth(getName, p, dir) {
     return 1 + sideRun(getName, c, leftOf(dir)) + sideRun(getName, c, rightOf(dir));
 }
 
+/** v0.1.4.13 (Q1): a tunnel that earlier mining widened is measured up to this width (option maxWidth). */
+export const WIDENED_TUNNEL_WIDTH = 4;
+
+// The width allowed by options.maxWidth: 2 (the rule of v0.1.4.11) unless 3 or 4 is asked for.
+function maxWidthOf(options) {
+    const w = options?.maxWidth;
+    return isFiniteNumber(w) ? Math.max(2, Math.min(WIDENED_TUNNEL_WIDTH, Math.floor(w))) : 2;
+}
+
+// v0.1.4.13 (Q1): a corridor wider than 2 counts as a tunnel only when it was dug, not found: across `dir` every
+// open cell of the row (the cell and up to 3 open cells to each side) stands on a solid floor at its feet level and
+// has a closed ceiling 2 above its feet (no step, no hole, no open roof).
+function levelAndClosed(getName, p, dir) {
+    const c = cellOf(p);
+    if (!c || !isDirection(dir)) {
+        return false;
+    }
+    const row = [c];
+    for (const side of [leftOf(dir), rightOf(dir)]) {
+        for (let k = 1; k <= 3 && openCell(getName, offset(c, side, k)); k++) {
+            row.push(offset(c, side, k));
+        }
+    }
+    const closed = q => ['solid', 'unbreakable'].includes(classify(readName(getName, q)));
+    return row.every(q => closed({ x: q.x, y: q.y - 1, z: q.z }) && closed({ x: q.x, y: q.y + 2, z: q.z }));
+}
+
 /**
  * The tunnel the bot stands in, measured in `dir` (spec I6, B3): `end` the last open cell ahead
  * before rock, `start` the last open cell behind the bot before the corridor opens into a room (a
@@ -1621,16 +1648,21 @@ export function corridorWidth(getName, p, dir) {
  * v0.1.4.11 (I3): a corridor 2 wide is measured too: when the feet are 2 wide (corridorWidth) the
  * corridor behind opens into a room where a cell is more than 2 wide. `width` is 2 when a cell from
  * start to end is 2 wide or more, else 1 (the checks of the width are those of tunnelAt).
+ * v0.1.4.13 (Q1): with `options.maxWidth` 3 or 4 a tunnel that earlier mining widened is measured: the corridor
+ * behind opens into a room where a cell is wider than maxWidth, and `width` is the widest cell from start to end,
+ * at most maxWidth. Without the option everything is as before.
  * @param {(x: number, y: number, z: number) => string|null} getName
  * @param {{x,y,z}} feet
  * @param {string} dir
+ * @param {{maxWidth?: number}} [options]
  * @returns {{start: object, end: object, length: number, level: number, dir: string, width: number}|null}
  */
-export function measureTunnel(getName, feet, dir) {
+export function measureTunnel(getName, feet, dir, options = {}) {
     const f = cellOf(feet);
     if (!f || typeof getName !== 'function' || !isDirection(dir) || !openCell(getName, f)) {
         return null;
     }
+    const maxWidth = maxWidthOf(options);
     let end = f;
     for (let k = 1; k <= CORRIDOR_LIMIT; k++) {
         const p = offset(f, dir, k);
@@ -1643,13 +1675,15 @@ export function measureTunnel(getName, feet, dir) {
     let start = f;
     for (let k = 1; k <= CORRIDOR_LIMIT; k++) {
         const p = offset(f, backOf(dir), k);
-        // 1 wide: the rule of v0.1.4.9; 2 wide (I3): a cell of the corridor has its twin beside it
-        if (!openCell(getName, p) || (wide ? corridorWidth(getName, p, dir) > 2 : openNeighbours(getName, p) >= 3)) {
+        // 1 wide: the rule of v0.1.4.9; 2 wide (I3): a cell of the corridor has its twin beside it; widened (Q1): a
+        // room is wider than maxWidth
+        if (!openCell(getName, p) || (wide ? corridorWidth(getName, p, dir) > maxWidth : openNeighbours(getName, p) >= 3)) {
             break;
         }
         start = p;
     }
-    const width = tunnelCells({ start, end }).some(c => corridorWidth(getName, c, dir) >= 2) ? 2 : 1;
+    const widest = tunnelCells({ start, end }).reduce((w, c) => Math.max(w, corridorWidth(getName, c, dir)), 1);
+    const width = maxWidth > 2 ? Math.min(widest, maxWidth) : (widest >= 2 ? 2 : 1);
     return { start, end, length: Math.abs(end.x - start.x) + Math.abs(end.z - start.z) + 1, level: f.y, dir, width };
 }
 
@@ -1662,13 +1696,29 @@ export function measureTunnel(getName, feet, dir) {
  * in this order: the open sides at the feet (open on both sides across the tunnel, or no corridor and
  * open on 3 sides or more: `open_sides`), the width ahead (a cell ahead more than 2 wide: `wide`), the
  * ceiling (the cell above the head open: `ceiling`), the length (fewer than `minCells` cells: `short`).
+ * v0.1.4.13 (Q1): with `options.maxWidth` 3 or 4 a tunnel that earlier mining widened counts too: the direction is
+ * taken along the axis with the longest open run through the feet, the feet may be open on both sides and a cell
+ * ahead may be up to maxWidth wide, each only where the floor is level and the ceiling closed across the row
+ * (levelAndClosed); `width` is the widest cell. Without the option the checks are those of v0.1.4.11.
  * @param {(x: number, y: number, z: number) => string|null} getName
  * @param {{x,y,z}} feet
- * @param {{yaw?: number, anchor?: {x,y,z}, minAhead?: number, minCells?: number}} [options]
+ * @param {{yaw?: number, anchor?: {x,y,z}, minAhead?: number, minCells?: number, maxWidth?: number}} [options]
  * @returns {{ok: true, tunnel: {start: object, dir: string, end: object, level: number, length: number, width: number}}
  *   |{ok: false, cause: {kind: 'open_sides'|'wide'|'ceiling'|'short', at: object, sides?: number, width?: number, length?: number}}}
  */
 export function tunnelAt(getName, feet, options = {}) {
+    const narrow = tunnelAtWidth(getName, feet, options, 2);
+    const maxWidth = maxWidthOf(options);
+    if (narrow.ok || maxWidth <= 2) {
+        return narrow;
+    }
+    // Q1: the rule of v0.1.4.11 first (its causes and texts stay); a widened tunnel only where that one fails
+    const wide = tunnelAtWidth(getName, feet, options, maxWidth);
+    return wide.ok ? wide : narrow;
+}
+
+// tunnelAt for one width: 2 is the rule of v0.1.4.11, 3 or 4 the rule of a widened tunnel (Q1).
+function tunnelAtWidth(getName, feet, options, maxWidth) {
     const f = cellOf(feet);
     if (!f || typeof getName !== 'function') {
         return { ok: false, cause: { kind: 'open_sides', at: f, sides: 0 } };
@@ -1676,7 +1726,15 @@ export function tunnelAt(getName, feet, options = {}) {
     const minAhead = isFiniteNumber(options?.minAhead) ? options.minAhead : 2;
     const minCells = isFiniteNumber(options?.minCells) ? options.minCells : 1;
     const sides = openNeighbours(getName, f);
-    const dirs = corridorDirections(getName, f).filter(d => d.length >= minAhead);
+    let dirs = corridorDirections(getName, f).filter(d => d.length >= minAhead);
+    if (maxWidth > 2 && dirs.length > 0) {
+        // Q1: in a widened tunnel a run across it is a corridor too; the tunnel is the axis with the longest run
+        const run = d => dirs.find(x => x.dir === d)?.length ?? 0;
+        const total = d => run(d) + run(backOf(d));
+        const best = Math.max(...dirs.map(d => total(d.dir)));
+        const axis = dirs.find(d => total(d.dir) === best).dir;
+        dirs = dirs.filter(d => d.dir === axis || d.dir === backOf(axis));
+    }
     const anchor = cellOf(options?.anchor);
     let dir = null;
     if (dirs.length === 1 && !openCell(getName, offset(f, backOf(dirs[0].dir))) && anchor && awayFromAnchor(dirs[0].dir, f, anchor) < 0) {
@@ -1692,7 +1750,11 @@ export function tunnelAt(getName, feet, options = {}) {
         return { ok: false, cause: { kind: 'short', at: f, length: run + 1 } };
     }
     if (openCell(getName, offset(f, leftOf(dir))) && openCell(getName, offset(f, rightOf(dir)))) {
-        return { ok: false, cause: { kind: 'open_sides', at: f, sides } };
+        // Q1: a widened tunnel is open on both sides of the feet; it counts when it is dug (levelAndClosed)
+        const across = corridorWidth(getName, f, dir);
+        if (maxWidth <= 2 || across > maxWidth || !levelAndClosed(getName, f, dir)) {
+            return { ok: false, cause: { kind: 'open_sides', at: f, sides } };
+        }
     }
     for (let k = 1; k <= CORRIDOR_LIMIT; k++) {
         const p = offset(f, dir, k);
@@ -1700,7 +1762,7 @@ export function tunnelAt(getName, feet, options = {}) {
             break;
         }
         const width = corridorWidth(getName, p, dir);
-        if (width > 2) {
+        if (width > maxWidth || (width > 2 && !levelAndClosed(getName, p, dir))) {
             return { ok: false, cause: { kind: 'wide', at: p, width } };
         }
     }
@@ -1708,8 +1770,9 @@ export function tunnelAt(getName, feet, options = {}) {
     if (classify(readName(getName, ceiling)) === 'air') {
         return { ok: false, cause: { kind: 'ceiling', at: ceiling } };
     }
-    const m = measureTunnel(getName, f, dir);
-    if (!m || m.length < minCells) {
+    const m = measureTunnel(getName, f, dir, { maxWidth });
+    // Q1: a widened tunnel is at least twice as long as it is wide; shorter, it is a room
+    if (!m || m.length < minCells || (m.width > 2 && m.length < 2 * m.width)) {
         return { ok: false, cause: { kind: 'short', at: f, length: m?.length ?? 1 } };
     }
     return { ok: true, tunnel: { start: m.start, dir: m.dir, end: m.end, level: m.level, length: m.length, width: m.width } };

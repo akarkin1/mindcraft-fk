@@ -153,7 +153,7 @@ describe('I9, D2: the prices', () => {
     });
 
     test('in DEFAULT_PRICES', () => {
-        assert.deepEqual({ ...P.DEFAULT_PRICES['gpt-6-luna'] }, { input: 0.10, output: 0.50, cache_read: 0.01 });
+        assert.deepEqual({ ...P.DEFAULT_PRICES['gpt-6-luna'] }, { input: 0.10, output: 0.50, cache_read: 0.01, cache_write: 0.125 }); // v0.1.4.13 (M3)
         assert.equal(P.DEFAULT_PRICES['text-embedding-3-small'].input, 0.02);
     });
 

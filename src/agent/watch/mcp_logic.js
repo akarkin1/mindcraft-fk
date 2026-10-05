@@ -2,10 +2,13 @@
 // the subset a Claude session needs: JSON-RPC 2.0 with initialize, notifications/initialized, tools/list,
 // tools/call and ping; the bearer token; the answers. No socket here: server.js reads the request and writes
 // what these functions return. Nothing here throws.
+// v0.1.4.13 (part S): the schemas of digest, wait, run, look and server; the stream of server-sent events is
+// gone (wait replaces it); tools/list takes the list from handlers.tools when the server gives one (the
+// registered tools of registerTool), else TOOLS.
 import crypto from 'node:crypto';
 import { TEXTS } from './texts.js';
 
-export const SERVER_INFO = Object.freeze({ name: 'mindcraft-watch', version: '0.1.4.12' });
+export const SERVER_INFO = Object.freeze({ name: 'mindcraft-watch', version: '0.1.4.13' });
 export const DEFAULT_PROTOCOL = '2025-03-26';
 export const MAX_BODY = 64 * 1024;
 export const MCP_PATH = '/mcp';
@@ -65,6 +68,56 @@ export const TOOLS = Object.freeze([
             required: ['text'],
             additionalProperties: false,
         },
+    },
+    // v0.1.4.13 (part S)
+    {
+        name: 'digest',
+        description: 'What changed since a cursor, about 10 lines: the position, health and food, the running command, the job, the inventory changes, the item in hand with its uses, new chat lines, new events, hazards within 8 blocks, the nearest chest with free slots. The first line is the cursor for the next call; without a cursor every line.',
+        inputSchema: {
+            type: 'object',
+            properties: { since: { type: 'string', description: 'The cursor the last digest returned; without it every line.' } },
+            additionalProperties: false,
+        },
+    },
+    {
+        name: 'wait',
+        description: 'Holds the answer until something happens, then answers with the digest: for event (a new event), idle (nothing runs and nothing ran for 3 s), done (the command that runs has ended), any (a change of the bot\'s situation: health, food, the running command, the item in hand, a hazard, the chest, a line of a player, an event). At the timeout: Woke: timeout. At most 4 waits at a time.',
+        inputSchema: {
+            type: 'object',
+            properties: {
+                for: { type: 'string', enum: ['event', 'idle', 'done', 'any'], default: 'any', description: 'What to wait for.' },
+                timeout: { type: 'integer', minimum: 1, maximum: 55, default: 55, description: 'Seconds, 1 to 55.' },
+                since: { type: 'string', description: 'A cursor of digest: the answer is the digest since it; without it, since the call.' },
+            },
+            additionalProperties: false,
+        },
+    },
+    {
+        name: 'run',
+        description: 'Runs commands as the owner, one after the other, each after the previous one ended; a failure stops the queue when stop_on_failure. A skill that ran 2 s counts as started. The result lines come back together, at most 55 s after the call; a longer queue answers with what is done and the rest comes through digest. A command of the owner while the queue runs waits behind it; !stop empties the queue.',
+        inputSchema: {
+            type: 'object',
+            properties: {
+                commands: { type: 'array', items: { type: 'string' }, minItems: 1, maxItems: 10, description: 'The commands, each a !command(...), 1 to 10.' },
+                stop_on_failure: { type: 'boolean', default: true, description: 'Stop at the first failure.' },
+            },
+            required: ['commands'],
+            additionalProperties: false,
+        },
+    },
+    {
+        name: 'look',
+        description: 'What is around the bot, no model call: ores, lava, water, chests with their free slots, furnaces, ladders, doors and gates, drops on the ground, players. One line per kind, nearest first, at most 5 of each kind.',
+        inputSchema: {
+            type: 'object',
+            properties: { radius: { type: 'integer', minimum: 4, maximum: 32, default: 16, description: 'Blocks, 4 to 32.' } },
+            additionalProperties: false,
+        },
+    },
+    {
+        name: 'server',
+        description: 'The process and the world: uptime, heap, tick lag, the players online, time and weather, the model calls and cost of the session, the switches that are on, whether a supervisor is connected.',
+        inputSchema: NO_ARGS,
     },
 ].map((tool) => Object.freeze(tool)));
 
@@ -127,6 +180,43 @@ export function unauthorizedAnswer() {
     return { status: 401, body: rpcError(null, ERRORS.unauthorized, TEXTS.unauthorized) };
 }
 
+// v0.1.4.13 (the owner, 2026-10-04): watch_local_only, the server for this machine only, without a token. A tunnel
+// (cloudflared, ngrok) also reaches the server from 127.0.0.1, so its requests are told apart by the headers it adds;
+// a browser page by the Host and the Content-Type it can send without a preflight.
+export const TUNNEL_HEADERS = Object.freeze(['cf-connecting-ip', 'cf-ray', 'cf-ipcountry', 'x-forwarded-for', 'x-forwarded-host',
+    'x-forwarded-proto', 'x-real-ip', 'forwarded', 'ngrok-trace-id']);
+const LOCAL_HOSTS = Object.freeze(['127.0.0.1', 'localhost', '[::1]']);
+
+/**
+ * Why a request may not reach the server for this machine only, or null when it may: a header of a tunnel, a Host
+ * that is not this machine, a POST whose Content-Type is not JSON. Never throws.
+ * @param {object} headers the request's headers (lower-case names, as node:http gives them)
+ * @param {string} method the request's method
+ * @returns {string|null}
+ */
+export function localRefusal(headers, method = 'POST') {
+    try {
+        const h = headers && typeof headers === 'object' ? headers : {};
+        const tunnel = TUNNEL_HEADERS.find((name) => h[name] !== undefined);
+        if (tunnel)
+            return `the request came through a tunnel (${tunnel})`;
+        const host = String(h.host ?? '').toLowerCase().replace(/:\d+$/, '');
+        if (!LOCAL_HOSTS.includes(host))
+            return `the host "${host}" is not this machine`;
+        const type = String(h['content-type'] ?? '').toLowerCase();
+        if (String(method).toUpperCase() === 'POST' && !type.startsWith('application/json'))
+            return 'the body is not JSON';
+        return null;
+    } catch {
+        return 'the request could not be read';
+    }
+}
+
+/** The answer to a request that the server for this machine only refuses (403). */
+export function localOnlyAnswer(why) {
+    return { status: 403, body: rpcError(null, ERRORS.unauthorized, TEXTS.localOnly(why)) };
+}
+
 /** The answer to a body over 64 KB. */
 export function tooLargeAnswer() {
     return { status: 413, body: rpcError(null, ERRORS.invalidRequest, TEXTS.tooLarge) };
@@ -162,11 +252,22 @@ function isRequestShape(message) {
     return isObject(message) && message.jsonrpc === '2.0' && typeof message.method === 'string' && message.method !== '';
 }
 
+function toolsOf(handlers) {
+    try {
+        const list = typeof handlers?.tools === 'function' ? handlers.tools() : handlers?.tools;
+        if (Array.isArray(list))
+            return list.filter((tool) => isObject(tool) && typeof tool.name === 'string');
+    } catch {
+        // the table
+    }
+    return TOOLS;
+}
+
 /**
  * One JSON-RPC message. A notification (no id) gets null (no answer). Never throws.
  * @param {*} message
- * @param {{callTool: (name: string, args: object) => Promise<{text: string, isError?: boolean}|null>}} handlers
- *   callTool: null for an unknown tool
+ * @param {{callTool: (name: string, args: object) => Promise<{text: string, isError?: boolean}|null>, tools?: Function|object[]}} handlers
+ *   callTool: null for an unknown tool; tools: the schemas for tools/list (registerTool), else TOOLS
  * @returns {Promise<object|null>}
  */
 export async function dispatch(message, handlers = {}) {
@@ -183,11 +284,11 @@ export async function dispatch(message, handlers = {}) {
         case 'ping':
             return rpcResult(id, {});
         case 'tools/list':
-            return rpcResult(id, { tools: TOOLS.map((tool) => ({ ...tool })) });
+            return rpcResult(id, { tools: toolsOf(handlers).map((tool) => ({ ...tool })) });
         case 'tools/call': {
             const name = typeof params.name === 'string' ? params.name : '';
             const args = isObject(params.arguments) ? params.arguments : {};
-            if (!TOOL_NAMES.includes(name))
+            if (!toolsOf(handlers).some((tool) => tool.name === name))
                 return rpcError(id, ERRORS.invalidParams, TEXTS.unknownTool(name || '(none)'));
             let answer = null;
             try {
@@ -233,17 +334,4 @@ export async function handleRpc(text, handlers = {}) {
     if (answer === null)
         return { status: 202, body: null };
     return { status: answer.error?.code === ERRORS.invalidRequest ? 400 : 200, body: answer };
-}
-
-/**
- * An event as an MCP notification for the stream of GET /mcp.
- * @param {{t: string, kind: string, text: string, data: object}} event
- */
-export function eventNotification(event) {
-    return { jsonrpc: '2.0', method: 'notifications/message', params: { level: 'info', logger: 'events', data: event } };
-}
-
-/** One server-sent event with the notification of an event. */
-export function sseMessage(event) {
-    return `event: message\ndata: ${JSON.stringify(eventNotification(event))}\n\n`;
 }

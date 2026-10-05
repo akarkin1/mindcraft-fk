@@ -10,14 +10,78 @@ export const ROLE_ANCHOR = 'A rule about a place names ';
 /** The fallback place of the role line: right before this line (DECISIONS F2b). */
 export const MEMORY_MARKER = 'Summarized memory:';
 
-const nameList = (list) => (Array.isArray(list) ? list : []).filter((n) => typeof n === 'string');
+const nameList = (list) => (Array.isArray(list) ? list : []).filter((n) => typeof n === 'string' && n.trim() !== '');
+
+/** The words before a name that still make an address (v0.1.4.13, N1): "hey claude, come", "ok so gpt wait". */
+export const ADDRESS_WORDS = Object.freeze(['hey', 'hi', 'ok', 'okay', 'so', 'now', 'please', 'and']);
+/** The punctuation stripped from the end of a word before it is compared with a name (N1). */
+const WORD_END = /[,:!?.]+$/;
+/** Blanks at the end of an address: the rest of the line starts after them. */
+const ADDRESS_GAP = /^\s+/;
+
+const stripEnd = (word) => word.replace(WORD_END, '');
 
 /**
- * Whether the bot answers a chat line (D1).
- * @param {{from: string, text: string, self: string, otherBots?: string[], onlyChatWith?: string[]}} line
- * @returns {{answer: boolean, why: 'self'|'other_bot'|'command_echo'|'bot_result'|'not_listened'|null}}
+ * Which name of `names` a chat line addresses (spec v0.1.4.13, 4.2, part N1). A line addresses a name when its
+ * first word, with trailing `,` `:` `!` `?` `.` stripped and compared without case, is that name, or when the
+ * name is one of the first three words and every word before it is one of hey, hi, ok, okay, so, now, please,
+ * and ("hey claude, come", "ok so gpt wait"). "claude and gpt, come here" addresses none: both come. A name
+ * inside a sentence ("tell gpt to wait") is no address. Pure, never throws.
+ * @param {string} text the chat line
+ * @param {string[]} names the names that may be addressed (the own name, the other bots, the supervisor)
+ * @returns {{name: string, rest: string}|null} the addressed name as it stands in `names`, and the line without
+ *   the address ('' when the line is the address alone); null when no name is addressed
  */
-export function shouldAnswer({ from, text, self, otherBots = [], onlyChatWith = [] } = {}) {
+export function addressedTo(text, names) {
+    try {
+        const line = String(text ?? '').trim();
+        const known = nameList(names);
+        if (line === '' || known.length === 0)
+            return null;
+        const words = line.split(/\s+/);
+        const nameOf = (word) => {
+            const bare = stripEnd(word).toLowerCase();
+            return bare === '' ? null : (known.find((n) => n.toLowerCase() === bare) ?? null);
+        };
+        for (let i = 0; i < Math.min(3, words.length); i++) {
+            const name = nameOf(words[i]);
+            if (name === null) {
+                if (ADDRESS_WORDS.includes(stripEnd(words[i]).toLowerCase()))
+                    continue;
+                return null;
+            }
+            // "claude and gpt, come here": two names addressed are no address
+            if (i + 2 < words.length && stripEnd(words[i + 1]).toLowerCase() === 'and' && nameOf(words[i + 2]) !== null)
+                return null;
+            // the rest: the line after the words of the address, with the blanks after it gone
+            let end = 0;
+            for (let k = 0; k <= i; k++) {
+                end = line.indexOf(words[k], end) + words[k].length;
+            }
+            return { name, rest: line.slice(end).replace(ADDRESS_GAP, '') };
+        }
+        return null;
+    } catch {
+        return null;
+    }
+}
+
+/**
+ * Whether the bot answers a chat line (D1; v0.1.4.13, N1: the address by name). The rows, first match wins:
+ * from the bot itself (`self`), from one of `otherBots` (`other_bot`), a command echo, a result of a bot, a
+ * sender outside `onlyChatWith` (`not_listened`); then the address (addressedTo over the own name, `otherBots`,
+ * `names` and `supervisor`): another bot addressed (`addressed_other`, not answered), the supervisor addressed
+ * (`addressed_supervisor`, not answered; part N2 makes it an event), the own name addressed (`addressed_self`,
+ * answered, `text` the line without the address). A line without an address is answered, why null. v0.1.4.13 (N2):
+ * a relayed line of the supervisor, `[<supervisor>] ...`, whoever said it, and a line from a player named like the
+ * supervisor (the `other_bots` filter with one more name, PLAN 1.11) are not answered (`supervisor`).
+ * @param {{from: string, text: string, self: string, otherBots?: string[], onlyChatWith?: string[],
+ *   names?: string[], supervisor?: string}} line
+ *   names: more names that may be addressed (the other agents of the mindserver); supervisor: `settings.supervisor_name`
+ * @returns {{answer: boolean, why: 'self'|'other_bot'|'command_echo'|'bot_result'|'supervisor'|'not_listened'
+ *   |'addressed_other'|'addressed_supervisor'|'addressed_self'|null, text?: string}}
+ */
+export function shouldAnswer({ from, text, self, otherBots = [], onlyChatWith = [], names = [], supervisor = '' } = {}) {
     try {
         if (from === self)
             return { answer: false, why: 'self' };
@@ -29,9 +93,24 @@ export function shouldAnswer({ from, text, self, otherBots = [], onlyChatWith = 
             return { answer: false, why: 'command_echo' };
         if (BOT_RESULT.test(line))
             return { answer: false, why: 'bot_result' };
+        // v0.1.4.13 (N2): a relayed line of the supervisor (`[Opus] ...`, said by a bot) or a line of the supervisor
+        // itself is answered by no bot
+        const bossName = typeof supervisor === 'string' ? supervisor.trim() : '';
+        if (bossName !== '' && (lower === bossName.toLowerCase() || line.startsWith(`[${bossName}] `)))
+            return { answer: false, why: 'supervisor' };
         const listened = nameList(onlyChatWith);
         if (listened.length > 0 && !listened.includes(from))
             return { answer: false, why: 'not_listened' };
+        const boss = typeof supervisor === 'string' ? supervisor.trim() : '';
+        const own = typeof self === 'string' ? self : '';
+        const address = addressedTo(line, [own, ...nameList(otherBots), ...nameList(names), boss]);
+        if (address) {
+            if (boss !== '' && address.name === boss && address.name !== own)
+                return { answer: false, why: 'addressed_supervisor' };
+            if (address.name !== own)
+                return { answer: false, why: 'addressed_other' };
+            return { answer: true, why: 'addressed_self', text: address.rest };
+        }
         return { answer: true, why: null };
     } catch {
         return { answer: true, why: null };

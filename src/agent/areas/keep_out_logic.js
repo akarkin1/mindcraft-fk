@@ -57,6 +57,7 @@ function hasGate(area) {
 /**
  * True for an area that the reflex does not enter from outside: type pen or farm, or the flag no_enter.
  * v0.1.4.11 (I5), by the facts: also the kind pen, and an area with animals in its contents and an opening of kind gate.
+ * v0.1.4.13 (Q8): also the kind farm; an enclosure the scan finds as a pen with animals (penArea) holds by the facts.
  * @param {object} area
  * @returns {boolean}
  */
@@ -64,8 +65,150 @@ export function isKeepOutArea(area) {
     if (!isBox(area)) {
         return false;
     }
-    return KEEP_OUT_TYPES.includes(area.type) || area.kind === 'pen' || (holdsAnimals(area) && hasGate(area))
+    return KEEP_OUT_TYPES.includes(area.type) || KEEP_OUT_TYPES.includes(area.kind) || (holdsAnimals(area) && hasGate(area))
         || area.flags?.no_enter === true;
+}
+
+// --- the pen and its gate (v0.1.4.13, part Q, SPEC 4.6 Q8) ---------------------------------------------------------
+
+/** The numbers of Q8. */
+export const PEN_RULES = Object.freeze({
+    range: 8,          // an unsaved pen counts for the item reflex when the bot is within this many blocks of its gate
+    allowRange: 16,    // "open the pen" (!allowChanges) looks for an unsaved pen within this many blocks
+    cacheMs: 10000,    // the scan behind a gate is kept this long
+    sayMs: 60000,      // the pen text at most once in this many ms
+    permitMinutes: 10, // "open the pen" without minutes
+});
+
+/**
+ * True for a saved area whose gate the walks keep closed (Q8): a pen by its type or kind, or an area with animals and a
+ * gate. A farm is no such area (the farming pack walks in through its gate), nor an area only marked no_enter.
+ * @param {object} area
+ * @returns {boolean}
+ */
+export function isPenArea(area) {
+    if (!isBox(area)) {
+        return false;
+    }
+    return area.type === 'pen' || area.kind === 'pen' || (holdsAnimals(area) && hasGate(area));
+}
+
+/**
+ * The saved pen whose fence holds a gate (Q8): the first pen area (isPenArea) of the dimension whose box, widened by one
+ * block in x and z, holds the cell of the gate; null for none.
+ * @param {object[]} areas
+ * @param {{x: number, y: number, z: number}} gate
+ * @param {string} [dimension]
+ * @returns {object|null}
+ */
+export function savedPenOf(areas, gate, dimension) {
+    if (!Array.isArray(areas) || !isPoint(gate)) {
+        return null;
+    }
+    const wanted = plainDimension(dimension);
+    return areas.find(area => isPenArea(area) && plainDimension(area.dimension) === wanted && insideArea({
+        min: { x: Math.min(area.min.x, area.max.x) - 1, y: Math.min(area.min.y, area.max.y), z: Math.min(area.min.z, area.max.z) - 1 },
+        max: { x: Math.max(area.min.x, area.max.x) + 1, y: Math.max(area.min.y, area.max.y), z: Math.max(area.min.z, area.max.z) + 1 },
+    }, gate)) ?? null;
+}
+
+// The plural of an animal: `chickens`, `sheep`.
+const SAME_PLURAL = new Set(['sheep', 'fish', 'cod', 'salmon', 'axolotl_bucket']);
+function animalWords(name, n) {
+    const word = String(name).replace(/^minecraft:/, '').replace(/_/g, ' ');
+    if (n === 1 || SAME_PLURAL.has(word)) {
+        return `${n} ${word}`;
+    }
+    return `${n} ${word.endsWith('s') || word.endsWith('x') ? `${word}es` : `${word}s`}`;
+}
+
+/**
+ * The animals of a pen as words, the most first: `26 chickens`, `6 chickens and 1 cow`, `4 sheep, 2 pigs and 1 cow`.
+ * @param {Object<string, number>} animals
+ * @returns {string}
+ */
+export function penAnimalsText(animals) {
+    const parts = Object.entries(animals && typeof animals === 'object' ? animals : {})
+        .filter(([, n]) => Number.isFinite(n) && n > 0)
+        .sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1))
+        .map(([name, n]) => animalWords(name, Math.floor(n)));
+    if (parts.length <= 1) {
+        return parts.join('') || 'animals';
+    }
+    return `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`;
+}
+
+/**
+ * Q8, word for word: `That is a pen with 26 chickens; I do not open its gate. Say "open the pen" if you mean it.`
+ * @param {Object<string, number>} animals
+ * @returns {string}
+ */
+export function penText(animals) {
+    return `That is a pen with ${penAnimalsText(animals)}; I do not open its gate. Say "open the pen" if you mean it.`;
+}
+
+/**
+ * Q8, within the minute after the pen text: `I do not open the gate of the pen at (0, 64, -3).`
+ * @param {{x: number, y: number, z: number}} gate
+ * @returns {string}
+ */
+export function penAgainText(gate) {
+    return `I do not open the gate of the pen at (${Math.floor(gate?.x)}, ${Math.floor(gate?.y)}, ${Math.floor(gate?.z)}).`;
+}
+
+/**
+ * The answer of "open the pen" for an unsaved pen (`!allowChanges("pen")`, Q8 and the handoff): `I may open the gate of
+ * the pen with 6 chickens at (0, 64, -3) for 10 minutes. I close it behind me.`
+ * @param {Object<string, number>} animals
+ * @param {{x: number, y: number, z: number}} gate
+ * @param {number} minutes
+ * @returns {string}
+ */
+export function penAllowedText(animals, gate, minutes) {
+    return `I may open the gate of the pen with ${penAnimalsText(animals)} at (${gate.x}, ${gate.y}, ${gate.z}) for ${minutes} minutes. `
+        + 'I close it behind me.';
+}
+
+/**
+ * The answer of "open the pen" when no area of that name is saved and no pen with animals is near (Q8).
+ * @param {string} name
+ * @returns {string}
+ */
+export function noPenText(name) {
+    return `No area named "${name}" is saved, and I see no pen with animals within ${PEN_RULES.allowRange} blocks.`;
+}
+
+/**
+ * True when a name of !allowChanges means an unsaved pen (the handoff of round 1): the kind word "pen", or a name of
+ * a few words with the word pen in it ("the pen", "chicken pen", "fenced pen" as the sense says it).
+ * @param {string} name
+ * @returns {boolean}
+ */
+export function isPenWord(name) {
+    if (typeof name !== 'string') {
+        return false;
+    }
+    const words = name.trim().toLowerCase().split(/[\s_]+/).filter(Boolean);
+    return words.length > 0 && words.length <= 4 && words.includes('pen');
+}
+
+/**
+ * The key of a pen for its permit: the cell of its gate.
+ * @param {{x: number, y: number, z: number}} gate
+ * @returns {string}
+ */
+export function penKey(gate) {
+    return isPoint(gate) ? `${Math.floor(gate.x)},${Math.floor(gate.y)},${Math.floor(gate.z)}` : '';
+}
+
+/**
+ * True when the text of the pen may be said again: never said, or 60 s ago or more.
+ * @param {number|null|undefined} saidAt
+ * @param {number} now
+ * @returns {boolean}
+ */
+export function mayPenText(saidAt, now) {
+    return !Number.isFinite(saidAt) || now - saidAt >= PEN_RULES.sayMs;
 }
 
 /**

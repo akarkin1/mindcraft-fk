@@ -83,9 +83,12 @@ function errorText(err) {
 export class WorldMemory {
     /**
      * @param {{name: string, botsDir?: string, settings?: object, history: object,
-     *   memoryBank: object, now?: () => Date}} options
+     *   memoryBank: object, now?: () => Date, paths?: object}} options
+     *   paths (v0.1.4.13, M1): memoryPathsFor of src/agent/memory_paths.js, `{ storeDir(key), share(key),
+     *   sharedFile(file) }`: the folder of the stores of the world (the shared folder with shared_memory), the
+     *   one-time copy and the file mark of the places; without it the stores live in the world folder, as before
      */
-    constructor({ name, botsDir = './bots', settings = {}, history, memoryBank, now } = {}) {
+    constructor({ name, botsDir = './bots', settings = {}, history, memoryBank, now, paths = null } = {}) {
         this.name = name;
         this.botsDir = botsDir;
         this.botDir = `${botsDir}/${name}`;
@@ -93,6 +96,9 @@ export class WorldMemory {
         this.history = history ?? null;
         this.memoryBank = memoryBank ?? null;
         this.now = typeof now === 'function' ? now : () => new Date();
+        this.paths = paths !== null && typeof paths === 'object' ? paths : null;
+        this._storeDir = null;
+        this._sharedCopied = [];
 
         // what the connection revealed, latest packet wins
         this._login = null; // { hashedSeed, isFlat, name, isHardcore }
@@ -113,6 +119,19 @@ export class WorldMemory {
     /** Directory of the current world, or null. */
     get worldDir() {
         return this._worldDir;
+    }
+
+    /**
+     * v0.1.4.13 (M1): the folder of the stores of areas, places, routes, mines, chests and rules of the current
+     * world: the shared folder with shared_memory, else the world folder; null before the world is known.
+     */
+    get storeDir() {
+        return this._storeDir;
+    }
+
+    /** v0.1.4.13 (M1): the files the last resolve copied into the shared folder (the one-time copy), [] for none. */
+    get sharedCopied() {
+        return [...this._sharedCopied];
     }
 
     /**
@@ -218,6 +237,8 @@ export class WorldMemory {
         };
         this._world = result;
         this._worldDir = null;
+        this._storeDir = null;
+        this._sharedCopied = [];
         return result;
     }
 
@@ -303,6 +324,25 @@ export class WorldMemory {
             return true;
         }, false);
 
+        // 3b. v0.1.4.13 (M1): the folder of the stores (the shared folder with shared_memory), and the one-time copy
+        // of the bot's own files into it before the stores open
+        let storeDir = worldDir;
+        let sharedCopied = [];
+        if (dirReady && this.paths !== null) {
+            storeDir = step('finding the folder of the memory of the world', () => {
+                const dir = typeof this.paths.storeDir === 'function' ? this.paths.storeDir(key) : null;
+                if (typeof dir !== 'string' || dir.length === 0) {
+                    return worldDir;
+                }
+                fs.mkdirSync(dir, { recursive: true });
+                return dir;
+            }, worldDir);
+            sharedCopied = step('sharing the memory of the world', () => {
+                const shared = typeof this.paths.share === 'function' ? this.paths.share(key) : null;
+                return Array.isArray(shared?.copied) ? [...shared.copied] : [];
+            }, []);
+        }
+
         // 4. legacy adoption, only when the memory is loaded
         let adoptedLegacy = false;
         if (dirReady && context.loadMemory && context.knownBefore === 0) {
@@ -332,10 +372,12 @@ export class WorldMemory {
             }
         }
 
-        // 7. places
+        // 7. places (v0.1.4.13, M1: in the folder of the stores, re-read when another bot wrote the file)
         if (dirReady && this.memoryBank !== null) {
             step('loading the saved places', () => {
-                const store = new PlaceStore(`${worldDir}/places.json`, { now: this.now });
+                const file = `${storeDir}/places.json`;
+                const shared = typeof this.paths?.sharedFile === 'function' ? this.paths.sharedFile(file) : null;
+                const store = new PlaceStore(file, { now: this.now, shared: shared ?? null });
                 store.load();
                 this.memoryBank.attachStore(store, context.getDimension);
             }, undefined);
@@ -357,6 +399,8 @@ export class WorldMemory {
 
         this._world = result;
         this._worldDir = dirReady ? worldDir : null;
+        this._storeDir = dirReady ? storeDir : null;
+        this._sharedCopied = sharedCopied;
         this._registry = registry;
         return result;
     }

@@ -18,7 +18,8 @@ Rules that hold for every release:
 | 0.1.4.10 | Goals | Released |
 | 0.1.4.11 | Navigation and words | Released |
 | 0.1.4.12 | Understanding and watching | Released |
-| 0.1.4.13 | Routines | Planned: routines first, then the local embedding model |
+| 0.1.4.13 | Supervision | Released: `CHANGELOG.md` |
+| 0.1.4.14 | Routines | Planned: after the play of 0.1.4.13 |
 | Later | See the backlog | Not decided |
 
 ## 0.1.4.9 The mine, the routes of the player, and the model comparison
@@ -151,20 +152,36 @@ cost a play yet.
 
 Two bots of the owner in one world answered each other's command echoes and results (2026-10-03). Until this part, `only_chat_with` names the owner in each bot's settings and `MINDSERVER_PORT` gives the second bot its own port. The part: a bot recognises the other bots of the owner by name (the launch script passes them), never answers their echoes or results, and a role per bot ("you farm, you mine") in the settings; a question to both ("where are you?") gets one line from each.
 
-## 0.1.4.13 Routines
+## 0.1.4.13 Supervision
 
-Decided by the owner on 2026-10-03, during the gate of v0.1.4.12: "something like maintain the base cannot be expressed as a function, but can easily be described with words". A rule is a constraint; a routine is a procedure in the owner's words, kept per world like the rules, that the bot works through when the owner names it.
+Scope decided by the owner on 2026-10-04 after the supervised play of that day (Claude on Haiku and gpt on Luna mining
+diamonds, the tech lead as the supervisor through the watch server): supervision is the main feature and the corrections the play found come with it. Routines go to 0.1.4.14 (the owner's
+split of 2026-10-04: two smaller releases, and the play of this one shows which routines the owner would write). The
+plan is `docs/releases/0.1.4.13/PLAN.md`.
 
-| Step | Content |
+| Part | Content |
 |---|---|
-| The store | `!rememberRoutine("maintain the base", "Farm the wheat and store it. Feed the chickens if any are missing. Keep 32 torches. At night mine iron in the mine. Stay within 100 blocks of home.")`, `!routines`, `!forgetRoutine`, in `bots/<name>/routines.json`; at most 20, one paragraph each. |
-| Running one | `!doRoutine("maintain the base")`, or the name in a sentence: the text becomes the goal of a job of v0.1.4.10; the model turns the sentences into steps (commands only, never code), code checks each step, errands do not end it, it survives a restart, a routine that maintains runs again when its steps are done until "stop". One line per step done; the knowledge block names the running routine and its step. |
-| The supervisor's lever | A routine is what the watch server's `say` hands the bot when the owner is away: `say "maintain the base"`. |
-| What it is not | No new commands, no code written, no rule changed: a library of well-written prompts, each with a name. |
+| Supervision | The watch server gets `digest`, `wait`, `run`, `note`, `look`, `server`, a report every N seconds and a `help` event, so a supervisor wakes only on a change and orders in one call. One channel, names: a line that names one bot is for that bot and the other stays quiet; a line that names the supervisor is a message for it and nothing a bot answers; the supervisor's `reply` goes into the chat; the voice page speaks each. A `/supervise` skill and `docs/SUPERVISOR.md` make a supervision session cheap (about a cent a turn against $7 an hour on 2026-10-04). |
+| The corrections | Supplies from the chest beside the bot, tool wear, the plan that starts, the furnace in the bag, the job counter, no cancel by the model's follow-up, `!mineOre` from where the bot stands, `!goToSurface` by a known route, two ladder places, the full bag, death drops and armour, `!givePlayer`, no shaft downwards, an unsaved pen protected like a saved one (two bots opened the pens together on 2026-10-04). `mine_other_ores` as a setting. |
+| Two bots, one memory | `shared_memory`: the places, chests, routes, mines, rules and routines of a world shared by the bots. |
+| Cost | `prompt_cache` on the Anthropic API: Haiku's hour from about $1.70 to about $0.60. The price of Luna checked against the bill. |
+| The creeper loop | F10 of v0.1.4.12: the keep-away loop that about once in 30 runs after an explosion runs until the process is out of memory (W47). A profiling run finds it. |
 
-Setting `routines` (off). After it, part A of v0.1.4.12 (the local embedding model), measured by the routing check first.
+Voice (the demo's page, whisper and Supertonic in the mindserver, `voice_ui`, `voice_voice`, `voice_language`) was built
+by a local session on `release/v0.1.4.13-voice` on 2026-10-04 and proven in a game session; it merges in with round 1.
+After this release: the supervisor and the bot as one mind, and part A of v0.1.4.12 (the local embedding model) after
+the routing check measures it.
 
-Also in 0.1.4.13: the keep-away loop of the creeper reflex, which about once in 30 runs after an explosion that leaves the bot near death runs on until the process is out of memory (W47, seen 2026-10-01 and 2026-10-03; not of a part of 0.1.4.12, bisected). A profiling run inside the agent process finds the loop; the fix gets a repeated W47.
+## 0.1.4.14 Routines
+
+Split off 0.1.4.13 by the owner on 2026-10-04: planned after the play of 0.1.4.13.
+
+| Part | Content |
+|---|---|
+| Routines | Decided on 2026-10-03: "something like maintain the base cannot be expressed as a function, but can easily be described with words". `!rememberRoutine`, `!routines`, `!forgetRoutine`, `!doRoutine`: a paragraph in the owner's words becomes a job of v0.1.4.10, the model plans the steps, code checks them, a maintaining routine runs again until "stop". The supervisor's lever when the owner is away. |
+| The model comparison | `npm run test:play -- --situations`: six situations in plain words, the same for each model, with the first command, the follow-ups and the time. |
+
+Setting `routines` (off).
 
 ## Backlog
 
@@ -177,21 +194,16 @@ Ordered by recommendation. Nothing here is decided.
 | 3 | Saved lessons | A recorded round is replayed on order. The bot checks the world before each step. |
 | 4 | Guides of big goals | A short file per big goal, ten lines: the milestones in order, each with the state that code checks (an iron pickaxe in the inventory, 5 diamonds, the portal lit). The model plans only the next milestone; the skills do the work; the player edits the file. The guide is also the list of skills to build: smelting, trading, the Nether. "Beat the game" first. Stashed on 2026-10-01 until the job of v0.1.4.10 and smelting exist. |
 | 5 | Review after the session | A strong model reads the journal after play and proposes rules and corrections. The player approves. |
-| 6 | Smelting | The bot makes iron tools by itself. |
 | 7 | New skills from a record | The strong model writes a skill from what it watched. The player approves each one. Experimental. |
 | 8 | Learned skills on top of the coded ones | The skill library of 0.1.4.4, with approval for each skill. |
 | 9 | Vision | A look on request. An experiment. |
+| 10 | Building from a blueprint | The owner's wish of 2026-10-04. The original project has blueprints for its construction tasks (`src/agent/tasks/construction_tasks.js`: levels of blocks with coordinates, `Blueprint.explain` and `Blueprint.check`), reachable only through the four blocked commands of a task. A skill of the fork: "build me a 5 by 7 house" gets a blueprint from a file under `blueprints/` or from the model once, says the material it needs, places it level by level with every safety rule and checks each level against the world as the task check does, then says what is missing. Next to `!buildWatched` of v0.1.4.12, which builds the rest of what the owner started. |
 
 ### Small items
 
 | Item |
 |---|
-| `bot.wake()` of mineflayer sends the wrong action since Minecraft 1.21.6. The home pack works around it; a patch of the library would correct every caller. |
-| The path search does not centre the points of a path behind a door that it opens, so the bot can stick at the frame. |
-| The bot is ignored for 3 seconds after each spawn, because mineflayer does not send the packet `player_loaded`. |
 | When a chat message is deleted by the server, the network library forgets which messages it has seen. |
-| `!useOn` toggles a door without reading its state. |
-| `!endConversation` answers with a typing error. `!goToPlayer` fails for a player it does not know. |
 | Pull requests for the original project: text-to-speech without a shell, the sandbox, the chat checksum. |
 
 ## Open decisions

@@ -46,8 +46,14 @@ export const BATCH_MAX = 64;
 export const FURNACE_RANGE = 16;
 /** Then a furnace within this distance among the loaded blocks (v0.1.4.12, F1: the room is 20 to 30 blocks from the tunnel's end). */
 export const FURNACE_FAR_RANGE = 64;
-/** A furnace from the inventory is placed within this distance. */
+/** A furnace from the inventory is placed within this distance (v0.1.4.12; the cells read around the bot). */
 export const PLACE_RANGE = 8;
+/** Since v0.1.4.13 (P4) a furnace from the bag goes on a free solid cell within this distance of the bot. */
+export const FURNACE_PLACE_NEAR = 3;
+/** A known mine whose level is this near the feet of the bot counts as the mine the bot is in (inKnownMine). */
+export const MINE_LEVEL_SLACK = 3;
+/** A known mine whose entrance is this near horizontally counts as the mine the bot is in (inKnownMine). */
+export const MINE_NEAR_RANGE = 64;
 /** The furnace is read this often, in ms. */
 export const POLL_MS = 2000;
 /** The time limit: this much per item ... */
@@ -284,12 +290,14 @@ export function areaKindOf(area) {
 /**
  * True when a furnace may stand on the cell as far as the saved areas go (spec 4.2, 1): the cell lies in
  * an area of kind storage, building, home or mine and in no pen, farm or yard; without any area every
- * cell. `areas` are the areas of the dimension.
+ * cell. `areas` are the areas of the dimension. Since v0.1.4.13 (P4) `options.inMine` (the bot is
+ * underground in a mine it knows) allows every cell that is in no pen, farm or yard.
  * @param {{x,y,z}} cell
  * @param {object[]} areas
+ * @param {{inMine?: boolean}} [options]
  * @returns {boolean}
  */
-export function cellAllowsFurnace(cell, areas) {
+export function cellAllowsFurnace(cell, areas, options = {}) {
     const list = (Array.isArray(areas) ? areas : []).filter(isBox);
     if (list.length === 0) {
         return isPoint(cell);
@@ -298,27 +306,61 @@ export function cellAllowsFurnace(cell, areas) {
     if (holding.some(a => NO_FURNACE_KINDS.includes(areaKindOf(a)))) {
         return false;
     }
+    if (options?.inMine === true) {
+        return isPoint(cell);
+    }
     return holding.some(a => FURNACE_AREA_KINDS.includes(areaKindOf(a)));
 }
 
 /**
- * The cell for a furnace from the inventory: the nearest free floor cell within 8 blocks of `from` that
- * cellAllowsFurnace and `canPlace(cell, 'furnace')` allow; null when there is none. `cells` are the free
- * floor cells (the caller reads the world). A canPlace that throws counts as a refusal.
+ * True when the bot is underground in a mine it knows (v0.1.4.13, P4): `where` (whereAmI of the agent) says
+ * underground and names a mine, or a mine of `mines` (the mine store, { entrance, level }) has its level within
+ * 3 of the feet of the bot and its entrance within 64 blocks horizontally.
+ * @param {{underground?: boolean, mine?: object|null}|null} where
+ * @param {object[]|null} mines the mines of the dimension
+ * @param {{x,y,z}|null} pos the feet of the bot
+ * @returns {boolean}
+ */
+export function inKnownMine(where, mines, pos) {
+    if (where?.underground !== true) {
+        return false;
+    }
+    if (where.mine && typeof where.mine === 'object') {
+        return true;
+    }
+    if (!isPoint(pos) || !Array.isArray(mines)) {
+        return false;
+    }
+    return mines.some(m => isPoint(m?.entrance) && isFiniteNumber(m.level) && Math.abs(m.level - Math.floor(pos.y)) <= MINE_LEVEL_SLACK
+        && Math.hypot(m.entrance.x - pos.x, m.entrance.z - pos.z) <= MINE_NEAR_RANGE);
+}
+
+// True when the centre of the cell is within `range` blocks of the bot horizontally and not more than `range` up or down.
+function withinRange(cell, from, range) {
+    return Math.hypot(cell.x + 0.5 - from.x, cell.z + 0.5 - from.z) <= range && Math.abs(cell.y - Math.floor(from.y)) <= range;
+}
+
+/**
+ * The cell for a furnace from the inventory: the nearest free floor cell within `options.range` blocks of
+ * `from` (PLACE_RANGE, 8, without it; the skill passes FURNACE_PLACE_NEAR, 3, since v0.1.4.13, P4) that
+ * cellAllowsFurnace (with `options.inMine`) and `canPlace(cell, 'furnace')` allow; null when there is none.
+ * `cells` are the free floor cells (the caller reads the world). A canPlace that throws counts as a refusal.
  * @param {{x,y,z}[]} cells
  * @param {object[]} areas
  * @param {{x,y,z}} from the position of the bot
  * @param {(cell: object, item: string) => boolean} [canPlace]
+ * @param {{range?: number, inMine?: boolean}} [options]
  * @returns {{x: number, y: number, z: number}|null}
  */
-export function chooseFurnaceSpot(cells, areas, from, canPlace = null) {
+export function chooseFurnaceSpot(cells, areas, from, canPlace = null, options = {}) {
     if (!isPoint(from)) {
         return null;
     }
-    const list = (Array.isArray(cells) ? cells : []).filter(isPoint).filter(c => distance(c, from) <= PLACE_RANGE)
+    const range = isFiniteNumber(options?.range) && options.range > 0 ? options.range : PLACE_RANGE;
+    const list = (Array.isArray(cells) ? cells : []).filter(isPoint).filter(c => withinRange(c, from, range))
         .sort(byDistance(from));
     for (const c of list) {
-        if (!cellAllowsFurnace(c, areas)) {
+        if (!cellAllowsFurnace(c, areas, { inMine: options?.inMine === true })) {
             continue;
         }
         let allowed = true;

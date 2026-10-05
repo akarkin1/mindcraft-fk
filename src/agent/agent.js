@@ -33,6 +33,7 @@ import { installAreaGuard } from './areas/area_guard.js';
 import { PlacedStore } from './areas/placed_store.js';
 import { autoHome } from './areas/auto_home.js';
 import { RuleStore } from './rules/rule_store.js';
+import { memoryPathsFor, SHARED_TEXT } from './memory_paths.js';
 import { autoEatOptions, passThrough, enterBuilding, doorIsSafe, foodItems, moveOffhandBack, createDoorService } from './packs/home/index.js';
 // v0.1.4.8 (X5): wakeUp of the home pack may not exist yet; always called with ?.
 import * as homePack from './packs/home/index.js';
@@ -316,6 +317,8 @@ export class Agent {
         const areas_on = Boolean(settings.protected_areas) && Boolean(settings.world_memory); // areas belong to a world
         if (settings.protected_areas && !settings.world_memory)
             console.warn('protected_areas needs world_memory, so the protected areas stay off.');
+        if (settings.shared_memory && !settings.world_memory)
+            console.warn('shared_memory needs world_memory, so the memory stays per bot.'); // v0.1.4.13 (M1)
         if (settings.mine_routes && !settings.routes_pack)
             console.warn(MINE_ROUTES_WARNING); // v0.1.4.9: once, the mine routes stay off
         if (!this.cost_meter)
@@ -358,7 +361,9 @@ export class Agent {
         this._limitChat(); // v0.1.4.8 (X9): every chat line of the bot through one queue
         if (settings.world_memory) {
             try {
-                this.world_memory = new WorldMemory({ name: this.name, settings, history: this.history, memoryBank: this.memory_bank });
+                // v0.1.4.13 (M1): the paths of the stores of a world; with shared_memory the folder bots/shared/worlds/<seed>
+                this.memory_paths = memoryPathsFor(this.name, settings);
+                this.world_memory = new WorldMemory({ name: this.name, settings, history: this.history, memoryBank: this.memory_bank, paths: this.memory_paths });
                 this.world_memory.attach(this.bot);
             } catch (error) {
                 console.warn('Could not start world memory:', error);
@@ -471,7 +476,7 @@ export class Agent {
         // never printed. Without it the text says so once and the agent goes on.
         try {
             const watch = settings.watch_server ? await import('./watch/server.js') : null;
-            this.watch = watch ? await watch.startWatchServer(this, { port: settings.watch_port, token: process.env.MC_WATCH_TOKEN }) : null;
+            this.watch = watch ? await watch.startWatchServer(this, { port: settings.watch_port, token: process.env.MC_WATCH_TOKEN, localOnly: settings.watch_local_only === true }) : null;
             if (this.watch?.text)
                 console.log(this.watch.text);
         } catch (error) {
@@ -600,7 +605,8 @@ export class Agent {
         // changes. null before that or when the file cannot be used. Never throws.
         if (!settings.protected_areas || !settings.world_memory)
             return null;
-        const dir = this.world_memory?.worldDir ?? null;
+        // v0.1.4.13 (M1): the folder of the stores, the shared folder with shared_memory (a world memory without it: its folder)
+        const dir = this.world_memory?.storeDir ?? this.world_memory?.worldDir ?? null;
         if (dir !== this._area_dir) {
             // v0.1.4.8: another world: the door service of the old one stops, the mode makes a new one
             if (this._area_dir && this.door_service) {
@@ -615,7 +621,8 @@ export class Agent {
             this.area_store = undefined;
             if (dir) {
                 try {
-                    const store = new AreaStore(`${dir}/areas.json`);
+                    const file = `${dir}/areas.json`;
+                    const store = new AreaStore(file, { shared: this.memory_paths?.sharedFile(file) ?? null });
                     store.load();
                     this.area_store = store;
                 } catch (error) {
@@ -946,13 +953,15 @@ export class Agent {
         // lives in memory only. null before the world is known or when it cannot be made. Never throws.
         if (typeof Store !== 'function')
             return null;
-        const dir = settings.world_memory ? (this.world_memory?.worldDir ?? null) : ''; // '': in memory only
+        // v0.1.4.13 (M1): the folder of the stores, the shared folder with shared_memory; '': in memory only
+        const dir = settings.world_memory ? (this.world_memory?.storeDir ?? this.world_memory?.worldDir ?? null) : '';
         const stores = this.work_stores ?? (this.work_stores = {});
         if (stores[key]?.dir !== dir) {
             stores[key] = { dir, store: null };
             if (dir !== null) {
                 try {
-                    const store = new Store(dir ? `${dir}/${file}` : null);
+                    const path = dir ? `${dir}/${file}` : null;
+                    const store = new Store(path, { shared: path ? (this.memory_paths?.sharedFile(path) ?? null) : null });
                     store.load();
                     stores[key].store = store;
                 } catch (error) {
@@ -1047,6 +1056,8 @@ export class Agent {
             tools: null,
             wood: null,
             home: { passThrough, enterBuilding, doorIsSafe, foodItems }, // as they are, not bound (Amendment 1, part F; v0.1.4.8, I7)
+            // v0.1.4.13 (P5): a skill of a job reports its own count; the job's counter follows it
+            job: this.job ? { progress: (got) => this.job.progress?.(got) } : null,
         };
         const packs = this.work_packs;
         if (!packs)
@@ -1155,6 +1166,9 @@ export class Agent {
             save_data = result.saveData ?? null;
             if (result.note !== null && result.note !== undefined)
                 await this.history.add('system', result.note);
+            this._shareRuleStore(); // v0.1.4.13 (M1): the rules of the world in the shared folder
+            if (this.world_memory.sharedCopied?.length > 0)
+                this.sayText(SHARED_TEXT); // the one-time copy of the own memory into the shared folder was made
         } catch (error) {
             console.warn('World memory failed:', error);
             try {
@@ -1173,6 +1187,26 @@ export class Agent {
         if (typeof save_data?.taskStart === 'number')
             this.task.taskStartTime = save_data.taskStart;
         return save_data;
+    }
+
+    _shareRuleStore() {
+        // v0.1.4.13 (M1): with shared_memory the rules live in the shared folder of the world (rules.json), opened when
+        // the world is known and again when it changes; the own bots/<name>/rules.json was copied there once by the
+        // one-time copy of world_memory. Without the switch the store of the start stays. Never throws.
+        if (settings.shared_memory !== true || !this.rule_store)
+            return;
+        const dir = this.world_memory?.storeDir ?? this.world_memory?.worldDir ?? null;
+        if (!dir || this._rules_dir === dir)
+            return;
+        try {
+            const file = `${dir}/rules.json`;
+            const store = new RuleStore(file, { max: numberSetting(settings.rules_max, 20), shared: this.memory_paths?.sharedFile(file) ?? null });
+            store.load();
+            this.rule_store = store;
+            this._rules_dir = dir;
+        } catch (error) {
+            console.warn('Could not open the rules of this world:', error);
+        }
     }
 
     async _resumeGoal(save_data) {
@@ -1228,20 +1262,33 @@ export class Agent {
         const respondFunc = async (username, message) => {
             if (message === "") return;
             // v0.1.4.12, D2: the bot itself, the owner's other bots, a command echo or a result of a bot, a name
-            // outside only_chat_with: dropped, with one console line behind verbose_commands (not for its own lines)
+            // outside only_chat_with: dropped, with one console line behind verbose_commands (not for its own lines).
+            // v0.1.4.13, N1: a line that addresses another bot (other_bots, the other agents of the mindserver) or
+            // the supervisor by name is dropped the same way, with no call of the model; a line that addresses this
+            // bot goes on without the address ("claude, come here" is handled as "come here")
             const verdict = shouldAnswer({ from: username, text: message, self: this.name,
-                otherBots: settings.other_bots, onlyChatWith: settings.only_chat_with });
+                otherBots: settings.other_bots, onlyChatWith: settings.only_chat_with,
+                names: convoManager.getInGameAgents(), supervisor: settings.supervisor_name });
             if (!verdict.answer) {
                 if (settings.verbose_commands && verdict.why !== 'self')
                     console.log(`${this.name} does not answer ${username} (${verdict.why}): ${message}`);
+                // v0.1.4.13, N2: a line for the supervisor is an event of kind message of the watch server; with no
+                // supervisor connected the first agent of the mindserver says "The supervisor is not here."
+                if (verdict.why === 'addressed_supervisor') {
+                    import('./watch/supervisor.js')
+                        .then((m) => m.supervisorMessage(this, username, message, { agents: convoManager.getInGameAgents() }))
+                        .catch((error) => console.warn('Could not hand the line to the supervisor:', error?.message ?? error));
+                }
                 return;
             }
+            // the line without the address; the address alone ("claude?") is handed on as it is
+            const text = typeof verdict.text === 'string' && verdict.text !== '' ? verdict.text : message;
             try {
                 if (ignore_messages.some((m) => message.startsWith(m))) return;
 
                 this.shut_up = false;
 
-                console.log(this.name, 'received message from', username, ':', message);
+                console.log(this.name, 'received message from', username, ':', text);
 
                 if (convoManager.isOtherAgent(username)) {
                     // a bot of the mindserver: its lines come through the conversation, never through the chat
@@ -1249,7 +1296,7 @@ export class Agent {
                         console.log(`${this.name} does not answer ${username} (other_bot): ${message}`);
                 }
                 else {
-                    let translation = await handleEnglishTranslation(message);
+                    let translation = await handleEnglishTranslation(text);
                     this.handleMessage(username, translation);
                 }
             } catch (error) {
@@ -1538,6 +1585,8 @@ export class Agent {
             for (let username of settings.only_chat_with) {
                 this.bot.whisper(username, message);
             }
+            // v0.1.4.13: the page of the mindserver shows (and with voice_ui speaks) the lines the bot whispers too
+            try { sendOutputToServer(this.name, message); } catch (_) {}
         }
         else {
             if (settings.speak) {

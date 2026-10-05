@@ -14,7 +14,9 @@ import { extractTask } from '../agent/skills/skill_review.js';
 import { withPurpose } from '../agent/cost/usage_context.js';
 import { buildRulesSection } from '../agent/rules/rule_prompt.js';
 import { visibleExamples } from '../agent/rules/example_filter.js';
-import { insertRoleLine } from '../agent/bots_logic.js';
+import { insertRoleLine, roleLine } from '../agent/bots_logic.js';
+import { insertNoteLine, noteText } from '../agent/watch/supervisor_logic.js'; // v0.1.4.13 (N2): the note of the supervisor
+import { splitTemplate, joinParts, withLeadingLines } from './prompt_parts.js'; // v0.1.4.13 (M2): the two parts of the prompt
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -275,10 +277,23 @@ export class Prompter {
             let prompt = this.profile.conversing;
             // v0.1.4.8: a profile without $KNOWLEDGE (the profile of the owner) gets the block like the rules
             const knowledge_placeholder = typeof prompt === 'string' && prompt.includes('$KNOWLEDGE');
+            // v0.1.4.13 (M2): with prompt_cache the fixed part (the template up to $COMMAND_DOCS without what changes)
+            // is filled apart; `prompt` is then the changing part, and the role line, the note and the sections go there
+            const parts = settings.prompt_cache === true ? splitTemplate(prompt) : null;
+            const fixed = parts !== null ? await this.replaceStrings(parts.fixed, messages, this.convo_examples) : null;
+            if (parts !== null)
+                prompt = parts.changing;
             prompt = await this.replaceStrings(prompt, messages, this.convo_examples);
             // v0.1.4.12 (D3, DECISIONS F2, F2b): the line of bot_role after the W6 sentence of the rules of places, else
             // before "Summarized memory:", else nowhere; an empty role: the prompt unchanged
             prompt = insertRoleLine(prompt, settings.bot_role);
+            // v0.1.4.13 (N2): the note of the supervisor (the tool note of the watch server, agent.supervisor_note) as
+            // one line after the role line, or where the role line would be; nothing without a note or when it expired
+            prompt = insertNoteLine(prompt, noteText(this.agent?.supervisor_note, Date.now()), settings.bot_role);
+            // v0.1.4.13 (M2): the anchor of the role line is in the fixed part; a changing part without "Summarized
+            // memory:" gets the role line and the note as its first lines
+            if (fixed !== null)
+                prompt = withLeadingLines(prompt, [roleLine(settings.bot_role), noteText(this.agent?.supervisor_note, Date.now())]);
             if (this.agent?.skill_manager) {
                 try {
                     prompt = insertSection(prompt, this.agent.skill_manager.conversingSection());
@@ -292,16 +307,20 @@ export class Prompter {
             prompt = withRules(this.agent, prompt);
             if (!knowledge_placeholder && settings.knowledge_in_prompt)
                 prompt = insertSection(prompt, knowledgeOf(this.agent)); // '' leaves the prompt as it is
+            // v0.1.4.13 (M2): the fixed part first; a model that takes the parts (claude.js) gets [fixed, changing] and
+            // marks the fixed part for the cache, every other model the joined string
+            const system = fixed === null ? prompt
+                : (this.chat_model?.acceptsSystemParts === true ? [fixed, prompt] : joinParts(fixed, prompt));
             let generation;
 
             try {
-                generation = await withPurposeOf(this.agent, 'chat', () => this.chat_model.sendRequest(messages, prompt));
+                generation = await withPurposeOf(this.agent, 'chat', () => this.chat_model.sendRequest(messages, system));
                 if (typeof generation !== 'string') {
                     console.error('Error: Generated response is not a string', generation);
                     throw new Error('Generated response is not a string');
                 }
                 console.log("Generated response:", generation);
-                await this._saveLog(prompt, messages, generation, 'conversation');
+                await this._saveLog(fixed === null ? prompt : joinParts(fixed, prompt), messages, generation, 'conversation');
 
             } catch (error) {
                 console.error('Error during message generation or file writing:', error);

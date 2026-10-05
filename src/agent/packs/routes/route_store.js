@@ -85,13 +85,29 @@ function routeKey(name, dimension) {
 export class RouteStore {
     /**
      * @param {string|null} filePath usually <worldDir>/routes.json; without it the store lives in memory only
-     * @param {{now?: () => Date}} [options]
+     * @param {{now?: () => Date, shared?: {changed: (fresh?: boolean) => boolean, mark: (stamp?: string|null) => void, stamp?: () => string|null}|null}} [options]
+     *   shared (v0.1.4.13, M1): a SharedFile of memory_paths.js when another bot writes the same file: the store
+     *   re-reads the file before a read or a write when it changed; without it the file is read once, as before
      */
     constructor(filePath, options = {}) {
         this.filePath = typeof filePath === 'string' && filePath.length > 0 ? filePath : null;
         const now = options?.now;
         this.now = typeof now === 'function' ? now : () => new Date();
+        const shared = options?.shared;
+        this._shared = this.filePath !== null && shared && typeof shared.changed === 'function' && typeof shared.mark === 'function' ? shared : null;
         this._routes = new Map();
+    }
+
+    // v0.1.4.13 (M1): the file as another bot left it; `fresh` before a write (a read looks at most once a second).
+    // Never throws.
+    _refresh(fresh = false) {
+        try {
+            if (this._shared !== null && this._shared.changed(fresh)) {
+                this.load();
+            }
+        } catch (err) {
+            console.warn(`Could not re-read the route file ${this.filePath}:`, err?.message ?? err);
+        }
     }
 
     _nowIso() {
@@ -109,6 +125,7 @@ export class RouteStore {
      * @returns {number} number of routes
      */
     load() {
+        const seen = this._shared?.stamp?.(); // v0.1.4.13 (M1): the file as it was before the read
         this._routes = new Map();
         if (this.filePath === null) {
             return 0;
@@ -138,6 +155,7 @@ export class RouteStore {
             console.warn(`Route file ${this.filePath} could not be read:`, err?.message ?? err);
             this._routes = new Map();
         }
+        this._shared?.mark(seen);
         return this._routes.size;
     }
 
@@ -149,6 +167,7 @@ export class RouteStore {
      */
     set(route) {
         try {
+            this._refresh(true);
             const clean = validateRoute(route, this._nowIso());
             if (!clean) {
                 return null;
@@ -178,6 +197,7 @@ export class RouteStore {
         if (!clean) {
             return null;
         }
+        this._refresh();
         const route = this._routes.get(routeKey(clean, dimension));
         return route ? copyRoute(route) : null;
     }
@@ -188,6 +208,12 @@ export class RouteStore {
      * @returns {object[]} copies
      */
     list(dimension) {
+        this._refresh();
+        return this._sorted(dimension);
+    }
+
+    // the routes of a dimension (all without one) in the order of list, as copies; no re-read (a save uses it)
+    _sorted(dimension) {
         const wanted = dimension === undefined || dimension === null ? null : normalizeDimension(dimension);
         return [...this._routes.values()].filter(r => wanted === null || r.dimension === wanted)
             .sort((a, b) => a.name.localeCompare(b.name) || a.dimension.localeCompare(b.dimension)).map(copyRoute);
@@ -202,6 +228,7 @@ export class RouteStore {
     remove(name, dimension) {
         const clean = normalizeRouteName(name);
         const key = clean ? routeKey(clean, dimension) : null;
+        this._refresh(true);
         if (key === null || !this._routes.has(key)) {
             return false;
         }
@@ -212,12 +239,13 @@ export class RouteStore {
 
     /** Number of routes. */
     get size() {
+        this._refresh();
         return this._routes.size;
     }
 
     _toJson() {
         const routes = {};
-        for (const route of this.list()) {
+        for (const route of this._sorted()) {
             routes[routeKey(route.name, route.dimension)] = route;
         }
         return { version: FILE_VERSION, routes };
@@ -229,6 +257,7 @@ export class RouteStore {
         }
         try {
             writeJsonAtomic(this.filePath, this._toJson(), { indent: 2 });
+            this._shared?.mark();
             return true;
         } catch (err) {
             console.warn(`Could not write the route file ${this.filePath}:`, err?.message ?? err);

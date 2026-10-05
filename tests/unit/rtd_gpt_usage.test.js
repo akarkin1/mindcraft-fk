@@ -109,7 +109,8 @@ describe('responses API (no url)', () => {
         assert.equal(client.requests.responses[0].model, 'gpt-6-luna');
         assert.equal(client.requests.responses[0].instructions, 'system prompt');
         assert.deepEqual(client.requests.responses[0].reasoning, { effort: 'low' });
-        assert.deepEqual(reports.map(counts), [['gpt-6-luna', 200, 300, 1000, 0]]);
+        // v0.1.4.13 (M3): a prompt of 1,024 tokens or more is written to OpenAI's cache where it was not read from it
+        assert.deepEqual(reports.map(counts), [['gpt-6-luna', 0, 300, 1000, 200]]);
         assert.equal(reports[0].purpose, 'chat');
     });
 
@@ -144,7 +145,8 @@ describe('responses API (no url)', () => {
         const gpt = new G.GPT('gpt-6-luna', null, {}, { client });
         await U.withPurpose('vision', () => gpt.sendVisionRequest(TURNS, 'describe', Buffer.from('jpeg')));
         assert.equal(client.requests.responses.length, 1);
-        assert.deepEqual(reports.map((r) => [r.input_tokens, r.purpose]), [[1500, 'vision']]);
+        // v0.1.4.13 (M3): the 1,500 prompt tokens are cache writes
+        assert.deepEqual(reports.map((r) => [r.input_tokens, r.purpose]), [[0, 'vision']]);
     });
 });
 

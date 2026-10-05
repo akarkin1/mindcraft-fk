@@ -13,6 +13,7 @@
 //   parsed command: { commandName: '!x', ... }           a command that runs (typed or chosen by the model)
 //   Awaiting <api> api response from model <name>        a call of a model (the line of each model class)
 //   Cost: session $0.13 (...), ... 674 calls.            the cost meter (cumulative per launch)
+//   ... Prompt tokens: 1,131k, of them 997k cache writes and 79k cache reads.   in it since v0.1.4.13 (M3)
 //   I'm stuck!                                           the mode unstuck (also inside an AUTO MESSAGE)
 //   Door service: closed <name> at (x, y, z).            a door the bot left open, closed by the service
 //   Door service: could not close <name> at ...          a door that stayed open
@@ -58,6 +59,7 @@ const RE = Object.freeze({
     command: /^parsed command: \{ commandName: '(!\w+)'/,
     cost: /^Cost: session \$(\d+(?:\.\d+)?)\b.*?\b(\d+) calls\./,
     earlier: /It includes (\d+) earlier process/,
+    cache: /Prompt tokens: ([\d,]+k?), of them ([\d,]+k?) cache writes and ([\d,]+k?) cache reads\./,
     door: /Door service: closed (\S+) at \((-?\d+), (-?\d+), (-?\d+)\)/,
     doorFailed: /Door service: could not close (\S+)/,
 });
@@ -66,6 +68,18 @@ const RE = Object.freeze({
 const AWAIT_FROM = /^Awaiting (.+?) (?:api |API )?response(?: from)?(?: model)? (\S+?)(?:\.\.\.)?\s*$/;
 const AWAIT_PAREN = /^Awaiting (.+?) (?:api |API )?response\.\.\. \(model: ([^,)]+)/;
 const AWAIT_PLAIN = /^Awaiting (.+?) (?:api |API )?response/;
+
+// v0.1.4.13 (M3): a count of the cost line, '79k' or '512', as tokens.
+function tokensOf(text) {
+    const m = /^([\d,]+)(k?)$/.exec(String(text ?? ''));
+    return m ? Number(m[1].replace(/,/g, '')) * (m[2] ? 1000 : 1) : null;
+}
+
+// Tokens as the cost line writes them: below 1,000 the number, else thousands with a k ('1,131k').
+export function tokensText(count) {
+    const n = typeof count === 'number' && Number.isFinite(count) && count > 0 ? count : 0;
+    return n < 1000 ? String(Math.round(n)) : `${String(Math.round(n / 1000)).replace(/\B(?=(\d{3})+(?!\d))/g, ',')}k`;
+}
 
 /**
  * The text of a log file: UTF-16 with its byte order mark (a redirect of Windows PowerShell 5) or UTF-8.
@@ -122,7 +136,8 @@ export function endReason(message) {
  * lines: [{ n, t, text }], n from 1, t in seconds since the first midnight of the log or null (no time);
  * events: [{ type, n, t, ... }] in the order of the lines; first a { type: 'span', from, to } when the log has times.
  * Types: start, end (code, message, reason), exit (code), restart, order (player, text, typed), executed (command),
- * answer (to), command (command), call (model), cost (dollars, calls, earlier), stuck, door (name, x, y, z),
+ * answer (to), command (command), call (model), cost (dollars, calls, earlier, and since v0.1.4.13 prompt, writes,
+ * reads: the tokens of the cache sentence, null without it), stuck, door (name, x, y, z),
  * door_failed (name).
  * @param {string} text
  * @returns {{lines: object[], events: object[]}}
@@ -183,7 +198,9 @@ export function parseLog(text) {
         else if ((m = RE.command.exec(s))) ev('command', { command: m[1] });
         else if ((m = RE.cost.exec(s))) {
             const e = RE.earlier.exec(s);
-            ev('cost', { dollars: Number(m[1]), calls: Number(m[2]), earlier: e ? Number(e[1]) : 0 });
+            const c = RE.cache.exec(s); // v0.1.4.13 (M3): null without cache tokens
+            ev('cost', { dollars: Number(m[1]), calls: Number(m[2]), earlier: e ? Number(e[1]) : 0,
+                prompt: c ? tokensOf(c[1]) : null, writes: c ? tokensOf(c[2]) : null, reads: c ? tokensOf(c[3]) : null });
         } else {
             const model = modelOfAwait(s);
             if (model !== null) ev('call', { model });
@@ -220,7 +237,8 @@ function withoutResult(events) {
  * @param {object[]} events of parseLog
  * @param {{name?: string}} [options]
  * @returns {object[]} one row: { log, minutes, timed, processes, ends, orders, withoutResult, calls, callsFrom,
- *   models, cost, stuck, doors, doorsFailed, commands }
+ *   models, cost, cache, stuck, doors, doorsFailed, commands }; cache (v0.1.4.13, M3): { prompt, writes, reads } in
+ *   tokens from the cost lines, null when they name no cache
  */
 export function scorecard(events, { name = 'log' } = {}) {
     const list = Array.isArray(events) ? events : [];
@@ -242,10 +260,16 @@ export function scorecard(events, { name = 'log' } = {}) {
     }
     let cost = null;
     let costCalls = null;
+    let cache = null; // v0.1.4.13 (M3): { prompt, writes, reads } of the cache sentences, null without one
+    const cacheOf = (s) => (s.writes === null || s.writes === undefined ? null : { prompt: s.prompt ?? 0, writes: s.writes, reads: s.reads ?? 0 });
     for (const s of segments) {
         if (!s) continue;
-        if (s.earlier > 0 || cost === null) { cost = s.dollars; costCalls = s.calls; }
-        else { cost += s.dollars; costCalls += s.calls; }
+        if (s.earlier > 0 || cost === null) { cost = s.dollars; costCalls = s.calls; cache = cacheOf(s); }
+        else {
+            cost += s.dollars; costCalls += s.calls;
+            const add = cacheOf(s);
+            if (add) cache = cache ? { prompt: cache.prompt + add.prompt, writes: cache.writes + add.writes, reads: cache.reads + add.reads } : add;
+        }
     }
     const awaited = Object.values(models).reduce((a, b) => a + b, 0);
     return [{
@@ -260,6 +284,7 @@ export function scorecard(events, { name = 'log' } = {}) {
         callsFrom: costCalls !== null ? 'cost' : 'log',
         models,
         cost: cost === null ? null : Math.round(cost * 100) / 100,
+        cache,
         stuck: list.filter((e) => e.type === 'stuck').length,
         doors: list.filter((e) => e.type === 'door').length,
         doorsFailed: list.filter((e) => e.type === 'door_failed').length,
@@ -278,6 +303,7 @@ export function totalRow(rows) {
     const sum = (key) => rows.reduce((a, r) => a + (r[key] ?? 0), 0);
     const minutes = rows.filter((r) => r.minutes !== null);
     const costs = rows.filter((r) => r.cost !== null);
+    const caches = rows.filter((r) => r.cache);
     return {
         log: 'Total',
         minutes: minutes.length ? Math.round(minutes.reduce((a, r) => a + r.minutes, 0) * 10) / 10 : null,
@@ -290,6 +316,7 @@ export function totalRow(rows) {
         callsFrom: rows.every((r) => r.callsFrom === 'cost') ? 'cost' : 'log',
         models: merge('models'),
         cost: costs.length ? Math.round(costs.reduce((a, r) => a + r.cost, 0) * 100) / 100 : null,
+        cache: caches.length ? ['prompt', 'writes', 'reads'].reduce((acc, k) => ({ ...acc, [k]: caches.reduce((a, r) => a + r.cache[k], 0) }), {}) : null,
         stuck: sum('stuck'),
         doors: sum('doors'),
         doorsFailed: sum('doorsFailed'),
@@ -302,6 +329,13 @@ export function totalRow(rows) {
 export function countsText(map) {
     const list = Object.entries(map ?? {}).sort((a, b) => (b[1] - a[1]) || (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
     return list.map(([k, v]) => `${k} ${v}`).join(', ');
+}
+
+// v0.1.4.13 (M3): after the dollars, the cache writes and reads of the prompt tokens: " (cache writes 997k, reads 79k
+// of 1,131k)"; nothing without them.
+function cacheCell(cache) {
+    if (!cache) return '';
+    return ` (cache writes ${tokensText(cache.writes)}, reads ${tokensText(cache.reads)} of ${tokensText(cache.prompt)})`;
 }
 
 /**
@@ -319,7 +353,7 @@ export function cells(r) {
         String(r.orders),
         String(r.withoutResult),
         models ? `${r.calls} (${models})` : String(r.calls),
-        r.cost === null ? '-' : `$${r.cost.toFixed(2)}`,
+        r.cost === null ? '-' : `$${r.cost.toFixed(2)}${cacheCell(r.cache)}`,
         String(r.stuck),
         r.doorsFailed ? `${r.doors}, ${r.doorsFailed} not closed` : String(r.doors),
     ];

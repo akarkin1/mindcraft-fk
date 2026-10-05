@@ -12,6 +12,11 @@ export const TEXTS = Object.freeze({
     noFuel: 'I have no fuel: no coal, charcoal, planks or logs.',
     /** `I know no furnace within 64 blocks and carry none.` (v0.1.4.12, F1: the range searched) */
     noFurnace: (range = 16) => `I know no furnace within ${range} blocks and carry none.`,
+    // v0.1.4.13 (P4): the furnace in the bag
+    /** `I placed my furnace at (16, -59, -99).` */
+    placedFurnace: (pos) => `I placed my furnace at ${posText(pos)}.`,
+    /** `I know no furnace within 64 blocks. I carry one but find no free cell for it within 3 blocks. Stand where I may build and tell me again.` */
+    noFurnaceSpot: (range = 64, near = 3) => `I know no furnace within ${range} blocks. I carry one but find no free cell for it within ${near} blocks. Stand where I may build and tell me again.`,
     /** `I smelted 8 raw_iron into 8 iron_ingot in the furnace at (x, y, z) with 1 coal.` */
     smelted: (count, item, product, pos, fuelCount, fuelName) => `I smelted ${count} ${item} into ${count} ${product} in the furnace at ${posText(pos)} with ${fuelCount} ${fuelName}.`,
     /** `I carry no raw_iron.` */

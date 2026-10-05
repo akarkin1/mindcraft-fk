@@ -2,9 +2,11 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-    DEFAULT_PROTOCOL, ERRORS, MAX_BODY, SERVER_INFO, TOOLS, TOOL_NAMES, authorized, bearerOf, dispatch, eventNotification,
-    handleRpc, sseMessage, tokenHash, tooLargeAnswer, toolResult, unauthorizedAnswer,
+    DEFAULT_PROTOCOL, ERRORS, MAX_BODY, SERVER_INFO, TOOLS, TOOL_NAMES, authorized, bearerOf, dispatch,
+    handleRpc, tokenHash, tooLargeAnswer, toolResult, unauthorizedAnswer,
 } from '../../src/agent/watch/mcp_logic.js';
+// v0.1.4.13 (S): the stream of server-sent events is gone (wait replaces it), so are eventNotification and sseMessage;
+// the server says the version of this release; the table holds the five tools of 4.1 after the six of v0.1.4.12.
 
 const callTool = async (name, args) => ({ text: `${name}:${JSON.stringify(args)}`, isError: name === 'say' && args.text === '/kill' });
 
@@ -14,9 +16,9 @@ describe('initialize', () => {
         assert.equal(answer.status, 200);
         assert.deepEqual(answer.body, {
             jsonrpc: '2.0', id: 1,
-            result: { protocolVersion: '2025-06-18', capabilities: { tools: {} }, serverInfo: { name: 'mindcraft-watch', version: '0.1.4.12' } },
+            result: { protocolVersion: '2025-06-18', capabilities: { tools: {} }, serverInfo: { name: 'mindcraft-watch', version: '0.1.4.13' } },
         });
-        assert.deepEqual(SERVER_INFO, { name: 'mindcraft-watch', version: '0.1.4.12' });
+        assert.deepEqual(SERVER_INFO, { name: 'mindcraft-watch', version: '0.1.4.13' });
     });
 
     test('without a version: 2025-03-26', async () => {
@@ -40,8 +42,8 @@ describe('tools/list', () => {
     test('the six tools with their JSON schemas', async () => {
         const answer = await handleRpc('{"jsonrpc":"2.0","id":2,"method":"tools/list"}', { callTool });
         const tools = answer.body.result.tools;
-        assert.deepEqual(tools.map((t) => t.name), ['state', 'inventory', 'chat', 'places', 'events', 'say']);
-        assert.deepEqual(TOOL_NAMES, ['state', 'inventory', 'chat', 'places', 'events', 'say']);
+        assert.deepEqual(tools.map((t) => t.name).slice(0, 6), ['state', 'inventory', 'chat', 'places', 'events', 'say']);
+        assert.deepEqual(TOOL_NAMES.slice(0, 6), ['state', 'inventory', 'chat', 'places', 'events', 'say']);
         for (const tool of tools) {
             assert.equal(typeof tool.description, 'string');
             assert.equal(tool.inputSchema.type, 'object');
@@ -53,7 +55,7 @@ describe('tools/list', () => {
         assert.equal(byName.say.properties.text.minLength, 1);
         assert.equal(byName.say.properties.text.maxLength, 256);
         assert.deepEqual(byName.state.properties, {});
-        assert.equal(TOOLS.length, 6);
+        assert.equal(TOOLS.length, 11); // v0.1.4.13 (S): six of v0.1.4.12 and digest, wait, run, look, server
     });
 });
 
@@ -157,12 +159,13 @@ describe('the token', () => {
 });
 
 describe('the stream', () => {
-    test('an event as notifications/message, level info, logger events', () => {
-        const event = { t: '2026-10-03T13:45:02.000Z', kind: 'restart', text: 'Luna started.', data: {} };
-        assert.deepEqual(eventNotification(event), { jsonrpc: '2.0', method: 'notifications/message', params: { level: 'info', logger: 'events', data: event } });
-        const sse = sseMessage(event);
-        assert.ok(sse.startsWith('event: message\ndata: {'));
-        assert.ok(sse.endsWith('\n\n'));
-        assert.deepEqual(JSON.parse(sse.split('\n')[1].slice(6)), eventNotification(event));
+    test('v0.1.4.13 (S): there is no stream; the tools of the server (handlers.tools) win over the table', async () => {
+        const tools = [{ name: 'reply', description: 'x', inputSchema: { type: 'object', properties: {} } }];
+        const list = await handleRpc('{"jsonrpc":"2.0","id":2,"method":"tools/list"}', { callTool, tools: () => tools });
+        assert.deepEqual(list.body.result.tools.map((t) => t.name), ['reply']);
+        const known = await handleRpc(JSON.stringify({ jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'reply', arguments: {} } }), { callTool, tools });
+        assert.equal(known.body.result.content[0].text, 'reply:{}');
+        const unknown = await handleRpc(JSON.stringify({ jsonrpc: '2.0', id: 4, method: 'tools/call', params: { name: 'state' } }), { callTool, tools });
+        assert.equal(unknown.body.error.code, -32602);
     });
 });

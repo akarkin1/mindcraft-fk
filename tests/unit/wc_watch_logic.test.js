@@ -1,7 +1,9 @@
 // Spec v0.1.4.12 4.1 (part C): the pure parts of the client scripts/watch.js: arguments, request bodies, answers.
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { DEFAULT_URL, EXIT, createSseParser, parseAnswer, parseCliArgs, requestBody, requestHeaders, streamLine } from '../../scripts/watch_logic.js';
+import { DEFAULT_URL, EXIT, parseAnswer, parseCliArgs, requestBody, requestHeaders } from '../../scripts/watch_logic.js';
+// v0.1.4.13 (S): the stream of events is gone (createSseParser, streamLine); `events --follow` is refused with a hint,
+// `--follow` is a loop of `wait any` (tested in xs_watch_logic.test.js).
 
 describe('the arguments', () => {
     test('<tool> [json args]', () => {
@@ -17,8 +19,9 @@ describe('the arguments', () => {
         assert.deepEqual(parseCliArgs(['events', '2026-10-03T13:00:00Z']).args, { since: '2026-10-03T13:00:00Z' });
     });
 
-    test('events --follow', () => {
-        assert.deepEqual(parseCliArgs(['events', '--follow']), { tool: 'events', args: {}, follow: true });
+    test('events --follow is gone: a hint and the usage (v0.1.4.13)', () => {
+        const parsed = parseCliArgs(['events', '--follow']);
+        assert.ok(parsed.error.startsWith('events --follow is gone: use --follow, a loop of wait any.'));
     });
 
     test('no tool, broken JSON, --follow on another tool: the usage', () => {
@@ -67,15 +70,3 @@ describe('the answer', () => {
     });
 });
 
-describe('the stream', () => {
-    test('events in pieces, comments skipped', () => {
-        const parser = createSseParser();
-        const event = { t: '2026-10-03T11:45:02.000Z', kind: 'restart', text: 'Luna started.', data: {} };
-        const message = { jsonrpc: '2.0', method: 'notifications/message', params: { level: 'info', logger: 'events', data: event } };
-        const text = `: ping\n\nevent: message\ndata: ${JSON.stringify(message)}\n\n`;
-        assert.deepEqual(parser.feed(text.slice(0, 30)), []);
-        assert.deepEqual(parser.feed(text.slice(30)), [message]);
-        assert.match(streamLine(message), /^\[\d\d:\d\d:\d\d\] restart: Luna started\.$/);
-        assert.equal(streamLine({ jsonrpc: '2.0', method: 'other' }), null);
-    });
-});

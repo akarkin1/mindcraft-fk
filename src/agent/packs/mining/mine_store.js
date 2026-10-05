@@ -252,13 +252,29 @@ function ofBot(mine) {
 export class MineStore {
     /**
      * @param {string|null} filePath usually <worldDir>/mines.json; without it the store lives in memory only
-     * @param {{now?: () => Date}} [options]
+     * @param {{now?: () => Date, shared?: {changed: (fresh?: boolean) => boolean, mark: (stamp?: string|null) => void, stamp?: () => string|null}|null}} [options]
+     *   shared (v0.1.4.13, M1): a SharedFile of memory_paths.js when another bot writes the same file: the store
+     *   re-reads the file before a read or a write when it changed; without it the file is read once, as before
      */
     constructor(filePath, options = {}) {
         this.filePath = typeof filePath === 'string' && filePath.length > 0 ? filePath : null;
         const now = options?.now;
         this.now = typeof now === 'function' ? now : () => new Date();
+        const shared = options?.shared;
+        this._shared = this.filePath !== null && shared && typeof shared.changed === 'function' && typeof shared.mark === 'function' ? shared : null;
         this._mines = new Map();
+    }
+
+    // v0.1.4.13 (M1): the file as another bot left it; `fresh` before a write (a read looks at most once a second).
+    // Never throws.
+    _refresh(fresh = false) {
+        try {
+            if (this._shared !== null && this._shared.changed(fresh)) {
+                this.load();
+            }
+        } catch (err) {
+            console.warn(`Could not re-read the mine file ${this.filePath}:`, err?.message ?? err);
+        }
     }
 
     _nowIso() {
@@ -272,6 +288,7 @@ export class MineStore {
      * @returns {number} number of mines
      */
     load() {
+        const seen = this._shared?.stamp?.(); // v0.1.4.13 (M1): the file as it was before the read
         this._mines = new Map();
         if (this.filePath === null) {
             return 0;
@@ -313,6 +330,7 @@ export class MineStore {
             console.warn(`Mine file ${this.filePath} could not be read:`, err?.message ?? err);
             this._mines = new Map();
         }
+        this._shared?.mark(seen);
         return this._mines.size;
     }
 
@@ -324,6 +342,7 @@ export class MineStore {
      * @throws {TypeError} for an unknown ore, a bad entrance or a missing level
      */
     set(mine) {
+        this._refresh(true);
         const clean = validateMine(mine, this._nowIso());
         const old = this._mines.get(mineKey(clean));
         if (old) {
@@ -431,6 +450,7 @@ export class MineStore {
     }
 
     _byKey(key) {
+        this._refresh(true); // addPassed and removePassed write after it
         if (typeof key !== 'string') {
             return this._mines.get(mineKey(key)) ?? null;
         }
@@ -484,6 +504,12 @@ export class MineStore {
      * @returns {object[]} copies
      */
     list(dimension) {
+        this._refresh();
+        return this._sorted(dimension);
+    }
+
+    // the mines of a dimension (all without one) in the order of list, as copies; no re-read (a save uses it)
+    _sorted(dimension) {
         const wanted = dimension === undefined || dimension === null ? null : normalizeDimension(dimension);
         return [...this._mines.values()].filter(m => wanted === null || m.dimension === wanted)
             .sort((a, b) => b.level - a.level || a.ore.localeCompare(b.ore) || mineKey(a).localeCompare(mineKey(b))).map(copyMine);
@@ -522,6 +548,7 @@ export class MineStore {
      * @returns {boolean} true if it existed
      */
     remove(name, dimension) {
+        this._refresh(true);
         const mine = this.find(name, dimension);
         if (!mine) {
             return false;
@@ -533,12 +560,13 @@ export class MineStore {
 
     /** Number of mines. */
     get size() {
+        this._refresh();
         return this._mines.size;
     }
 
     _toJson() {
         const mines = {};
-        for (const mine of this.list()) {
+        for (const mine of this._sorted()) {
             mines[mineKey(mine)] = mine;
         }
         return { version: FILE_VERSION, mines };
@@ -550,6 +578,7 @@ export class MineStore {
         }
         try {
             writeJsonAtomic(this.filePath, this._toJson(), { indent: 2 });
+            this._shared?.mark();
             return true;
         } catch (err) {
             console.warn(`Could not write the mine file ${this.filePath}:`, err?.message ?? err);

@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "mindcraft": {
+      "type": "http",
+      "url": "${MC_WATCH_URL:-http://127.0.0.1:8090/mcp}",
+      "headers": {
+        "Authorization": "Bearer ${MC_WATCH_TOKEN:-unset}"
+      }
+    }
+  }
+}

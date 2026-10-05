@@ -418,6 +418,61 @@
         "description": "One sentence of the bot's role in the conversation prompt, e.g. 'You are the farmer. gpt is the miner.' Empty: no role line",
         "default": ""
     },
+    "voice_ui": {
+        "type": "boolean",
+        "description": "Whether the page of the mindserver has the live voice: whisper hears the owner, Supertonic speaks the bot's lines in the page, the system voice is silent. Read when the mindserver starts; needs npm run voice:setup (about 1.6 GB)",
+        "default": false
+    },
+    "voice_voice": {
+        "type": "string",
+        "description": "With voice_ui: the voice of the bot in the page, supertonic:F1 to F5 or M1 to M5; kokoro:af_heart needs kokoro-js",
+        "default": "supertonic:F1"
+    },
+    "voice_language": {
+        "type": "string",
+        "description": "With voice_ui: the language whisper hears ('auto' for any) and Supertonic speaks (English when it does not speak it)",
+        "default": "en"
+    },
+    "watch_local_only": {
+        "type": "boolean",
+        "description": "With watch_server: the server answers this machine only and needs no token; a request through a tunnel is refused. Off: the token of MC_WATCH_TOKEN, for a session elsewhere",
+        "default": false
+    },
+    "watch_report_seconds": {
+        "type": "number",
+        "description": "With watch_server: every N seconds an event 'report' with the digest since the last report, even when nothing happened. 0: no report",
+        "default": 0
+    },
+    "mine_other_ores": {
+        "type": "boolean",
+        "description": "With mining_pack: while the bot mines one ore, the other ores it takes from the tunnel's walls, floor and ceiling are counted in its text ('and 11 redstone and 4 lapis_lazuli on the way'). Off: the text names only the ore asked for",
+        "default": false
+    },
+    "supervisor_name": {
+        "type": "string",
+        "description": "The name the owner addresses the supervisor by ('Opus, why is it going up?'): such a line is an event 'message' of the watch server and no bot answers it; the supervisor's lines come back as '[Opus] ...'. Empty: no supervisor in the chat, no help or message events, no notes",
+        "default": ""
+    },
+    "supervisor_voice": {
+        "type": "string",
+        "description": "With voice_ui: the voice the page gives the supervisor's lines, supertonic:F1 to F5 or M1 to M5",
+        "default": "supertonic:M1"
+    },
+    "supervisor_updates": {
+        "type": "boolean",
+        "description": "Whether the supervisor's unprompted updates ('[Opus] The mining is at 2 of 6.') are shown and spoken. Off: only its answers to lines that named it",
+        "default": false
+    },
+    "shared_memory": {
+        "type": "boolean",
+        "description": "With world_memory: the areas, places, routes, mines, chests and rules of a world live in bots/shared/worlds/<seed>/ and every bot reads and writes them. The chat memory and the job stay per bot. Off: each bot has its own memory",
+        "default": false
+    },
+    "prompt_cache": {
+        "type": "boolean",
+        "description": "Whether the prompt is sent in two parts: the fixed part first (the introduction, the command list), then what changes (memory, stats, inventory, knowledge, examples). On the Anthropic API the fixed part carries a cache mark. Off: the prompt as before",
+        "default": false
+    },
     "code_timeout_mins": {
         "type": "number",
         "description": "Number of minutes to allow code execution. -1 for no timeout",

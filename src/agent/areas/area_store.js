@@ -399,14 +399,30 @@ function migratedType(area) {
 export class AreaStore {
     /**
      * @param {string} filePath usually <worldDir>/areas.json
-     * @param {{now?: () => Date}} options
+     * @param {{now?: () => Date, shared?: {changed: (fresh?: boolean) => boolean, mark: (stamp?: string|null) => void, stamp?: () => string|null}|null}} options
+     *   shared (v0.1.4.13, M1): a SharedFile of memory_paths.js when another bot writes the same file: the store
+     *   re-reads the file before a read or a write when it changed; without it the file is read once, as before
      */
     constructor(filePath, options = {}) {
         this.filePath = filePath;
         const now = options?.now;
         this.now = typeof now === 'function' ? now : () => new Date();
+        const shared = options?.shared;
+        this._shared = shared && typeof shared.changed === 'function' && typeof shared.mark === 'function' ? shared : null;
         this._areas = new Map();
         this._revision = 0;
+    }
+
+    // v0.1.4.13 (M1): the file as another bot left it; `fresh` before a write (a read looks at most once a second).
+    // Never throws.
+    _refresh(fresh = false) {
+        try {
+            if (this._shared !== null && this._shared.changed(fresh)) {
+                this.load();
+            }
+        } catch (err) {
+            console.warn(`Could not re-read the area file ${this.filePath}:`, err?.message ?? err);
+        }
     }
 
     _nowIso() {
@@ -424,6 +440,7 @@ export class AreaStore {
      * @returns {number} number of areas
      */
     load() {
+        const seen = this._shared?.stamp?.(); // v0.1.4.13 (M1): the file as it was before the read
         this._areas = new Map();
         this._revision++;
         try {
@@ -441,6 +458,7 @@ export class AreaStore {
             console.warn(`Area file ${this.filePath} could not be read:`, err?.message ?? err);
             this._areas = new Map();
         }
+        this._shared?.mark(seen);
         return this._areas.size;
     }
 
@@ -531,6 +549,7 @@ export class AreaStore {
      * @throws {RangeError} for a box larger than 64 blocks in x or z, or 48 in y
      */
     set(area) {
+        this._refresh(true);
         const nowIso = this._nowIso();
         const clean = validateArea({ ...(isPlainObject(area) ? area : null), created: undefined, updated: undefined }, nowIso);
         const previous = this._areas.get(clean.name);
@@ -566,6 +585,7 @@ export class AreaStore {
      */
     setFlag(name, flag, value) {
         try {
+            this._refresh(true);
             const area = this._areas.get(lookupName(name));
             if (!area || !AREA_FLAG_NAMES.includes(flag)) {
                 return null;
@@ -593,12 +613,14 @@ export class AreaStore {
 
     /** @returns {object|undefined} a copy of the area; the name is normalised */
     get(name) {
+        this._refresh();
         const area = this._areas.get(lookupName(name));
         return area === undefined ? undefined : copyArea(area);
     }
 
     /** Removes an area and writes the file. @returns {boolean} true if it existed */
     remove(name) {
+        this._refresh(true);
         const key = lookupName(name);
         if (!this._areas.has(key)) {
             return false;
@@ -611,20 +633,24 @@ export class AreaStore {
 
     /** @returns {object[]} copies of all areas, sorted by name */
     list() {
+        this._refresh();
         return [...this._areas.keys()].sort(compareNames).map(name => copyArea(this._areas.get(name)));
     }
 
     /** Number of areas. */
     get size() {
+        this._refresh();
         return this._areas.size;
     }
 
     /** Changes on every load, set and remove. The guard refreshes its cache when it changes. */
     get revision() {
+        this._refresh(); // v0.1.4.13 (M1): a change of another bot is a new revision
         return this._revision;
     }
 
     _inDimension(dimension) {
+        this._refresh();
         const wanted = normalizeDimension(dimension);
         return [...this._areas.values()].filter(area => area.dimension === wanted);
     }
@@ -714,6 +740,7 @@ export class AreaStore {
     _save() {
         try {
             writeJsonAtomic(this.filePath, this._toJson(), { indent: 2 });
+            this._shared?.mark();
             return true;
         } catch (err) {
             console.warn(`Could not write the area file ${this.filePath}:`, err?.message ?? err);

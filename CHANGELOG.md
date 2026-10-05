@@ -6,6 +6,68 @@ This fork is based on [Mindcraft](https://github.com/mindcraft-bots/mindcraft) `
 
 Each release lists new settings and feature flags with their default value.
 
+## [0.1.4.13] - 2026-10-04
+
+"Supervision": a supervisor that wakes on a change and orders in one call, one chat for the bots and
+the supervisor (by voice too), the corrections of the supervised play of 2026-10-04, one memory for two
+bots, the prompt cache, the creeper crash found.
+
+### Added
+
+- **The supervisor's tools** on the watch server: `digest` (only what changed since the last call, about 10 lines: position, health and food, the running command, the job, the bag as `+7 diamond -1 iron_pickaxe`, new chat and events, lava or water within 8 blocks, the nearest chest with room, the uses left of the tool in hand), `wait` (the server holds the call until an event, the end of a command, idle or any change, at most 55 s: no polling, no stream), `run` (up to 10 commands one after the other, stopped at a failure; a command typed while it runs waits behind it, `!stop` empties it), `look` (ores, lava, water, chests, furnaces, ladders, doors, drops and players around, no model call), `server` (uptime, heap, players, time and weather, the session's model cost, the switches on, whether a supervisor is connected). A `report` event every `watch_report_seconds`, a `help` event when the bot asks the player something. `node scripts/watch.js digest | wait | run | look | server | reply | note`, `--follow` as a loop of `wait`.
+- **The supervisor in the chat** (`supervisor_name`, e.g. "Opus"): "Opus, why is it going up?" is a message for the supervisor and no bot answers it; the supervisor's `reply` appears as `[Opus] ...` and no bot answers that either; with nobody connected one bot says `The supervisor is not here.` Unasked updates behind `supervisor_updates`. Nobody speaks over anybody: a supervisor's line waits while a bot is answering, an update that waited 20 s is dropped. `note` puts one line of the supervisor in the bot's prompt for N minutes. The page shows one chat for every bot and the supervisor and speaks one line at a time, each bot in its voice and the supervisor in `supervisor_voice`; the dropdown of the bot you talk with puts its name in front of what you say, "everyone" sends it plain.
+- **The watch server for this machine only** (`watch_local_only`): no token; a request through a tunnel (cloudflared, ngrok), from another host or with a body that is not JSON is refused. For a supervisor on the same machine as the bot. The repository's `.mcp.json` gives every Claude Code session in the folder the MCP server `mindcraft`.
+- **`/supervise`** (`.claude/skills/supervise/SKILL.md`) and **`docs/SUPERVISOR.md`**: how a Claude Code session supervises the bot through the tunnel, its standing rules, what it never does, and what it costs.
+- **The live voice** (`voice_ui`, `voice_voice`, `voice_language`): talk with the bot in the page of the mindserver; whisper hears you, Supertonic speaks; built on the voice branch, see `docs/releases/0.1.4.13/VOICE.md`. `npm run voice:setup` downloads about 1.6 GB.
+- **One memory for two bots** (`shared_memory`): the areas, places, routes, mines, chests and rules of a world in `bots/shared/worlds/<seed>/`, read and written by every bot; the chat memory and the job stay per bot. The first bot that starts with it copies its own memory once: `I share the memory of this world now.`
+- **The prompt cache** (`prompt_cache`): the fixed part of the prompt (the introduction and the command list) first, the changing part (memory, stats, inventory, knowledge, examples) after it; on the Anthropic API the fixed part carries the cache mark. OpenAI caches the fixed part by itself once it comes first.
+- **Other ores on the way** (`mine_other_ores`): the end text of the mining counts the other ores the bot dug in the tunnel's walls: `I mined 6 raw_iron, and 11 redstone and 4 lapis_lazuli on the way.`
+
+### Changed
+
+- **Names**: "claude, come here" moves claude; the other bot stays quiet and its model is not asked. A line without a name goes to every bot, as before.
+- **Supplies**: the bot looks into the chests within 16 blocks first, then the chests it knows, then crafts, the surface last, and names the chest: `I get my supplies: 10 bread from the chest at (15, -59, -99).` A spare pickaxe only when the one in hand has under 50 uses, made from what it carries.
+- **Tool wear**: at 10 uses left the bot takes or makes another pickaxe and keeps the old one: `My iron_pickaxe is nearly worn: 8 uses left. I made a new one.`; without material it says so and stops.
+- **A plan starts at once**: a plan of a job runs its first step in the same call: `Step 1 of 3: !mineOre("iron", 3).`
+- **The furnace in the bag** is placed when none is near: `I placed my furnace at (16, -59, -99).`; "carry none" only when none is carried.
+- **The counter**: the job line and the mining's own count agree, also after `!stop`.
+- **The model's follow-up** never cancels a running skill of a job: it is told `The mining runs, 7 of 28 diamond. Say !stop first.`
+- **`!mineOre` underground** in a mine the bot does not know makes the mine where it stands and takes the tunnel it stands in, also one widened by earlier mining: `I made the mine "mine 2" here and measured the tunnel ...`.
+- **`!goToSurface`** takes a known route up first: `I take the route "basement_to_surface".`
+- **The way out of the mine** passes the gap at the foot of a ladder.
+- **A full bag** during mining: stored in the mine's chest and the mining goes on: `I stored 203 cobbled_deepslate and 65 gravel in the chest at (16, -59, -98) and go on.`
+- **Death drops**: the bot leaves a player's things where they died for 5 minutes and never wears armour it picked up from the ground: `I leave MartyByrde2's things at (13, -57, -99).`
+- **`!givePlayer`**: the bot throws from 2 blocks, steps back, and leaves what it threw for 30 s; more than 8 of a kind: `That is a lot. Say "put my stuff in the chest" and I put it in the nearest chest.`
+- **Down by a safe way**: `!goToCoordinates` and `!digDown` more than 3 blocks straight down dig a shaft with a ladder on every block when the bag holds the depth plus 2 ladders: `I dig down 20 blocks with ladders.`; without them nothing is dug: `I do not dig a shaft 20 blocks down without ladders: I have 6 and need 22. Bring me ladders or show me stairs.` The shaft stops at lava or water beside it.
+- **The cheapest pickaxe that is enough**: a worn pickaxe's replacement and the spare are stone for stone, coal, copper, iron and lapis, iron for gold, redstone and diamond; iron for a stone ore only with more than 20 ingots and no cobblestone.
+- **Pens**: a fenced enclosure with animals is kept closed whether you saved it or not: the path search, the item reflex, `!useOn` and the model's code never open its gate: `That is a pen with 26 chickens; I do not open its gate. Say "open the pen" if you mean it.` After "open the pen" the gate is closed behind the bot.
+- **The cost meter** counts OpenAI's cache writes ($0.125 per million for `gpt-6-luna`; your bill of 2026-10-03 was 997k writes, 79k reads): the session line says `Prompt tokens: 1,131k, of them 997k cache writes and 79k cache reads.` and the scorecard shows it.
+- **The creeper crash** (F10 of v0.1.4.12) is fixed: the 1.21.8 server sends an explosion's knockback as doubles and the pinned `minecraft-data` read floats, so now and then the bot got a velocity of 5·10^14 and the physics step ran until the memory was gone. The patch of `minecraft-data` 3.98.0 reads doubles, as the library does since 3.117.0 (no version bump). 36 runs of the scenario after it, no crash.
+
+### Settings
+
+| Key | Default |
+|---|---|
+| `supervisor_name` | `""` |
+| `supervisor_voice` | `"supertonic:M1"` |
+| `supervisor_updates` | `false` |
+| `watch_local_only` | `false` |
+| `watch_report_seconds` | `0` |
+| `shared_memory` | `false` |
+| `prompt_cache` | `false` |
+| `mine_other_ores` | `false` |
+| `voice_ui` | `false` |
+| `voice_voice` | `"supertonic:F1"` |
+| `voice_language` | `"en"` |
+
+The supervisor's tools, the names, the corrections and the creeper fix have no switch.
+
+### Known limitations
+
+- Claude Haiku 4.5 caches only a prompt prefix of 4,096 tokens or more; the fixed part of the prompt is about 3,800 to 4,350. Whether `prompt_cache` saves anything with Haiku shows in the session line of the cost meter. Luna is not affected.
+- The supervisor is a Claude Code session: a turn takes 5 to 30 s, so it answers slower than the bot.
+- The two ladder places of the play of 2026-10-04 (the landing at level 30 and the ladder under the basement trapdoor) did not reproduce in the test base; the way out of the mine's room is fixed.
+
 ## [0.1.4.12] - 2026-10-03
 
 "Understanding and watching": a watch server for a Claude session, learning by watching, smelting,

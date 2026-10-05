@@ -29,9 +29,9 @@ function isEvent(e, kind) {
 }
 
 describe('4.1 the kinds', () => {
-    test('the nine kinds of the table', () => {
+    test('the nine kinds of the table, and report and help of v0.1.4.13 (part S)', () => {
         assert.deepEqual([...E.EVENT_KINDS].sort(), ['animals_missing', 'death', 'explosion', 'failure_repeated', 'far_from_home',
-            'health', 'job_stalled', 'night_awake', 'restart'].sort());
+            'health', 'job_stalled', 'night_awake', 'restart', 'report', 'help'].sort());
     });
 
     test('a ring of 200 in memory: the oldest goes', () => {

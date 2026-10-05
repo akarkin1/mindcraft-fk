@@ -491,7 +491,8 @@ async function runSteps(bot, ctx, steps, clock) {
  * @param {{minUses?: number, count?: number, collect?: boolean, now?: Function, wait?: Function}} [options]
  *   minUses: a tool with fewer uses left does not count (default 1); count: how many such tools
  *   the bot wants (default 1), for a second pickaxe on a long trip; collect: false asks only the
- *   chests, it cuts no tree and breaks no stone (the axe of chopTrees)
+ *   chests, it cuts no tree and breaks no stone (the axe of chopTrees); exact: true crafts the material asked for
+ *   and no better one (the mining pack's cheapest pickaxe, the correction of 2026-10-04)
  * @returns {Promise<{ok: boolean, reason: string|null, tool: string|null, crafted: string[], text: string}>}
  *   reasons: unknown_kind, unknown_material, not_craftable, missing, craft_failed, interrupted, error, no_iron
  */
@@ -518,7 +519,8 @@ export async function ensureTool(bot, ctx = {}, kind = '', minMaterial = '', opt
         // v0.1.4.8, E3: the known chests count, and without a material the best up to stone
         const word = typeof kind === 'string' ? kind.trim().toLowerCase().replace(/^minecraft:/, '').replace(/\s+/g, '_') : '';
         const open = (typeof minMaterial !== 'string' || minMaterial.trim() === '') && !parseTool(word);
-        const target = chooseMaterial(request.kind, open ? '' : request.material, inventoryOf(bot), { table: tableNear(bot), chests: chestCounts(bot, ctx) });
+        const target = options.exact === true && !open ? request.material
+            : chooseMaterial(request.kind, open ? '' : request.material, inventoryOf(bot), { table: tableNear(bot), chests: chestCounts(bot, ctx) });
         const name = toolName(request.kind, target);
         // v0.1.4.12 (part E): an iron tool with smelting on smelts its raw iron first
         let smelt = '';
