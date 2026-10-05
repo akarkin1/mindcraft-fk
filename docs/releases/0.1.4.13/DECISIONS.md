@@ -64,9 +64,18 @@ memory and histories (not in the repository).
 | F1-7 | "Home was set to the bed in the cave." | No place "home" changed: the supervisor placed the owner's bed at (16, 14, 26) and the bot slept in it, which sets the respawn point (vanilla). | No change of code; the skill: never sleep in a placed bed underground. | lead |
 | F1-9 | The supervisor counted "66 diamond ore within 32 blocks" and "41 iron ore within 12 blocks" and sent the bot toward them, into a cave. | `look` listed every ore within the radius, through the rock. The owner: the bot sees only what is open to his or the player's view; seeing through walls is a cheat. | `look` lists ore, lava and water only with an open side. | lead |
 | F1-8 | `start-gpt.ps1` loaded the watch token while `start-claude.ps1` no longer did (the owner's commit b6639e8 for `watch_local_only`). | | The same two lines commented out in `start-gpt.ps1`. | lead |
+| F1-10 | W115 part B in the gate of the fix: the bot carried the dead player's 5 ingots (2 of 7 runs since v0.1.4.13). | Not the item reflex (no `Picking up item!`): the step away from a death drop at the bot's feet aimed away from one drop (the boots) and walked over the ingots, which the server gives to whoever touches them. | The step goes 4 blocks away from the middle of all the death's drops within 6 blocks (`awayPoint`). W115 gains part B2: the player dies 1 block from the bot, in gold. After it W115 passed 8 of 8 runs; in one B2 run the drops landed at the bot's feet and it stepped 5 blocks away from all of them, taking none. | lead |
+| F1-11 | W118 in the gate of the fix: 1 of 6 raw iron in 3 minutes. | The bot dug a parallel tunnel at z -2 instead of the measured one at z 0 and never reached the seeded iron; with one free slot it walked to the chest every 2 cobblestone. The same code passed W118 in 70 s an hour before, and in the gate of the release. | A flake of the mining's choice of tunnel, not of this fix; with the full bag far from the chest in 0.1.4.14. | lead |
+| F1-12 | W116 in the first run of the group: the gate open 10 s after the bot passed. | | Passed 2 of 2 alone and in the gate; a flake of the timing of the gate. | lead |
+| F1-13 | W113 in the last group run: `I placed my furnace at (x, y, z).` not said. | A race of the test: it read the bot's lines at 34 s, when the pickaxe was in the bag; the result line came when the command ended, a moment later (the log has it). | W113 waits up to 10 s for the line; 3 of 3 after it. | lead |
 
 Not a defect: the mining digs only ore that its tunnel exposes; the bot sees no ore behind walls, as the owner intends
 (the setting that sees through walls is a cheat and stays off). The rest of the play's findings (caves, the supplies, the mine and its route, a full bag
 far from the chest, chests by position, `!craftRecipe` with a count, a ladder through a trapdoor, orders that the
 bot's model overrides, code that cannot be stopped) are planned for 0.1.4.14 in
 `docs/ROADMAP.md`; the load of the laptop only if it remains after this fix.
+
+The gate of the fix in a fresh clone (fe5a19a): unit 8,457 tests, 0 fail; the world set of the release gate (the 30
+journeys, the 11 of 0.1.4.13 with W119, `creeper_in_sight` twice) 40 of 42, the two failures F1-10 (fixed) and F1-11
+(a flake). After F1-10 and F1-13: unit 8,461 tests, 0 fail; the 11 of 0.1.4.13 10 of 11 (W113, F1-13), then W113 3 of 3,
+W115 8 of 8, W118 2 of 2.

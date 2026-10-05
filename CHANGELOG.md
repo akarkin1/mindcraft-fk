@@ -60,6 +60,8 @@ bots, the prompt cache, the creeper crash found.
 - **The supervisor sees no ore behind walls**: `look` lists ore, lava and water, and the digest's hazards lava, only
   with an open side (air, cave air or a liquid next to it), as a player sees them; they listed every block within the
   radius, through the rock.
+- **A player's death drops**: the bot steps away from all of them, not across one; in 2 of 7 test runs its step from
+  the boots passed over the ingots and the server gave them to the bot.
 - **`/supervise`**: the supervisor speaks in the chat only when the bot is in danger, when the goal is done or stuck,
   and when you ask; never `!collectBlocks` or code actions to fetch ore underground; the bot stays out of caves; "check"
   never moves your things; nothing is claimed before a tool showed it.

@@ -15,6 +15,8 @@
 //      After 60 s the iron_boots and the 5 iron_ingot lie within 8 blocks of the death (server entities: a death scatters
 //      its drops up to 5 blocks, and 8 is the range of the bot's leave rule); the bot wears
 //      no boots and carries no ingot; it said `I leave w_player's things at (x, y, z).` exactly once.
+//   B2. (v0.1.4.13 fix 1) The same with golden boots and 5 gold ingots, the player 1 block from the bot: the drops land at
+//      its feet, it steps away from all of them and takes none.
 //   A. Typed !goToCoordinates(x, y - 20, z, 1) (20 blocks straight down, rock below, no ladder in the bag): the answer is
 //      `I do not dig a shaft 20 blocks down without ladders: I have 0 and need 22. Bring me ladders or show me stairs.`;
 //      20 s after the order the bot is within 2 blocks of where it stood; no block of the 3 x 3 columns under it was
@@ -52,7 +54,6 @@ await scenarioMain({
         await buildBase(b);
         const g = b.g;
         const botAt = { x: b.ox + 30, y: g + 1, z: b.oz - 20 }; // open grass east of the house, rock below
-        const playerAt = { x: botAt.x + 3, y: g + 1, z: botAt.z };
         let agent = null, orders = null;
         try {
             const j = await startJourney(NAME, b, { botAt, playerAt: { x: botAt.x - 6, y: g + 1, z: botAt.z }, kit: KIT, settings: SUPERVISION_SETTINGS() });
@@ -62,50 +63,61 @@ await scenarioMain({
             await sleep(2000);
 
             // ---------------------------------------------------------- B. the death drops (first: the bot on the surface)
-            await commands([`gamemode survival ${PLAYER}`, `clear ${PLAYER}`]);
-            await tp(PLAYER, playerAt, 90, 0);
-            await commands([`item replace entity ${PLAYER} armor.feet with minecraft:iron_boots 1`, `give ${PLAYER} minecraft:iron_ingot 5`]);
-            await sleep(1000);
-            const pInv = await inventoryOf(PLAYER);
-            const deathAt = await entityPos(PLAYER);
-            note(`B: the player at ${fmt(deathAt)}, ${dist(deathAt, await entityPos(NAME)).toFixed(1)} blocks from the bot, carries ${itemsText(pInv)}`);
-            check((pInv.iron_boots || 0) === 1 && (pInv.iron_ingot || 0) === 5, 'B: precondition: the player wears iron boots and carries 5 iron ingots (server)', itemsText(pInv));
-            const tB = Date.now();
-            const killed = await command(`kill ${PLAYER}`);
-            note(`B: the control killed the player: ${JSON.stringify(killed)}`);
-            const dropBox = { min: { x: Math.floor(deathAt.x) - 8, y: g - 1, z: Math.floor(deathAt.z) - 8 }, max: { x: Math.floor(deathAt.x) + 8, y: g + 4, z: Math.floor(deathAt.z) + 8 } };
-            const dropsOf = async () => (await itemsOnGround(dropBox)).filter((x) => /^iron_(boots|ingot)$/.test(x.name ?? ''));
-            const dropped = await waitFor(async () => { const d = await dropsOf(); return d.length ? d : null; }, { ms: 5000, every: 200 });
-            note(`B: the drops on the ground ${JSON.stringify((dropped.value ?? []).map((x) => `${x.count} ${x.name} at ${fmt(x.pos)}`))}`);
-            // the player respawns at the world spawn (mineflayer respawns by itself): back as the owner, 10 blocks away, in creative
-            await sleep(1500);
-            await commands([`gamemode creative ${PLAYER}`]);
-            await tp(PLAYER, { x: botAt.x - 10, y: g + 1, z: botAt.z }, -90, 0);
-            // where the drops, the bot and the player are, every 5 s, for the report (the first baseline run lost the
-            // drops out of the 4 blocks within the 60 s while the bot was 19 blocks underground)
-            const wide = { min: { x: botAt.x - 20, y: g - 25, z: botAt.z - 20 }, max: { x: botAt.x + 20, y: g + 6, z: botAt.z + 20 } };
-            const itemTrace = startTrace(async () => ({
-                items: (await itemsOnGround(wide)).filter((x) => /^iron_(boots|ingot)$/.test(x.name ?? '')).map((x) => `${x.count} ${x.name} ${fmt(x.pos)}`).join(' '),
-                bot: await entityPos(NAME), player: await entityPos(PLAYER), action: agent.actions.currentActionLabel || '-',
-            }), 5000);
-            await sleep(Math.max(0, 60000 - (Date.now() - tB)));
-            const rows = await itemTrace.stop();
-            printTrace('B: the drops of the player', rows, { items: (x) => x.items || 'none', bot: (x) => fmt(x.bot), player: (x) => fmt(x.player), action: (x) => x.action }, 20);
-            const drops = await dropsOf();
-            const boots = drops.filter((x) => x.name === 'iron_boots').reduce((n, x) => n + (x.count || 0), 0);
-            const ingots = drops.filter((x) => x.name === 'iron_ingot').reduce((n, x) => n + (x.count || 0), 0);
-            const inv = await inventoryOf(NAME);
-            const said = saidLines(s, tB);
-            const leaves = said.filter((l) => LEAVE.test(l));
-            note(`B: 60 s after the death: on the ground ${boots} iron_boots and ${ingots} iron_ingot within 8 blocks of ${fmt(deathAt)}; the bot carries ${itemsText(inv)} at ${fmt(await entityPos(NAME))}; it said ${JSON.stringify(said.slice(0, 10))}`);
-            check(boots === 1 && ingots === 5, 'B: after 60 s the iron_boots and the 5 iron_ingot lie within 8 blocks of the death (server entities)', `${boots} boots, ${ingots} ingots`);
-            check(!inv.iron_boots && !inv.iron_ingot, 'B: the bot wears no boots and carries no ingot of the player', itemsText(inv));
-            check(leaves.length === 1, `B: the bot said \`I leave ${PLAYER}'s things at (x, y, z).\` exactly once`, JSON.stringify(leaves.length ? leaves : said.slice(0, 5)));
-            if (leaves.length) {
-                const m = LEAVE.exec(leaves[0]);
-                const at = { x: Number(m[1]), y: Number(m[2]), z: Number(m[3]) };
-                check(dist({ x: at.x + 0.5, y: at.y, z: at.z + 0.5 }, deathAt) <= 4, 'B: the leave text names the place of the death (within 4 blocks)', `${fmt(at)} vs ${fmt(deathAt)}`);
-            }
+            // B: the player dies 3 blocks from the bot; B2 (v0.1.4.13 fix 1): 1 block from it, so that drops land at its
+            // feet and it steps away from them (its step from one drop once passed over the others). B2 drops gold, so
+            // that the drops of B, which still lie there, are not counted.
+            const deathPart = async (P, offset, metal) => {
+                const ingotName = `${metal}_ingot`;
+                const bootsName = metal === 'gold' ? 'golden_boots' : 'iron_boots';
+                const from = await entityPos(NAME);
+                const at = { x: Math.floor(from.x) + offset + 0.5, y: g + 1, z: Math.floor(from.z) + 0.5 };
+                await commands([`gamemode survival ${PLAYER}`, `clear ${PLAYER}`]);
+                await tp(PLAYER, at, 90, 0);
+                await commands([`item replace entity ${PLAYER} armor.feet with minecraft:${bootsName} 1`, `give ${PLAYER} minecraft:${ingotName} 5`]);
+                await sleep(1000);
+                const pInv = await inventoryOf(PLAYER);
+                const deathAt = await entityPos(PLAYER);
+                note(`${P}: the player at ${fmt(deathAt)}, ${dist(deathAt, await entityPos(NAME)).toFixed(1)} blocks from the bot, carries ${itemsText(pInv)}`);
+                check((pInv[bootsName] || 0) === 1 && (pInv[ingotName] || 0) === 5, `${P}: precondition: the player wears ${bootsName} and carries 5 ${ingotName} (server)`, itemsText(pInv));
+                const tB = Date.now();
+                const killed = await command(`kill ${PLAYER}`);
+                note(`${P}: the control killed the player: ${JSON.stringify(killed)}`);
+                const kinds = new RegExp(`^(${bootsName}|${ingotName})$`);
+                const dropBox = { min: { x: Math.floor(deathAt.x) - 8, y: g - 1, z: Math.floor(deathAt.z) - 8 }, max: { x: Math.floor(deathAt.x) + 8, y: g + 4, z: Math.floor(deathAt.z) + 8 } };
+                const dropsOf = async () => (await itemsOnGround(dropBox)).filter((x) => kinds.test(x.name ?? ''));
+                const dropped = await waitFor(async () => { const d = await dropsOf(); return d.length ? d : null; }, { ms: 5000, every: 200 });
+                note(`${P}: the drops on the ground ${JSON.stringify((dropped.value ?? []).map((x) => `${x.count} ${x.name} at ${fmt(x.pos)}`))}`);
+                // the player respawns at the world spawn (mineflayer respawns by itself): back as the owner, 10 blocks away, in creative
+                await sleep(1500);
+                await commands([`gamemode creative ${PLAYER}`]);
+                await tp(PLAYER, { x: botAt.x - 10, y: g + 1, z: botAt.z }, -90, 0);
+                // where the drops, the bot and the player are, every 5 s, for the report
+                const wide = { min: { x: botAt.x - 20, y: g - 25, z: botAt.z - 20 }, max: { x: botAt.x + 20, y: g + 6, z: botAt.z + 20 } };
+                const itemTrace = startTrace(async () => ({
+                    items: (await itemsOnGround(wide)).filter((x) => kinds.test(x.name ?? '')).map((x) => `${x.count} ${x.name} ${fmt(x.pos)}`).join(' '),
+                    bot: await entityPos(NAME), player: await entityPos(PLAYER), action: agent.actions.currentActionLabel || '-',
+                }), 5000);
+                await sleep(Math.max(0, 60000 - (Date.now() - tB)));
+                const rows = await itemTrace.stop();
+                printTrace(`${P}: the drops of the player`, rows, { items: (x) => x.items || 'none', bot: (x) => fmt(x.bot), player: (x) => fmt(x.player), action: (x) => x.action }, 20);
+                const drops = await dropsOf();
+                const boots = drops.filter((x) => x.name === bootsName).reduce((n, x) => n + (x.count || 0), 0);
+                const ingots = drops.filter((x) => x.name === ingotName).reduce((n, x) => n + (x.count || 0), 0);
+                const inv = await inventoryOf(NAME);
+                const said = saidLines(s, tB);
+                const leaves = said.filter((l) => LEAVE.test(l));
+                note(`${P}: 60 s after the death: on the ground ${boots} ${bootsName} and ${ingots} ${ingotName} within 8 blocks of ${fmt(deathAt)}; the bot carries ${itemsText(inv)} at ${fmt(await entityPos(NAME))}; it said ${JSON.stringify(said.slice(0, 10))}`);
+                check(boots === 1 && ingots === 5, `${P}: after 60 s the ${bootsName} and the 5 ${ingotName} lie within 8 blocks of the death (server entities: a death scatters its drops up to 5 blocks)`, `${boots} boots, ${ingots} ingots`);
+                check(!inv[bootsName] && !inv[ingotName], `${P}: the bot wears no boots and carries no ingot of the player`, itemsText(inv));
+                check(leaves.length === 1, `${P}: the bot said \`I leave ${PLAYER}'s things at (x, y, z).\` exactly once`, JSON.stringify(leaves.length ? leaves : said.slice(0, 5)));
+                if (leaves.length) {
+                    const m = LEAVE.exec(leaves[0]);
+                    const where = { x: Number(m[1]), y: Number(m[2]), z: Number(m[3]) };
+                    check(dist({ x: where.x + 0.5, y: where.y, z: where.z + 0.5 }, deathAt) <= 4, `${P}: the leave text names the place of the death (within 4 blocks)`, `${fmt(where)} vs ${fmt(deathAt)}`);
+                }
+            };
+            await deathPart('B', 3, 'iron');
+            await deathPart('B2', 1, 'gold');
             // ---------------------------------------------------------- A. the shaft
             const stood = await entityPos(NAME);
             const target = { x: Math.floor(stood.x), y: Math.floor(stood.y + 0.01) - DOWN, z: Math.floor(stood.z) };

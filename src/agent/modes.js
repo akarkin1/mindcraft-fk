@@ -19,7 +19,7 @@ import { keepOutAreas, keptOutBy, itemNameOf, leaveText, mayLeaveText } from './
 import { collectItems } from './areas/keep_out.js';
 // v0.1.4.13 (part Q): the drops the item reflex leaves (Q5 the bot's own tosses, Q6 death drops and the armour rule) and
 // the pens before anyone saves them (Q8)
-import { watchDrops, leftAlone, takeLeaveText, deathDropAtFeet, stepAwayFrom, deathNearBot } from './reflex/drop_watch.js';
+import { watchDrops, leftAlone, takeLeaveText, deathDropAtFeet, stepAwayFromAll, deathDropsNear, deathNearBot } from './reflex/drop_watch.js';
 import { leaveThingsText } from './reflex/drop_logic.js';
 import { installPenGuard, pensNear } from './areas/pen_gate.js';
 import { newSenseState, senseTick } from './areas/area_sense.js';
@@ -722,9 +722,11 @@ function stepFromDeathDrop(mode, agent) {
             return false;
         mode.stepped.add(drop.id);
         leftByRule(agent, drop); // the text of the death, once
-        const from = drop.position.clone ? drop.position.clone() : { x: drop.position.x, y: drop.position.y, z: drop.position.z };
+        // v0.1.4.13 fix 1 (W115): away from all the death's drops near, not from this one only: a step to its other side
+        // passed over the other drops and the server gave them to the bot
+        const points = [{ x: drop.position.x, y: drop.position.y, z: drop.position.z }, ...deathDropsNear(bot, 6)];
         execute(mode, agent, async () => {
-            await stepAwayFrom(bot, from, 4, 2000);
+            await stepAwayFromAll(bot, points, 4, 2000);
         });
         return true;
     } catch (error) {
