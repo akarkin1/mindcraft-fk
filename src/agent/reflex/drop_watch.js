@@ -11,7 +11,7 @@
 // the bot does not see (no entity) is not noted: there are no drops near the bot.
 import pf from 'mineflayer-pathfinder';
 import { DROP_RULES, armourRank, armourSlot, deathNear, deathOf, forgetDeaths, forgetTosses, isArmourName, isTossed, mayWear,
-    noteDeath } from './drop_logic.js';
+    noteDeath, awayPoint } from './drop_logic.js';
 import { isOwnDropSpawn } from './item_logic.js';
 
 const states = new WeakMap();
@@ -310,6 +310,69 @@ export function deathDropAtFeet(bot, stepped) {
         // none
     }
     return null;
+}
+
+/**
+ * v0.1.4.13 fix 1: the positions of the death drops within `range` blocks of the bot. Never throws.
+ * @param {object} bot
+ * @param {number} [range]
+ * @returns {Array<{x, y, z}>}
+ */
+export function deathDropsNear(bot, range = 6) {
+    const out = [];
+    try {
+        const me = bot.entity?.position;
+        if (!me)
+            return out;
+        for (const entity of Object.values(bot.entities ?? {})) {
+            if (entity?.name !== 'item' || !entity.position)
+                continue;
+            const p = entity.position;
+            if (Math.hypot(p.x - me.x, p.y - me.y, p.z - me.z) <= range && leftAlone(bot, entity)?.why === 'death')
+                out.push({ x: p.x, y: p.y, z: p.z });
+        }
+    } catch {
+        // none
+    }
+    return out;
+}
+
+/**
+ * v0.1.4.13 fix 1 (W115): steps the bot `blocks` away from the middle of the death drops, without digging, at most
+ * `ms`. Never throws.
+ * @param {object} bot
+ * @param {Array<{x, y, z}>} points
+ * @param {number} [blocks]
+ * @param {number} [ms]
+ * @returns {Promise<void>}
+ */
+export async function stepAwayFromAll(bot, points, blocks = 4, ms = 2000) {
+    const me = bot?.entity?.position;
+    const to = awayPoint(me, points, blocks);
+    if (!to)
+        return;
+    let timer = null;
+    try {
+        const movements = new pf.Movements(bot);
+        movements.canDig = false;
+        bot.pathfinder.setMovements(movements);
+        const goal = new pf.goals.GoalNear(Math.floor(to.x), Math.floor(to.y), Math.floor(to.z), 1);
+        await Promise.race([
+            Promise.resolve(bot.pathfinder.goto(goal)).catch(() => {}),
+            new Promise(resolve => {
+                timer = setTimeout(resolve, ms);
+            }),
+        ]);
+    } catch {
+        // the bot stays
+    } finally {
+        clearTimeout(timer);
+        try {
+            bot.pathfinder.setGoal(null);
+        } catch {
+            // nothing to stop
+        }
+    }
 }
 
 /**

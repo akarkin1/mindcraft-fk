@@ -49,7 +49,8 @@ describe('SPEC 4.1 look: the lines of the example from a block fixture', () => {
     test('every kind present, in the order of the spec, radius 32', () => {
         const lines = lookAround(makeReader(exampleWorld(), ENTITIES), CENTER, 32, { chestIndex: CHESTS });
         assert.deepEqual(lines, [
-            'Ores: deepslate_diamond_ore 3 at (34, -60, -101), redstone_ore 11 nearest at (29, -59, -108).',
+            // v0.1.4.13 fix1: the ore at y -61 lies under the ground with no open side and is not seen (1 diamond, 2 redstone)
+            'Ores: deepslate_diamond_ore 2 at (34, -60, -101), redstone_ore 9 nearest at (29, -59, -108).',
             'Lava: 4 blocks away at (34, -59, -101).',
             'Water: none within 32.',
             'Chests: (16, -59, -98) 22 free slots; (11, -57, -100) 27 free slots.',
@@ -63,7 +64,7 @@ describe('SPEC 4.1 look: the lines of the example from a block fixture', () => {
 
     test('radius 16: what lies outside is left out, Water says none within 16', () => {
         const lines = lookAround(makeReader(exampleWorld(), ENTITIES), CENTER, 16, { chestIndex: CHESTS });
-        assert.equal(lines[0], 'Ores: deepslate_diamond_ore 3 at (34, -60, -101), redstone_ore 1 at (29, -59, -108).');
+        assert.equal(lines[0], 'Ores: deepslate_diamond_ore 2 at (34, -60, -101), redstone_ore 1 at (29, -59, -108).');
         assert.equal(lines[1], 'Lava: 4 blocks away at (34, -59, -101).');
         assert.equal(lines[2], 'Water: none within 16.');
         assert.equal(lines[3], 'Chests: (16, -59, -98) 22 free slots.');
@@ -126,6 +127,22 @@ describe('SPEC 4.1 look: nearest first, at most 5 of each kind', () => {
         world.set(36, -60, -99, 'coal_ore');
         const lines = lookAround(makeReader(world, []), CENTER, 16, { chestIndex: makeChestIndex([]) });
         assert.equal(lines[0], 'Ores: coal_ore 2 nearest at (33, -60, -99), iron_ore 1 at (40, -60, -99).');
+    });
+});
+
+describe('v0.1.4.13 fix1, look: only what is open to view', () => {
+    test('ore, lava and water behind a wall are not seen; with one open side they are', () => {
+        const world = createBlockWorld().flatGround(-60, 'deepslate', 'deepslate');
+        world.set(34, -63, -101, 'deepslate_diamond_ore'); // deep in the rock
+        world.set(36, -63, -101, 'lava');
+        world.set(38, -63, -101, 'water');
+        const hidden = lookAround(makeReader(world, []), CENTER, 16, { chestIndex: makeChestIndex([]) });
+        assert.deepEqual(hidden, ['Lava: none within 16.', 'Water: none within 16.']);
+        world.set(34, -62, -101, 'cave_air'); // a cave opens above the ore
+        world.set(36, -62, -101, 'air');
+        world.set(38, -62, -101, 'air');
+        const open = lookAround(makeReader(world, []), CENTER, 16, { chestIndex: makeChestIndex([]) });
+        assert.deepEqual(open, ['Ores: deepslate_diamond_ore 1 at (34, -63, -101).', 'Lava: 7 blocks away at (36, -63, -101).', 'Water: 8 blocks away at (38, -63, -101).']);
     });
 });
 

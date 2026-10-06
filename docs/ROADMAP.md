@@ -180,6 +180,16 @@ Split off 0.1.4.13 by the owner on 2026-10-04: planned after the play of 0.1.4.1
 |---|---|
 | Routines | Decided on 2026-10-03: "something like maintain the base cannot be expressed as a function, but can easily be described with words". `!rememberRoutine`, `!routines`, `!forgetRoutine`, `!doRoutine`: a paragraph in the owner's words becomes a job of v0.1.4.10, the model plans the steps, code checks them, a maintaining routine runs again until "stop". The supervisor's lever when the owner is away. |
 | The model comparison | `npm run test:play -- --situations`: six situations in plain words, the same for each model, with the first command, the follow-ups and the time. |
+| Caves | The play of 2026-10-05: two deaths in caves. The mining walls off a cave it breaks into; a command seals an opening; the bot keeps out of dark caves. About 1 to 1.5 days. |
+| Supplies by need | No walk of 150 blocks for 2 torches; no loop of eating the food and fetching more; the cobblestone named. About 0.5 day. |
+| The mine and its route | `!mineOre("diamond")` took the shallow mine; the same route failure came 4 times. About 0.5 day. |
+| A full bag far from the chest | Carry it back or place a chest; `!discard` no longer picked up again. About 0.5 day. |
+| Chests by position | The upper of two stacked chests; every stack in one `!putInChest`. About 0.5 day. |
+| `!craftRecipe` with a count | A count above 1 says "missing ingredient". About 2 hours. |
+| A ladder through a trapdoor | The path search opens it; a patch of the pinned path search, so a play test of the owner. About 0.5 day. |
+| Orders stay orders | The bot's model stopped the supervisor's commands, turned off its unstuck reflex, left the mine after "wait", made a mine without a yes. About 0.5 day. |
+| Code that cannot be stopped | Generated code that ran `collectBlock` in a loop ended the process (`refused stop after 10 seconds`). About 0.5 day. |
+| The load of the laptop | Only if it remains in the play after the quiet supervisor of the fix of 0.1.4.13. |
 
 Setting `routines` (off).
 

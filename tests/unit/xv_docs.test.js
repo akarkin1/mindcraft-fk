@@ -23,7 +23,11 @@ describe('the skill supervise', () => {
         assert.ok(skill.includes('node scripts/watch.js'));
         assert.ok(skill.includes('Updates are off.'));
         assert.ok(skill.includes('Dropped: the bot was speaking.'));
-        assert.ok(skill.includes('At most one per 2 minutes.'));
+        // v0.1.4.13 fix1, the owner after the play of 2026-10-05: the chat only for danger, the goal done or stuck
+        assert.ok(skill.includes('At most one per 5 minutes, unless the bot is in danger.'));
+        assert.ok(skill.includes('Never for routine work'));
+        assert.ok(skill.includes('Your `run` and `say` are quiet'));
+        assert.ok(skill.includes('Never `!collectBlocks` or `!newAction` to fetch ore'));
         // the owner, 2026-10-04: going down is fine when the way is safe (ladders on every block, stairs, a known way)
         assert.ok(skill.includes('Never a bare shaft down'));
     });

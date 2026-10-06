@@ -9,6 +9,7 @@
 // run call comes when its commands are done or stopped, at most 55 s after the call. Nothing here throws.
 import { looksLikeFailure } from '../repeat_guard.js';
 import { TEXTS } from './texts.js';
+import { runQuiet } from '../chat_gate.js';
 
 export const QUEUE_RULES = Object.freeze({
     answerMs: 55000,     // the answer of run at the latest
@@ -240,7 +241,10 @@ export function createQueue(agent, options = {}) {
         item.longTimer?.unref?.();
         let handed;
         try {
-            handed = innerHandle ? Promise.resolve(innerHandle.call(agent, item.by, item.text)) : Promise.reject(new Error('the agent has no handleMessage'));
+            // v0.1.4.13 fix1: a command of the run tool runs quiet: its echo, its result and the texts of its skill
+            // go to the answer and the bot's log, never to the game chat; a command the owner typed is said as before
+            const hand = () => innerHandle.call(agent, item.by, item.text);
+            handed = innerHandle ? Promise.resolve(item.batch?.answers ? runQuiet(hand) : hand()) : Promise.reject(new Error('the agent has no handleMessage'));
         } catch (error) {
             handed = Promise.reject(error);
         }
@@ -325,7 +329,31 @@ export function createQueue(agent, options = {}) {
          */
         run(commands, runOptions = {}) {
             return new Promise((resolve) => {
-                const batch = enqueue(commands, runOptions?.by ?? 'watcher', { stopOnFailure: runOptions?.stopOnFailure, answers: true });
+                const by = runOptions?.by ?? 'watcher';
+                // v0.1.4.13 fix1: `!stop` first while something runs stops at once, as the owner's typed !stop does: it
+                // empties the queue and stops the running command; it never waits behind it. The rest of the call
+                // runs after it.
+                if (isActive() && commands.length > 0 && isStopCommand(commands[0])) {
+                    const stopText = String(commands[0]).trim();
+                    stopRest(null, by, current?.batch ? current.batch.items.indexOf(current) + 1 : 0);
+                    let stopped;
+                    try {
+                        stopped = Promise.resolve(runQuiet(() => innerHandle?.call(agent, by, stopText)));
+                    } catch (error) {
+                        stopped = Promise.reject(error);
+                    }
+                    const rest = commands.slice(1);
+                    stopped.then(() => true, (error) => { warn('could not stop', error); return false; }).then((ok) => {
+                        const head = ok ? TEXTS.ranLine(1, stopText, 'stopped') : TEXTS.ranLine(1, stopText, TEXTS.runFailed('the stop failed'));
+                        if (rest.length === 0) {
+                            resolve([TEXTS.ran(1, 1), head].join('\n'));
+                            return;
+                        }
+                        this.run(rest, runOptions).then((answer) => resolve(`${head}\n${answer}`));
+                    });
+                    return;
+                }
+                const batch = enqueue(commands, by, { stopOnFailure: runOptions?.stopOnFailure, answers: true });
                 batch.resolve = resolve;
                 batches.add(batch);
                 batch.timer = setTimeout(() => answerBatch(batch), answerMs);

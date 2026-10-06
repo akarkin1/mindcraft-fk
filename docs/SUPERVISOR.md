@@ -14,7 +14,7 @@ In `settings.js`, or in Settings of the bot on the page of the mindserver:
 | `watch_port` | `8090` | Its port |
 | `watch_local_only` | `true` on your machine | The server answers this machine only and needs no token. A request through a tunnel is refused. Leave it `false` only for a session in the cloud (section 3). |
 | `supervisor_name` | `"Opus"` | The name you call the supervisor by. A line that starts with it ("Opus, why is it going up?") goes to the supervisor, and no bot answers it. The supervisor's lines come back as `[Opus] ...`. Empty: no supervisor in the chat. |
-| `supervisor_updates` | `false` | `true`: the supervisor also says a short line when something happened (a step done, the job done, an intervention), at most one per 2 minutes. |
+| `supervisor_updates` | `false` | `true`: the supervisor also says a short line on its own, only when the bot is in danger or the job is done or stuck, at most one per 5 minutes. Its commands are quiet: their results go to the bot's log, not to the chat. |
 | `supervisor_voice` | `"supertonic:M1"` | With `voice_ui`: the voice the page gives the supervisor's lines. Each bot keeps its `voice_voice`. |
 
 "Opus" is only the example of these docs. Any name works that is not the name of a bot or a player.

@@ -199,3 +199,31 @@ export function armourRank(name) {
 export function mayWear(name, fromGround) {
     return isArmourName(name) && !(fromGround instanceof Set && fromGround.has(name));
 }
+
+/**
+ * v0.1.4.13 fix 1 (W115): the point `blocks` away from the bot, straight away from the middle of the death drops in x
+ * and z, at the bot's level; away from the nearest drop when the bot stands on the middle. The step to one drop's
+ * opposite side could pass over the other drops of the same death. Pure.
+ * @param {{x, y, z}} me
+ * @param {Array<{x, y, z}>} points
+ * @param {number} blocks
+ * @returns {{x: number, y: number, z: number}|null} null without a point
+ */
+export function awayPoint(me, points, blocks) {
+    const list = (Array.isArray(points) ? points : []).filter((p) => p && Number.isFinite(p.x) && Number.isFinite(p.z));
+    if (!me || list.length === 0)
+        return null;
+    const cx = list.reduce((sum, p) => sum + p.x, 0) / list.length;
+    const cz = list.reduce((sum, p) => sum + p.z, 0) / list.length;
+    let dx = me.x - cx;
+    let dz = me.z - cz;
+    if (Math.hypot(dx, dz) < 0.1) {
+        const nearest = list.reduce((a, b) => (Math.hypot(a.x - me.x, a.z - me.z) <= Math.hypot(b.x - me.x, b.z - me.z) ? a : b));
+        dx = me.x - nearest.x;
+        dz = me.z - nearest.z;
+    }
+    const length = Math.hypot(dx, dz);
+    if (length < 0.1)
+        return { x: me.x + blocks, y: me.y, z: me.z };
+    return { x: me.x + (dx / length) * blocks, y: me.y, z: me.z + (dz / length) * blocks };
+}

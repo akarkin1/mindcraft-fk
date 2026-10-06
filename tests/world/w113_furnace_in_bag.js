@@ -102,6 +102,9 @@ await scenarioMain({
                 return (f.inv.iron_pickaxe || 0) > 0 && f.furnaces.length > 0 ? f : null;
             }, { ms: 180000, every: 3000 });
             const f = got.value ?? await facts();
+            // v0.1.4.13 fix 1: the result line comes when the command ends, a moment after the pickaxe is in the bag
+            // (the gate of the fix read the lines at 34 s, the line came after)
+            await waitFor(() => [...saidLines(s, t1), ...s.added.filter((a) => a.t >= t1).map((a) => a.content)].some((l) => PLACED.test(l)), { ms: 10000, every: 250 });
             const secs = ((Date.now() - t1) / 1000).toFixed(0);
             const said = saidLines(s, t1);
             const history = s.added.filter((a) => a.t >= t1).map((a) => a.content);

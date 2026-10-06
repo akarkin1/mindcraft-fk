@@ -180,6 +180,7 @@ const SCENARIOS = [
     ['unsaved_pen', 'w116_unsaved_pen.js', 330, false, 'base'],
     ['shared_mine', 'w117_shared_mine.js', 350, false, 'base'],
     ['full_bag', 'w118_full_bag.js', 350, false, 'base'],
+    ['quiet_supervisor', 'w119_quiet_supervisor.js', 240, false, 'base'], // v0.1.4.13 fix1
 ];
 
 // Words that select a group of scenarios (spec v0.1.4.8, W30: the work scenarios of v0.1.4.7, which run
@@ -202,7 +203,7 @@ const GROUPS = {
     // v0.1.4.13 "Supervision": the journeys W109 to W118 (README, "Journeys of v0.1.4.13")
     journeys13: [
         'supervised_mining', 'two_bots_names', 'supervisor_chat', 'bread_beside_tunnel', 'furnace_in_bag', 'worn_pickaxe',
-        'shaft_and_drops', 'unsaved_pen', 'shared_mine', 'full_bag',
+        'shaft_and_drops', 'unsaved_pen', 'shared_mine', 'full_bag', 'quiet_supervisor',
     ],
 };
 
