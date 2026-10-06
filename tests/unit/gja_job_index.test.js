@@ -430,7 +430,7 @@ describe('T3-1: the prompt names the chests, every missing supply and where the 
 
 describe('the same failure three times', () => {
     test('pauses the job with the stop text', async () => {
-        const w = makeWorld({ handlers: { '!mineOre': () => ({ result: { ok: false, reason: 'no_path', text: 'I found no way there.' } }) } });
+        const w = makeWorld({ handlers: { '!mineOre': () => ({ result: { ok: false, reason: 'no_path', text: 'The ore is not here.' } }) } });
         await w.run('!mineOre("iron", 8)', 'Steve');
         assert.equal(w.job.get().fails, 1);
         w.wait(60);
@@ -439,9 +439,31 @@ describe('the same failure three times', () => {
         w.wait(60);
         await w.job.tick();
         assert.equal(w.job.get().state, 'paused');
-        assert.equal(w.said.at(-1), 'I stop the mining: I found no way there.');
+        assert.equal(w.said.at(-1), 'I stop the mining: The ore is not here.');
         w.wait(60);
         assert.equal((await w.job.tick()).reason, 'wait');
+    });
+
+    test('v0.1.4.13 fix 2: the same failure with other numbers counts as the same', async () => {
+        let n = 0;
+        const w = makeWorld({ handlers: { '!mineOre': () => ({ result: { ok: false, reason: 'no_path', text: `The ore is not at (${n++}, 30, -99).` } }) } });
+        await w.run('!mineOre("iron", 8)', 'Steve');
+        w.wait(60);
+        await w.job.tick();
+        w.wait(60);
+        await w.job.tick();
+        assert.equal(w.job.get().state, 'paused');
+    });
+
+    test('v0.1.4.13 fix 2: stuck or no way with nothing gained pauses at once, no walk back to it', async () => {
+        for (const text of ['I mined 0 raw_iron of 4. I stopped because I got stuck. The mine is at (8, 67, 52).', 'I find no way from (10, 30, 5) to the room.']) {
+            const w = makeWorld({ handlers: { '!mineOre': () => ({ result: { ok: false, reason: 'stuck', text } }) } });
+            await w.run('!mineOre("iron", 4)', 'Steve');
+            assert.equal(w.job.get().state, 'paused', text);
+            assert.equal(w.said.at(-1), `I stop the mining: ${text}`);
+            w.wait(60);
+            assert.equal((await w.job.tick()).reason, 'wait', 'not resumed');
+        }
     });
 
     test('a different text starts the count again', async () => {

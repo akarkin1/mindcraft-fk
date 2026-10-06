@@ -79,3 +79,23 @@ The gate of the fix in a fresh clone (fe5a19a): unit 8,457 tests, 0 fail; the wo
 journeys, the 11 of 0.1.4.13 with W119, `creeper_in_sight` twice) 40 of 42, the two failures F1-10 (fixed) and F1-11
 (a flake). After F1-10 and F1-13: unit 8,461 tests, 0 fail; the 11 of 0.1.4.13 10 of 11 (W113, F1-13), then W113 3 of 3,
 W115 8 of 8, W118 2 of 2.
+
+## Fix 2: the play of 2026-10-06 (Haiku only)
+
+The owner's play with a supervisor on fix 1: the chat held 246 lines of the bot in about 3.5 hours (811 in under 2
+hours before), no echo of a supervisor's command reached it. The data: three logs of the bot, the server's log, the
+bot's memory and histories (not in the repository). The owner approved A to F on 2026-10-06; PR #22 was merged first.
+
+| Id | Finding | Cause | Decision | By |
+|---|---|---|---|---|
+| F2-1 | The bot stopped answering twice in the deep mine (03:38, 03:44); the supervisor took it for a loop on bedrock. | The log: `My iron_pickaxe is nearly worn: 9 uses left. I take my spare one.` 55 times a second. Mining iron with a worn iron pickaxe and a fresh stone one (the stone spare of the cheapest-pickaxe rule of v0.1.4.13), a block only iron breaks answered worn; the replacement saw a fresh pickaxe for iron ore and put the best pickaxe in hand, the worn iron one; no step awaited anything. | The worn pickaxe digs a block no fresh pickaxe (stone or better) breaks while it has more than 1 use; `equipPickaxe` and the fallback of `equipFor` take a fresh pickaxe that harvests the block first; a replacement counts only with a fresh pickaxe in hand; two worn answers in a row with nothing dug stop the trip (`wornLoopText`). W120 reproduces the play. | lead |
+| F2-2 | After every "stuck" the job restarted the mining and the bot walked 150 to 250 blocks home again; five times, until `!stop`. | The job paused only after the same failure text 3 times; each text had other numbers. | The same text with other numbers counts as the same; a failure that got stuck or found no way and gained nothing pauses the job at once. | lead |
+| F2-3 | `I have no stone for a new one` while the supervisor counted 503 cobblestone. | The full-bag store put every stone kind into the chest; the replacement crafts from the bag only. | The store keeps 3 of each stone kind (cobblestone, cobbled deepslate, blackstone); mined stone stacks onto it. | lead |
+| F2-4 | `The supervisor is not here.` twice while the supervisor ran long batches. | Only `wait` and `digest` counted as presence; a run can take 55 s. | Every tool call but `server` counts, at its start and its end. | lead |
+| F2-5 | A `wait` refused by the permission classifier of Claude Code. | No rule allowed the tools of the repository's MCP server. | `.claude/settings.json`: `enabledMcpjsonServers` and `permissions.allow` for `mcp__mindcraft`. | lead |
+| F2-6 | The supervisor's own mistakes: a far `!goToCoordinates` underground crossed open ground; more than two ways before asking; a long run before answering the owner. | The skill. | The skill's rules; world facts (the deep mine's chest is used from (16, -58, -97)) belong in the supervisor's memory, not in the skill. | lead |
+
+The owner on the tunnels: "The tunnel is not a segment, it is a beam, it will be growing infinitely; the bot should
+expect that." The mining keeps tunnels as segments with an end and a length, which explains the forgotten tunnels, the
+"no way" and the walks home with 0 iron. The beam model is the first item of 0.1.4.14 (`docs/ROADMAP.md`), with the
+other findings of this play.

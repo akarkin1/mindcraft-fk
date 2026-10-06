@@ -79,6 +79,18 @@ begin a new Claude Code session.
 | 22 | Tell Opus "stop the bot" while it mines. | It stops within a few seconds. |
 | 23 | Ask Opus what ore is around. | It names only ore you could see: on the walls of the tunnel or a cave, none behind the rock. |
 
+## 5c. Fix 2 (after the play of 2026-10-06)
+
+Get it as in section 1 (no library changed). Start a new Claude Code session: the skill changed, and
+`.claude/settings.json` now approves the `mindcraft` server and its tools (no prompt for `wait`).
+
+| Step | What you do | What should happen |
+|---|---|---|
+| 24 | Mining iron in the deep mine with a worn iron pickaxe and a fresh stone one in the bag. | It mines on; a diamond ore in the way is dug with the iron one. Never the line `I take my spare one.` over and over; the bot keeps answering. |
+| 25 | Let a mining run end with "stuck" or "no way". | `I stop the mining: ...` once; no walk home and back by itself. Say the order again when you want it. |
+| 26 | A full bag during the mining, then a worn stone pickaxe. | `I stored ...` keeps a few cobblestone; the new pickaxe is made: `... I made a new one.` |
+| 27 | Let the supervisor run a long batch of commands. | No `The supervisor is not here.` while it works. |
+
 ## 6. What I would like to know
 
 - Each bot's log and the server log; the supervisor session's report.

@@ -66,8 +66,23 @@ export function storeKinds(items, keep = {}) {
             counts.set(name, (counts.get(name) ?? 0) + count);
         }
     }
+    // v0.1.4.13 fix 2: of each stone kind, enough for a stone pickaxe stays in the bag (the play of 2026-10-06: "I have
+    // no stone for a new one" after the stone went into the chest); the mined stone stacks onto it, no slot is lost
+    for (const name of PICKAXE_STONE) {
+        if (counts.has(name)) {
+            const left = counts.get(name) - STONE_KEPT;
+            if (left > 0)
+                counts.set(name, left);
+            else
+                counts.delete(name);
+        }
+    }
     return [...counts].map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
 }
+
+/** v0.1.4.13 fix 2: the stone a stone pickaxe is made of, and how much of it the full-bag store keeps. */
+export const PICKAXE_STONE = Object.freeze(['cobblestone', 'cobbled_deepslate', 'blackstone']);
+export const STONE_KEPT = 3;
 
 /**
  * What the trip does when shouldReturn says the bag is full (Q4): `store` when a kind can be stored; `dig` when nothing
