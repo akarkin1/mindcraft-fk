@@ -66,6 +66,25 @@ bots, the prompt cache, the creeper crash found.
   and when you ask; never `!collectBlocks` or code actions to fetch ore underground; the bot stays out of caves; "check"
   never moves your things; nothing is claimed before a tool showed it.
 
+### Fixed after the play of 2026-10-06
+
+- **The hang in the mine**: mining iron with a worn iron pickaxe and a fresh stone one, a block only iron breaks (deepslate
+  diamond ore) made the replacement put the worn pickaxe back in hand and say `I take my spare one.` 55 times a second
+  until the process restarted. Now the worn pickaxe digs such a block while one dig cannot break it, a replacement
+  counts only when a fresh pickaxe is in hand, and two worn answers in a row with nothing dug stop the mining:
+  `I cannot go on: my iron_pickaxe is nearly worn and no other pickaxe breaks the next block. I stop the mining at 2 of 4 iron.`
+- **No walk back to the same failure**: a job run that got stuck or found no way and gained nothing pauses the job at
+  once (`I stop the mining: ...`); the same failure with other numbers counts as the same. It walked 150 to 250 blocks
+  home and back five times.
+- **Stone for a new pickaxe**: the full-bag store keeps 3 of each stone kind in the bag (`I have no stone for a new one`
+  came after the stone went into the chest).
+- **The supervisor counts as present at every call** (not only `wait` and `digest`), so a long `run` no longer makes the
+  bot say `The supervisor is not here.`
+- **`.claude/settings.json`** approves the repository's MCP server `mindcraft` and allows its tools, so a Claude Code
+  session in the folder never asks for them.
+- **`/supervise`**: underground leg by leg along what is known; after "stuck" or "no way" lead the bot to the tunnel's
+  open end by hand; at most two ways before asking the owner; answer the owner before a long run.
+
 ### Settings
 
 | Key | Default |

@@ -20,6 +20,9 @@ import {
     stopText,
 } from './job_texts.js';
 
+// v0.1.4.13 fix 2: a failure of these words with nothing gained pauses the job at once
+const STUCK_FAILURE = /\b(got stuck|find no way|found no way|no way from|could not get to|could not reach)\b/i;
+
 export { JobStore, JOB_FILE } from './job_store.js';
 
 // The commands that run at the same time are few; older entries without a result are dropped.
@@ -181,12 +184,15 @@ export function createJob(agent, store, options = {}) {
         return text;
     };
 
-    // The same failure again: counts it, and pauses the job at the third time.
-    function noteFailure(job, text) {
+    // The same failure again: counts it, and pauses the job at the third time. v0.1.4.13 fix 2: the same failure
+    // with other numbers (a position, a length) counts as the same; a run that got stuck or found no way and gained
+    // nothing pauses the job at once (the play of 2026-10-06: five walks of 150 to 250 blocks to the same "stuck").
+    function noteFailure(job, text, gained = false) {
         const clean = typeof text === 'string' ? text.replace(/\s+/g, ' ').trim() : '';
-        job.fails = job.failText === clean ? (job.fails ?? 0) + 1 : 1;
+        const keyOf = (t) => (typeof t === 'string' ? t.replace(/-?\d+(\.\d+)?/g, '#') : null);
+        job.fails = keyOf(job.failText) === keyOf(clean) ? (job.fails ?? 0) + 1 : 1;
         job.failText = clean;
-        if (job.fails >= JOB_RULES.maxFails) {
+        if (job.fails >= JOB_RULES.maxFails || (!gained && STUCK_FAILURE.test(clean))) {
             job.state = 'paused';
             setJob(job);
             return result(false, 'paused', speak(stopText(job, clean)));
@@ -360,7 +366,7 @@ export function createJob(agent, store, options = {}) {
             setJob(job);
             return await startPlan(blocker, r.text, detached);
         }
-        return noteFailure(job, r.text);
+        return noteFailure(job, r.text, isFiniteNumber(job.got) && isFiniteNumber(before) && job.got > before);
     }
 
     // The result of a step of the plan.

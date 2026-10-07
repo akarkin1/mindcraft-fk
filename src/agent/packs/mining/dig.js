@@ -277,10 +277,12 @@ async function equipNamed(bot, name) {
 export async function equipPickaxe(bot, material = 'wooden') {
     try {
         const want = PICKAXE_LEVELS[material] ?? 0;
+        // v0.1.4.13 fix 2: a pickaxe that is not nearly worn first, then the best material, then the most uses
+        const fresh = i => (wornTool(i) === null ? 1 : 0);
         const items = bot.inventory.items().filter(i => {
             const m = pickaxeMaterial(i.name);
             return m !== null && PICKAXE_LEVELS[m] >= want;
-        }).sort((a, b) => PICKAXE_LEVELS[pickaxeMaterial(b.name)] - PICKAXE_LEVELS[pickaxeMaterial(a.name)]
+        }).sort((a, b) => fresh(b) - fresh(a) || PICKAXE_LEVELS[pickaxeMaterial(b.name)] - PICKAXE_LEVELS[pickaxeMaterial(a.name)]
             || (usesLeftOf(b) ?? 0) - (usesLeftOf(a) ?? 0));
         if (items.length === 0) {
             return null;
@@ -334,6 +336,19 @@ async function equipFor(bot, block) {
     } catch {
         // fall back to a pickaxe
     }
+    // v0.1.4.13 fix 2: the fallback takes a pickaxe that harvests the block, a fresh one first
+    try {
+        const fresh = i => (wornTool(i) === null ? 1 : 0);
+        const fits = bot.inventory.items().filter(i => pickaxeMaterial(i.name) !== null && fitsBlock(block, i))
+            .sort((a, b) => fresh(b) - fresh(a) || PICKAXE_LEVELS[pickaxeMaterial(b.name)] - PICKAXE_LEVELS[pickaxeMaterial(a.name)]);
+        if (fits.length > 0) {
+            if (bot.heldItem !== fits[0])
+                await bot.equip(fits[0], 'hand');
+            return;
+        }
+    } catch {
+        // any pickaxe
+    }
     await equipPickaxe(bot);
 }
 
@@ -373,7 +388,15 @@ export async function digBlock(bot, p, options = {}) {
     await equipFor(bot, block);
     const worn = wornTool(bot.heldItem);
     if (worn && !(await equipFreshPickaxe(bot, block))) {
-        return { ok: false, reason: 'worn', name, dug: 0, worn };
+        // v0.1.4.13 fix 2: a fresh pickaxe is in the bag but cannot break this block (deepslate diamond ore while the
+        // trip mines iron with stone): the worn one that can digs it while one dig cannot break it. The trip's
+        // replacement would only put the worn one back in hand (the hang of the play of 2026-10-06).
+        // (a fresh wooden one is no replacement for the worn one: then the trip replaces it as before)
+        const freshInBag = bot.inventory.items().some(i => pickaxeMaterial(i.name) !== null && wornTool(i) === null
+            && PICKAXE_LEVELS[pickaxeMaterial(i.name)] >= PICKAXE_LEVELS.stone);
+        if (!(freshInBag && worn.uses > 1 && fitsBlock(block, bot.heldItem))) {
+            return { ok: false, reason: 'worn', name, dug: 0, worn };
+        }
     }
     let expected = 1000;
     try {
