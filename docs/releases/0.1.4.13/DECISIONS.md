@@ -94,6 +94,13 @@ bot's memory and histories (not in the repository). The owner approved A to F on
 | F2-4 | `The supervisor is not here.` twice while the supervisor ran long batches. | Only `wait` and `digest` counted as presence; a run can take 55 s. | Every tool call but `server` counts, at its start and its end. | lead |
 | F2-5 | A `wait` refused by the permission classifier of Claude Code. | No rule allowed the tools of the repository's MCP server. | `.claude/settings.json`: `enabledMcpjsonServers` and `permissions.allow` for `mcp__mindcraft`. | lead |
 | F2-6 | The supervisor's own mistakes: a far `!goToCoordinates` underground crossed open ground; more than two ways before asking; a long run before answering the owner. | The skill. | The skill's rules; world facts (the deep mine's chest is used from (16, -58, -97)) belong in the supervisor's memory, not in the skill. | lead |
+| F2-7 | W118 in the gate: the room chest got no cobblestone (448 before and after). | The bot did the work (6 raw iron in 22 s, 28 s before) and stored the gravel; the 4 cobblestone it mined stayed in the bag by F2-3. The check held the old behaviour. | W118 checks that the chest gains what was stored and that the bag keeps a few cobblestone, not a pile. | lead |
+| F2-8 | W82 and W84 in the gate: the way out stuck at the foot of the basement ladder (`I could not follow the route "mine" at step 6 of 11`), and `I found no way to the bed` in the basement. | The same as finding 5 of the play (the route breaks at the foot of the ladder), on the old code too; nothing of fix 2 walks or plans a way. | Passed 2 of 2 each after; the ladder of the basement is in 0.1.4.14 (routes and places). | lead |
+
+The gate in a fresh clone at 2baf01f: unit 8,471 tests, 0 fail; the world set (the 30 journeys, the 12 of 0.1.4.13
+with W120, `creeper_in_sight` twice) 40 of 43, the failures F2-7 (the test fixed) and F2-8 (intermittent, known). W120
+on the code before fix 2 hung until the runner's limit of 360 s, saying the spare text over and over; on fix 2 it
+passes in 68 s.
 
 The owner on the tunnels: "The tunnel is not a segment, it is a beam, it will be growing infinitely; the bot should
 expect that." The mining keeps tunnels as segments with an end and a length, which explains the forgotten tunnels, the

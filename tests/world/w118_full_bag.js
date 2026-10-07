@@ -11,7 +11,7 @@
 //      the tunnel's line is seeded with gravel (1 block in), iron ore (2, 4, 6) and cobblestone (3, 5), feet and head:
 //      the dig yields gravel, raw_iron, cobblestone (and flint): more kinds than the 2 free slots hold.
 //   1. Typed !mineOre("iron", 6): within 3 minutes the bag holds 6 raw_iron (server); the chest of the room holds more
-//      cobblestone than before (server); the store text was said: `I stored ... in the chest at (x, y, z) and go on.`
+//      than before (server; since fix 2 of v0.1.4.13 the bag keeps 3 of each stone kind for a new pickaxe); the store text was said: `I stored ... in the chest at (x, y, z) and go on.`
 //      with the room chest; no stop for the bag (`My bag is full` never said).
 // Throughout: the process lives, no request reached a real model.
 import { scenarioMain, check, note, exitSoon, stopRealAgent, env, entityPos, fmt, sleep, commands, waitFor, giveItems } from './helpers.js';
@@ -86,7 +86,11 @@ await scenarioMain({
             note(`1: ${((Date.now() - tOrder) / 1000).toFixed(0)} s after the order the bot carries ${itemsText(inv)} at ${fmt(await entityPos(NAME))}; the chest of the room holds ${itemsText(chest1)} (${await chestFreeSlots(chest)} free)`);
             note(`1: the bot said ${JSON.stringify(said.slice(0, 30))}`);
             check(mined.ok && (inv.raw_iron || 0) >= 6, '1: the mining ends with 6 raw_iron in the bag (server) within 3 minutes', `${inv.raw_iron || 0} raw_iron`);
-            check((chest1?.cobblestone || 0) > (chest0?.cobblestone || 0), '1: the chest of the room holds the cobblestone (more than before; server)', `${chest0?.cobblestone || 0} -> ${chest1?.cobblestone || 0}`);
+            // v0.1.4.13 fix 2: the store keeps 3 of each stone kind for a new pickaxe, so the chest gains what was stored,
+            // cobblestone only beyond those 3
+            const total = (c) => Object.values(c ?? {}).reduce((n, k) => n + (Number(k) || 0), 0);
+            check(total(chest1) > total(chest0), '1: the chest of the room holds what the bot stored (more than before; server)', `${JSON.stringify(chest0)} -> ${JSON.stringify(chest1)}`);
+            check((inv.cobblestone || 0) <= 3 + 6, '1: the bag keeps a few cobblestone for a new pickaxe, not a pile (server)', `${inv.cobblestone || 0} cobblestone`);
             check(Boolean(stored), `1: the store text was said: \`I stored ... in the chest at (${chest.x}, ${chest.y}, ${chest.z}) and go on.\``, JSON.stringify(said.filter((l) => /stored|chest|bag/i.test(l)).slice(0, 4)));
             check(!said.some((l) => BAG_FULL.test(l)), '1: no stop for the bag (`My bag is full` never said)', JSON.stringify(said.filter((l) => BAG_FULL.test(l))));
             const info = await Promise.race([order, sleep(1000).then(() => null)]);
