@@ -139,7 +139,14 @@ answer and the bot's log, never to the chat. Say in the chat only what the owner
   - `!digDown` and `!goToCoordinates` deeper than 3 blocks dig a shaft with a ladder on every block when the bag
     holds the depth plus 2 ladders, and refuse without them.
 - Never an order while a command runs, unless it is `!stop`. Wait for `done`.
-- Never the same failing command a third time.
+- Never the same failing command a third time, and never more than two ways to the same end before you ask the
+  owner in one `reply`.
+- Underground, never `!goToCoordinates` to a far point: it can cross open ground or dig its own way. Lead the bot leg
+  by leg along what is known (a route, the mine's way in, the tunnel), one short leg per command.
+- When `!mineOre` ends with "stuck" or "no way", the job pauses and waits for you: do not run it again from where the
+  bot stands. Lead the bot to the open end of the tunnel by hand, then run it once more; if it fails again, tell the
+  owner. (The mining keeps only parts of its tunnels until v0.1.4.14.)
+- When the owner speaks to you, answer first, then start a long run of commands.
 - Never `!collectBlocks` or `!newAction` to fetch ore or blocks underground: they chase ore into dark caves, where
   the bot died twice in the play of 2026-10-05. Underground only `!mineOre` and the commands of the mine.
 - Keep the bot out of caves. When the bot breaks into a cave (cave air, mobs, a dark open space in `look`), stop it,

@@ -218,3 +218,16 @@ describe('the loop guard and the quiet run', () => {
         assert.equal(loudAgent.killed, 'Infinite action loop detected, shutting down.');
     });
 });
+
+describe('v0.1.4.13 fix 2: every call of the supervisor counts as presence', () => {
+    test('a run, a look or a reply refreshes the presence; server does not', async () => {
+        const { runTool } = await import('../../src/agent/watch/tools.js');
+        let t = 1_000_000;
+        const watch = { now: () => t, presence: { seenAt: t - 50_000 }, settings: {} };
+        const agent = { name: 'claude', bot: { username: 'claude', entity: null, entities: {} } };
+        await runTool(agent, watch, 'server', {});
+        assert.equal(watch.presence.seenAt, t - 50_000, 'server leaves it');
+        await runTool(agent, watch, 'events', {});
+        assert.equal(watch.presence.seenAt, t, 'events refreshes it');
+    });
+});

@@ -710,8 +710,16 @@ export async function runTool(agent, watch, name, args = {}, request = {}) {
     const refusal = argsRefusal(name, clean);
     if (refusal)
         return { text: refusal, isError: true };
+    // v0.1.4.13 fix 2: every call of the supervisor counts as presence, at its start and its end (a run of commands
+    // can take 55 s; in the play of 2026-10-06 the bot said "The supervisor is not here." during two such runs).
+    // Not `server`: its line reports the presence of the other calls.
+    const present = name !== 'server';
+    if (present)
+        touchPresence(watch);
     try {
         const text = await handler(agent, clean, watch, request ?? {});
+        if (present)
+            touchPresence(watch);
         const isError = name === 'wait' && text === TEXTS.tooManyWaits(TOOL_RULES.waitsMax);
         return { text: typeof text === 'string' ? text : String(text), isError };
     } catch (error) {

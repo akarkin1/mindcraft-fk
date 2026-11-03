@@ -273,6 +273,19 @@ export function wornStopText(name, uses, mined, wanted, ore, lacking = null) {
 }
 
 /**
+ * v0.1.4.13 fix 2: the trip stops because a fresh pickaxe did not help twice in a row: no pickaxe of the bag that is
+ * not nearly worn breaks the next block. `I cannot go on: my iron_pickaxe is nearly worn and no other pickaxe breaks
+ * the next block. I stop the mining at 2 of 4 iron.`
+ * @returns {string}
+ */
+export function wornLoopText(name, mined, wanted, ore) {
+    const row = oreOf(ore);
+    const thing = row ? row.ore : String(ore ?? 'ore');
+    return `I cannot go on: my ${name} is nearly worn and no other pickaxe breaks the next block. `
+        + `I stop the mining at ${Number.isFinite(mined) ? mined : 0} of ${Number.isFinite(wanted) ? wanted : 0} ${thing}.`;
+}
+
+/**
  * The text of a trip stopped while the bot got its supplies (spec v0.1.4.8 I6):
  * `I was stopped while I got my supplies. I still lack 16 ladders, a chest.` or
  * `I was stopped while I got my supplies. I have all of them.`

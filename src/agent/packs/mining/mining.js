@@ -22,7 +22,7 @@ import { chooseFood, isEdibleFood } from '../home/food_logic.js';
 import { walkNear } from '../home/motion.js';
 import {
     FILLERS, WEAR_LIMIT, blockAt, collectDrops, countOf, digClear, equipPickaxe, fillerCount, freeSlots, inventoryList, isFree, isSolid,
-    logicName, nameReader, patchAll, placeInto, placeTorch, stepInto, walkTo, REACH,
+    logicName, nameReader, patchAll, placeInto, placeTorch, stepInto, walkTo, wornTool, REACH,
 } from './dig.js';
 import { SUPPLY_NEAR_RANGE, applySpareRule, pickaxeToCraft, supplyPlan } from './supply_logic.js';
 import { storeFullBag } from './bag.js';
@@ -39,7 +39,7 @@ import { MINE_RANGE, chooseMine, fromInsideOn, mineRoutesOn, senseRangeOf, walks
 import { ORES, isOreBlock, oreOf, pickaxeMaterial, targetLevel, tripPickaxe } from './ore_table.js';
 import {
     NO_TORCHES_TEXT, STOP_REASONS, TEXTS, askMineText, cannotMineText, descendText, mineLabel, mineOreText, noTunnelText, passedText, posText,
-    rememberTunnelText, suppliesStoppedText, suppliesText, tunnelText, unknownOreText, wornMadeText, wornSpareText, wornStopText,
+    rememberTunnelText, suppliesStoppedText, suppliesText, tunnelText, unknownOreText, wornLoopText, wornMadeText, wornSpareText, wornStopText,
 } from './texts.js';
 // v0.1.4.11: the texts of W2 and W3 that part W adds to texts.js, reached at run time with the words of the
 // spec as the fallback (a named import of a name that does not exist yet would break the loading of the pack)
@@ -1504,8 +1504,8 @@ export async function replaceWornPickaxe(bot, ctx, row, worn, count = {}) {
     const uses = isFiniteNumber(worn?.uses) ? worn.uses : 0;
     let make = null;
     try {
-        if (fresh()) {
-            await equipPickaxe(bot, material);
+        // v0.1.4.13 fix 2: the spare counts only when a pickaxe that is not nearly worn is in hand afterwards
+        if (fresh() && (await equipPickaxe(bot, material)) && wornTool(bot.heldItem) === null) {
             const text = wornSpareText(name, uses);
             sayTo(ctx, text);
             return { ok: true, text };
@@ -1516,8 +1516,7 @@ export async function replaceWornPickaxe(bot, ctx, row, worn, count = {}) {
             await callTool({ ...ctx, storage: null, chests: null }, 'tools', 'ensureTool', bot, 'pickaxe', make,
                 { count: 1, minUses: WEAR_LIMIT + 1, collect: false, exact: true });
         }
-        if (make && fresh()) {
-            await equipPickaxe(bot, material);
+        if (make && fresh() && (await equipPickaxe(bot, material)) && wornTool(bot.heldItem) === null) {
             const text = wornMadeText(name, uses);
             sayTo(ctx, text);
             return { ok: true, text };
@@ -2561,6 +2560,8 @@ export async function mineOre(bot, ctx = {}, ore = '', count = 8, options = {}) 
         dark = countOf(bot, 'torch') === 0;
         const depth = mine.entrance.y - (shownMine(mine, tunnel)?.level ?? mine.level);
         const tunnelLength = () => shownMine(mine, tunnel)?.length ?? mine.length;
+        let wornAt = null; // v0.1.4.13 fix 2: where the last worn answer came (the count and the tunnel's length)
+        let wornRepeats = 0;
         for (;;) {
             if (bot.interrupt_code) {
                 reason = 'interrupted';
@@ -2614,9 +2615,16 @@ export async function mineOre(bot, ctx = {}, ore = '', count = 8, options = {}) 
             addCounts(ores, t.collected); // Q9: the ore items of every kind the dig collected
             report();
             if (!t.ok && t.reason === 'worn') {
-                if (await replaceWorn(t.worn)) {
+                // v0.1.4.13 fix 2: the same worn answer again with nothing dug in between: the replacement does not help,
+                // the trip stops instead of asking again (the hang of the play of 2026-10-06)
+                const at = `${mined()}|${tunnelLength()}`;
+                wornRepeats = wornAt === at ? wornRepeats + 1 : 0;
+                wornAt = at;
+                if (wornRepeats < 1 && (await replaceWorn(t.worn))) {
                     continue;
                 }
+                if (wornRepeats >= 1)
+                    sayTo(tripCtx, wornLoopText(t.worn?.name ?? 'pickaxe', mined(), wanted, row));
                 reason = 'pickaxe';
                 break;
             }

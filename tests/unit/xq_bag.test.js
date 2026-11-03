@@ -20,7 +20,14 @@ const BAG = [
 
 describe('Q4: what the full bag stores', () => {
     test('not tools, food, torches, ladders or the ore mined; the most first', () => {
-        assert.deepEqual(L.storeKinds(BAG, { ore: 'diamond', foods: FOODS }), [{ name: 'cobbled_deepslate', count: 203 }, { name: 'gravel', count: 65 }]);
+        // v0.1.4.13 fix 2: 3 of the stone stay for a new stone pickaxe
+        assert.deepEqual(L.storeKinds(BAG, { ore: 'diamond', foods: FOODS }), [{ name: 'cobbled_deepslate', count: 200 }, { name: 'gravel', count: 65 }]);
+    });
+
+    test('v0.1.4.13 fix 2: 3 or fewer of a stone kind are not stored at all', () => {
+        assert.deepEqual(L.storeKinds([{ name: 'cobblestone', count: 3 }, { name: 'blackstone', count: 2 }, { name: 'gravel', count: 1 }], { foods: FOODS }), [{ name: 'gravel', count: 1 }]);
+        assert.deepEqual(L.storeKinds([{ name: 'cobblestone', count: 64 }, { name: 'cobblestone', count: 10 }], { foods: FOODS }), [{ name: 'cobblestone', count: 71 }]);
+        assert.equal(L.STONE_KEPT, 3);
     });
 
     test('the ore of another trip is stored', () => {
@@ -110,7 +117,9 @@ describe('Q4: storeFullBag over a fake bot and storage', () => {
         const s = scene();
         const r = await B.storeFullBag(s.bot, s.ctx, mine, row, { mined: 2, wanted: 6 });
         assert.deepEqual([r.ok, r.action, r.stored], [true, 'store', { cobblestone: 4, gravel: 2 }]);
-        assert.deepEqual(s.calls.map(c => [c.chest ?? null, c.only]), [[CHEST, ['cobblestone', 'gravel']]]);
+        // v0.1.4.13 fix 2: 1 of the 4 cobblestone is to store (3 stay): gravel first; the keep goes to the store
+        assert.deepEqual(s.calls.map(c => [c.chest ?? null, c.only]), [[CHEST, ['gravel', 'cobblestone']]]);
+        assert.deepEqual(s.calls[0].keep, { cobblestone: 3, cobbled_deepslate: 3, blackstone: 3 });
         assert.deepEqual(s.said, ['I stored 4 cobblestone and 2 gravel in the chest at (0, 41, 2) and go on.']);
     });
 

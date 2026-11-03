@@ -1,0 +1,8 @@
+{
+  "enabledMcpjsonServers": ["mindcraft"],
+  "permissions": {
+    "allow": [
+      "mcp__mindcraft"
+    ]
+  }
+}

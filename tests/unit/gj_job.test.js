@@ -361,14 +361,15 @@ describe('I4: the job on the agent', () => {
     test('a resumed command that fails with the same text 3 times in a row pauses the job', async () => {
         const cap = captureConsole();
         try {
-            const env = makeJob();
+            // v0.1.4.13 fix 2: "no way" pauses at once (below); the same other failure three times still pauses
+            const env = makeJob({ results: { mineOre: { ok: false, reason: 'no_path', text: 'The ore is not here.' } } });
             env.job.onCommand('!mineOre', ['iron', 16], 'player', '!mineOre("iron", 16)');
             for (let i = 0; i < 3; i++) {
                 env.t += 60_000;
                 await env.job.tick();
             }
             assert.equal(env.orders.length, 3, env.orders.map((o) => o[0]).join(' | '));
-            assert.ok(env.said.includes('I stop the mining: I found no way there.'), env.said.join(' | '));
+            assert.ok(env.said.includes('I stop the mining: The ore is not here.'), env.said.join(' | '));
             assert.equal(env.job.get().state, 'paused');
             env.t += 60_000;
             await env.job.tick();
