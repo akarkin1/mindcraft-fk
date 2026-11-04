@@ -101,7 +101,8 @@ Each patch is regenerated with `npx patch-package <name>` from the new version, 
 | `minecraft-data+3.98.0` (the explosion's knockback as `vec3f64`, 1.21.6 and 1.21.8) | upstream since 3.117.0 | **Drop.** Check in 3.119.0 that `pc/1.21.8/protocol.json` and `pc/26.1/protocol.json` read the knockback as `vec3f64`; W47 twice in the gate |
 | `minecraft-protocol+1.62.0` (`src/client/chat.js`, 2 hunks) | applies at an offset of 42 lines | Regenerate as `+1.68.0` |
 | `mineflayer+4.33.0`, `bed.js` (`leave_bed` through the string mapper) | the context matches; 4.39.0 still writes `actionId: 2` | Keep |
-| `mineflayer+4.33.0`, `digging.js` (`incorrect_for_wooden_tool` as `mineable/pickaxe`; `isInWater` false) | fails: `digTime` is called with other arguments in 4.39.0 | Read the new call. Re-apply what is still needed; what upstream fixed is dropped. Say in the report which of the two fixes stays and why. The dig times of the mining trips (W114, W120) are the check |
+| `mineflayer+4.33.0`, `digging.js` (`incorrect_for_wooden_tool` as `mineable/pickaxe`; `isInWater` false) | fails on context: 4.37.1 took the `isInWater` fix upstream; the material fix is still needed (the test of 2026-11-04: iron ore 4,550 ms instead of 750 with an iron pickaxe, deepslate iron ore 6,750 instead of 1,150, with iron, stone and copper pickaxes; stone correct) | Re-apply the material fix on the new call; drop the `isInWater` line. W121 part E checks the dig time |
+| **new** `mineflayer`, `lib/plugins/entities.js` (the knockback) | 26.1 sends `entity_velocity` as an `lpVec3` in blocks per tick (minecraft-data's feature `entityVelocityIsLpVec3`, 1.21.9+); 4.39.0 still divides it by 8,000, so a hit moves the bot by 0.00005 blocks: no knockback from a player or a zombie (issue #4167, confirmed on 2026-11-04) | **Add** a hunk: with `bot.supportFeature('entityVelocityIsLpVec3')` the velocity is taken as it is, else through `fromNotchVelocity`. W121 part E checks the knockback |
 | `mineflayer+4.33.0`, `inventory.js` (the yaw and pitch of `use_item`) | upstream: `rotation: { x: toNotchianYaw(bot.entity.yaw), ... }` | **Drop** after checking that the pitch is there too |
 | `mineflayer+4.33.0`, `place_block.js` (the timeout of the block update 5000 to 500) | fails on context only; 4.39.0 still has 5000 | Re-apply |
 | `mineflayer-pathfinder+2.4.5` (919 lines: the pen gates, the ladders, the no-dig rule) | the library is unchanged | Keep as is; the gate proves it against the new physics and blocks |
@@ -216,6 +217,12 @@ cannot be given (no `copper_pickaxe`, no `copper_chest` in 1.21.8), which the sc
   a spear": the next prompt holds the spear line; the fake model answers `!craftRecipe("stone_spear", 1)`
   and the bag holds a `stone_spear` (server). With the pickaxe stored and nothing new near, the next prompt
   holds no `NEW SINCE` header.
+- **E. Knockback and dig time** (the two library defects of 26.1, SPEC 4.8). A second bot of the control (survival,
+  1.5 blocks east, as the hitter of the test of 2026-11-04) hits the bot once with its fist: within 1 s the bot's
+  position moved at least 0.3 blocks west (server), every component of `bot.entity.velocity` stayed a finite number,
+  and `onGround` is true again within 3 s. Then an `iron_ore` set next to the bot: `!collectBlocks("iron_ore", 1)` with
+  the iron pickaxe in hand takes at most 1,500 ms from the first `block_dig` to the block being air (server), not
+  4,550.
 - Throughout: the process lives, no request reached a real model, the server log holds no
   `Unknown packet` or disconnect of the bot.
 
@@ -265,6 +272,32 @@ changes in the prompt and the old limits hold.
 effects) and none in 1.21.8's except `name_tag`, `zombie_horse` and `mannequin` (which existed, and changed);
 the selection by bag, by view, by line, the order, the limit, the whole-word match ("copper" alone matches
 nothing); the prompt holds the header and the lines with the switch on and nothing with it off; the sizes.
+
+### 4.8 Known issues of the libraries on 26.1
+
+Checked on 2026-11-04 with the released libraries on a vanilla 26.1 server (`DECISIONS.md`, "Before the build").
+
+| Issue | On 26.1 with 4.39.0 | What we do |
+|---|---|---|
+| #4167 no knockback since 1.21.9 | **Real**: a hit from a player or a zombie moves the bot by 0.00005 blocks | The `entities.js` hunk of 4.2; W121 part E |
+| #3921 wrong dig time for `incorrect_for_wooden_tool` blocks (the ores) | **Real**: 4,550 ms instead of 750 for iron ore | Our `digging.js` material fix stays; W121 part E |
+| #3882, #3887 the bot freezes or hangs in the air after damage | Not reproduced: no NaN in 121 of 121 ticks, `onGround` back after one tick, it walked and jumped right after | Nothing; W121 part E guards it (finite velocity, `onGround`) |
+| #3911, #3915 stuck at one-block steps, hundreds of position corrections | Not reproduced on vanilla: a 5-step staircase and a wall detour with 0 corrections (the reports were on Paper) | Nothing; the journeys walk stairs and ladders |
+| #3906 3x3 crafting delivers nothing | Not reproduced: the server counts the stone pickaxe | Nothing |
+| #3838 kick after about 22 chat messages | Not reproduced in offline mode: 30 lines each way; only the vanilla spam limit at 300 ms spacing, which our chat limit of v0.1.4.8 already respects (6 lines, then 1 per 1.2 s) | Nothing; signed chat (online mode) is not our case |
+
+### 4.9 Part H: the chat model Claude Haiku 5.5 (if the owner confirms the switch)
+
+The owner, 2026-11-04: the bot moves to Claude Haiku 5.5 (`claude-haiku-5-5`). `src/models/claude.js` sends only
+`max_tokens`, the system prompt and the messages and reads the answer by block type, so it is compatible as it is.
+Part H (E2, 2 hours): `profiles/claude.json` gets the model id and `"output_config": { "effort": "low" }` in its
+params (the chat's level; the model still thinks when a line needs it); `src/agent/cost/price_table.js` gets the
+row `claude-haiku-5-5: input 0.10, output 0.50` (the rate for prompts up to 100K tokens; ours is about 5K) with a
+unit test; the cost meter's session line is checked to count the thinking tokens (they are in `output_tokens`).
+Known from the docs, no code: the minimum cacheable prefix is 512 tokens (4,096 on Haiku 4.5), so `prompt_cache`
+now works for the whole fixed part; the tokenizer counts about 30% more tokens, so the meter's token numbers rise
+while the cost falls to about a tenth. The play test reads the cache reads and the cost line. Part K stays
+independent of the model: whether Haiku 5.5 knows the things of 4.3 is for the owner's probe to show.
 
 ### 4.6 Texts
 

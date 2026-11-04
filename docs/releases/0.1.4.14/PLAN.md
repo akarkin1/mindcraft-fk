@@ -102,6 +102,7 @@ are re-applied on the new code). The test-applied details are in SPEC 4.2.
 | D: the data of 26.1 in the bot's tables | 0.5 |
 | T: the test setup on 26.1 (server, Java 25, the simulated server, the fixtures) | 1 |
 | K: what the model does not know, in the prompt | 0.5 |
+| H: the chat model Claude Haiku 5.5, if confirmed | 0.25 |
 | The gate: unit, end-to-end and every world scenario on a 26.1 server, and the fix round | 1 to 1.5 |
 | **Total** | **4 to 4.5** |
 
@@ -123,6 +124,7 @@ packets of 1.21.8.
 
 | Risk | What we do |
 |---|---|
+| Two defects of the released libraries on 26.1, found by a test on 2026-11-04: no knockback (a hit moves the bot by 0.00005 blocks), and ores dug six times too slowly (4.5 s for iron ore) | Both are corrected in our patches of mineflayer and proven by the new journey; four other reported issues (a freeze after damage, sticking at steps, crafting that delivers nothing, a chat kick) did not reproduce on a vanilla 26.1 server |
 | The path search behaves differently on the new physics or blocks (ladders, doors, trapdoors, water, the pen gates) | The 30 journeys and the 12 of 0.1.4.13 run on 26.1; every difference is a finding of the fix round |
 | A native module of the voice (`onnxruntime-node`, `@ricky0123/vad-web`) or the viewer (`canvas`, `gl`) has no build for Node 22 on Windows | Checked by you in the play test with `npm run reinstall` and `npm run voice:setup`; a module that fails is reported with its error, the voice can be off |
 | The simulated server of the end-to-end tests needs new packet shapes | Part T; the end-to-end suite is the check |
