@@ -1,7 +1,7 @@
 // A fake mineflayer bot for the tests from the spec (v0.1.4.13, T1): the public API of mineflayer and of
 // mineflayer-pathfinder as the library documents it (blockAt, dig, equip, toss, activateBlock, inventory, entities,
 // players, pathfinder.getPathTo/goto/setGoal/setMovements), over a block world, with the item ids, durabilities and
-// harvest tools of minecraft-data 1.21.8. Every call that changes the world is recorded, so a test checks what the
+// harvest tools of minecraft-data 26.1. Every call that changes the world is recorded, so a test checks what the
 // bot did (dug, tossed, equipped, walked, opened), not what the code says. No timer stays open: every promise of the
 // fake resolves at once.
 import { createRequire } from 'node:module';
@@ -11,7 +11,7 @@ import { EventEmitter } from 'node:events';
 const require = createRequire(import.meta.url);
 const minecraftData = require('minecraft-data');
 
-export const VERSION = '1.21.8';
+export const VERSION = '26.1';
 export const MC = minecraftData(VERSION);
 
 /** An item of the inventory as mineflayer gives it: name, count, type (the id), maxDurability, durabilityUsed. */

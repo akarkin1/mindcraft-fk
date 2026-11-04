@@ -211,8 +211,13 @@ describe('W6: the two lines of the prompt in both profiles', () => {
         const base = baseProfile('profiles/claude.json');
         if (!base) return t.skip('origin/main is not reachable');
         const now = JSON.parse(fs.readFileSync(repoPath('profiles/claude.json'), 'utf8'));
-        const strip = (p) => ({ ...p, conversing: p.conversing.replace(`\n${W6[0]}\n${W6[1]}`, '') });
+        // v0.1.4.14 part H changes the model (SPEC 4.9): the model is compared apart, the rest of the profile as before
+        const strip = (p) => {
+            const { model, ...rest } = p;
+            return { ...rest, conversing: p.conversing.replace(`\n${W6[0]}\n${W6[1]}`, '') };
+        };
         assert.deepEqual(strip(now), strip(base));
+        assert.deepEqual(now.model, { model: 'claude-haiku-5-5', params: { max_tokens: 4096, output_config: { effort: 'low' } } });
     });
 
     test('the two lines are about 150 characters (plan 1.6), not more than 250', () => {

@@ -11,6 +11,7 @@ const HAIKU = { input: 1, output: 5, cache_read: 0.1, cache_write: 1.25 };
 const SONNET = { input: 2, output: 10, cache_read: 0.2, cache_write: 2.5 };
 const OPUS_5 = { input: 5, output: 25, cache_read: 0.5, cache_write: 6.25 };
 const OPUS_5_5 = { input: 4, output: 20, cache_read: 0.4, cache_write: 5 };
+const HAIKU_5_5 = { input: 0.1, output: 0.5, cache_read: 0.01, cache_write: 0.125 }; // v0.1.4.14 (part H)
 
 describe('module', () => {
     test('imports nothing', () => {
@@ -26,6 +27,7 @@ describe('DEFAULT_PRICES', () => {
     test('dollars per million tokens as in the spec', () => {
         assert.deepEqual(JSON.parse(JSON.stringify(P.DEFAULT_PRICES)), {
             'claude-haiku-4-5': { input: 1, output: 5 },
+            'claude-haiku-5-5': { input: 0.1, output: 0.5 }, // v0.1.4.14 (part H)
             'claude-sonnet-5': { input: 2, output: 10 },
             'claude-opus-5': { input: 5, output: 25 },
             'claude-opus-5-5': { input: 4, output: 20 },
@@ -161,5 +163,26 @@ describe('costOf', () => {
 
     test('a price without cache prices derives them from the input price', () => {
         assert.equal(P.costOf({ cache_read_tokens: 1_000_000, cache_write_tokens: 1_000_000 }, { input: 2, output: 10 }), 2.7);
+    });
+});
+
+// v0.1.4.14 (part H, SPEC 4.9): Claude Haiku 5.5, the chat model of the owner's profile
+describe('claude-haiku-5-5 (v0.1.4.14, part H)', () => {
+    test('0.10 dollars per million input tokens, 0.50 per million output tokens, cache prices derived', () => {
+        assert.deepEqual(P.priceFor('claude-haiku-5-5'), HAIKU_5_5);
+    });
+
+    test('Haiku 4.5 keeps its own price; neither id finds the other', () => {
+        assert.deepEqual(P.priceFor('claude-haiku-4-5-20251001'), HAIKU);
+        assert.deepEqual(P.priceFor('claude-haiku-5-5'), HAIKU_5_5);
+        assert.equal(P.priceFor('claude-haiku-5'), null);
+    });
+
+    test('a call of about 5K tokens in and 300 out (thinking included) costs 0.00065 dollars', () => {
+        assert.equal(P.costOf({ input_tokens: 5000, output_tokens: 300 }, P.priceFor('claude-haiku-5-5')), 0.00065);
+    });
+
+    test('cache reads and writes of the fixed part at a tenth and 1.25 times the input price', () => {
+        assert.equal(P.costOf({ cache_read_tokens: 1_000_000, cache_write_tokens: 1_000_000 }, P.priceFor('claude-haiku-5-5')), 0.135);
     });
 });

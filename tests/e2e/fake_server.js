@@ -1,5 +1,8 @@
-// Simulated Minecraft 1.21.8 server for the end-to-end tests (runs as a child process).
+// Simulated Minecraft 26.1 server for the end-to-end tests (runs as a child process).
 // Listens on 127.0.0.1 only, on a port chosen by the operating system, and prints "PORT=<n>".
+// v0.1.4.14 (spec section 4.4): 26.1 in place of 1.21.8. The registries of the configuration phase come
+// from minecraft-data's loginPacket of 26.1 (minecraft-protocol sends them); update_time carries the
+// clocks of 26.1 (clockUpdates) in place of time and tickDayTime; see the packets below.
 //
 // Parameters (command line --key=value, or environment variable in brackets):
 //   --seed-high=<int32>   [E2E_SEED_HIGH]  high word of the hashed seed
@@ -27,7 +30,7 @@ import prismarineRegistry from 'prismarine-registry';
 import prismarineChunk from 'prismarine-chunk';
 import { Vec3 } from 'vec3';
 
-const VERSION = '1.21.8';
+const VERSION = '26.1';
 const mcData = minecraftData(VERSION);
 
 function param(name, envName, fallback) {
@@ -59,6 +62,12 @@ if (dimIndex < 0) {
     log('unknown dimension', dimension);
     process.exit(2);
 }
+
+// The clock of the dimension (26.1): dimension_type names its default_clock, an entry of the world_clock
+// registry (overworld and the_end; the nether has none). update_time sends its index with the time.
+const clockEntries = mcData.loginPacket.dimensionCodec['minecraft:world_clock']?.entries ?? [];
+const defaultClock = dimEntries[dimIndex].value?.value?.default_clock?.value ?? null;
+const clockIndex = defaultClock === null ? -1 : clockEntries.findIndex((e) => e.key === defaultClock);
 
 // 64-bit value as the [high, low] pair of signed 32-bit words that the protocol library writes
 function toWords(value) {
@@ -170,7 +179,13 @@ server.on('playerJoin', (client) => {
         motd: { type: 'compound', name: '', value: { text: { type: 'string', value: motd } } },
         iconBytes: undefined,
     });
-    client.write('update_time', { age: toWords(age), time: toWords(6000), tickDayTime: true });
+    // 26.1: the time of day is the state of a clock (totalTicks, partialTick, rate) in clockUpdates; 1.21.8
+    // sent { age, time, tickDayTime }. Time 6000 with the daylight cycle on (rate 1), as before. totalTicks is a
+    // varlong, which minecraft-protocol reads and writes as a plain number.
+    client.write('update_time', {
+        age: toWords(age),
+        clockUpdates: clockIndex < 0 ? [] : [{ id: clockIndex, totalTicks: 6000, partialTick: 0, rate: 1 }],
+    });
     client.write('position', {
         teleportId: 1,
         x: posX, y: posY, z: posZ,

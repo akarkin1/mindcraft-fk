@@ -145,26 +145,6 @@ function reportCostAtExit(meter) {
     }
 }
 
-/**
- * v0.1.4.12 (G2): tells the server that the client has loaded the world (packet player_loaded, new in
- * 1.21.4), so the server takes the bot's actions from the first second after a spawn. mineflayer 4.33
- * never sends it. Written only when the protocol of the bot's version has the packet. One console line.
- * Never throws. Returns true when the packet was written.
- */
-export function sendPlayerLoaded(bot) {
-    try {
-        const has = Boolean(bot?.registry?.protocol?.play?.toServer?.types?.packet_player_loaded);
-        if (!has || typeof bot?._client?.write !== 'function')
-            return false;
-        bot._client.write('player_loaded', {});
-        console.log('Sent player_loaded after the spawn.');
-        return true;
-    } catch (error) {
-        console.warn('Could not send player_loaded:', error?.message ?? error);
-        return false;
-    }
-}
-
 export class Agent {
     async start(load_mem=false, init_message=null, count_id=0, is_restart=false) {
         // lock down the realm before any component or the bot is created
@@ -421,9 +401,7 @@ export class Agent {
             log(this.name, msg);
             process.exit(1);
         }, spawnTimeoutDuration * 1000);
-        // v0.1.4.12 (G2): player_loaded at every spawn, first of the listeners; mineflayer emits 'spawn' again
-        // after a death and a change of dimension (the respawn packet), and the server waits for it again then.
-        this.bot.on('spawn', () => sendPlayerLoaded(this.bot));
+        // mineflayer sends player_loaded itself at every spawn since 4.38.0 (#3986).
         this.bot.once('spawn', async () => {
             try {
                 clearTimeout(spawnTimeout);

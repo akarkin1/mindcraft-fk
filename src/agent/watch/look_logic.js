@@ -15,7 +15,9 @@ export const LOOK_RULES = Object.freeze({
     veinRange: 2,       // ore blocks within this many blocks of the nearest one count as one vein
 });
 
-export const CHEST_BLOCKS = Object.freeze(['chest', 'trapped_chest', 'barrel']);
+// v0.1.4.14 (part D): the eight copper chests (the four stages of oxidation, and waxed) are chests too.
+export const CHEST_BLOCKS = Object.freeze(['chest', 'trapped_chest', 'barrel', 'copper_chest', 'exposed_copper_chest', 'weathered_copper_chest',
+    'oxidized_copper_chest', 'waxed_copper_chest', 'waxed_exposed_copper_chest', 'waxed_weathered_copper_chest', 'waxed_oxidized_copper_chest']);
 export const FURNACE_BLOCKS = Object.freeze(['furnace', 'blast_furnace', 'smoker']);
 
 function isFiniteNumber(value) {

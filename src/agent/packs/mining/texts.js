@@ -224,7 +224,8 @@ export function suppliesText(missing, takes = []) {
     return words.length > 0 ? `I get my supplies: ${words.join(', ')}.` : '';
 }
 
-// The word of the material a pickaxe is made of, for the wear texts: `iron`, `stone`, `wood`, `gold`, `diamond`.
+// The word of the material a pickaxe is made of, for the wear texts: `iron`, `stone`, `wood`, `gold`, `diamond`; since
+// v0.1.4.14 (part D) `copper` for a copper_pickaxe (for the spare and worn texts: a copper pickaxe is never crafted).
 function materialWord(name) {
     const material = pickaxeMaterial(name) ?? 'iron';
     return { wooden: 'wood', golden: 'gold' }[material] ?? material;

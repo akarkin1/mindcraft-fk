@@ -7,6 +7,8 @@
  */
 export const DEFAULT_PRICES = Object.freeze({
     'claude-haiku-4-5': Object.freeze({ input: 1, output: 5 }),
+    // v0.1.4.14 (part H): the rate for prompts up to 100K tokens (ours are about 5K); the thinking tokens are output tokens
+    'claude-haiku-5-5': Object.freeze({ input: 0.1, output: 0.5 }),
     'claude-sonnet-5': Object.freeze({ input: 2, output: 10 }),
     'claude-opus-5': Object.freeze({ input: 5, output: 25 }),
     'claude-opus-5-5': Object.freeze({ input: 4, output: 20 }),

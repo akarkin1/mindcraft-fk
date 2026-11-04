@@ -8,7 +8,7 @@
 // placed), built blocks outside every area with protect_built_blocks (D3), the blocks that the bot
 // placed (D4), and refusal(), areaAt(), isBuilt(), placedByBot() on the view (I3).
 import { normalizeDimension, normalizeAreaName, typeRank } from './area_store.js';
-import { isBuiltBlock } from './area_scan.js';
+import { COPPER_CHESTS, isBuiltBlock } from './area_scan.js'; // v0.1.4.14 (part D): the copper chests
 import { PlacedStore } from './placed_store.js';
 
 /** Blocks that may be broken inside a farm: ripe or not, the crops. */
@@ -30,7 +30,7 @@ const PLANTABLE = new Set(PLANTABLE_ITEMS);
 const RISKY_ITEMS = new Set(['flint_and_steel', 'fire_charge', 'bone_meal']);
 // Blocks whose own use wins over the item in the hand (unless the player sneaks).
 const OWN_USE_BLOCKS = new Set(['chest', 'trapped_chest', 'ender_chest', 'barrel', 'crafting_table', 'furnace',
-    'smoker', 'blast_furnace']);
+    'smoker', 'blast_furnace', ...COPPER_CHESTS]); // v0.1.4.14: the copper chests too
 // A block that becomes one of these is gone: the bot no longer counts it as placed by itself.
 const GONE_NAMES = new Set(['air', 'cave_air', 'void_air', 'water', 'lava']);
 const EMPTY = Object.freeze([]);

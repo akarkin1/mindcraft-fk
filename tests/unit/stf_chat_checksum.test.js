@@ -1,6 +1,6 @@
 // Spec v0.1.4.8, part F: F1 (the chat kick, S12) -- the checksum of the last seen messages that
 // minecraft-protocol 1.62.0 sends with every chat of Minecraft 1.21.5 and later, and the patch
-// patches/minecraft-protocol+1.62.0.patch.
+// patches/minecraft-protocol+1.62.0.patch (since v0.1.4.14 patches/minecraft-protocol+1.68.0.patch).
 //
 // The client keeps the last seen signatures in a ring of 20 (LastSeenMessagesWithInvalidation of
 // src/client/chat.js): message n goes to index (n - 1) % 20. getAcknowledgements() walks the ring
@@ -223,7 +223,7 @@ describe('after 40 messages the ring is in window order again', () => {
 });
 
 describe('the patch file', () => {
-    const patch = fs.readFileSync(repoPath('patches/minecraft-protocol+1.62.0.patch'), 'utf8');
+    const patch = fs.readFileSync(repoPath('patches/minecraft-protocol+1.68.0.patch'), 'utf8');
 
     test('changes only src/client/chat.js of minecraft-protocol, in two places', () => {
         const files = [...patch.matchAll(/^diff --git a\/(\S+)/gm)].map((m) => m[1]);
@@ -238,6 +238,6 @@ describe('the patch file', () => {
     test('npm install applies it: postinstall runs patch-package', () => {
         const pkg = JSON.parse(fs.readFileSync(repoPath('package.json'), 'utf8'));
         assert.equal(pkg.scripts.postinstall, 'patch-package');
-        assert.equal(pkg.dependencies['minecraft-protocol'], '1.62.0');
+        assert.equal(pkg.dependencies['minecraft-protocol'], '1.68.0');
     });
 });

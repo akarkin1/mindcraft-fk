@@ -3,7 +3,7 @@
 // Runs every scenario in its own child process, one after another. Each scenario gets a
 // fresh temp directory (os.tmpdir()/mc-e2e-*) as working directory, with the coder
 // templates copied into its bots/ folder; the directory is removed afterwards. The
-// scenarios start a simulated Minecraft 1.21.8 server on 127.0.0.1 with a port chosen by
+// scenarios start a simulated Minecraft 26.1 server on 127.0.0.1 with a port chosen by
 // the operating system. No other network is used.
 //
 // Usage:

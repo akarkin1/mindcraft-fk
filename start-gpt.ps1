@@ -8,7 +8,7 @@ param([switch] $Log)
 
 if (Get-Command fnm -ErrorAction SilentlyContinue) {
     fnm env --shell powershell | Out-String | Invoke-Expression
-    fnm use 20
+    fnm use 22
 }
 
 Push-Location $PSScriptRoot

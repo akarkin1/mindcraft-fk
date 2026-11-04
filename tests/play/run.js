@@ -8,7 +8,7 @@
 //
 // It refuses to run without the key of the chat model in the environment (ANTHROPIC_API_KEY for a Claude model,
 // OPENAI_API_KEY for gpt and Luna, ...; see KEY_OF_API in play_logic.js); keys.json is not read. Like the world
-// runner it starts the 1.21.8 server of MC_TEST_SERVER_DIR with MC_TEST_JAVA on 127.0.0.1, port 25599 or the next
+// runner it starts the 26.1 server of MC_TEST_SERVER_DIR with the Java 25 of MC_TEST_JAVA (or the runner's default) on 127.0.0.1, port 25599 or the next
 // free one (never 55916), in a fresh temp directory, as a world of the type `base`; tests/play/play.js builds the
 // owner variant of the base in a region of it, starts the bot and the player and plays. Then one table: the sentence,
 // the command the model chose, the command of the journeys, the world fact, pass or fail, the cost; and the line of
@@ -32,11 +32,14 @@ const TIMEOUT_MS = 30 * 60 * 1000;
 
 // The world state of the run, as the world runner sets it.
 const WORLD_DEFAULTS = [
-    'gamerule doDaylightCycle false', 'gamerule doWeatherCycle false', 'weather clear',
-    'gamerule doMobSpawning false', 'gamerule doInsomnia false', 'gamerule doPatrolSpawning false',
-    'gamerule doTraderSpawning false', 'gamerule randomTickSpeed 0', 'gamerule announceAdvancements false',
-    'gamerule doImmediateRespawn true', 'gamerule playersSleepingPercentage 100',
-    'gamerule doFireTick false', 'gamerule mobGriefing true',
+    // the game rules by their names of 26.1 (1.21.8: doDaylightCycle, doWeatherCycle, doMobSpawning, doInsomnia,
+    // doPatrolSpawning, doTraderSpawning, randomTickSpeed, announceAdvancements, doImmediateRespawn,
+    // playersSleepingPercentage, doFireTick false, mobGriefing; mc_server.js GAMERULES_26_1)
+    'gamerule advance_time false', 'gamerule advance_weather false', 'weather clear',
+    'gamerule spawn_mobs false', 'gamerule spawn_phantoms false', 'gamerule spawn_patrols false',
+    'gamerule spawn_wandering_traders false', 'gamerule random_tick_speed 0', 'gamerule show_advancement_messages false',
+    'gamerule immediate_respawn true', 'gamerule players_sleeping_percentage 100',
+    'gamerule fire_spread_radius_around_player 0', 'gamerule mob_griefing true',
     'difficulty peaceful', 'time set 6000',
 ];
 
@@ -59,6 +62,7 @@ if (!args.fake) {
     if (!k.ok) stop(`Play test refused: ${k.reason}. Set it, or run with --fake.`);
 }
 const loc = locateServer();
+if (loc.refused) stop(`Play test not run: ${loc.refused}`);
 if (loc.missing) stop(`Play test not run: no test server found (missing: ${loc.missing}; set MC_TEST_SERVER_DIR and MC_TEST_JAVA).`);
 
 // ------------------------------------------------------------------ the server and its control

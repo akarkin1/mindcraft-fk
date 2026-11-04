@@ -1,6 +1,6 @@
-// Fix round 2 of v0.1.4.9, finding F1 (engineer E1): patches/prismarine-physics+1.10.0.patch. The physics of the
+// Fix round 2 of v0.1.4.9, finding F1 (engineer E1): patches/prismarine-physics+1.11.1.patch (since v0.1.4.14). The physics of the
 // bot knows that an open trapdoor over a ladder of the same facing is climbable (feature climbableTrapdoor) also
-// for 1.21, and the bamboo, pale oak and copper trapdoors are trapdoors. The feature and the set of trapdoors are
+// for 1.21 and 26.1, and the bamboo, pale oak and copper trapdoors are trapdoors. The feature and the set of trapdoors are
 // closures of Physics(), so the test proves them by what they do: a player that holds sneak in the cell of an
 // open trapdoor over a ladder stays up only when the cell is climbable. Without the patch it drops to the ladder.
 import { describe, test } from 'node:test';
@@ -59,8 +59,8 @@ describe('F1: the patch of prismarine-physics for 1.21', () => {
     });
 
     test('the patch file is there and changes the two files', () => {
-        const patch = fs.readFileSync(repoPath('patches/prismarine-physics+1.10.0.patch'), 'utf8');
-        assert.match(patch, /"1\.20", "1\.21"\]/);
+        const patch = fs.readFileSync(repoPath('patches/prismarine-physics+1.11.1.patch'), 'utf8');
+        assert.match(patch, /"1\.20", "1\.21", "26\.1"\]/);
         for (const name of ['bamboo_trapdoor', 'copper_trapdoor', 'waxed_oxidized_copper_trapdoor']) assert.ok(patch.includes(`blocksByName.${name}.id`), name);
         assert.equal(patch.includes('\r'), false, 'LF');
     });

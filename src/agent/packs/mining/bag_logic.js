@@ -1,6 +1,15 @@
 // The full bag during the mining (v0.1.4.13, part Q, SPEC 4.6 Q4) and the other ores on the way (Q9): what is stored,
 // what the trip does next, and the texts word for word. Pure: no imports.
 
+/**
+ * v0.1.4.14 (part D): the copper chests, a copy of COPPER_CHESTS of packs/storage/storage_logic.js (this module imports
+ * nothing, and the mining pack does not import the storage pack); tests/unit/xd_copper_food.test.js checks that the
+ * copies hold the same names. The containers of the mining pack: chest, trapped_chest, barrel and these.
+ */
+export const COPPER_CHESTS = Object.freeze(['copper_chest', 'exposed_copper_chest', 'weathered_copper_chest', 'oxidized_copper_chest',
+    'waxed_copper_chest', 'waxed_exposed_copper_chest', 'waxed_weathered_copper_chest', 'waxed_oxidized_copper_chest']);
+export const CONTAINER_NAMES = Object.freeze(['chest', 'trapped_chest', 'barrel', ...COPPER_CHESTS]);
+
 /** Q4: the chests of the index the full bag is stored in lie within this many blocks of the bot. */
 export const BAG_RULES = Object.freeze({ chestRange: 32 });
 
@@ -19,6 +28,11 @@ function isTool(name) {
 }
 
 function isFoodName(name, foods) {
+    // v0.1.4.14 (part D, SPEC 4.3): a bucket is never food, though 26.1 lists the fish buckets as foods (the rule of
+    // isBucketName of home/food_logic.js; this module imports nothing)
+    if (typeof name === 'string' && name.endsWith('_bucket')) {
+        return false;
+    }
     if (foods instanceof Set) {
         return foods.has(name);
     }

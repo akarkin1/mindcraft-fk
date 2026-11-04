@@ -5,34 +5,90 @@
 // The server folder (MC_TEST_SERVER_DIR) is only read: the server runs with the temp directory
 // as working directory and the jar by its path, so the world, server.properties, eula.txt (a copy
 // of the accepted one), the extracted libraries and the logs all land in the temp directory.
+//
+// v0.1.4.14 (spec section 4.4): the Minecraft 26.1 server, which needs Java 25. A Java below 25 is
+// refused with one line; without MC_TEST_JAVA the runner takes the Java of the launcher
+// (java-runtime-epsilon), else the JRE of `node scripts/get_test_server.js --jdk` in <dir>/jdk/.
 import { spawn, spawnSync } from 'node:child_process';
 import readline from 'node:readline';
 import fs from 'node:fs';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
-import { defaultDir } from '../../scripts/get_test_server_logic.js';
+import { defaultDir, jdkDir, javaInJdk, javaMajor, javaRefusal, MIN_JAVA } from '../../scripts/get_test_server_logic.js';
 
 export const OWNER_PORT = 55916; // the owner's own world: never used
 export const DEFAULT_PORT = 25599;
-export const JAR_NAME = 'server-1.21.8.jar';
+export const JAR_NAME = 'server-26.1.jar';
+export { MIN_JAVA };
 
-const DEFAULT_JAVA = path.join(os.homedir(), 'AppData', 'Local', 'Packages', 'Microsoft.4297127D64EC6_8wekyb3d8bbwe',
-    'LocalCache', 'Local', 'runtime', 'java-runtime-delta', 'windows-x64', 'java-runtime-delta', 'bin', 'java.exe');
+// The Java 25 of the Minecraft launcher (java-runtime-epsilon; 1.21.8 used java-runtime-delta, Java 21).
+export const DEFAULT_JAVA = path.join(os.homedir(), 'AppData', 'Local', 'Packages', 'Microsoft.4297127D64EC6_8wekyb3d8bbwe',
+    'LocalCache', 'Local', 'runtime', 'java-runtime-epsilon', 'windows-x64', 'java-runtime-epsilon', 'bin', 'java.exe');
+
+// The output of `java -version` (standard error) of a java, run without JAVA_TOOL_OPTIONS, whose
+// "Picked up ..." line would come first. '' when it cannot be run.
+export function javaVersionText(java) {
+    const r = spawnSync(java, ['-version'], { encoding: 'utf8', env: serverEnv(), timeout: 30000, windowsHide: true });
+    return `${r.stderr ?? ''}${r.stdout ?? ''}`;
+}
+
+// The javas of the JREs of `get_test_server.js --jdk`: <dir>/jdk/*/bin/java (java.exe on Windows) that
+// exist, sorted by the folder name, the newest first.
+export function jdkJavas(serverDir, platform = process.platform) {
+    const jdk = jdkDir(serverDir, platform);
+    let entries = [];
+    try { entries = fs.readdirSync(jdk, { withFileTypes: true }); } catch { return []; }
+    return entries.filter((e) => e.isDirectory() && !e.name.startsWith('.'))
+        .map((e) => javaInJdk(path.join(jdk, e.name), platform))
+        .filter((java) => fs.existsSync(java))
+        .sort().reverse();
+}
+
+// The Java rule (v0.1.4.14): the server needs Java 25 or later.
+//   MC_TEST_JAVA set: that java; missing: { missing }; below 25 or no readable version: { refused }.
+//   MC_TEST_JAVA not set: the default Java (the launcher's) when it is there and 25 or later, else the
+//   first java of <dir>/jdk/*/bin/ that is 25 or later; else { refused } naming the Java that was found,
+//   or { missing } when none was found.
+// `versionOf(java)` gives the output of java -version (a fake in the unit tests).
+// Returns { java, major } or { missing: '<what>' } or { refused: '<one line>' }.
+export function chooseJava(env, platform, serverDir, versionOf = javaVersionText, defaultJava = DEFAULT_JAVA) {
+    const check = (java) => ({ java, major: javaMajor(versionOf(java)) });
+    const ok = (c) => c.major !== null && c.major >= MIN_JAVA;
+    if (env.MC_TEST_JAVA) {
+        const java = env.MC_TEST_JAVA;
+        if (!fs.existsSync(java)) return { missing: `java ${java}` };
+        const c = check(java);
+        return ok(c) ? c : { refused: javaRefusal(c.java, c.major) };
+    }
+    const found = [];
+    if (fs.existsSync(defaultJava)) {
+        const c = check(defaultJava);
+        if (ok(c)) return c;
+        found.push(c);
+    }
+    for (const java of jdkJavas(serverDir, platform)) {
+        const c = check(java);
+        if (ok(c)) return c;
+        found.push(c);
+    }
+    if (found.length > 0) return { refused: javaRefusal(found[0].java, found[0].major) };
+    return { missing: `java ${defaultJava} or ${javaInJdk(path.join(jdkDir(serverDir, platform), '*'), platform)}` };
+}
 
 // Where the server and Java are, from MC_TEST_SERVER_DIR and MC_TEST_JAVA or the defaults.
 // The default folder is the one of scripts/get_test_server.js (v0.1.4.9): %LOCALAPPDATA%\Mindcraft\test-server
-// on Windows, ~/.local/share/mindcraft/test-server on Linux and macOS.
-// Returns { serverDir, jar, java, eula } or { missing: '<what>' }.
-export function locateServer(env = process.env, platform = process.platform) {
+// on Windows, ~/.local/share/mindcraft/test-server on Linux and macOS. Java: see chooseJava.
+// Returns { serverDir, jar, java, eula } or { missing: '<what>' } or { refused: '<one line>' }.
+export function locateServer(env = process.env, platform = process.platform, versionOf = javaVersionText) {
     const serverDir = defaultDir(platform, env);
     const jar = path.join(serverDir, JAR_NAME);
     const eula = path.join(serverDir, 'eula.txt');
-    const java = env.MC_TEST_JAVA || DEFAULT_JAVA;
     if (!fs.existsSync(jar)) return { missing: `server jar ${jar}` };
     if (!fs.existsSync(eula) || !/^\s*eula\s*=\s*true\s*$/m.test(fs.readFileSync(eula, 'utf8'))) return { missing: `accepted eula.txt in ${serverDir}` };
-    if (!fs.existsSync(java)) return { missing: `java ${java}` };
-    return { serverDir, jar, java, eula };
+    const chosen = chooseJava(env, platform, serverDir, versionOf);
+    if (chosen.missing || chosen.refused) return chosen;
+    return { serverDir, jar, java: chosen.java, eula };
 }
 
 // The environment of the server process: that of the runner without JAVA_TOOL_OPTIONS (v0.1.4.9),
@@ -68,7 +124,7 @@ export async function findFreePort(start = DEFAULT_PORT, tries = 20) {
 //   deep  a flat world with depth for the mining scenarios: bedrock at y -64, 120 layers of stone
 //         (y -63 to 56), 3 of dirt (57 to 59) and grass at y 60; no lakes, no features (so no ore,
 //         no trees), no structures. Ore, lava and caves are put into the stone by the scenarios.
-// The 1.21.8 server reads the layers of a flat world from the property `generator-settings`, a JSON
+// The server (1.21.8 and 26.1) reads the layers of a flat world from the property `generator-settings`, a JSON
 // text in the format of the flat generator: { layers: [{ block, height }], biome, lakes, features },
 // layers from the bottom up. A text it cannot read gives the default flat world WITHOUT an error in
 // the log, so the runner proves the layers after the start (see `worldProbes`).
@@ -138,6 +194,9 @@ export function serverProperties(port, extra = {}) {
         'sync-chunk-writes': 'false',
         'player-idle-timeout': '0',
         'allow-flight': 'true',
+        // A fresh 26.x server may write white-list=true by itself; the bots of the tests are on no list.
+        'white-list': 'false',
+        'enforce-whitelist': 'false',
         ...extra,
     };
     return '#Mindcraft world tests\n' + Object.entries(props).map(([k, v]) => `${k}=${v}`).join('\n') + '\n';
@@ -159,6 +218,67 @@ export function pidAlive(pid) {
     try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; }
 }
 
+// The console of 26.1 (v0.1.4.14). 26.1 renamed the game rules (1.21.11: snake-case ids of the registry
+// minecraft:game_rule; `gamerule doDaylightCycle false` is "Incorrect argument for command") and replaced
+// `time query daytime` by the timelines (`time query minecraft:day` answers "Timeline minecraft:day is at N
+// tick(s)"). The scenarios of the world tests were written for 1.21.8: `commands` rewrites their old names
+// before it writes them (doFireTick false is a fire spread radius of 0, true the default 128), and gives the
+// answer of the daytime query in the old words, "The time is N". Names taken from the registries report of
+// the 26.1 server jar (`--reports`), checked on the server on 2026-11-04.
+export const GAMERULES_26_1 = Object.freeze({
+    doDaylightCycle: 'advance_time',
+    doWeatherCycle: 'advance_weather',
+    doMobSpawning: 'spawn_mobs',
+    doInsomnia: 'spawn_phantoms',
+    doPatrolSpawning: 'spawn_patrols',
+    doTraderSpawning: 'spawn_wandering_traders',
+    doWardenSpawning: 'spawn_wardens',
+    randomTickSpeed: 'random_tick_speed',
+    announceAdvancements: 'show_advancement_messages',
+    doImmediateRespawn: 'immediate_respawn',
+    playersSleepingPercentage: 'players_sleeping_percentage',
+    mobGriefing: 'mob_griefing',
+    doFireTick: 'fire_spread_radius_around_player',
+    keepInventory: 'keep_inventory',
+    naturalRegeneration: 'natural_health_regeneration',
+    doTileDrops: 'block_drops',
+    doEntityDrops: 'entity_drops',
+    doMobLoot: 'mob_drops',
+    fallDamage: 'fall_damage',
+    fireDamage: 'fire_damage',
+    drowningDamage: 'drowning_damage',
+    freezeDamage: 'freeze_damage',
+    sendCommandFeedback: 'send_command_feedback',
+    showDeathMessages: 'show_death_messages',
+    spawnMonsters: 'spawn_monsters',
+});
+const FIRE_SPREAD_DEFAULT = '128';
+
+// A console command of the 1.21.8 scenarios in the words of 26.1; any other command as it is.
+export function consoleCommand26(cmd) {
+    const text = String(cmd);
+    const rule = /^gamerule\s+(?:minecraft:)?([A-Za-z]+)(?:\s+(\S+))?\s*$/.exec(text);
+    if (rule && Object.hasOwn(GAMERULES_26_1, rule[1])) {
+        let value = rule[2];
+        if (rule[1] === 'doFireTick' && value !== undefined) value = value === 'false' ? '0' : value === 'true' ? FIRE_SPREAD_DEFAULT : value;
+        return `gamerule ${GAMERULES_26_1[rule[1]]}${value === undefined ? '' : ' ' + value}`;
+    }
+    if (/^time\s+query\s+daytime\s*$/.test(text)) return 'time query minecraft:day';
+    return text;
+}
+
+// The line of the runner's summary that says the translation was in use: '' when nothing was rewritten.
+export function translationLine(count) {
+    if (!Number.isInteger(count) || count <= 0) return '';
+    return `console: ${count} ${count === 1 ? 'command' : 'commands'} of 1.21.8 translated`;
+}
+
+// An answer line of 26.1 in the words of 1.21.8, for the commands consoleCommand26 rewrote.
+export function answerLine26(line) {
+    const day = /^Timeline minecraft:day is at (-?\d+) tick\(s\)$/.exec(line);
+    return day ? `The time is ${day[1]}` : line;
+}
+
 const LINE_RE = /^\[(\d\d:\d\d:\d\d)\] \[([^\]]+)\/(\w+)\]: (.*)$/;
 
 export class McServer {
@@ -178,6 +298,7 @@ export class McServer {
         this.waiters = [];
         this.queue = Promise.resolve();
         this.markerCount = 0;
+        this.translated = 0; // console commands of 1.21.8 that consoleCommand26 rewrote (v0.1.4.14)
         this.startMs = null;
     }
 
@@ -252,7 +373,12 @@ export class McServer {
     commands(list, ms = 30000) {
         const run = async () => {
             if (!this.running) throw new Error('the server is not running');
-            const cmds = list.map((c) => String(c).replace(/^\//, ''));
+            const cmds = list.map((c) => {
+                const given = String(c).replace(/^\//, '');
+                const sent = consoleCommand26(given);
+                if (sent !== given) this.translated++;
+                return sent;
+            });
             for (const c of cmds) if (/[\r\n]/.test(c)) throw new Error('a console command must be one line: ' + JSON.stringify(c));
             const markers = cmds.map(() => `mcw_mark_${++this.markerCount}`);
             const from = this.lines.length;
@@ -269,7 +395,7 @@ export class McServer {
             for (const ml of markerLines) {
                 out.push(this.lines.slice(start, ml.n)
                     .filter((l) => !/^Unknown or incomplete command/.test(l.text) && !/^mcw_mark_\d+<--\[HERE\]$/.test(l.text))
-                    .map((l) => l.text));
+                    .map((l) => answerLine26(l.text)));
                 start = ml.n + 1;
             }
             return out;

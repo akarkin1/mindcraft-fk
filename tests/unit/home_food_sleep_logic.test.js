@@ -17,6 +17,8 @@ const item = (name, count = 1) => ({ name, count });
 
 const SPEC_BANNED = ['rotten_flesh', 'spider_eye', 'poisonous_potato', 'pufferfish', 'chicken', 'golden_apple',
     'enchanted_golden_apple', 'chorus_fruit', 'suspicious_stew'];
+// v0.1.4.14 (part D, SPEC 4.3): the plugin also gets the four fish buckets of 26.1 banned: a bucket is never food
+const PLUGIN_BANNED = [...SPEC_BANNED, 'cod_bucket', 'salmon_bucket', 'pufferfish_bucket', 'tropical_fish_bucket'];
 
 // The defaults of mineflayer-auto-eat 3.3.6 (dist/index.js).
 const PLUGIN_DEFAULTS = Object.freeze({
@@ -72,7 +74,7 @@ describe('food_logic: autoEatOptions', () => {
         assert.equal(opts.equipOldItem, true);
         assert.equal(opts.checkOnItemPickup, true);
         assert.equal(opts.ignoreInventoryCheck, false);
-        assert.deepEqual([...opts.bannedFood].sort(), [...SPEC_BANNED].sort());
+        assert.deepEqual([...opts.bannedFood].sort(), [...PLUGIN_BANNED].sort());
         assert.deepEqual(current.bannedFood, PLUGIN_DEFAULTS.bannedFood, 'the current object is not changed');
         assert.equal(current.priority, 'saturation');
     });
@@ -107,7 +109,7 @@ describe('food_logic: autoEatOptions', () => {
         assert.equal(opts.offhand, false);
         const bad = F.autoEatOptions({ ...PLUGIN_DEFAULTS, eatingTimeout: -1, bannedFood: 'none' });
         assert.equal(bad.eatingTimeout, 3000);
-        assert.deepEqual([...bad.bannedFood].sort(), [...SPEC_BANNED].sort());
+        assert.deepEqual([...bad.bannedFood].sort(), [...PLUGIN_BANNED].sort());
     });
 });
 

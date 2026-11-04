@@ -110,7 +110,10 @@ describe('pickaxes', () => {
         assert.equal(T.pickaxeMaterial('iron_pickaxe'), 'iron');
         assert.equal(T.pickaxeMaterial('minecraft:netherite_pickaxe'), 'netherite');
         assert.equal(T.pickaxeMaterial('iron_axe'), null);
-        assert.equal(T.pickaxeMaterial('copper_pickaxe'), null);
+        // v0.1.4.14 (part D, SPEC 4.3): copper is a pickaxe material of tier 1 (as stone) with 190 uses
+        assert.equal(T.pickaxeMaterial('copper_pickaxe'), 'copper');
+        assert.equal(T.PICKAXE_LEVELS.copper, 1);
+        assert.equal(T.PICKAXE_USES.copper, 190);
         assert.equal(T.pickaxeMaterial(null), null);
         assert.equal(T.pickaxeIsEnough('diamond', 'iron'), true);
         assert.equal(T.pickaxeIsEnough('iron', 'iron'), true);

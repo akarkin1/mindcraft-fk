@@ -5,6 +5,10 @@ import { describe, test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { loadSrc } from '../helpers/load.js';
 import { makeWorld, makeMiningBot, makeClock, makeCtx, give, count } from './mining_fake_bot.test.js';
+import { MC } from '../helpers/xt_bot.js';
+
+// The ids come from the registry by name (v0.1.4.14, spec rule 26): they moved between 1.21.8 and 26.1.
+const ITEM = (name) => MC.itemsByName[name].id;
 
 const D = await loadSrc('src/agent/packs/mining/dig.js');
 const T = await loadSrc('src/agent/packs/mining/texts.js');
@@ -53,10 +57,16 @@ describe('P2: the wear rule, pure', () => {
     });
 
     test('fitsBlock: the harvest tools of the block', () => {
-        assert.equal(D.fitsBlock({ name: 'stone' }, { type: 1 }), true, 'no harvest tools: any tool');
-        assert.equal(D.fitsBlock({ name: 'diamond_ore', harvestTools: { 721: true, 757: true } }, { type: 721 }), true);
-        assert.equal(D.fitsBlock({ name: 'diamond_ore', harvestTools: { 721: true } }, { type: 3 }), false);
-        assert.equal(D.fitsBlock({ name: 'diamond_ore', harvestTools: { 721: true } }, {}), false);
+        const iron = ITEM('iron_pickaxe');
+        const diamond = ITEM('diamond_pickaxe');
+        const ironOnly = { [iron]: true };
+        assert.equal(D.fitsBlock({ name: 'stone' }, { type: ITEM('stone') }), true, 'no harvest tools: any tool');
+        assert.equal(D.fitsBlock({ name: 'diamond_ore', harvestTools: { [iron]: true, [diamond]: true } }, { type: iron }), true);
+        assert.equal(D.fitsBlock({ name: 'diamond_ore', harvestTools: ironOnly }, { type: ITEM('wooden_pickaxe') }), false);
+        assert.equal(D.fitsBlock({ name: 'diamond_ore', harvestTools: ironOnly }, {}), false);
+        const ore = MC.blocksByName.diamond_ore;
+        assert.equal(D.fitsBlock(ore, { type: iron }), true, 'the harvest tools of 26.1: an iron pickaxe digs diamond ore');
+        assert.equal(D.fitsBlock(ore, { type: ITEM('stone_pickaxe') }), false, 'a stone pickaxe does not');
     });
 
     test('the two texts of the spec, word for word', () => {

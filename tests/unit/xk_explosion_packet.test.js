@@ -3,8 +3,9 @@
 // minecraft-data 3.98.0 read it as three floats (vec3f). The second float was the low mantissa word of the x double, now
 // and then a number like 5.2e14, which mineflayer added to the velocity of the bot; the next physics tick then walked a
 // bounding box 5.2e14 blocks high, block by block, in one synchronous call, until the heap was gone. The correction is
-// the one of minecraft-data 3.117.0 (vec3f64), applied to the pinned 3.98.0 through patches/minecraft-data+3.98.0.patch.
-//   - the definition of the packet says vec3f64 (the patch is applied);
+// the one of minecraft-data 3.117.0 (vec3f64). It was applied to the pinned 3.98.0 through a patch; since v0.1.4.14
+// (minecraft-data 3.119.0) the doubles are upstream and the patch is dropped.
+//   - the definition of the packet says vec3f64 (upstream since 3.117.0);
 //   - a packet as the server writes it is read whole, with the knockback's doubles exact; without knockback too;
 //   - the velocity mineflayer adds from such a packet is finite and small.
 import { describe, test } from 'node:test';
@@ -40,7 +41,7 @@ function explosionPacket(knockback) {
 }
 
 describe('K: the player knockback of the explosion packet is three doubles', () => {
-    test('the definition of minecraft-data for 1.21.8 says vec3f64 (patches/minecraft-data+3.98.0.patch)', () => {
+    test('the definition of minecraft-data for 1.21.8 says vec3f64 (upstream since minecraft-data 3.117.0)', () => {
         const field = mcData.protocol.play.toClient.types.packet_explosion[1].find((f) => f.name === 'playerKnockback');
         assert.deepEqual(field.type, ['option', 'vec3f64']);
         assert.deepEqual(mcData.protocol.types.vec3f64[1].map((f) => f.type), ['f64', 'f64', 'f64']);

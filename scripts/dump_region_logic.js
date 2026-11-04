@@ -14,7 +14,7 @@ export const MAX_RADIUS = 48;
 export const DEFAULT_WAIT_S = 60;
 export const MIN_Y = -64;
 export const MAX_Y = 319;
-export const MC_VERSION = '1.21.8';
+export const MC_VERSION = '26.1';
 
 // facing, half and open (the spec), and the properties without which a block is rebuilt wrong: the hinge of a
 // door, the part of a bed, the type of a slab or a double chest, the axis of a log, the shape of stairs.

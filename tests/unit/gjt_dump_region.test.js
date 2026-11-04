@@ -151,7 +151,7 @@ describe('main of the script with a fake bot', () => {
         return { code, out: out.join('\n'), files, bot: created };
     };
 
-    test('reads the box, writes the dump without air, prints the table, quits; offline mode, version 1.21.8', async () => {
+    test('reads the box, writes the dump without air, prints the table, quits; offline mode, version 26.1', async () => {
         const { code, out, files, bot } = await run(['--port', '25599', '--center', '0', '60', '0', '--radius', '2', '--out', 'd.json']);
         assert.equal(code, 0);
         assert.deepEqual(Object.keys(files), ['d.json']);
@@ -165,7 +165,7 @@ describe('main of the script with a fake bot', () => {
         });
         assert.match(out, /^\| \(-2, 58, -2\) to \(2, 62, 2\) \| 125 \| 4 \| 121 \| 0 \| 3 \| 0 \| 0 \| 2 \| 0 \| 1 \| d\.json \|$/m);
         assert.equal(bot.quitCalls, 1);
-        assert.deepEqual({ ...bot.options }, { host: '127.0.0.1', port: 25599, username: 'region_dump', auth: 'offline', version: '1.21.8', hideErrors: true, checkTimeoutInterval: 60000 });
+        assert.deepEqual({ ...bot.options }, { host: '127.0.0.1', port: 25599, username: 'region_dump', auth: 'offline', version: '26.1', hideErrors: true, checkTimeoutInterval: 60000 });
     });
 
     test('chunks that stay unloaded: no file, one line with where the bot stands, exit 1', async () => {

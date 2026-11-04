@@ -87,13 +87,15 @@ function countIn(inventory, names) {
  * iron ingots when the ore needs iron, and for an ore that needs only stone only when the bag holds more than 20 iron
  * ingots and too little cobblestone for a stone one; diamond only for an ore that needs diamond, never for one that
  * needs less. null when the bag holds nothing to craft one from. Sticks and the crafting table are the business of
- * ensureTool.
- * @param {string} need wooden, stone, iron or diamond
+ * ensureTool. v0.1.4.14 (part D): never copper. A copper pickaxe mines what a stone one mines, but stone from
+ * cobblestone is cheaper; a copper pickaxe the bag holds is used as one of tier 1 (usablePickaxes). A need of `copper`
+ * is the need of stone.
+ * @param {string} need wooden, stone, copper, iron or diamond
  * @param {{name: string, count: number}[]} inventory
  * @returns {'stone'|'iron'|'diamond'|null}
  */
 export function pickaxeToCraft(need, inventory) {
-    const level = { wooden: 0, golden: 0, stone: 1, iron: 2, diamond: 3 }[need];
+    const level = { wooden: 0, golden: 0, stone: 1, copper: 1, iron: 2, diamond: 3 }[need];
     if (level === undefined) {
         return null;
     }

@@ -18,7 +18,7 @@ import { createBlockWorld } from './block_world.js';
 
 register('./mcdata_hooks.js', import.meta.url);
 
-export const REGISTRY = minecraftData('1.21.8');
+export const REGISTRY = minecraftData('26.1');
 const Block = prismarineBlock(REGISTRY);
 
 /** All modes off: the profile turns on only the modes a test names. */
@@ -107,7 +107,7 @@ let nextId = 1000;
  * The fake bot. `bot.gotoImpl(goal)` decides every walk of the path finder (default: the bot stays
  * where it is). setGoal(null) rejects a running walk with GoalChanged.
  * @param {{world?: object, pos?: number[], realBlocks?: boolean}} [options]
- *   realBlocks: blockAt gives prismarine blocks of 1.21.8 (default state), for the Movements of the
+ *   realBlocks: blockAt gives prismarine blocks of 26.1 (default state), for the Movements of the
  *   path finder and block.canHarvest; else plain objects { name, position, boundingBox }.
  */
 export function makeFakeBot({ world = createBlockWorld().flatGround(63), pos = [0.5, 64, 0.5], realBlocks = false } = {}) {

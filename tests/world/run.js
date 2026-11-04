@@ -1,9 +1,11 @@
 // World test runner of releases v0.1.4.6 and v0.1.4.7 (`npm run test:world`): tests on a REAL
 // Minecraft server.
 //
-// One server process per world type: the official Minecraft 1.21.8 server from MC_TEST_SERVER_DIR
-// (default %LOCALAPPDATA%\Mindcraft\test-server) with the Java of MC_TEST_JAVA (default: the Java 21 of
-// the Minecraft launcher). It runs on 127.0.0.1, port 25599 or the next free one, offline mode, in a
+// One server process per world type: the official Minecraft 26.1 server (v0.1.4.14; 1.21.8 before) from
+// MC_TEST_SERVER_DIR (default %LOCALAPPDATA%\Mindcraft\test-server) with the Java 25 of MC_TEST_JAVA (default:
+// the Java of the Minecraft launcher, java-runtime-epsilon, else the JRE of `get_test_server.js --jdk` in
+// <dir>/jdk/). A Java below 25 is refused with one line and exit 1 (mc_server.js, chooseJava). It runs on
+// 127.0.0.1, port 25599 or the next free one, offline mode, in a
 // fresh temp directory (os.tmpdir()/mc-world-*) that is removed at the end. The server folder is only
 // read. Without server or Java: "World tests skipped: no test server found.", exit 0.
 // World types (mc_server.js): `flat`, the default flat world with the ground at y -61, for the
@@ -42,7 +44,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
-    locateServer, McServer, findFreePort, killPid, pidAlive, OWNER_PORT, WORLD_TYPES, worldProperties, worldProbes,
+    locateServer, McServer, findFreePort, killPid, pidAlive, OWNER_PORT, WORLD_TYPES, worldProperties, worldProbes, translationLine,
 } from './mc_server.js';
 
 const WORLD_DIR = path.dirname(fileURLToPath(import.meta.url));
@@ -218,6 +220,10 @@ const logDir = process.env.MCW_LOG_DIR ? path.resolve(process.env.MCW_LOG_DIR) :
 const profile = (process.env.MCW_PROFILE || '').trim();
 
 const loc = locateServer();
+if (loc.refused) {
+    console.log(loc.refused);
+    process.exit(1);
+}
 if (loc.missing) {
     console.log('World tests skipped: no test server found.');
     console.log(`  (missing: ${loc.missing}; set MC_TEST_SERVER_DIR and MC_TEST_JAVA)`);
@@ -335,11 +341,14 @@ const controlUrl = `http://127.0.0.1:${control.address().port}`;
 
 // The world state every scenario starts from; a scenario changes what it needs in its region.
 const WORLD_DEFAULTS = [
-    'gamerule doDaylightCycle false', 'gamerule doWeatherCycle false', 'weather clear',
-    'gamerule doMobSpawning false', 'gamerule doInsomnia false', 'gamerule doPatrolSpawning false',
-    'gamerule doTraderSpawning false', 'gamerule randomTickSpeed 0', 'gamerule announceAdvancements false',
-    'gamerule doImmediateRespawn true', 'gamerule playersSleepingPercentage 100',
-    'gamerule doFireTick false', 'gamerule mobGriefing true',
+    // the game rules by their names of 26.1 (1.21.8: doDaylightCycle, doWeatherCycle, doMobSpawning, doInsomnia,
+    // doPatrolSpawning, doTraderSpawning, randomTickSpeed, announceAdvancements, doImmediateRespawn,
+    // playersSleepingPercentage, doFireTick false, mobGriefing; mc_server.js GAMERULES_26_1)
+    'gamerule advance_time false', 'gamerule advance_weather false', 'weather clear',
+    'gamerule spawn_mobs false', 'gamerule spawn_phantoms false', 'gamerule spawn_patrols false',
+    'gamerule spawn_wandering_traders false', 'gamerule random_tick_speed 0', 'gamerule show_advancement_messages false',
+    'gamerule immediate_respawn true', 'gamerule players_sleeping_percentage 100',
+    'gamerule fire_spread_radius_around_player 0', 'gamerule mob_griefing true',
     'difficulty peaceful', 'time set 6000',
 ];
 
@@ -579,6 +588,10 @@ if (JSON.stringify(serverFolderAfter) !== JSON.stringify(serverFolderBefore)) {
 }
 for (const p of hygieneProblems) console.log(`FAIL hygiene: ${p}`);
 if (!hygieneProblems.length) console.log(`hygiene: no server process left (pid ${servers.map((s) => s.pid).join(', ')} ended), no ${TMP_PREFIX}* temp directory left, repository bots/ unchanged, server folder unchanged (logs not compared)`);
+
+// v0.1.4.14: how many console commands of the 1.21.8 scenarios were spoken in the words of 26.1 (mc_server.js)
+const consoleLine = translationLine(servers.reduce((n, s) => n + (s.translated ?? 0), 0));
+if (consoleLine) console.log(consoleLine);
 
 const failed = outcomes.filter((o) => !o.pass);
 const total = ((Date.now() - tStart) / 1000).toFixed(1);
