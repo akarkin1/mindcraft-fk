@@ -33,11 +33,18 @@ signatures, no new dependency beyond section 4.1, the watch token never printed)
 | A copper chest is a chest for the index, the supplies and `look` | W121 part B |
 | The food choice on 26.1 picks the cooked beef over bread, never a fish bucket | W121 part C, unit tests of part D |
 | The creeper scenario passes without the dropped explosion patch | W47 `creeper_in_sight`, twice |
+| With `new_things_in_prompt` on and a copper pickaxe in the bag, the chat prompt names what it is; with a spear in the owner's line, what a spear is; with nothing new near, nothing | W121 part D, unit tests of part K |
 | Nothing regressed | the 30 journeys, the 12 of v0.1.4.13, the full set, all on 26.1 |
 
 ## 2. Settings
 
-None.
+One new key in `settings.js` and `src/mindcraft/public/settings_spec.json`, in the style of `knowledge_in_prompt`:
+
+| Key | Default | Type | Part | Meaning |
+|---|---|---|---|---|
+| `new_things_in_prompt` | `false` | bool | K | The prompt names the things of 1.21.9 to 26.1 that are present, one sentence each |
+
+The upgrade and the corrections of data have no switch.
 
 ## 3. Parts, owners, files
 
@@ -46,6 +53,7 @@ None.
 | L The libraries, the patches, Node 22 | E1 | `package.json`, `package-lock.json`, `patches/*`, `start-claude.ps1`, `start-gpt.ps1`, `CLAUDE.md` (the Node lines), `docs/SUPERVISOR.md` and `.claude/skills/supervise/SKILL.md` (the `fnm` lines only), `src/agent/agent.js` (the `player_loaded` send only, 4.2) | 1 |
 | D The data of 26.1 | E2 | `src/agent/packs/mining/ore_table.js`, `mine_logic.js` (`PICKAXE_MATERIAL_ITEMS`), `supply_logic.js` (`pickaxeToCraft`: copper), `texts.js` (`materialWord`), `src/agent/packs/storage/storage_logic.js` (`CONTAINER_KINDS`), `src/agent/watch/look_logic.js` (`CHEST_BLOCKS`), `src/agent/packs/home/food_logic.js` (`VANILLA_FOODS`, `isEdibleFood`), `food.js`, `src/utils/mcdata.js` (only if a name is pinned there); `tests/unit/xd_*.test.js` | 1 |
 | T The test setup on 26.1 | E3 | `scripts/get_test_server.js`, `get_test_server_logic.js`, `scripts/dump_region_logic.js`, `tests/world/mc_server.js`, `tests/world/helpers.js` (the version of the player bot), `tests/world/run.js`, `tests/world/README.md`, `tests/e2e/fake_server.js`, `tests/e2e/helpers.js`, `tests/e2e/run.js`, `tests/helpers/xt_bot.js`, `tests/helpers/st_modes_env.js`, `tests/helpers/st_glue_env.js`, `tests/play/run.js`; the unit tests that hold a literal id (rule 26); `tests/unit/xe_*.test.js` | 1 |
+| K What the model does not know | E2 | new `src/agent/knowledge/new_things.js` (the table and the pure selection), `src/agent/knowledge/knowledge_text.js` (the lines in the block), `src/models/prompter.js` (the input of the lines, after the knowledge block), `settings.js` and `settings_spec.json` for `new_things_in_prompt`, `tests/unit/gjg_prompt.test.js` and the other prompt-size tests (the budget, 4.7); `tests/unit/xk_*.test.js` | 1 |
 | TW The journey W121 | T3 | `tests/world/w121_copper_age.js`, `tests/world/run.js` (the row and the group), `tests/world/README.md` (the row) | 1, written before the build, fails on the old code (a copper pickaxe does not exist in 1.21.8) |
 | TU Unit tests from the spec | T1 | `tests/unit/xt26_*.test.js` | 2 |
 | G Glue | lead | `CHANGELOG.md`, `docs/`, the merge of the parts, the gate | every round |
@@ -202,12 +210,65 @@ cannot be given (no `copper_pickaxe`, no `copper_chest` in 1.21.8), which the sc
   `Chests:`.
 - **C. The food choice.** The bag holds 3 bread and 3 cooked_beef, and a `cod_bucket`; the bot's food is set
   to 4. Within 30 s the bot ate cooked beef (its count fell to 2, the bread stays 3, the bucket stays).
+- **D. What the model does not know** (`new_things_in_prompt` on). With the copper pickaxe of part A in the
+  bag, the chat prompt of the fake model (recorded by the harness) holds
+  `NEW SINCE 1.21.8 (true, even if you do not know it):` and the copper tools line. The player says "make me
+  a spear": the next prompt holds the spear line; the fake model answers `!craftRecipe("stone_spear", 1)`
+  and the bag holds a `stone_spear` (server). With the pickaxe stored and nothing new near, the next prompt
+  holds no `NEW SINCE` header.
 - Throughout: the process lives, no request reached a real model, the server log holds no
   `Unknown packet` or disconnect of the bot.
 
+### 4.7 Part K: what the model does not know
+
+The chat model (Claude Haiku 4.5 in the owner's profile) was trained before 1.21.9; it does not know the
+things of PLAN section 4b and says "I don't know" or picks a wrong name. The data knows them (26.1 of
+minecraft-data), so every command works once the model names the thing.
+
+**The table.** `src/agent/knowledge/new_things.js` exports `NEW_THINGS`: a frozen list of entries
+`{ names: [...], since: '1.21.9' | '1.21.11' | '26.1', line: '...' }`, one entry per thing, the names as the
+registry spells them (items, blocks, entities, effects; a wood or copper variant lists every variant). The
+lines, word for word:
+
+| names | line |
+|---|---|
+| copper_pickaxe, copper_axe, copper_shovel, copper_hoe, copper_sword, copper_nugget, copper_helmet, copper_chestplate, copper_leggings, copper_boots | `Copper tools and armour exist since 1.21.9: like stone but faster, 190 uses, from copper ingots; a copper pickaxe mines iron, copper and lapis, not diamond or gold.` |
+| copper_chest and its 7 variants | `A copper chest is a chest with 27 slots; it oxidizes unless waxed; a copper golem takes items out of it.` |
+| copper_golem, copper_golem_statue and its variants | `A copper golem sorts items: it carries up to 16 from a copper chest into a chest that is empty or holds that kind, within 32 blocks; a pumpkin on a copper block spawns one.` |
+| the 12 shelves | `A shelf holds 3 item stacks; using a slot swaps it with the item in hand. It is not a chest.` |
+| copper_torch, copper_wall_torch, copper_lantern, copper_bars, copper_chain, iron_chain and the oxidized and waxed variants | `Copper torches, lanterns, bars and chains work like the iron ones; the chain is called iron_chain now.` |
+| the 7 spears | `A spear is a weapon with long reach since 1.21.11: a quick jab or a charge while running; wood to netherite; it breaks no blocks.` |
+| parched | `A parched is a desert skeleton that does not burn in sunlight and shoots arrows of weakness.` |
+| camel_husk | `A camel husk is an undead camel; with its husk and parched riders it is hostile, without them harmless.` |
+| nautilus, zombie_nautilus | `A nautilus is a neutral ocean mob that dashes when hit and is tamed with pufferfish; a zombie nautilus carries a drowned with a trident.` |
+| zombie_horse | `Zombie horses spawn at night with a zombie rider that holds a spear.` |
+| golden_dandelion | `A golden dandelion, used on a baby animal, stops it from growing; used again, it grows.` |
+| name_tag | `A name tag is crafted from 1 paper and 1 nugget of any metal since 26.1.` |
+| mannequin | `A mannequin is a player-shaped figure placed by command, not a mob.` |
+| breath_of_the_nautilus (effect) | `Breath of the nautilus pauses the use of air under water.` |
+
+**The selection**, pure: `newThingLines({ inventory, near, lines, limit })` returns at most `limit` (3)
+lines, each once, in this order: a thing in the bag (`inventory`: names), a thing in view (`near`: the
+names of blocks within 8 blocks and entities within 16, from the look scan of the watch server's
+`look_logic.js` reused as a reader, no model call), a thing a line of the owner or of the model names
+(`lines`: the last 3 chat lines and the last command text; a name matches as a whole word, with spaces or
+underscores, singular or plural: "copper pickaxe", "spears", "shelf"). Nothing matches: an empty list.
+
+**The prompt.** With `new_things_in_prompt` on, the lines follow the knowledge block (after its last line,
+or alone when the block is off), headed `NEW SINCE 1.21.8 (true, even if you do not know it):`. The block
+is at most 3 lines and 360 characters. The prompt-size tests (`gjg_prompt` and the others that hold
+17,000) allow 17,400 characters with every switch on, a block of 600 and these 3 lines: the lead's
+decision, recorded here, since the budget of v0.1.4.13 had 13 characters left. With the switch off nothing
+changes in the prompt and the old limits hold.
+
+**Unit tests** `xk_*.test.js`: every name of the table is in the 26.1 registry (items, blocks, entities or
+effects) and none in 1.21.8's except `name_tag`, `zombie_horse` and `mannequin` (which existed, and changed);
+the selection by bag, by view, by line, the order, the limit, the whole-word match ("copper" alone matches
+nothing); the prompt holds the header and the lines with the switch on and nothing with it off; the sizes.
+
 ### 4.6 Texts
 
-No new text. The worn and spare texts of the mining take the pickaxe's name as today, so
+No new text of the bot. The worn and spare texts of the mining take the pickaxe's name as today, so
 `My copper_pickaxe is nearly worn: 9 uses left. I take my spare one.` comes from the existing text.
 
 ## 5. Order of work

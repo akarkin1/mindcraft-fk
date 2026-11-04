@@ -37,7 +37,7 @@ setup, the data tables), and the move is a smaller release.
 | Your client | 1.21.8 | 26.1 | Select 26.1 in the launcher |
 | Settings, profiles, memory, `bots/` | | unchanged | Nothing |
 
-New settings: none. This release is an upgrade with corrections of data; nothing needs a switch.
+New setting: `new_things_in_prompt` (off), section 4b. The rest is an upgrade with corrections of data and needs no switch.
 
 ## 4. What 26.1 brings that the bot must know
 
@@ -52,6 +52,31 @@ From the data of minecraft-data 3.119.0, 1.21.8 against 26.1:
 | New mobs: `parched` (hostile), copper golem, nautilus, zombie nautilus, camel husk, mannequin | self-defence, the shelter rule | Nothing: the bot reads "hostile" from the data's category |
 | The food table: minecraft-data corrected the saturation values (an apple: 2.4, not 19.2); four fish buckets are listed as foods | the food choice, the fallback table | The fallback table is regenerated from 26.1; a bucket is never food |
 | 946 of 1,105 block ids and 1,185 of 1,416 item ids moved | nothing in the bot (it works by name); the unit tests that hold an id | The tests take ids from the registry by name |
+
+## 4b. What the model does not know
+
+The four releases between 1.21.8 and 26.1, from Mojang's notes (bug fixes left out):
+
+| Release | Date | What a player meets |
+|---|---|---|
+| 1.21.9 "The Copper Age" | 2025-09-30 | Copper tools, weapons and armour (like stone, faster, 190 uses, from copper ingots); the copper chest (oxidizes, can be waxed); the copper golem, spawned with a pumpkin on a copper block, which carries items from copper chests into chests that are empty or hold the same kind, 16 at a time, within 32 blocks; shelves of 12 woods (3 item slots, swap with the hand; not a chest); copper torch, lantern, bars and chain; `chain` renamed to iron chain; lightning rods oxidize; mobs can spawn with copper armour; the End flashes; the server management protocol and the code of conduct |
+| 1.21.10 | 2025-10-07 | Bug fixes |
+| 1.21.11 "Mounts of Mayhem" | 2025-12-09 | The spear in wood, stone, copper, iron, gold, diamond and netherite (a jab or a charge, long reach, no block breaking); the nautilus (neutral, in every ocean, tamed with pufferfish) and the zombie nautilus with a drowned rider; nautilus armour; the parched, a desert skeleton that does not burn in sunlight and shoots arrows of weakness; the camel husk, an undead camel with a husk and a parched on it; zombie horses spawn at night with a zombie rider holding a spear; horses, camels and the like no longer sink when ridden; the effect "breath of the nautilus" |
+| 26.1 "Tiny Takeover" | 2026-03-24 | New looks and sounds for baby animals; the golden dandelion, which stops a baby animal from growing; name tags craftable from 1 paper and 1 metal nugget, and no longer in librarian trades or mansion chests; stone and deepslate cut straight to their cobbled kinds in the stonecutter; villager trades follow the world seed; the game takes 4 GB by default; worlds are upgraded on opening |
+
+The bot's chat model, Claude Haiku 4.5, was trained before all of these, as far as we know (Luna too, until
+proven otherwise). The commands work by the data (`!craftRecipe("copper_pickaxe", 1)` crafts one), but the
+model that chooses the command does not know the thing exists, what it is for, or that `chain` is
+`iron_chain` now, and says so. What we do:
+
+- A table of the new things, one plain sentence each with numbers, in the code (part K).
+- The prompt gets the sentences for the things that are present: in the bag, in view, in your last lines, or
+  in a command the model just wrote. At most 3 sentences, so the prompt stays within its budget. Nothing when
+  nothing new is near.
+- Behind the switch `new_things_in_prompt` (off by default, as every new behaviour; on in your play).
+
+Shelves, the copper golem's sorting, spears and the new mounts are known, not used: no skill of the bot
+builds on them in this release.
 
 ## 5. The libraries and the patches
 
@@ -76,8 +101,9 @@ are re-applied on the new code). The test-applied details are in SPEC 4.2.
 | L: the libraries, the patches, Node 22 | 1 |
 | D: the data of 26.1 in the bot's tables | 0.5 |
 | T: the test setup on 26.1 (server, Java 25, the simulated server, the fixtures) | 1 |
+| K: what the model does not know, in the prompt | 0.5 |
 | The gate: unit, end-to-end and every world scenario on a 26.1 server, and the fix round | 1 to 1.5 |
-| **Total** | **3.5 to 4** |
+| **Total** | **4 to 4.5** |
 
 The uncertainty is in the gate: the path search patch (919 lines on a library from 2023) has never run
 against the blocks and the physics of 26.1, and the simulated server of the end-to-end tests speaks the
