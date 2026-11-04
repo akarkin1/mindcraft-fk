@@ -27,36 +27,36 @@ index 82e85ff..a507593 100644
      for (const type of allowedWindowTypes) {
        if (window.type.startsWith(type)) return true
 diff --git a/node_modules/mineflayer/lib/plugins/craft.js b/node_modules/mineflayer/lib/plugins/craft.js
-index fb2766a..f4c676d 100644
+index fb2766a..e202aaa 100644
 --- a/node_modules/mineflayer/lib/plugins/craft.js
 +++ b/node_modules/mineflayer/lib/plugins/craft.js
-@@ -15,9 +15,15 @@ function inject (bot) {
+@@ -15,9 +15,17 @@ function inject (bot) {
        throw new Error('Recipe requires craftingTable, but one was not supplied: ' + JSON.stringify(recipe))
      }
  
-+    // v0.1.4.14 (Mindcraft fork): on 26.1 a table craft of several resolved before the server's correction, and the
-+    // server could make fewer than asked. A table craft of more than one now takes the server's state of the window
-+    // after each unit and lets its slots settle before the next one, then checks the count it made.
-+    const perUnit = Boolean(craftingTable) && count > 1
-+    const resultBefore = perUnit ? bot.inventory.count(recipe.result.id, recipe.result.metadata) : 0
++    // v0.1.4.14 (Mindcraft fork): on 26.1 a craft could resolve before the server's correction (at the table a craft of
++    // several, and under load a craft of one; in the 2x2 grid of the inventory right after a closed furnace window, whose
++    // cause, the stale stateId of the closed container, inventory.js now handles), and the server could make fewer than
++    // asked. Every craft, at the table and in the 2x2 grid, takes the server's state of the window it used (the table's,
++    // or the inventory's) after each unit and lets its slots settle, then lets bot.inventory settle and checks the count
++    // it made.
++    const resultBefore = bot.inventory.count(recipe.result.id, recipe.result.metadata)
      try {
        for (let i = 0; i < count; i++) {
          await craftOnce(recipe, craftingTable)
-+        if (perUnit && windowCraftingTable) await settleUnit(windowCraftingTable)
++        await settleUnit(craftingTable ? windowCraftingTable : bot.inventory)
        }
  
        if (windowCraftingTable) {
-@@ -27,6 +33,14 @@ function inject (bot) {
+@@ -27,6 +35,12 @@ function inject (bot) {
          await bot.closeWindow(windowCraftingTable)
          windowCraftingTable = undefined
        }
-+      if (perUnit) {
-+        await settle(bot.inventory)
-+        const made = Math.floor((bot.inventory.count(recipe.result.id, recipe.result.metadata) - resultBefore) / recipe.result.count)
-+        // fewer than asked while the ingredients for one more are there: the truth for the caller; gone: a real shortage
-+        if (made < count && requirementsMetForRecipe(recipe, 1, craftingTable)) {
-+          throw new Error(`missing ingredient: crafted ${made} of ${count}`)
-+        }
++      await settle(bot.inventory)
++      const made = Math.floor((bot.inventory.count(recipe.result.id, recipe.result.metadata) - resultBefore) / recipe.result.count)
++      // fewer than asked while the ingredients for one more are there: the truth for the caller; gone: a real shortage
++      if (made < count && requirementsMetForRecipe(recipe, 1, craftingTable)) {
++        throw new Error(`missing ingredient: crafted ${made} of ${count}`)
 +      }
      } catch (err) {
        if (windowCraftingTable) {
@@ -134,6 +134,35 @@ index 9fcb6f9..268556d 100644
    })
  
    bot._client.on('entity_destroy', (packet) => {
+diff --git a/node_modules/mineflayer/lib/plugins/inventory.js b/node_modules/mineflayer/lib/plugins/inventory.js
+index bab0eef..3f89618 100644
+--- a/node_modules/mineflayer/lib/plugins/inventory.js
++++ b/node_modules/mineflayer/lib/plugins/inventory.js
+@@ -31,8 +31,9 @@ function inject (bot, { hideErrors }) {
+ 
+   let nextActionNumber = 0 // < 1.17
+   let stateId = -1
++  let stateWindowId = null // v0.1.4.14: the window whose packet set stateId
+   if (bot.supportFeature('stateIdUsed')) {
+-    const listener = packet => { stateId = packet.stateId }
++    const listener = packet => { stateId = packet.stateId; stateWindowId = packet.windowId }
+     bot._client.on('window_items', listener)
+     bot._client.on('set_slot', listener)
+   }
+@@ -579,6 +580,13 @@ function inject (bot, { hideErrors }) {
+       }
+     }
+     const window = bot.currentWindow || bot.inventory
++    // v0.1.4.14 (Mindcraft fork): stateId is one for all windows. After a container closed it still held the container's,
++    // and on 26.1 the first clicks on the inventory with it were dropped or applied out of order (a craft in the 2x2 grid
++    // right after a closed furnace left the planks on the cursor). A click on another window than the one of the last
++    // stateId first fetches that window's state (at most 1 s).
++    if (bot.supportFeature('stateIdUsed') && stateWindowId !== window.id) {
++      await withTimeout(syncWindow(window), 1000).catch(() => {})
++    }
+ 
+     assert.ok(mode >= 0 && mode <= 6)
+     const actionId = createActionNumber()
 diff --git a/node_modules/mineflayer/lib/plugins/physics.js b/node_modules/mineflayer/lib/plugins/physics.js
 index bd36f96..25499bb 100644
 --- a/node_modules/mineflayer/lib/plugins/physics.js
