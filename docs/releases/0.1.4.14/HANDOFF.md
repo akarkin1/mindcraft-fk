@@ -94,3 +94,36 @@ server with the Temurin JRE, after the reinstall with the new patches.
   of 4.9; and moves the unit files that load `'1.21.8'` to the 26.1 registry where the test is about the bot's
   data (a test about the history of 1.21.8 keeps its version with a comment).
 - The lead runs `journeys journeys13 copper_age creeper_in_sight` on 26.1 twice (SPEC 6).
+
+## Round 2 (commit 4bd2780): the tests from the spec, W121, the first gate run and its fixes
+
+### T1: the tests from the spec and the registry sweep
+
+| Gives | Where | Note |
+|---|---|---|
+| `xt26_libraries` (4.1, 4.2), `xt26_data` (4.3), `xt26_setup` (4.4), `xt26_new_things` (4.7, reads SPEC.md), `xt26_model` (4.9), `xt26_rules` (25 to 27) | `tests/unit/` | Each describe names its spec section; `xt26_data` found the path finder's copper chests (R2-1) |
+| `TEST_MC_VERSION` (`'26.1'`) | `tests/helpers/load.js` | 46 unit files load the registry through it (R2-3); the files that compare the versions keep `'1.21.8'` with a comment |
+
+### T3: W121 "the Copper Age"
+
+`tests/world/w121_copper_age.js`, registered as `copper_age` (base world, 1200 s, no group). Parts A to E of SPEC
+4.5 as corrected in R2-5. Passes twice on the real server with the chest fix (R2-4); the numbers: 6 raw_iron in
+24 s with the copper pickaxe worn to exactly 10 uses and a stone spare made from 3 cobblestone; 8 bread taken from
+the copper chest at (401, 41, 2); the beef eaten first at food 4, the bread and the cod bucket kept; the prompt block
+with the copper line, then with the spear line, then without; a hit moves the bot 1.1 to 2.0 blocks; iron ore in
+about 770 ms with the iron pickaxe.
+
+### The fixes of the first gate run (the lead's runs: journeys 27 of 30; `sleep`, `spawn_and_bed`, `copper_age`)
+
+| Finding | Fix | Where |
+|---|---|---|
+| The path finder let the bot stand on or break a copper chest (R2-1) | the 8 names in `noStandNames` and `blocksCantBreak` | `patches/mineflayer-pathfinder+2.4.5.patch` (E1) |
+| The bot could not open a copper chest (R2-4) | the 8 names in `allowedWindowTypes` of `chest.js`; `xl_copper_chest_window` | `patches/mineflayer+4.39.0.patch` (E1) |
+| The explosion event never fired: the packet of 26.1 has `center` (R2-8) | `explosionCenter(packet)` of `events_logic.js`, both shapes; `xd_explosion_26` | `src/agent/watch/` (E2) |
+| The console's count answer changed: `Test passed. Count: N` (R2-9) | `answerLine26` restores the old words; the summary line counts commands and answers | `tests/world/mc_server.js` (E3) |
+| A table craft of several resolved before the server's correction, and the server could make fewer than asked (R2-10) | `craft.js` syncs the window and lets it settle after each unit, checks the count made; `xl_craft_one_at_a_time` | `patches/mineflayer+4.39.0.patch` (E1). Crafts of several take about 0.5 s per unit on 26.1 now |
+| `ten_minutes` part C: the bed walk from the door failed: the shelter walk took the learned route "basement" into the area box and the bed walk stuck climbing back through the trapdoor (R2-13) | `isRouteWithinArea` of `shelter_logic.js`: a route within the area is never a way into it; `xd_shelter_route` | `src/agent/packs/home/` (E2) |
+
+The probes of E1 (the scratchpad of the lead's session, `e1/prove_inventory.js`, `e1/craft-26.1-*.log`): a container
+window (furnace, chest) does not update `bot.inventory` until it is closed, on 26.1 and on 1.21.8 alike; nothing in
+the bot reads the bag while a window is open.
