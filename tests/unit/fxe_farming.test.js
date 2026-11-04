@@ -12,12 +12,12 @@ import { describe, test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import { give, makeFakeBot, makeSim, makeWorld, v } from './home_fake_bot.test.js';
-import { loadSrc } from '../helpers/load.js';
+import { loadSrc, TEST_MC_VERSION } from '../helpers/load.js';
 import { isPassingThrough } from '../../src/agent/packs/home/doors.js';
 
 const require = createRequire(import.meta.url);
 const { Vec3 } = require('vec3');
-const REGISTRY = require('prismarine-registry')('1.21.8');
+const REGISTRY = require('prismarine-registry')(TEST_MC_VERSION);
 const Block = require('prismarine-block')(REGISTRY);
 const AStar = require('mineflayer-pathfinder/lib/astar.js');
 const Move = require('mineflayer-pathfinder/lib/move.js');

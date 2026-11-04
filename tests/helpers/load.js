@@ -6,6 +6,10 @@
 // fails individually with the real reason, instead of the whole file failing once.
 import { repoUrl } from './paths.js';
 
+// The Minecraft version the bot plays, the registry the unit tests load (v0.1.4.14: 26.1). A test about the history
+// of an older version names that version itself, with a comment saying why.
+export const TEST_MC_VERSION = '26.1';
+
 export async function loadSrc(relPath) {
     try {
         return await import(repoUrl(relPath));

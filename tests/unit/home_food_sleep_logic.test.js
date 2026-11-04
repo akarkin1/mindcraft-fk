@@ -3,7 +3,7 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
-import { loadSrc } from '../helpers/load.js';
+import { loadSrc, TEST_MC_VERSION } from '../helpers/load.js';
 
 const F = await loadSrc('src/agent/packs/home/food_logic.js');
 const Z = await loadSrc('src/agent/packs/home/sleep_logic.js');
@@ -11,7 +11,7 @@ const T = await loadSrc('src/agent/packs/home/texts.js');
 const H = await loadSrc('src/agent/packs/home/home_settings.js');
 
 const require = createRequire(import.meta.url);
-const FOOD_LIST = require('minecraft-data/minecraft-data/data/pc/1.21.8/foods.json');
+const FOOD_LIST = require('minecraft-data')(TEST_MC_VERSION).foodsArray;
 const FOODS = Object.fromEntries(FOOD_LIST.map(f => [f.name, f]));
 const item = (name, count = 1) => ({ name, count });
 

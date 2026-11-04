@@ -6,6 +6,33 @@ This fork is based on [Mindcraft](https://github.com/mindcraft-bots/mindcraft) `
 
 Each release lists new settings and feature flags with their default value.
 
+## [0.1.4.14] - 2026-11-04
+
+"Minecraft 26.1": the bot plays in Minecraft Java 26.1 ("Tiny Takeover", 2026-03-24) with the libraries of
+2026 on Node 22; it knows the copper tools, the copper chests and the corrected foods of 26.1; the chat model
+can be told what 1.21.9 to 26.1 added; the chat model is Claude Haiku 5.5. 26.2 and 26.3 wait for the
+libraries (no released library supports them on 2026-11-03).
+
+### Added
+
+- **Minecraft 26.1**: mineflayer 4.39.0, minecraft-protocol 1.68.0, minecraft-data 3.119.0 and the matching prismarine libraries (`package.json`, `overrides`). The patches are rewritten on the new code; the patch of minecraft-data is gone (upstream). Two defects of the libraries on 26.1 are corrected in the mineflayer patch: no knockback (`entity_velocity` and `spawn_entity` are in blocks per tick since 1.21.9) and ores dug six times too slowly (the material `incorrect_for_wooden_tool`). One defect of minecraft-data 3.119.0 too: the renamed actions of 1.21.6 and later (getting out of bed sent "stop sprinting", a sprint sent "start riding jump"). On 26.1 a table craft of several items resolved before the server's answer and the server could make fewer than asked: the patch crafts one unit at a time and checks the count (about 0.5 s per unit). The bot can open the copper chests and the path finder never stands on or breaks one. The agent no longer sends `player_loaded` itself (mineflayer does).
+- **Node 22** (`engines`): `start-claude.ps1` and `start-gpt.ps1` say `fnm use 22`; the supervise skill `fnm exec --using=v22`. `npm run reinstall` once after the update.
+- **The data of 26.1**: a copper pickaxe is a pickaxe of stone tier with 190 uses, used when the bot has one and never crafted (the worn-pickaxe rule, the supplies, `look`, the wood pack's tools); the 8 copper chests are chests everywhere a chest is (the chest index, `!viewChest`, the supplies, `look`, the area scans, the no-stand rule); the food table is the one of 26.1 (the saturation values corrected; the four fish buckets are never food, for the bot and for the auto-eat plugin); `chain` is `iron_chain` (covered by name); the copper golem is no hostile mob, the parched is.
+- **`new_things_in_prompt`** (false): with it the prompt gets up to three one-line facts (`NEW SINCE 1.21.8 (true, even if you do not know it):`) about the things of 1.21.9 to 26.1 that are in the bag, in view, in the last lines or in a command the model just wrote: copper tools, copper chests, the copper golem, shelves, copper torches and chains, spears, the parched, the camel husk, the nautilus, zombie horses, the golden dandelion, name tags, mannequins, the breath of the nautilus (`src/agent/knowledge/new_things.js`). Off, the prompt is byte for byte the one of v0.1.4.13.
+- **The test server on 26.1**: `node scripts/get_test_server.js` downloads `server-26.1.jar`; `--jdk` downloads a Java 25 runtime into the test-server folder; the world tests find the launcher's Java 25 (`java-runtime-epsilon`) or `MC_TEST_JAVA`, and refuse an older Java with one line. The harness speaks the console of 26.1 (the renamed game rules, `time query minecraft:day`) and translates the scenarios' old names; the simulated server of the end-to-end tests sends the clock of 26.1. W121 "the Copper Age".
+
+### Changed
+
+- **The shelter walk** never takes a learned route whose two ends lie inside the building (the route "basement" of the owner's base took the bot down the shaft before a bed walk); it enters by the door.
+- **The explosion event** of the watch server reads the packet of 26.1 (`center`) as well as the old shape.
+- **The chat model** of `profiles/claude.json`: `claude-haiku-5-5` with effort `low` (thinking on, kept short; its tokens count as output in the cost line); the price row $0.10 / $0.50 per million tokens.
+- **Your world**: a world opened in 26.1 cannot go back to 1.21.8. Your client, your world and the test server are 26.1; settings, profiles, memory and `bots/` are unchanged.
+
+### Known issues
+
+- mineflayer 4.39.0 reads the clock of the End as 0 (the bot does not go there).
+- The scenarios of the world tests keep the game-rule names of 1.21.8; the harness translates them and prints `console: N commands of 1.21.8 translated` once per run.
+
 ## [0.1.4.13] - 2026-10-04
 
 "Supervision": a supervisor that wakes on a change and orders in one call, one chat for the bots and

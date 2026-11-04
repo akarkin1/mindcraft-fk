@@ -13,7 +13,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { EventEmitter } from 'node:events';
 import { createRequire } from 'node:module';
-import { loadSrc } from '../helpers/load.js';
+import { loadSrc, TEST_MC_VERSION } from '../helpers/load.js';
 import { repoPath, repoUrl } from '../helpers/paths.js';
 import { makeTmpDir, removeTmpDir } from '../helpers/tmp.js';
 import { captureConsole } from '../helpers/console_capture.js';
@@ -73,7 +73,7 @@ describe('F1: the checksum of the last seen messages', () => {
 
     function client() {
         const c = new EventEmitter();
-        c.version = '1.21.8';
+        c.version = TEST_MC_VERSION;
         c.packets = [];
         c.write = (name, params) => c.packets.push({ name, params });
         chatPlugin(c, {});

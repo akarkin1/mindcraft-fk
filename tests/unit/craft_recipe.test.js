@@ -5,13 +5,13 @@
 // name that is not an item. craftRecipe must give its friendly message and return false.
 //
 // src/utils/mcdata.js only gets its minecraft-data object on a real login; the hook in
-// helpers/mcdata_hooks.js adds a test-only setter, so the real 1.21.8 data (or a small fake) is
+// helpers/mcdata_hooks.js adds a test-only setter, so the real 26.1 data (or a small fake) is
 // installed. The skills module is imported with an empty temp directory as working directory.
 import { describe, test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { register } from 'node:module';
 import minecraftData from 'minecraft-data';
-import { loadSrc } from '../helpers/load.js';
+import { loadSrc, TEST_MC_VERSION } from '../helpers/load.js';
 import { makeTmpDir, removeTmpDir } from '../helpers/tmp.js';
 import { captureConsole } from '../helpers/console_capture.js';
 
@@ -34,7 +34,7 @@ async function importModules() {
 }
 
 const { skills, mcdata } = await importModules();
-const REAL_DATA = minecraftData('1.21.8');
+const REAL_DATA = minecraftData(TEST_MC_VERSION);
 
 const noRecipeMessage = (name) => `${name} is either not an item, or it does not have a crafting recipe!`;
 
@@ -68,7 +68,7 @@ afterEach(() => {
     mcdata.__setMcdataForTests(null);
 });
 
-describe('getItemCraftingRecipes returns null (real 1.21.8 data)', () => {
+describe('getItemCraftingRecipes returns null (real 26.1 data)', () => {
     test('farmland has no crafting recipe, a made-up name is not an item', () => {
         assert.equal(mcdata.getItemCraftingRecipes('farmland'), null);
         assert.equal(mcdata.getItemCraftingRecipes('not_an_item_at_all'), null);

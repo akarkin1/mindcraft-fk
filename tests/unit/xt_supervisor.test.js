@@ -18,7 +18,7 @@ import { describe, test, before, after, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { register } from 'node:module';
 import { createRequire } from 'node:module';
-import { loadSrc } from '../helpers/load.js';
+import { loadSrc, TEST_MC_VERSION } from '../helpers/load.js';
 import { makeTmpDir, removeTmpDir } from '../helpers/tmp.js';
 import { captureConsole } from '../helpers/console_capture.js';
 import { T0, makeClock, makeWatch, makeWatchAgent } from '../helpers/xt_watch.js';
@@ -51,7 +51,7 @@ before(async () => {
         cap.restore();
         process.chdir(originalCwd);
     }
-    M.mcdata.__setMcdataForTests(minecraftData('1.21.8'));
+    M.mcdata.__setMcdataForTests(minecraftData(TEST_MC_VERSION));
     // the watch server registers reply and note when it loads with supervisor_name set (the handoff: registerTool)
     const names = () => M.tools.toolList().map((t) => t.name);
     if (!names().includes('reply')) {

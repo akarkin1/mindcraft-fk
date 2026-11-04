@@ -10,7 +10,7 @@
 import { describe, test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import minecraftData from 'minecraft-data';
-import { loadSrc } from '../helpers/load.js';
+import { loadSrc, TEST_MC_VERSION } from '../helpers/load.js';
 import { makeTmpDir, removeTmpDir } from '../helpers/tmp.js';
 import { captureConsole } from '../helpers/console_capture.js';
 import { assertImportRules, assertCleanImport } from '../helpers/module_rules.js';
@@ -46,7 +46,7 @@ async function importHandler() {
     }
 }
 const CH = await importHandler();
-const LANGUAGE = minecraftData('1.21.8').language;
+const LANGUAGE = minecraftData(TEST_MC_VERSION).language;
 
 let cap;
 beforeEach(() => { cap = captureConsole(); });

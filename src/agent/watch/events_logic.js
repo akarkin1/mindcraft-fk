@@ -169,13 +169,26 @@ function sameDimension(area, dimension) {
 }
 
 /**
+ * The center of the packet `explosion` (v0.1.4.14): 26.1 sends `{ center: { x, y, z }, radius, ... }`, 1.21.8 sent
+ * `{ x, y, z, ... }` at the top level; a plain point is taken as it is. null for anything else.
+ * @param {object} packet
+ * @returns {{x: number, y: number, z: number}|null}
+ */
+export function explosionCenter(packet) {
+    if (isPoint(packet?.center))
+        return packet.center;
+    return isPoint(packet) ? packet : null;
+}
+
+/**
  * The event of an explosion within 16 blocks of a saved area (any kind), naming the nearest; null else.
- * @param {{x, y, z}} at the position of the packet
+ * @param {object} packet the packet `explosion` of either shape (explosionCenter), or its position {x, y, z}
  * @param {object[]} areas the saved areas
  * @param {string} dimension of the bot
  * @param {number} [now]
  */
-export function explosionEvent(at, areas, dimension, now = Date.now()) {
+export function explosionEvent(packet, areas, dimension, now = Date.now()) {
+    const at = explosionCenter(packet);
     if (!isPoint(at) || !Array.isArray(areas))
         return null;
     let best = null;

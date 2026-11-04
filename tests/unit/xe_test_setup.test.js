@@ -118,6 +118,19 @@ describe('the console of 26.1: the old game rule names and the daytime query', (
         assert.equal(W.answerLine26('Set minecraft:overworld to 6000 tick(s)'), 'Set minecraft:overworld to 6000 tick(s)');
     });
 
+    test('answerLine26 gives the count of execute if/unless in the words of 1.21.8 (W101, countEntities of journey.js)', () => {
+        assert.equal(W.answerLine26('Test passed. Count: 6'), 'Test passed, count: 6');
+        assert.equal(W.answerLine26('Test failed. Count: 2'), 'Test failed, count: 2');
+        assert.equal(W.answerLine26('Test passed. Count: 16'), 'Test passed, count: 16', 'execute if blocks');
+        const read = (line) => Number((/count: (\d+)/.exec(W.answerLine26(line)) ?? [0, 0])[1]);
+        assert.equal(read('Test passed. Count: 6'), 6, 'the regex of W101 reads it');
+        for (const same of ['Test passed', 'Test failed', 'Killed 2 entities', 'Killed Chicken', 'No entity was found', 'Changed the block at 2, -60, 2',
+            'Could not set the block', 'Summoned new Chicken', 'Successfully filled 16 block(s)', 'Teleported Chicken to 7.500000, -60.000000, 7.500000',
+            'Chicken has the following entity data: 4.0f', '2, -60, 2 has the following block data: [{count: 5, Slot: 0b, id: "minecraft:bread"}]']) {
+            assert.equal(W.answerLine26(same), same);
+        }
+    });
+
     test('the server counts what it translated; the summary line only when something was', async () => {
         const s = new W.McServer({ java: 'java', jar: 'x.jar', eula: 'eula.txt', dir: '.', port: 25599 });
         const written = [];
@@ -144,7 +157,10 @@ describe('the console of 26.1: the old game rule names and the daytime query', (
         assert.equal(W.translationLine(1), 'console: 1 command of 1.21.8 translated');
         assert.equal(W.translationLine(0), '', 'no line when nothing was translated');
         assert.equal(W.translationLine(undefined), '');
-        assert.match(source('tests/world/run.js'), /const consoleLine = translationLine\(servers\.reduce\(\(n, s\) => n \+ \(s\.translated \?\? 0\), 0\)\);\nif \(consoleLine\) console\.log\(consoleLine\);/);
+        assert.equal(s.answersTranslated, 1, 'the answer of the daytime query');
+        assert.equal(W.translationLine(2, 1), 'console: 2 commands and 1 answer of 1.21.8 translated');
+        assert.equal(W.translationLine(0, 3), 'console: 3 answers of 1.21.8 translated');
+        assert.match(source('tests/world/run.js'), /const consoleLine = translationLine\(servers\.reduce\(\(n, s\) => n \+ \(s\.translated \?\? 0\), 0\), servers\.reduce\(\(n, s\) => n \+ \(s\.answersTranslated \?\? 0\), 0\)\);\nif \(consoleLine\) console\.log\(consoleLine\);/);
     });
 });
 

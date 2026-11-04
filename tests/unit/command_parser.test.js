@@ -17,7 +17,7 @@ import { describe, test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { register } from 'node:module';
 import minecraftData from 'minecraft-data';
-import { loadSrc } from '../helpers/load.js';
+import { loadSrc, TEST_MC_VERSION } from '../helpers/load.js';
 import { makeTmpDir, removeTmpDir } from '../helpers/tmp.js';
 import { captureConsole } from '../helpers/console_capture.js';
 
@@ -50,7 +50,7 @@ async function importCommands() {
 
 const { index, mcdata } = await importCommands();
 
-before(() => mcdata.__setMcdataForTests(minecraftData('1.21.8')));
+before(() => mcdata.__setMcdataForTests(minecraftData(TEST_MC_VERSION)));
 after(() => mcdata.__setMcdataForTests(null));
 
 // ---------------------------------------------------------------- own command definitions

@@ -475,7 +475,7 @@ index b38bd30..3154ab9 100644
  
  module.exports = {
 diff --git a/node_modules/mineflayer-pathfinder/lib/movements.js b/node_modules/mineflayer-pathfinder/lib/movements.js
-index a7e3505..e291554 100644
+index a7e3505..a141ea3 100644
 --- a/node_modules/mineflayer-pathfinder/lib/movements.js
 +++ b/node_modules/mineflayer-pathfinder/lib/movements.js
 @@ -15,6 +15,11 @@ const diagonalDirections = [
@@ -490,7 +490,19 @@ index a7e3505..e291554 100644
  class Movements {
    constructor (bot) {
      const registry = bot.registry
-@@ -50,7 +55,12 @@ class Movements {
+@@ -40,6 +45,11 @@ class Movements {
+ 
+     this.blocksCantBreak = new Set()
+     this.blocksCantBreak.add(registry.blocksByName.chest.id)
++    // v0.1.4.14: a copper chest (1.21.9+) is a chest; the names of COPPER_CHESTS of src/agent/packs/storage/storage_logic.js
++    for (const name of ['copper_chest', 'exposed_copper_chest', 'weathered_copper_chest', 'oxidized_copper_chest',
++      'waxed_copper_chest', 'waxed_exposed_copper_chest', 'waxed_weathered_copper_chest', 'waxed_oxidized_copper_chest']) {
++      if (registry.blocksByName[name]) this.blocksCantBreak.add(registry.blocksByName[name].id)
++    }
+ 
+     registry.blocksArray.forEach(block => {
+       if (block.diggable) return
+@@ -50,7 +60,12 @@ class Movements {
      this.blocksToAvoid.add(registry.blocksByName.fire.id)
      if (registry.blocksByName.cobweb) this.blocksToAvoid.add(registry.blocksByName.cobweb.id)
      if (registry.blocksByName.web) this.blocksToAvoid.add(registry.blocksByName.web.id)
@@ -504,7 +516,7 @@ index a7e3505..e291554 100644
  
      this.liquids = new Set()
      this.liquids.add(registry.blocksByName.water.id)
-@@ -62,7 +72,13 @@ class Movements {
+@@ -62,7 +77,13 @@ class Movements {
  
      this.climbables = new Set()
      this.climbables.add(registry.blocksByName.ladder.id)
@@ -519,7 +531,7 @@ index a7e3505..e291554 100644
      this.emptyBlocks = new Set()
  
      this.replaceables = new Set()
-@@ -92,13 +108,37 @@ class Movements {
+@@ -92,13 +113,40 @@ class Movements {
        }
      })
      registry.blocksArray.forEach(block => {
@@ -540,7 +552,10 @@ index a7e3505..e291554 100644
 +    // fence already. Slabs and stairs are floor again (v0.1.4.11, F24): a staircase of bottom stairs or bottom slabs
 +    // is a way, as in the upstream pathfinder; halfBlocks only keeps a move from breaking them (mayBreakOnPath).
 +    const noStandNames = ['composter', 'cauldron', 'water_cauldron', 'lava_cauldron', 'powder_snow_cauldron', 'hopper',
-+      'chest', 'trapped_chest', 'ender_chest']
++      'chest', 'trapped_chest', 'ender_chest',
++      // v0.1.4.14: the 8 copper chests (1.21.9+) are chests; the names of COPPER_CHESTS of src/agent/packs/storage/storage_logic.js
++      'copper_chest', 'exposed_copper_chest', 'weathered_copper_chest', 'oxidized_copper_chest',
++      'waxed_copper_chest', 'waxed_exposed_copper_chest', 'waxed_weathered_copper_chest', 'waxed_oxidized_copper_chest']
 +    this.noStandBlocks = new Set()
 +    this.halfBlocks = new Set() // slabs and stairs: never broken by a move (mayBreakOnPath)
 +    this.keepBlocks = new Set() // the hollow ones: never broken by a move either (mayBreakOnPath)
@@ -559,7 +574,7 @@ index a7e3505..e291554 100644
  
      this.exclusionAreasStep = []
      this.exclusionAreasBreak = []
-@@ -230,8 +270,22 @@ class Movements {
+@@ -230,8 +278,22 @@ class Movements {
        }
      }
      b.climbable = this.climbables.has(b.type)
@@ -584,7 +599,7 @@ index a7e3505..e291554 100644
      b.replaceable = this.replaceables.has(b.type) && !b.physical
      b.liquid = this.liquids.has(b.type)
      b.height = pos.y + dy
-@@ -244,6 +298,26 @@ class Movements {
+@@ -244,6 +306,26 @@ class Movements {
      return b
    }
  
@@ -611,7 +626,7 @@ index a7e3505..e291554 100644
    /**
     * Takes into account if the block is within a break exclusion area.
     * @param {import('prismarine-block').Block} block
-@@ -273,6 +347,14 @@ class Movements {
+@@ -273,6 +355,14 @@ class Movements {
      return block.type && !this.blocksCantBreak.has(block.type) && this.exclusionBreak(block) < 100
    }
  
@@ -626,7 +641,7 @@ index a7e3505..e291554 100644
    /**
     * Takes into account if the block is within the stepExclusionAreas. And returns 100 if a block to be broken is within break exclusion areas.
     * @param {import('prismarine-block').Block} block block
-@@ -284,7 +366,15 @@ class Movements {
+@@ -284,7 +374,15 @@ class Movements {
      cost += this.exclusionStep(block) // Is excluded so can't move or break
      cost += this.getNumEntitiesAt(block.position, 0, 0, 0) * this.entityCost
      if (block.safe) return cost
@@ -643,7 +658,7 @@ index a7e3505..e291554 100644
      toBreak.push(block.position)
  
      if (block.physical) cost += this.getNumEntitiesAt(block.position, 0, 1, 0) * this.entityCost // Add entity cost if there is an entity above (a breakable block) that will fall
-@@ -324,7 +414,7 @@ class Movements {
+@@ -324,7 +422,7 @@ class Movements {
          if (this.getNumEntitiesAt(blockD.position, 0, 0, 0) > 0) return // Check for any entities in the way of a block placement
  
          if (!blockD.replaceable) {
@@ -652,7 +667,7 @@ index a7e3505..e291554 100644
            cost += this.exclusionBreak(blockD)
            toBreak.push(blockD.position)
          }
-@@ -334,7 +424,7 @@ class Movements {
+@@ -334,7 +432,7 @@ class Movements {
        }
  
        if (!blockC.replaceable) {
@@ -661,7 +676,7 @@ index a7e3505..e291554 100644
          cost += this.exclusionBreak(blockC)
          toBreak.push(blockC.position)
        }
-@@ -375,7 +465,7 @@ class Movements {
+@@ -375,7 +473,7 @@ class Movements {
        if (this.getNumEntitiesAt(blockD.position, 0, 0, 0) > 0) return // D intersects an entity hitbox
  
        if (!blockD.replaceable) {
@@ -670,7 +685,7 @@ index a7e3505..e291554 100644
          cost += this.exclusionBreak(blockD)
          toBreak.push(blockD.position)
        }
-@@ -384,11 +474,17 @@ class Movements {
+@@ -384,11 +482,17 @@ class Movements {
        cost += this.placeCost // additional cost for placing a block
      }
  
@@ -691,7 +706,7 @@ index a7e3505..e291554 100644
        toPlace.push({ x: node.x + dir.x, y: node.y, z: node.z + dir.z, dx: 0, dy: 0, dz: 0, useOne: true }) // Indicate that a block should be used on this block not placed
      } else {
        cost += this.safeOrBreak(blockC, toBreak)
-@@ -397,7 +493,7 @@ class Movements {
+@@ -397,7 +501,7 @@ class Movements {
  
      if (this.getBlock(node, 0, 0, 0).liquid) cost += this.liquidCost
  
@@ -700,7 +715,7 @@ index a7e3505..e291554 100644
    }
  
    getMoveDiagonal (node, dir, neighbors) {
-@@ -503,6 +599,26 @@ class Movements {
+@@ -503,6 +607,26 @@ class Movements {
    getMoveDown (node, neighbors) {
      const block0 = this.getBlock(node, 0, -1, 0)
  
@@ -727,7 +742,7 @@ index a7e3505..e291554 100644
      let cost = 1 // move cost
      const toBreak = []
      const toPlace = []
-@@ -517,6 +633,7 @@ class Movements {
+@@ -517,6 +641,7 @@ class Movements {
  
      cost += this.getNumEntitiesAt(blockLand.position, 0, 0, 0) * this.entityCost // add cost for entities
  
@@ -735,7 +750,7 @@ index a7e3505..e291554 100644
      neighbors.push(new Move(blockLand.position.x, blockLand.position.y, blockLand.position.z, node.remainingBlocks - toPlace.length, cost, toBreak, toPlace))
    }
  
-@@ -533,11 +650,25 @@ class Movements {
+@@ -533,11 +658,25 @@ class Movements {
      cost += this.safeOrBreak(block2, toBreak)
      if (cost > 100) return
  
@@ -763,7 +778,7 @@ index a7e3505..e291554 100644
          toBreak.push(block1.position)
        }
  
-@@ -551,7 +682,110 @@ class Movements {
+@@ -551,7 +690,110 @@ class Movements {
  
      if (cost > 100) return
  
@@ -875,7 +890,7 @@ index a7e3505..e291554 100644
    }
  
    // Jump up, down or forward over a 1 block gap
-@@ -642,6 +876,7 @@ class Movements {
+@@ -642,6 +884,7 @@ class Movements {
        this.getMoveForward(node, dir, neighbors)
        this.getMoveJumpUp(node, dir, neighbors)
        this.getMoveDropDown(node, dir, neighbors)
@@ -883,7 +898,7 @@ index a7e3505..e291554 100644
        if (this.allowParkour) {
          this.getMoveParkourForward(node, dir, neighbors)
        }
-@@ -656,8 +891,33 @@ class Movements {
+@@ -656,8 +899,33 @@ class Movements {
      this.getMoveDown(node, neighbors)
      this.getMoveUp(node, neighbors)
  

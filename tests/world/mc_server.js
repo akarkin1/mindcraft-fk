@@ -268,15 +268,29 @@ export function consoleCommand26(cmd) {
 }
 
 // The line of the runner's summary that says the translation was in use: '' when nothing was rewritten.
-export function translationLine(count) {
-    if (!Number.isInteger(count) || count <= 0) return '';
-    return `console: ${count} ${count === 1 ? 'command' : 'commands'} of 1.21.8 translated`;
+// `answers` (round 3 of v0.1.4.14) counts the answer lines given back in the words of 1.21.8.
+export function translationLine(count, answers = 0) {
+    const n = (x) => (Number.isInteger(x) && x > 0 ? x : 0);
+    const parts = [];
+    if (n(count)) parts.push(`${n(count)} ${n(count) === 1 ? 'command' : 'commands'}`);
+    if (n(answers)) parts.push(`${n(answers)} ${n(answers) === 1 ? 'answer' : 'answers'}`);
+    return parts.length ? `console: ${parts.join(' and ')} of 1.21.8 translated` : '';
 }
 
-// An answer line of 26.1 in the words of 1.21.8, for the commands consoleCommand26 rewrote.
+// An answer line of 26.1 in the words of 1.21.8, one to one; any other line as it is. Checked on the 26.1
+// server on 2026-11-04 (answers that did not change: "Changed the block at x, y, z", "Could not set the block",
+// "... has the following block data: ..." and "... entity data: ...", "Summoned new Chicken", "Successfully filled
+// N block(s)", "No blocks were filled", "Successfully cloned N block(s)", "Teleported Chicken to x, y, z",
+// "Killed N entities", "Killed Chicken", "No entity was found", "No player was found", "Test passed", "Test failed").
+//   the daytime query: "Timeline minecraft:day is at N tick(s)"  -> "The time is N"
+//   execute if/unless entity, if blocks: "Test passed. Count: N", "Test failed. Count: N"
+//                                         -> "Test passed, count: N", "Test failed, count: N" (1.21.8)
 export function answerLine26(line) {
     const day = /^Timeline minecraft:day is at (-?\d+) tick\(s\)$/.exec(line);
-    return day ? `The time is ${day[1]}` : line;
+    if (day) return `The time is ${day[1]}`;
+    const test = /^Test (passed|failed)\. Count: (\d+)$/.exec(line);
+    if (test) return `Test ${test[1]}, count: ${test[2]}`;
+    return line;
 }
 
 const LINE_RE = /^\[(\d\d:\d\d:\d\d)\] \[([^\]]+)\/(\w+)\]: (.*)$/;
@@ -299,6 +313,7 @@ export class McServer {
         this.queue = Promise.resolve();
         this.markerCount = 0;
         this.translated = 0; // console commands of 1.21.8 that consoleCommand26 rewrote (v0.1.4.14)
+        this.answersTranslated = 0; // answer lines that answerLine26 gave back in the words of 1.21.8
         this.startMs = null;
     }
 
@@ -395,7 +410,11 @@ export class McServer {
             for (const ml of markerLines) {
                 out.push(this.lines.slice(start, ml.n)
                     .filter((l) => !/^Unknown or incomplete command/.test(l.text) && !/^mcw_mark_\d+<--\[HERE\]$/.test(l.text))
-                    .map((l) => answerLine26(l.text)));
+                    .map((l) => {
+                        const said = answerLine26(l.text);
+                        if (said !== l.text) this.answersTranslated++;
+                        return said;
+                    }));
                 start = ml.n + 1;
             }
             return out;

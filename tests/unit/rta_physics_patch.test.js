@@ -8,12 +8,13 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { createRequire } from 'node:module';
 import { repoPath } from '../helpers/paths.js';
+import { TEST_MC_VERSION } from '../helpers/load.js';
 
 const require = createRequire(import.meta.url);
 const { Physics, PlayerState } = require('prismarine-physics');
 const { Vec3 } = require('vec3');
-const mcData = require('minecraft-data')('1.21.8');
-const Block = require('prismarine-block')('1.21.8');
+const mcData = require('minecraft-data')(TEST_MC_VERSION);
+const Block = require('prismarine-block')(TEST_MC_VERSION);
 
 // the shaft of the base: ladders at (2, 41..59, -2), the trapdoor at (2, 60, -2), stone around, air above y 60
 function shaft(trapdoor, ladderFacing = 'south') {
@@ -40,7 +41,7 @@ function heldAt(world) {
             position: new Vec3(2.5, 60.2, -1.45), velocity: new Vec3(0, 0, 0), onGround: false, isInWater: false, isInLava: false, isInWeb: false,
             isCollidedHorizontally: false, isCollidedVertically: false, elytraFlying: false, yaw: 0, pitch: 0, effects: {},
         },
-        jumpTicks: 0, jumpQueued: false, fireworkRocketDuration: 0, version: '1.21.8', inventory: { slots: [] },
+        jumpTicks: 0, jumpQueued: false, fireworkRocketDuration: 0, version: TEST_MC_VERSION, inventory: { slots: [] },
     };
     const control = { forward: false, back: false, left: false, right: false, jump: false, sprint: false, sneak: true };
     for (let i = 0; i < 20; i++) {
@@ -52,9 +53,10 @@ function heldAt(world) {
 }
 
 describe('F1: the patch of prismarine-physics for 1.21', () => {
-    test('the feature climbableTrapdoor lists 1.21, the major version of 1.21.8', () => {
-        assert.equal(mcData.version.majorVersion, '1.21');
+    test('the feature climbableTrapdoor lists 26.1, the major version of the version the bot plays, and 1.21', () => {
+        assert.equal(mcData.version.majorVersion, '26.1');
         const features = JSON.parse(fs.readFileSync(repoPath('node_modules/prismarine-physics/lib/features.json'), 'utf8'));
+        assert.ok(features.find(f => f.name === 'climbableTrapdoor').versions.includes('26.1'));
         assert.ok(features.find(f => f.name === 'climbableTrapdoor').versions.includes('1.21'));
     });
 

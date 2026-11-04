@@ -48,7 +48,7 @@ describe('L: entity_action by name from 1.21.6', () => {
         for (const v of ['1.21.6', '1.21.8', '26.1']) assert.equal(prismarineRegistry(v).version['>=']('1.21.6'), true, v);
     });
 
-    for (const version of ['1.21.8', '26.1']) {
+    for (const version of ['1.21.8', '26.1']) { // kept: both versions name the actions from 1.21.6 on
         test(`${version}: the serializer of minecraft-protocol maps the names to 0, 1, 2 (and 6)`, () => {
             const serializer = createSerializer({ state: 'play', isServer: false, version });
             const lastTwo = (actionId) => [...serializer.createPacketBuffer({ name: 'entity_action', params: { entityId: 1, actionId, jumpBoost: 0 } }).subarray(-2)];

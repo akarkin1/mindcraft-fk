@@ -23,12 +23,13 @@ import fs from 'node:fs';
 import { EventEmitter } from 'node:events';
 import { createRequire } from 'node:module';
 import { repoPath } from '../helpers/paths.js';
+import { TEST_MC_VERSION } from '../helpers/load.js';
 
 const require = createRequire(repoPath('package.json'));
 const chatPlugin = require('minecraft-protocol/src/client/chat.js');
 const { computeChatChecksum } = require('minecraft-protocol/src/datatypes/checksums.js');
 
-const VERSION = '1.21.8';
+const VERSION = TEST_MC_VERSION;
 const RING = 20;
 const MESSAGES = 25;
 
@@ -44,7 +45,7 @@ function javaArraysHashCode(bytes) {
 
 // LastSeenMessages.computeChecksum(): start 1; for each signature of the window, oldest first,
 // 31 * value + the checksum of the signature; the low byte; 0 becomes 1. Returned as the unsigned
-// byte that goes on the wire (the field is u8 in minecraft-data 1.21.8).
+// byte that goes on the wire (the field is u8 in minecraft-data 1.21.8 and 26.1).
 function referenceChecksum(windowOldestFirst) {
     let value = 1;
     for (const signature of windowOldestFirst)
@@ -84,7 +85,7 @@ function signature(n) {
     return Buffer.concat(parts);
 }
 
-// The real chat plugin on a fake client of 1.21.8: it records what the client writes.
+// The real chat plugin on a fake client of the version the bot plays: it records what the client writes.
 function newClient() {
     const client = new EventEmitter();
     client.version = VERSION;

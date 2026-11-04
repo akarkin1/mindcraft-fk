@@ -62,6 +62,26 @@ export function isInsideArea(area, pos) {
 }
 
 /**
+ * True when a learned route that the routes pack picked for an area (routeFor: `{ route, reverse, waypoints, ... }`)
+ * lies inside the area at both ends (v0.1.4.14, round 4 of the fix round): a way within the building, such as the
+ * route "basement" from the house down the ladder under the trapdoor, and never a way into it. The shelter walk then
+ * enters by the door: on the run of W110 part C the shelter walk took the route "basement" from the door, ended in
+ * the basement, and the walk to the bed had to climb the ladder through the trapdoor again. False for a route that
+ * starts or ends outside the area, and for anything that is no such pick.
+ * @param {{waypoints?: {x: number, y: number, z: number}[]}|null} pick
+ * @param {object} area
+ * @returns {boolean}
+ */
+export function isRouteWithinArea(pick, area) {
+    const waypoints = Array.isArray(pick?.waypoints) ? pick.waypoints : [];
+    if (waypoints.length === 0 || !isBox(area)) {
+        return false;
+    }
+    const inside = (wp) => isPoint(wp) && isInsideArea(area, { x: Math.floor(wp.x) + 0.5, y: Math.floor(wp.y), z: Math.floor(wp.z) + 0.5 });
+    return inside(waypoints[0]) && inside(waypoints[waypoints.length - 1]);
+}
+
+/**
  * True for an area that is safe to be in at night (v0.1.4.11, F25): an area of type `home`, or a building with walls
  * (isBuildingArea: type `building` or none) that was not concluded to be a `yard` (no roof). Being inside its walls is
  * being in shelter; it is never a shelter to go to (see chooseShelter).

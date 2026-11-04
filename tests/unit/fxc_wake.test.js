@@ -28,7 +28,7 @@ function fakeClock() {
     return c;
 }
 
-// A sleeping bot of 1.21.8: the client writes packets; the server takes the bot out of the bed after
+// A sleeping bot of 1.21.6 or later (26.1): the client writes packets; the server takes the bot out of the bed after
 // `afterMs` for the right packet (stop_sleeping), or never (`answer` false), or from the given try on.
 function sleeper({ answerFrom = 1, afterMs = 10, stringMapper = true } = {}) {
     const bot = makeFakeBot();

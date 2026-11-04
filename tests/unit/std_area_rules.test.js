@@ -4,7 +4,7 @@ import { describe, test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import { createRequire } from 'node:module';
-import { loadSrc } from '../helpers/load.js';
+import { loadSrc, TEST_MC_VERSION } from '../helpers/load.js';
 import { makeTmpDir, removeTmpDir } from '../helpers/tmp.js';
 import { captureConsole } from '../helpers/console_capture.js';
 import { createBlockWorld, vec } from '../helpers/block_world.js';
@@ -383,7 +383,7 @@ describe('D3: built blocks outside every area', () => {
     });
 
     test('the real Movements: safeToBreak refuses the fence of a pen that is no saved area', () => {
-        const registry = require('prismarine-registry')('1.21.8');
+        const registry = require('prismarine-registry')(TEST_MC_VERSION);
         const Block = require('prismarine-block')(registry);
         const { Vec3 } = require('vec3');
         const Movements = require('mineflayer-pathfinder/lib/movements');

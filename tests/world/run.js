@@ -184,6 +184,9 @@ const SCENARIOS = [
     ['full_bag', 'w118_full_bag.js', 350, false, 'base'],
     ['quiet_supervisor', 'w119_quiet_supervisor.js', 240, false, 'base'], // v0.1.4.13 fix1
     ['worn_spare_block', 'w120_worn_spare_block.js', 360, false, 'base'], // v0.1.4.13 fix 2
+    // v0.1.4.14 "Minecraft 26.1" (tester T3): the copper pickaxe, the copper chest, the food choice, the new things in the
+    // prompt, knockback and dig time (SPEC 4.5)
+    ['copper_age', 'w121_copper_age.js', 1200, false, 'base'],
 ];
 
 // Words that select a group of scenarios (spec v0.1.4.8, W30: the work scenarios of v0.1.4.7, which run
@@ -590,7 +593,7 @@ for (const p of hygieneProblems) console.log(`FAIL hygiene: ${p}`);
 if (!hygieneProblems.length) console.log(`hygiene: no server process left (pid ${servers.map((s) => s.pid).join(', ')} ended), no ${TMP_PREFIX}* temp directory left, repository bots/ unchanged, server folder unchanged (logs not compared)`);
 
 // v0.1.4.14: how many console commands of the 1.21.8 scenarios were spoken in the words of 26.1 (mc_server.js)
-const consoleLine = translationLine(servers.reduce((n, s) => n + (s.translated ?? 0), 0));
+const consoleLine = translationLine(servers.reduce((n, s) => n + (s.translated ?? 0), 0), servers.reduce((n, s) => n + (s.answersTranslated ?? 0), 0));
 if (consoleLine) console.log(consoleLine);
 
 const failed = outcomes.filter((o) => !o.pass);

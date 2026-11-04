@@ -10,7 +10,7 @@ import { doorCenter, sideOf } from './door_logic.js';
 import { closeDoor, doorState, findOpenables, passThrough } from './doors.js';
 import { goals, gotoGoal, isNear, makeMovements, walkNear } from './motion.js';
 import { isNight } from './night_logic.js';
-import { chooseCoverBlock, chooseShelter, chooseStandingPlace, isBuildingArea, isFallingBlockName, isInsideArea, orderEntrances,
+import { chooseCoverBlock, chooseShelter, chooseStandingPlace, isBuildingArea, isFallingBlockName, isInsideArea, isRouteWithinArea, orderEntrances,
     roomCenter, shelterHere } from './shelter_logic.js';
 import { isBedName } from './sleep_logic.js';
 import { isNoStandBlock } from './stand_logic.js';
@@ -195,6 +195,22 @@ async function walkToRoom(bot, area, ctx, options, clock) {
         return { ok: false, where: name, reason: 'no_path', text: `I cannot get into the shelter "${name}".` };
     }
     return insideText(name, await closeOpenDoorsOf(bot, area, options));
+}
+
+// v0.1.4.14 (round 4 of the fix round): true when the learned route the routes pack picks for the area lies inside it
+// at both ends (the route "basement" from the house down to the basement): a way within the building is never a way
+// in, the bot enters by the door (isRouteWithinArea). False without a pick or without routeFor. Never throws.
+function routeWithinArea(ctx, area) {
+    try {
+        const pick = ctx?.routes?.routeFor?.(area);
+        if (!pick) {
+            return false;
+        }
+        const waypoints = Array.isArray(pick.waypoints) ? pick.waypoints : ctx.routes.waypointsOf?.(pick.route ?? pick);
+        return isRouteWithinArea({ waypoints }, area);
+    } catch {
+        return false;
+    }
 }
 
 /**
@@ -427,7 +443,7 @@ export async function goToShelter(bot, ctx = {}, options = {}) {
             }
             // v0.1.4.11 (I7, the lead for part N): with routes_by_search a learned route into the building goes
             // first, after its dry scan; its failure text names the block and nothing else is tried
-            if (ctx?.routes?.bySearch?.() && ctx.routes.routeFor?.(choice.area) && !bot.interrupt_code) {
+            if (ctx?.routes?.bySearch?.() && ctx.routes.routeFor?.(choice.area) && !routeWithinArea(ctx, choice.area) && !bot.interrupt_code) {
                 const first = await ctx.routes.walkTo(bot, choice.area, { clock });
                 if (first?.ok) {
                     return isInsideArea(choice.area, botPos(bot)) ? await walkToRoom(bot, choice.area, ctx, options, clock)
@@ -443,7 +459,8 @@ export async function goToShelter(bot, ctx = {}, options = {}) {
             }
             if (!entered.ok && entered.reason === 'no_path' && !bot.interrupt_code) {
                 // v0.1.4.9 (I5): a learned route into the building where the path search finds no way
-                const viaRoute = await ctx?.routes?.walkTo?.(bot, choice.area, { clock });
+                // v0.1.4.14: never a route within the area (routeWithinArea)
+                const viaRoute = routeWithinArea(ctx, choice.area) ? null : await ctx?.routes?.walkTo?.(bot, choice.area, { clock });
                 if (viaRoute?.ok) {
                     return isInsideArea(choice.area, botPos(bot)) ? await walkToRoom(bot, choice.area, ctx, options, clock)
                         : await enterBuilding(bot, choice.area, ctx, options);

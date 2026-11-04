@@ -9,7 +9,7 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { register } from 'node:module';
 import minecraftData from 'minecraft-data';
-import { loadSrc } from '../helpers/load.js';
+import { loadSrc, TEST_MC_VERSION } from '../helpers/load.js';
 import { repoPath, REPO_ROOT } from '../helpers/paths.js';
 import { makeTmpDir, removeTmpDir } from '../helpers/tmp.js';
 import { captureConsole } from '../helpers/console_capture.js';
@@ -40,7 +40,7 @@ const ST = await loadSrc('src/agent/library/skill_texts.js');
 const D = await loadSrc('src/agent/dig_request_logic.js');
 const SC = await loadSrc('scripts/scorecard_logic.js');
 
-before(() => M.mcdata.__setMcdataForTests(minecraftData('1.21.8')));
+before(() => M.mcdata.__setMcdataForTests(minecraftData(TEST_MC_VERSION)));
 after(() => M.mcdata.__setMcdataForTests(null));
 
 // ------------------------------------------------------------------------------------------------ W1

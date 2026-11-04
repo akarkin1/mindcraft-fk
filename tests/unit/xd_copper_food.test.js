@@ -11,7 +11,7 @@ import minecraftData from 'minecraft-data';
 import { loadSrc } from '../helpers/load.js';
 
 const R = minecraftData('26.1');
-const OLD = minecraftData('1.21.8');
+const OLD = minecraftData('1.21.8'); // kept: the tests compare 26.1 with the data of 1.21.8 (new names, the old food order)
 const T = await loadSrc('src/agent/packs/mining/ore_table.js');
 const M = await loadSrc('src/agent/packs/mining/mine_logic.js');
 const SUP = await loadSrc('src/agent/packs/mining/supply_logic.js');

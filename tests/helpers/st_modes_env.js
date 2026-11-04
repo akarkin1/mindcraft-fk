@@ -11,14 +11,14 @@ import { register } from 'node:module';
 import minecraftData from 'minecraft-data';
 import prismarineBlock from 'prismarine-block';
 import { Vec3 } from 'vec3';
-import { loadSrc } from './load.js';
+import { loadSrc, TEST_MC_VERSION } from './load.js';
 import { makeTmpDir, removeTmpDir } from './tmp.js';
 import { captureConsole } from './console_capture.js';
 import { createBlockWorld } from './block_world.js';
 
 register('./mcdata_hooks.js', import.meta.url);
 
-export const REGISTRY = minecraftData('26.1');
+export const REGISTRY = minecraftData(TEST_MC_VERSION);
 const Block = prismarineBlock(REGISTRY);
 
 /** All modes off: the profile turns on only the modes a test names. */

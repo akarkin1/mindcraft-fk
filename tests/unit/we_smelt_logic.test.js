@@ -3,7 +3,7 @@
 // and the texts of storage/texts.js word for word.
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { loadSrc } from '../helpers/load.js';
+import { loadSrc, TEST_MC_VERSION } from '../helpers/load.js';
 import { importsOf } from '../helpers/hygiene.js';
 import { assertCleanImport } from '../helpers/module_rules.js';
 
@@ -87,9 +87,9 @@ describe('productOf: the table of the common smelting recipes', () => {
         }
     });
 
-    test('the products are items of 1.21.8', async () => {
+    test('the products are items of the version the bot plays', async () => {
         const { createRequire } = await import('node:module');
-        const reg = createRequire(import.meta.url)('prismarine-registry')('1.21.8');
+        const reg = createRequire(import.meta.url)('prismarine-registry')(TEST_MC_VERSION);
         for (const [item, product] of Object.entries(L.SMELT_PRODUCTS)) {
             assert.ok(reg.itemsByName[item], item);
             assert.ok(reg.itemsByName[product], product);

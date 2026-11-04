@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { createRequire } from 'node:module';
 import fs from 'node:fs';
-import { loadSrc } from '../helpers/load.js';
+import { loadSrc, TEST_MC_VERSION } from '../helpers/load.js';
 import { repoPath } from '../helpers/paths.js';
 import { captureConsole } from '../helpers/console_capture.js';
 
@@ -22,14 +22,14 @@ afterEach(() => { cap.restore(); });
 
 /**
  * A bot with the bed plugin of mineflayer and a client that records what it writes. `named`: the registry of
- * 1.21.8 (the actions by name), else of 1.21.5. The server takes the bot out of the bed for the action
+ * the version the bot plays, 26.1 (the actions by name), else of 1.21.5. The server takes the bot out of the bed for the action
  * `answerTo` (the name for 1.21.6 and later, the id 2 before), never for another.
  */
 function bedBot({ named = true, answerTo = named ? 'stop_sleeping' : 2 } = {}) {
     const bot = new EventEmitter();
     bot.writes = [];
     bot.entity = { id: 7 };
-    bot.registry = prismarineRegistry(named ? '1.21.8' : '1.21.5');
+    bot.registry = prismarineRegistry(named ? TEST_MC_VERSION : '1.21.5') // 1.21.5: the last version of the old action ids;
     bot.supportFeature = bot.registry.supportFeature;
     bot._client = new EventEmitter();
     bot._client.write = (name, params) => {

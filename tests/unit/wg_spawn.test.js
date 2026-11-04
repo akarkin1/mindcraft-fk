@@ -20,7 +20,7 @@ describe('G2: player_loaded at every spawn, by mineflayer', () => {
         assert.doesNotMatch(agent, /sendPlayerLoaded/);
         const health = fs.readFileSync(repoPath('node_modules/mineflayer/lib/plugins/health.js'), 'utf8');
         assert.match(health, /if \(bot\.supportFeature\('sendsPlayerLoadedPacket'\)\) bot\._client\.write\('player_loaded', \{\}\)/);
-        for (const version of ['1.21.8', '26.1']) {
+        for (const version of ['1.21.8', '26.1']) { // kept: the feature holds from 1.21.4 on, both versions
             const registry = prismarineRegistry(version);
             assert.equal(registry.supportFeature('sendsPlayerLoadedPacket'), true, version);
             const bot = new EventEmitter();

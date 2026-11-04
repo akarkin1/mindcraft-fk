@@ -12,14 +12,14 @@ import prismarineBlock from 'prismarine-block';
 import { Vec3 } from 'vec3';
 import pf from 'mineflayer-pathfinder';
 import { register } from 'node:module';
-import { loadSrc } from '../helpers/load.js';
+import { loadSrc, TEST_MC_VERSION } from '../helpers/load.js';
 import { captureConsole } from '../helpers/console_capture.js';
 
 register('../helpers/mcdata_hooks.js', import.meta.url);
 const mcdata = await loadSrc('src/utils/mcdata.js');
 const skills = await loadSrc('src/agent/library/skills.js');
 
-const registry = minecraftData('1.21.8');
+const registry = minecraftData(TEST_MC_VERSION);
 const Block = prismarineBlock(registry);
 mcdata.__setMcdataForTests(registry);
 

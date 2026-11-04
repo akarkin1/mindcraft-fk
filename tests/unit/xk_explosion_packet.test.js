@@ -15,7 +15,7 @@ import { createRequire } from 'node:module';
 import { repoUrl } from '../helpers/paths.js';
 
 const require = createRequire(repoUrl('package.json'));
-const mcData = require('minecraft-data')('1.21.8');
+const mcData = require('minecraft-data')('1.21.8'); // kept: the history of F10, the explosion packet of the 1.21.8 server
 const { createDeserializer } = require('minecraft-protocol/src/transforms/serializer');
 
 const KNOCK = { x: -0.5305555555555556, y: 0.1234567890123, z: 1.3999999999 };

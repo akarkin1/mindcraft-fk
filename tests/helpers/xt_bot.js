@@ -7,11 +7,12 @@
 import { createRequire } from 'node:module';
 import Vec3 from 'vec3';
 import { EventEmitter } from 'node:events';
+import { TEST_MC_VERSION } from './load.js';
 
 const require = createRequire(import.meta.url);
 const minecraftData = require('minecraft-data');
 
-export const VERSION = '26.1';
+export const VERSION = TEST_MC_VERSION;
 export const MC = minecraftData(VERSION);
 
 /** An item of the inventory as mineflayer gives it: name, count, type (the id), maxDurability, durabilityUsed. */

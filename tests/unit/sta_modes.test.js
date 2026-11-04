@@ -19,7 +19,7 @@ import assert from 'node:assert/strict';
 import { register } from 'node:module';
 import minecraftData from 'minecraft-data';
 import { Vec3 } from 'vec3';
-import { loadSrc } from '../helpers/load.js';
+import { loadSrc, TEST_MC_VERSION } from '../helpers/load.js';
 import { repoUrl } from '../helpers/paths.js';
 import { makeTmpDir, removeTmpDir } from '../helpers/tmp.js';
 import { captureConsole } from '../helpers/console_capture.js';
@@ -73,7 +73,7 @@ const M = await importQuietly();
 const settings = M.settingsModule.default;
 const BASE_SETTINGS = { language: 'en', home_pack: true, narrate_behavior: false };
 M.settingsModule.setSettings({ ...BASE_SETTINGS }); // home_pack on before the first initModes: the home modes exist
-const REGISTRY = minecraftData('1.21.8');
+const REGISTRY = minecraftData(TEST_MC_VERSION);
 
 // ---------------------------------------------------------------- the fake agent
 

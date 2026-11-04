@@ -17,7 +17,7 @@ import { makeTmpDir, removeTmpDir } from '../helpers/tmp.js';
 import { captureConsole } from '../helpers/console_capture.js';
 
 const R = minecraftData('26.1');
-const OLD = minecraftData('1.21.8');
+const OLD = minecraftData('1.21.8'); // kept: "new since 1.21.8" is a comparison with the registry of 1.21.8
 const N = await loadSrc('src/agent/knowledge/new_things.js');
 const K = await loadSrc('src/agent/knowledge/knowledge_text.js');
 

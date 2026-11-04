@@ -147,8 +147,10 @@ an old name is "Incorrect argument for command") and replaced `time query daytim
 (`time query minecraft:day` answers `Timeline minecraft:day is at N tick(s)`); `time set` answers
 `Set minecraft:overworld to N tick(s)`. The scenarios were written for 1.21.8, so `McServer.commands` rewrites the
 old game rule names (`GAMERULES_26_1`, `consoleCommand26` in `mc_server.js`) and gives the daytime query's answer in
-the old words, `The time is N` (`answerLine26`). At the end of a run the runner says how often it did, for example
-`console: 14 commands of 1.21.8 translated` (no line when it was 0). Write new scenarios with the names of 26.1.
+the old words, `The time is N` (`answerLine26`). The count of `execute if entity`, `execute unless entity` and
+`execute if blocks` reads `Test passed. Count: N` on 26.1 and is given back as `Test passed, count: N`, as 1.21.8 said it
+(W101, `countEntities` of `journey.js`). At the end of a run the runner says how often it did, for example
+`console: 14 commands and 3 answers of 1.21.8 translated` (no line when both were 0). Write new scenarios with the names of 26.1.
 
 ## Writing a scenario
 
