@@ -132,3 +132,9 @@ about 770 ms with the iron pickaxe.
 The probes of E1 (the scratchpad of the lead's session, `e1/prove_inventory.js`, `e1/craft-26.1-*.log`): a container
 window (furnace, chest) does not update `bot.inventory` until it is closed, on 26.1 and on 1.21.8 alike; nothing in
 the bot reads the bag while a window is open.
+
+## The gate (commit 26d0939)
+
+A fresh clone on Node 22.23.4: the 7 patches apply with no warning; unit 8,690 tests (8,688 pass, 2 skipped);
+end-to-end 17 of 17; the full world set on the 26.1 server 44 of 44 in 4,175 s (G-13). The four full runs
+before it (42 of 44 each, with different failures every time) and what they found are G-1 to G-12.
