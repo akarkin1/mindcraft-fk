@@ -7,6 +7,7 @@ import agentSettings from "../settings.js";
 import { isOreName, oreInSight, oreKind, outOfSightText, sightRange, SIGHT_TEXT_DISTANCE } from "./ore_sight_logic.js";
 import { ladderStepTowards, ladderWayTowards, STEP_RULES } from "./ladder_pass.js";
 import { findOpenables, openDoor, passThrough, reserveDoor } from "../packs/home/doors.js";
+import { noteTowardReserved, releasePassedToward } from "./toward_doors.js";
 import { walkNear } from "../packs/home/motion.js";
 import { GIVE_TEXTS, SURFACE_TEXTS } from "./skill_texts.js";
 import { sideOf } from "../packs/home/door_logic.js";
@@ -2505,6 +2506,7 @@ async function openTowardPlayer(bot, player, opened) {
                 break;
             opened.add(`${door.x},${door.y},${door.z}`);
             reserveDoor(bot, door, 20000);
+            noteTowardReserved(bot, door, sideOf(door, me));
             if (await openDoor(bot, door))
                 count++;
         }
@@ -2793,6 +2795,7 @@ export async function goToPlayer(bot, username, distance=3) {
         }
     } finally {
         cave.stop();
+        releasePassedToward(bot, true); // v0.1.4.14 (W116): the walk ends, so do the reservations of its approach
     }
     if (cave.at && !bot.interrupt_code) {
         log(bot, caveText(cave.at));
@@ -2874,6 +2877,7 @@ export async function followPlayer(bot, username, distance=4) {
 
     while (!bot.interrupt_code) {
         await new Promise(resolve => setTimeout(resolve, 500));
+        releasePassedToward(bot); // v0.1.4.14 (W116): the gates and doors the approach opened, once passed
         // in cheat mode, if the distance is too far, teleport to the player
         const distance_from_player = bot.entity.position.distanceTo(player.position);
 
@@ -2951,6 +2955,7 @@ export async function followPlayer(bot, username, distance=4) {
         if (cave.check()) {
             log(bot, caveText(cave.at));
             clearInterval(doorCheckInterval);
+            releasePassedToward(bot, true);
             return false;
         }
         // v0.1.4.11 (N2): a bot that stands still away from the player asks the path search, at most every 5 s,
@@ -2980,6 +2985,7 @@ export async function followPlayer(bot, username, distance=4) {
                 if (cave.at || again === 'none') {
                     log(bot, cave.at ? caveText(cave.at) : NO_WAY_TO_PLAYER);
                     clearInterval(doorCheckInterval);
+                    releasePassedToward(bot, true);
                     return false;
                 }
                 bot.pathfinder.setMovements(move);
@@ -3041,6 +3047,7 @@ export async function followPlayer(bot, username, distance=4) {
         }
     }
     clearInterval(doorCheckInterval);
+    releasePassedToward(bot, true);
     return true;
 }
 

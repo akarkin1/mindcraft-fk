@@ -289,8 +289,8 @@ Checked on 2026-11-04 with the released libraries on a vanilla 26.1 server (`DEC
 Found in the build and the gate, not in the issue tracker (`DECISIONS.md` R1-1, R2-4, R2-8, G-7): minecraft-data
 3.119.0 renamed the entity actions of 1.21.6 and later and 4.39.0 still sends the old numbers (the `bed.js` and
 `physics.js` hunks); `chest.js` cannot open a copper chest (the hunk); the explosion packet of 26.1 carries `center`
-(the bot's reader accepts both shapes); a climb up a ladder through a trapdoor by the path finder can stall for about
-a second on 26.1 (seen three times in the tests, never for good; not changed); `time.js` reads the clock of the End as
+(the bot's reader accepts both shapes); a climb up a ladder through a trapdoor stalled on silent teleports by the server, a floating-point
+slip of the physics' collision (the `aabb.js` hunk, G-12); `time.js` reads the clock of the End as
 0 (the bot does not go there).
 
 ### 4.9 Part H: the chat model Claude Haiku 5.5 (if the owner confirms the switch)

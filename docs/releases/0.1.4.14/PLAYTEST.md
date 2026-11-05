@@ -60,7 +60,7 @@ at the end of the log counts its thinking as output tokens; the price is $0.10 /
 | 7 | Hit the bot once (or let a zombie). | It is pushed back about a block (the knockback was missing on 26.1 before the patch). |
 | 8 | Dig times: watch it dig iron ore with an iron pickaxe. | Under a second per block (4.5 s before the patch). |
 | 9 | Night: "go to sleep", then "get up" before the morning. | It sleeps and gets up (getting up was broken on 26.1 before the patch). |
-| 9b | Night, the bot down in the basement or the mine room: "go to sleep". | It climbs up the ladder through the trapdoor and sleeps in the bed. (On 26.1 a climb through the trapdoor stuck once in the tests; tell me if it stops under the trapdoor or says `I found no way to the bed.`) |
+| 9b | Night, the bot down in the basement or the mine room: "go to sleep". | It climbs up the ladder through the trapdoor and sleeps in the bed. (A stall under the trapdoor was found and fixed in the tests; tell me if it still stops there or says `I found no way to the bed.`) |
 | 10 | The supervisor as in v0.1.4.13 (a new Claude Code session; `fnm exec --using=v22` in the skill). | As before. |
 
 ## 5. The three new things
