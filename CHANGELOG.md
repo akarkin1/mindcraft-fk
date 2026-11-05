@@ -23,6 +23,8 @@ libraries (no released library supports them on 2026-11-03).
 
 ### Changed
 
+- **The walk up a learned ladder** lowers a top stand cell that the teaching recorded in the air onto the floor beneath it (saved routes included); before, the bot could bounce at the top of the second ladder of the mine for ever ("I got stuck").
+- **The pen's gate** is closed behind the bot even when an animal stands beside the gate or presses against it from inside (the close waited for a clear block around the gate and gave up once the bot was out of reach; now only somebody in the gate's own bar holds it).
 - **The shelter walk** never takes a learned route whose two ends lie inside the building (the route "basement" of the owner's base took the bot down the shaft before a bed walk); it enters by the door.
 - **The explosion event** of the watch server reads the packet of 26.1 (`center`) as well as the old shape.
 - **The chat model** of `profiles/claude.json`: `claude-haiku-5-5` with effort `low` (thinking on, kept short; its tokens count as output in the cost line); the price row $0.10 / $0.50 per million tokens.
@@ -31,6 +33,7 @@ libraries (no released library supports them on 2026-11-03).
 ### Known issues
 
 - mineflayer 4.39.0 reads the clock of the End as 0 (the bot does not go there).
+- A climb up a ladder through a trapdoor by the path finder can stall for about a second on 26.1 (seen three times in the tests, never for good).
 - The scenarios of the world tests keep the game-rule names of 1.21.8; the harness translates them and prints `console: N commands of 1.21.8 translated` once per run.
 
 ## [0.1.4.13] - 2026-10-04

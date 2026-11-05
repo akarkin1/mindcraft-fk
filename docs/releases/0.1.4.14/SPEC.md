@@ -283,8 +283,15 @@ Checked on 2026-11-04 with the released libraries on a vanilla 26.1 server (`DEC
 | #3921 wrong dig time for `incorrect_for_wooden_tool` blocks (the ores) | **Real**: 4,550 ms instead of 750 for iron ore | Our `digging.js` material fix stays; W121 part E |
 | #3882, #3887 the bot freezes or hangs in the air after damage | Not reproduced: no NaN in 121 of 121 ticks, `onGround` back after one tick, it walked and jumped right after | Nothing; W121 part E guards it (finite velocity, `onGround`) |
 | #3911, #3915 stuck at one-block steps, hundreds of position corrections | Not reproduced on vanilla: a 5-step staircase and a wall detour with 0 corrections (the reports were on Paper) | Nothing; the journeys walk stairs and ladders |
-| #3906 3x3 crafting delivers nothing | Not reproduced: the server counts the stone pickaxe | Nothing |
+| #3906 3x3 crafting delivers nothing | Not reproduced as described: the server counts the stone pickaxe. **Found in the gate (G-4):** mineflayer keeps one `stateId` for every window, so a craft right after a container window closed clicks with a stale id; the server drops a click, the planks end on the cursor and every later craft fails. Also a table craft of several resolves before the server's correction (R2-10) | The `inventory.js` hunk (the window's state before a click on another window) and the `craft.js` hunk (the server's state after each unit, the count check) of 4.2 |
 | #3838 kick after about 22 chat messages | Not reproduced in offline mode: 30 lines each way; only the vanilla spam limit at 300 ms spacing, which our chat limit of v0.1.4.8 already respects (6 lines, then 1 per 1.2 s) | Nothing; signed chat (online mode) is not our case |
+
+Found in the build and the gate, not in the issue tracker (`DECISIONS.md` R1-1, R2-4, R2-8, G-7): minecraft-data
+3.119.0 renamed the entity actions of 1.21.6 and later and 4.39.0 still sends the old numbers (the `bed.js` and
+`physics.js` hunks); `chest.js` cannot open a copper chest (the hunk); the explosion packet of 26.1 carries `center`
+(the bot's reader accepts both shapes); a climb up a ladder through a trapdoor by the path finder can stall for about
+a second on 26.1 (seen three times in the tests, never for good; not changed); `time.js` reads the clock of the End as
+0 (the bot does not go there).
 
 ### 4.9 Part H: the chat model Claude Haiku 5.5 (if the owner confirms the switch)
 

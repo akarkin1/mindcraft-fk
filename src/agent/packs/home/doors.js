@@ -674,9 +674,25 @@ function isTheBot(bot, entity) {
         || (typeof bot?.username === 'string' && entity.type === 'player' && entity.username === bot.username);
 }
 
+/** v0.1.4.14: an entity holds a fence gate when its box goes this far into the bar of the closed gate. */
+export const GATE_BAR_MARGIN = 0.02;
+
+// The box of a closed fence gate in its cell (x0..x1, z0..z1): the whole cell along the fence line, the middle
+// quarter (0.375 to 0.625) across it; null without a facing.
+function gateBar(door) {
+    if (door.facing === 'north' || door.facing === 'south') {
+        return { x0: door.x, x1: door.x + 1, z0: door.z + 0.375, z1: door.z + 0.625 };
+    }
+    if (door.facing === 'east' || door.facing === 'west') {
+        return { x0: door.x + 0.375, x1: door.x + 0.625, z0: door.z, z1: door.z + 1 };
+    }
+    return null;
+}
+
 /**
  * True when an entity other than the bot stands in the openable: its box overlaps the block of a
- * gate or trapdoor, or the two blocks of a door. Items, orbs and projectiles do not count. Never throws.
+ * trapdoor, the two blocks of a door, or (v0.1.4.14) the bar of a fence gate with a facing (the block
+ * without one). Items, orbs and projectiles do not count. Never throws.
  * @param {object} bot
  * @param {{x,y,z,kind}} door
  * @returns {boolean}
@@ -686,13 +702,27 @@ export function somebodyInDoor(bot, door) {
         const cx = door.x + 0.5;
         const cz = door.z + 0.5;
         const top = door.y + (door.kind === 'door' ? 2 : 1);
+        // v0.1.4.14 (W94 on 26.1): a fence gate with a facing holds only for an entity in the bar the closed gate
+        // fills (the middle quarter of its cell across the fence line), by more than GATE_BAR_MARGIN; the animals of
+        // the pen stood pressed against the closed bar (their boxes touching it, the rest of them in the cell) and held
+        // the gate open after the bot walked out
+        const bar = door.kind === 'gate' ? gateBar(door) : null;
         for (const entity of Object.values(bot?.entities ?? {})) {
             if (!entity || isTheBot(bot, entity) || !entity.position || NOT_STANDING.has(entity.name) || entity.type === 'projectile') {
                 continue;
             }
             const p = entity.position;
-            const reach = (isFiniteNumber(entity.width) ? entity.width : 0.6) / 2 + 0.5;
+            const width = isFiniteNumber(entity.width) ? entity.width : 0.6;
+            const reach = width / 2 + 0.5;
             const height = isFiniteNumber(entity.height) ? entity.height : 1.8;
+            if (bar) {
+                const m = GATE_BAR_MARGIN;
+                if (p.x + width / 2 > bar.x0 + m && p.x - width / 2 < bar.x1 - m && p.z + width / 2 > bar.z0 + m && p.z - width / 2 < bar.z1 - m
+                    && p.y < door.y + 1.5 && p.y + height > door.y) {
+                    return true;
+                }
+                continue;
+            }
             if (Math.abs(p.x - cx) < reach && Math.abs(p.z - cz) < reach && p.y < top && p.y + height > door.y) {
                 return true;
             }
@@ -911,7 +941,9 @@ export function createDoorService(bot, ctx = {}, options = {}) {
                 watch.forget(door);
                 return;
             }
-            if (somebodyInDoor(bot, door) || somebodyNear(bot, door) || botStandsIn(bot, door)) {
+            // v0.1.4.14 (W94 on 26.1): the hold of the watch (occupiedBy), not somebodyNear: a chicken inside the pen
+            // beside its gate held the click on every look until the bot was out of reach, and the gate stood open
+            if (occupiedBy(bot, before) || botStandsIn(bot, door)) {
                 return; // tried again on a later look
             }
             const closed = await closeDoor(bot, before, { tries: 1, checkMs, respectInterrupt: false, ctx, now: options?.now, wait: options?.wait });
