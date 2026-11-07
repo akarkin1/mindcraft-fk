@@ -363,7 +363,8 @@ describe('the work commands of section 11', () => {
         const agent = makeAgent({ bot, fields: { work_packs: { storage: {} }, packContext: () => ({ storage }) } });
         const reply = await command('!givePlayer').perform(agent, 'steve', 'wheat', 5);
         assert.deepEqual(fetched, [['wheat', 3]], 'only what it does not carry');
-        assert.match(reply, /^Action output:\nI took 3 wheat from the chest at \(11, 67, 53\)\.\nCould not find steve\.\n$/);
+        // v0.1.4.14: a failed give says so plainly
+        assert.match(reply, /^Action output:\nI took 3 wheat from the chest at \(11, 67, 53\)\.\nI could not give you wheat: I cannot find steve\.\n$/);
         assert.equal(agent.pauses[0]?.name, 'unstuck', 'the walk to the chest pauses unstuck');
         // it carries enough: no fetch
         fetched.length = 0;
@@ -375,7 +376,7 @@ describe('the work commands of section 11', () => {
         const agent = makeAgent({ bot: { players: { steve: { entity: null } }, inventory: { slots: [], items: () => [] } } });
         Object.defineProperty(agent, 'work_packs', { get() { throw new Error('the packs must not be used'); } });
         agent.packContext = () => { throw new Error('no pack context'); };
-        assert.equal(await command('!givePlayer').perform(agent, 'steve', 'wheat', 5), 'Action output:\nCould not find steve.\n');
+        assert.equal(await command('!givePlayer').perform(agent, 'steve', 'wheat', 5), 'Action output:\nI could not give you wheat: I cannot find steve.\n'); // v0.1.4.14
         assert.equal(command('!givePlayer').description, 'Give the specified item to the given player.');
         M.settingsModule.setSettings({ ...BASE, storage_pack: true });
         assert.equal(command('!givePlayer').description, 'Give an item to a player. What you do not carry you first fetch from a chest you know.');

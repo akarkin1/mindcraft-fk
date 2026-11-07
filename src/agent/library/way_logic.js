@@ -10,14 +10,94 @@
 /** Q7: a target more than this many blocks below the feet is checked for a shaft; within 1 block of the line. */
 export const SHAFT_RULES = Object.freeze({ maxDrop: 3, near: 1 });
 
-/** Q5: more than this many of one kind, or more than this many kinds, is a kit. */
+/**
+ * Q5: more than this many of one kind, or more than this many kinds, is a kit. Since v0.1.4.14 (the owner's play of
+ * 2026-11-07) a kit is no refusal: the bot gives what is asked, and more than 3 kinds within a minute with a chest within
+ * 16 blocks only adds KIT_HINT to the answer.
+ */
 export const KIT_RULES = Object.freeze({ maxCount: 8, maxKinds: 3, windowMs: 60000 });
 
 /** Q2: a route to the surface starts within this many blocks of the bot. */
 export const SURFACE_ROUTE_RANGE = 8;
 
-/** Q5, word for word. */
-export const KIT_TEXT = 'That is a lot. Say "put my stuff in the chest" and I put it in the nearest chest.';
+/** v0.1.4.14: the hint after a give of more than 3 kinds within a minute, with a chest within 16 blocks, word for word. */
+export const KIT_HINT = 'If you want it all, say "put my stuff in the chest".';
+/** v0.1.4.14: a chest within this many blocks of the bot makes the hint. */
+export const KIT_HINT_RANGE = 16;
+
+/**
+ * v0.1.4.14: true when the answer of a give ends with KIT_HINT: more than 3 kinds within a minute (kindsGiven) and a
+ * chest within 16 blocks.
+ * @param {number} kinds
+ * @param {boolean} chestNear
+ * @returns {boolean}
+ */
+export function wantsKitHint(kinds, chestNear) {
+    return chestNear === true && isKit(1, kinds);
+}
+
+/**
+ * v0.1.4.14: the answer of a give that gave nothing, plainly: `I could not give you oak_log: I have none.`
+ * @param {string} item
+ * @param {string} reason
+ * @returns {string}
+ */
+export function giveFailedText(item, reason) {
+    return `I could not give you ${item}: ${reason}.`;
+}
+
+function cellWords(p) {
+    return `(${Math.floor(p?.x)}, ${Math.floor(p?.y)}, ${Math.floor(p?.z)})`;
+}
+
+/**
+ * v0.1.4.14: a give the player picked up nothing of, plainly:
+ * `I could not give you 8 wheat: MartyByrde2 picked up none; 8 lie on the ground at (6, 64, 1).`
+ * @returns {string}
+ */
+export function givenNoneText(username, count, item, at) {
+    return giveFailedText(`${count} ${item}`, `${username} picked up none; ${count} ${count === 1 ? 'lies' : 'lie'} on the ground at ${cellWords(at)}`);
+}
+
+/** v0.1.4.14: the containers !collectBlocks may break when the bot placed them and they are empty. */
+export const COLLECT_CONTAINERS = Object.freeze(['chest', 'trapped_chest', 'barrel', 'copper_chest', 'exposed_copper_chest',
+    'weathered_copper_chest', 'oxidized_copper_chest', 'waxed_copper_chest', 'waxed_exposed_copper_chest', 'waxed_weathered_copper_chest',
+    'waxed_oxidized_copper_chest']);
+
+/** v0.1.4.14: true for a container block (COLLECT_CONTAINERS). */
+export function isContainerName(name) {
+    return typeof name === 'string' && COLLECT_CONTAINERS.includes(name);
+}
+
+// `chest` for every kind of chest, `barrel` for a barrel
+function containerWord(name) {
+    return typeof name === 'string' && name.endsWith('chest') ? 'chest' : 'barrel';
+}
+
+/** v0.1.4.14, word for word: a container the bot did not place is never broken. */
+export function notMineText(name = 'chest') {
+    return `I do not break a ${containerWord(name)} that is not mine.`;
+}
+
+/** v0.1.4.14, word for word: `The chest at (x, y, z) holds N things; say "empty the chest" first.` */
+export function containerFullText(name, pos, count) {
+    const word = containerWord(name);
+    return `The ${word} at ${cellWords(pos)} holds ${count} ${count === 1 ? 'thing' : 'things'}; say "empty the ${word}" first.`;
+}
+
+/**
+ * v0.1.4.14: the answer when every block of the kind nearby is refused by the safety of the path search, naming one:
+ * `I do not break the chest at (3, 64, 0): it is on the list of blocks I never break.`
+ * @param {string} name
+ * @param {{x, y, z}} pos
+ * @param {'never'|'liquid'|'unsafe'} why
+ * @returns {string}
+ */
+export function unsafeBlockText(name, pos, why) {
+    const reason = why === 'never' ? 'it is on the list of blocks I never break'
+        : why === 'liquid' ? 'water or lava would flow in' : 'breaking it is not safe where it stands';
+    return `I do not break the ${name} at ${cellWords(pos)}: ${reason}.`;
+}
 
 /** Q2: the text that names the route walked, word for word: `I take the route "basement_to_surface".` */
 export function routeText(name) {

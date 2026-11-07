@@ -17,7 +17,8 @@ export const SURFACE_TEXTS = Object.freeze({
 
 /** The texts of giveToPlayer (W5). */
 export const GIVE_TEXTS = Object.freeze({
-    given: (count, item, username) => `Gave ${count} ${item} to ${username}.`,
+    // v0.1.4.14 (the owner's play of 2026-11-07): the count the bot gave, to the player who asked
+    given: (count, item, username) => `I gave you ${count} ${item}.`,
     partly: (username, taken, count, item, at) =>
         `${username} took ${taken} of ${count} ${item}; ${count - taken} ${count - taken === 1 ? 'lies' : 'lie'} on the ground at ${cellText(at)}.`,
 });

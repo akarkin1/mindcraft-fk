@@ -146,7 +146,7 @@ describe('W4: the surface, word for word', () => {
 
 describe('W5: give and the arguments, word for word', () => {
     test('the give texts', () => {
-        assert.equal(ST.GIVE_TEXTS.given(44, 'wheat', 'MartyByrde2'), 'Gave 44 wheat to MartyByrde2.');
+        assert.equal(ST.GIVE_TEXTS.given(44, 'wheat', 'MartyByrde2'), 'I gave you 44 wheat.'); // v0.1.4.14
         assert.equal(ST.GIVE_TEXTS.partly('MartyByrde2', 40, 44, 'wheat', { x: 8, y: 63, z: 28 }),
             'MartyByrde2 took 40 of 44 wheat; 4 lie on the ground at (8, 63, 28).');
     });

@@ -13,7 +13,7 @@
 //      `I do not write code for digging. From here: !mineOre("iron", 8, true).` (W7); the code model gets no request.
 //   3. !rememberRoute("a", "b"): `!rememberRoute takes 1 argument (name): !rememberRoute("name").` (W5).
 //   4. The player (his wheat cleared) stands still on open ground 6 blocks from the bot, as in W44. "give me 4 wheat"
-//      !givePlayer("w_player", "wheat", 4): `Gave 4 wheat to w_player.`; within 8 s the player has 4 wheat more (server)
+//      !givePlayer("w_player", "wheat", 4): `I gave you 4 wheat.` (v0.1.4.14: the give reports its count; before `Gave 4 wheat to w_player.`); within 8 s the player has 4 wheat more (server)
 //      and the bot 4 less.
 //   5. The player teaches the mine (journey.js partTeachMine); at the end of the tunnel "dig a tunnel", the model's
 //      !newAction("dig a tunnel"): `I do not write code for digging. From here: !mineOre("iron", 8).`
@@ -115,7 +115,7 @@ await scenarioMain({
             const pw = ((await inventoryOf(PLAYER)).wheat || 0) - pw0;
             const bw = bw0 - ((await inventoryOf(NAME)).wheat || 0);
             note(`4: !givePlayer answered ${JSON.stringify(four.slice(0, 300))}; the player has ${pw} wheat more, the bot ${bw} less`);
-            check(four.includes(`Gave 4 wheat to ${PLAYER}.`), `4: "give me 4 wheat": \`Gave 4 wheat to ${PLAYER}.\` (W5)`, JSON.stringify(four.slice(0, 200)));
+            check(four.includes(`I gave you 4 wheat.`), `4: "give me 4 wheat": \`I gave you 4 wheat.\` (W5; v0.1.4.14 P-2)`, JSON.stringify(four.slice(0, 200)));
             check(pw === 4 && bw === 4, '4: the player has 4 wheat more and the bot 4 less (server)', `player +${pw}, bot -${bw}`);
 
             // ---------------------------------------------------------- 5. the refusal in the tunnel

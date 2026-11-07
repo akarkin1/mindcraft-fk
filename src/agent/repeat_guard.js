@@ -18,7 +18,7 @@ const SUCCESS_SIGNS = [
     /^Successfully\b/,
     /^(Collected|Picked up|I picked up|I planted|I made|I took|I harvested|I stored|I mined|I ate|I cut|I crafted|I collected) [1-9]/,
     /^(Consumed|Equipped|Placed|Discarded|Moved away|Stayed for|Tilled|Planted|Teleported)\b/,
-    /^(Gave [1-9]|\S+ took [1-9])/, // v0.1.4.11 W5: the give texts
+    /^(Gave [1-9]|I gave you [1-9]|\S+ took [1-9])/, // v0.1.4.11 W5: the give texts; v0.1.4.14: `I gave you 97 oak_log.`
     /^I (slept|crafted|closed [a-z]|opened|went through)\b/,
     /^(Location|Area .*|Rule \d+) saved\b/,
     /^I (also )?saved\b/,
