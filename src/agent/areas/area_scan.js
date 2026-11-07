@@ -1543,7 +1543,11 @@ const OPEN = Object.freeze({ open: true });
 
 // v0.1.4.12 (F7): the blocks that show that a place in rock is used: a door or a trapdoor in its border or roof, a
 // bed, a chest or a barrel, a furnace (blast furnace, smoker), a crafting table, a ladder. Torches do not count.
-const USE_NAMES = new Set(['chest', 'trapped_chest', 'barrel', 'furnace', 'blast_furnace', 'smoker', 'crafting_table', 'ladder']);
+// v0.1.4.14 (part D): the copper chests, a copy of COPPER_CHESTS of packs/storage/storage_logic.js (this module imports
+// nothing); tests/unit/xd_copper_food.test.js checks that the copies hold the same names.
+export const COPPER_CHESTS = Object.freeze(['copper_chest', 'exposed_copper_chest', 'weathered_copper_chest', 'oxidized_copper_chest',
+    'waxed_copper_chest', 'waxed_exposed_copper_chest', 'waxed_weathered_copper_chest', 'waxed_oxidized_copper_chest']);
+const USE_NAMES = new Set(['chest', 'trapped_chest', 'barrel', 'furnace', 'blast_furnace', 'smoker', 'crafting_table', 'ladder', ...COPPER_CHESTS]);
 
 function isUseName(name) {
     return name !== null && (USE_NAMES.has(name) || name.endsWith('_bed') || isDoorName(name) || isTrapdoorName(name));

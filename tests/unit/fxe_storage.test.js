@@ -7,12 +7,12 @@
 import { describe, test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
-import { loadSrc } from '../helpers/load.js';
+import { loadSrc, TEST_MC_VERSION } from '../helpers/load.js';
 import { captureConsole } from '../helpers/console_capture.js';
 
 const require = createRequire(import.meta.url);
 const { Vec3 } = require('vec3');
-const REGISTRY = require('prismarine-registry')('1.21.8');
+const REGISTRY = require('prismarine-registry')(TEST_MC_VERSION);
 
 const S = await loadSrc('src/agent/packs/storage/storage.js');
 const T = await loadSrc('src/agent/packs/storage/texts.js');

@@ -1,6 +1,6 @@
 # Rules of this repository for Claude
 
-This is a fork of [Mindcraft](https://github.com/mindcraft-bots/mindcraft) for Minecraft Java 1.21.8. One owner plays with one bot. The fork adds skills that are code, reflexes, memory per world, protected areas, a cost meter and tests on a real server. `CHANGELOG.md` says what each release contains, `docs/ROADMAP.md` what is planned, `docs/PROCESS.md` how a release is made.
+This is a fork of [Mindcraft](https://github.com/mindcraft-bots/mindcraft) for Minecraft Java 26.1 (since v0.1.4.14; 1.21.8 before). One owner plays with one bot. The fork adds skills that are code, reflexes, memory per world, protected areas, a cost meter and tests on a real server. `CHANGELOG.md` says what each release contains, `docs/ROADMAP.md` what is planned, `docs/PROCESS.md` how a release is made.
 
 ## Never
 
@@ -21,7 +21,7 @@ This is a fork of [Mindcraft](https://github.com/mindcraft-bots/mindcraft) for M
 
 ## Node and line endings
 
-- The owner plays with Node 20.20.2. On the owner's machine run every node command through fnm: `fnm exec --using=v20.20.2 -- node ...`; `npm` is `npm.cmd` there. The shell has Node 24, where about 24 tests fail for reasons of the environment. In the cloud Node 22 works.
+- The owner plays with Node 22. On the owner's machine run every node command through fnm: `fnm exec --using=v22 -- node ...`; `npm` is `npm.cmd` there. The shell has Node 24, where about 24 tests fail for reasons of the environment. In the cloud Node 22 works.
 - The repository stores LF. A Windows checkout has CRLF. Keep the line endings of every file you change, and check with `file` before and after.
 
 ## Tests
@@ -34,7 +34,7 @@ This is a fork of [Mindcraft](https://github.com/mindcraft-bots/mindcraft) for M
 
 Every scenario that tests a skill runs with the reflexes of the profile on and gives its order as a chat command. A test file must end by itself: no timer, interval or listener may stay open.
 
-The test server: the jar of the 1.21.8 server and an accepted `eula.txt` in `%LOCALAPPDATA%\Mindcraft\test-server` on the owner's machine, `~/.local/share/mindcraft/test-server` elsewhere, or in the folder that `MC_TEST_SERVER_DIR` names. `node scripts/get_test_server.js --accept-eula` downloads and checks the jar and writes `eula.txt`. The owner accepted the EULA on 2026-09-28. In the cloud set `MC_TEST_JAVA=/usr/bin/java`.
+The test server: the jar of the 26.1 server (`server-26.1.jar`) and an accepted `eula.txt` in `%LOCALAPPDATA%\Mindcraft\test-server` on the owner's machine, `~/.local/share/mindcraft/test-server` elsewhere, or in the folder that `MC_TEST_SERVER_DIR` names. The 26.1 server needs Java 25; the runner refuses an older Java. `node scripts/get_test_server.js --accept-eula` downloads and checks the jar and writes `eula.txt`; with `--jdk` it also puts the Eclipse Temurin 25 JRE into `jdk/` of that folder, which the runner takes when `MC_TEST_JAVA` is not set and the launcher's Java 25 (`java-runtime-epsilon`) is missing. The owner accepted the EULA on 2026-09-28. In the cloud run `node scripts/get_test_server.js --accept-eula --jdk` once (with `NODE_USE_ENV_PROXY=1`) and leave `MC_TEST_JAVA` unset: `/usr/bin/java` is Java 21.
 
 ## Code
 

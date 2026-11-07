@@ -15,7 +15,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { register } from 'node:module';
 import { createRequire } from 'node:module';
-import { loadSrc } from '../helpers/load.js';
+import { loadSrc, TEST_MC_VERSION } from '../helpers/load.js';
 import { repoPath } from '../helpers/paths.js';
 import { makeTmpDir, removeTmpDir } from '../helpers/tmp.js';
 import { captureConsole } from '../helpers/console_capture.js';
@@ -53,7 +53,7 @@ before(async () => {
         cap.restore();
         process.chdir(originalCwd);
     }
-    M.mcdata.__setMcdataForTests(minecraftData('1.21.8'));
+    M.mcdata.__setMcdataForTests(minecraftData(TEST_MC_VERSION));
 });
 after(() => {
     M.mcdata.__setMcdataForTests?.(null);

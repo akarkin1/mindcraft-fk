@@ -13,7 +13,7 @@ import { describe, test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import minecraftData from 'minecraft-data';
 import { Vec3 } from 'vec3';
-import { loadSrc } from '../helpers/load.js';
+import { loadSrc, TEST_MC_VERSION } from '../helpers/load.js';
 import { makeTmpDir, removeTmpDir } from '../helpers/tmp.js';
 import { captureConsole } from '../helpers/console_capture.js';
 import { assertImportRules, assertCleanImport } from '../helpers/module_rules.js';
@@ -160,7 +160,7 @@ describe('withKillTimer(onTimeout, ms, fn)', () => {
 });
 
 describe('unstuck mode of src/agent/modes.js', () => {
-    const REGISTRY = minecraftData('1.21.8');
+    const REGISTRY = minecraftData(TEST_MC_VERSION);
     const ONLY_UNSTUCK = {
         self_preservation: false, unstuck: true, cowardice: false, self_defense: false, hunting: false,
         item_collecting: false, torch_placing: false, elbow_room: false, idle_staring: false,

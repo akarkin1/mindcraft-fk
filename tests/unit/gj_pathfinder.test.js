@@ -11,11 +11,11 @@ import { describe, test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { createRequire } from 'node:module';
-import { loadSrc } from '../helpers/load.js';
+import { loadSrc, TEST_MC_VERSION } from '../helpers/load.js';
 
 const require = createRequire(import.meta.url);
 const { Vec3 } = require('vec3');
-const REGISTRY = require('prismarine-registry')('1.21.8');
+const REGISTRY = require('prismarine-registry')(TEST_MC_VERSION);
 const Block = require('prismarine-block')(REGISTRY);
 const pf = require('mineflayer-pathfinder');
 
@@ -25,7 +25,7 @@ const STAND = await loadSrc('src/agent/packs/home/stand_logic.js');
 
 /**
  * A world of stone up to y 63 and air above; set() puts a block with properties. blockAt gives blocks of
- * prismarine-block of 1.21.8, the properties not given at the value of the default state.
+ * prismarine-block of 26.1, the properties not given at the value of the default state.
  */
 function makeWorld({ groundY = 63 } = {}) {
     const cells = new Map();
@@ -59,7 +59,7 @@ function makeWorld({ groundY = 63 } = {}) {
 /** A bot as the Movements read it: registry, blockAt, an empty inventory, no entities. */
 function moveBot(world) {
     return {
-        version: '1.21.8',
+        version: TEST_MC_VERSION,
         registry: REGISTRY,
         game: { minY: -64, height: 384, dimension: 'overworld' },
         entity: { position: new Vec3(0.5, 64, 0.5), effects: {}, onGround: true, height: 1.8 },
@@ -385,6 +385,9 @@ describe('P4: blocks to stand on', () => {
         assert.deepEqual(cells, ['1,64.5', '2,65', '3,65.5', '4,66', '5,66.5']);
     });
 
+    // FINDING (T1, v0.1.4.14 round 2, SPEC 4.3 "a copper chest is a chest"): on 26.1 isNoStandBlock of stand_logic.js holds
+    // the 8 copper chests, but noStandNames of patches/mineflayer-pathfinder+2.4.5.patch (Movements) lists only chest,
+    // trapped_chest and ender_chest: the path finder takes a copper chest as floor (and may break it). Left failing.
     test('cauldrons, composters, hoppers and every block of isNoStandBlock are no floor', () => {
         const names = REGISTRY.blocksArray.map((b) => b.name).filter((n) => STAND.isNoStandBlock(n, null));
         for (const n of ['composter', 'cauldron', 'hopper']) assert.ok(names.includes(n), n);

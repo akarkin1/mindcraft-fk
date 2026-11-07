@@ -186,7 +186,7 @@ export async function startAgent(name, overrides = {}, options = {}) {
         check(wrong.length === 0, 'the modes of the agent are as the profile of the scenario sets them',
             wrong.map(([m, on]) => `${m}: wanted ${on}, ${modes.exists(m) ? 'is ' + modes.isOn(m) : 'does not exist'}`).join('; '));
     }
-    // The 1.21.8 server ignores every action of a player (dig, place, use) until the client reports
+    // The server (1.21.8 and 26.1) ignores every action of a player (dig, place, use) until the client reports
     // that it has loaded the world (packet player_loaded, new in 1.21.4) or 60 ticks have passed.
     // mineflayer 4.33 never sends that packet; since v0.1.4.12 (G2) the agent sends it at every spawn,
     // so the server takes actions at once. A short wait remains for the spawn handler to settle.
@@ -600,7 +600,7 @@ export async function orderChannel(started, { name = 'w_player', at = null, game
 export async function connectPlayer(name, { ms = 20000 } = {}) {
     requireControl();
     const bot = mineflayer.createBot({
-        host: '127.0.0.1', port: env.port, username: name, auth: 'offline', version: '1.21.8',
+        host: '127.0.0.1', port: env.port, username: name, auth: 'offline', version: '26.1',
         checkTimeoutInterval: 60000, hideErrors: true,
     });
     bot.heard = [];

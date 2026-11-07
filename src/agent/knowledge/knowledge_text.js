@@ -16,6 +16,7 @@
 //   You are in the mine "mine", on its way in, 12 blocks under the ground.
 // The text is cut at whole lines to maxChars: the header, where the bot is, the areas, the mines and
 // the ore left behind come first, then the chests, the nearest first, then the places.
+// v0.1.4.14 (part K): newThingsText writes the block of the new things, which follows this block in the prompt.
 
 /** The first line of the block. */
 export const KNOWLEDGE_HEADER = 'WHAT YOU KNOW (from memory, no need to check):';
@@ -404,6 +405,45 @@ export function knowledgeText(input, maxChars = KNOWLEDGE_MAX_CHARS) {
         const keptPlaces = places && take(places) ? [places] : [];
         const lines = [...keptHead, ...keptChests, ...keptTail, ...keptOre, ...keptPlaces];
         return lines.length > 0 ? [KNOWLEDGE_HEADER, ...lines].join('\n') : '';
+    } catch {
+        return '';
+    }
+}
+
+/** v0.1.4.14 (part K, SPEC 4.7): the first line of the block of the new things. */
+export const NEW_THINGS_HEADER = 'NEW SINCE 1.21.8 (true, even if you do not know it):';
+/** v0.1.4.14 (part K): the longest the block of the new things may be, its header included. */
+export const NEW_THINGS_MAX_CHARS = 360;
+/** v0.1.4.14 (part K): the most sentences of the block of the new things. */
+export const NEW_THINGS_MAX_LINES = 3;
+
+/**
+ * The block of the new things for the chat prompt (v0.1.4.14, part K, SPEC 4.7): the header, then the sentences
+ * (newThingLines of new_things.js, the most important first), at most 3 and at most 360 characters in all, the header
+ * and the line breaks counted. A sentence that does not fit is left out and the next one is tried. '' without a
+ * sentence that fits. Pure; never throws.
+ *   NEW SINCE 1.21.8 (true, even if you do not know it):
+ *   Copper tools and armour exist since 1.21.9: like stone but faster, 190 uses, from copper ingots; ...
+ * @param {string[]} lines
+ * @param {number} [maxChars] 360
+ * @returns {string}
+ */
+export function newThingsText(lines, maxChars = NEW_THINGS_MAX_CHARS) {
+    try {
+        const limit = isFiniteNumber(maxChars) && maxChars > 0 ? Math.floor(maxChars) : NEW_THINGS_MAX_CHARS;
+        let used = NEW_THINGS_HEADER.length;
+        const kept = [];
+        for (const line of Array.isArray(lines) ? lines : []) {
+            if (kept.length >= NEW_THINGS_MAX_LINES) {
+                break;
+            }
+            if (typeof line !== 'string' || line === '' || kept.includes(line) || used + 1 + line.length > limit) {
+                continue;
+            }
+            used += 1 + line.length;
+            kept.push(line);
+        }
+        return kept.length > 0 ? [NEW_THINGS_HEADER, ...kept].join('\n') : '';
     } catch {
         return '';
     }

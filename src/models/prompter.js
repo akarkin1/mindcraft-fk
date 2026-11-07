@@ -17,6 +17,9 @@ import { visibleExamples } from '../agent/rules/example_filter.js';
 import { insertRoleLine, roleLine } from '../agent/bots_logic.js';
 import { insertNoteLine, noteText } from '../agent/watch/supervisor_logic.js'; // v0.1.4.13 (N2): the note of the supervisor
 import { splitTemplate, joinParts, withLeadingLines } from './prompt_parts.js'; // v0.1.4.13 (M2): the two parts of the prompt
+import { Vec3 } from 'vec3';
+import { newThingsText } from '../agent/knowledge/knowledge_text.js'; // v0.1.4.14 (part K): what the model does not know
+import { NEW_THINGS, nearThingNames, newThingLines } from '../agent/knowledge/new_things.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -50,6 +53,97 @@ function knowledgeOf(agent) {
         console.warn('Could not add what the bot knows to the prompt:', error);
         return '';
     }
+}
+
+// v0.1.4.14 (part K, SPEC 4.7): the lines a new thing may be named in: the last 3 chat lines (of the players and of the
+// model) and the text of the model's last command. Never throws.
+function recentLines(agent, messages) {
+    let turns = messages;
+    if (!Array.isArray(turns)) {
+        try {
+            turns = agent?.history?.getHistory?.();
+        } catch {
+            turns = null;
+        }
+    }
+    const chat = (Array.isArray(turns) ? turns : []).filter(t => t && typeof t.content === 'string' && (t.role === 'user' || t.role === 'assistant'));
+    const lines = chat.slice(-3).map(t => t.content);
+    const command = [...chat].reverse().find(t => t.role === 'assistant' && /![a-zA-Z]+/.test(t.content));
+    if (command && !lines.includes(command.content))
+        lines.push(command.content);
+    return lines;
+}
+
+// v0.1.4.14 (part K): the names of the bag (the off-hand too), and of the blocks within 8 blocks and the entities within
+// 16, through the scan of the look tool (nearThingNames). Never throws; [] without a world.
+function bagNames(bot) {
+    try {
+        const items = [...(bot?.inventory?.items?.() ?? [])];
+        const off = bot?.inventory?.slots?.[45];
+        if (off)
+            items.push(off);
+        return items.map(item => item?.name).filter(name => typeof name === 'string');
+    } catch {
+        return [];
+    }
+}
+
+function nearNames(bot) {
+    try {
+        const pos = bot?.entity?.position;
+        if (!pos || typeof bot.blockAt !== 'function')
+            return [];
+        const reader = { blockAt: (x, y, z) => bot.blockAt(new Vec3(x, y, z)) };
+        const entities = [];
+        for (const entity of Object.values(bot.entities ?? {})) {
+            if (!entity || entity === bot.entity || !entity.position)
+                continue;
+            let name = entity.name;
+            if (name === 'item') {
+                try {
+                    name = typeof entity.getDroppedItem === 'function' ? entity.getDroppedItem()?.name : null;
+                } catch {
+                    name = null;
+                }
+            }
+            if (typeof name === 'string')
+                entities.push({ name, position: entity.position });
+        }
+        return nearThingNames({ reader, center: { x: pos.x, y: pos.y, z: pos.z }, entities });
+    } catch {
+        return [];
+    }
+}
+
+/**
+ * v0.1.4.14 (part K, SPEC 4.7): the block of the new things for the prompt, with the setting new_things_in_prompt: the
+ * header `NEW SINCE 1.21.8 (true, even if you do not know it):` and at most 3 sentences of the things of 1.21.9 to 26.1
+ * that are in the bag, in view, or in the last lines; '' without the setting or when nothing new is near. Never throws.
+ * @param {object} agent
+ * @param {object[]} [messages] the turns of the conversation
+ * @returns {string}
+ */
+export function newThingsOf(agent, messages) {
+    if (settings.new_things_in_prompt !== true)
+        return '';
+    try {
+        const bot = agent?.bot;
+        const lines = newThingLines({ inventory: bagNames(bot), near: nearNames(bot), lines: recentLines(agent, messages), limit: NEW_THINGS.length });
+        return newThingsText(lines);
+    } catch (error) {
+        console.warn('Could not add the new things to the prompt:', error);
+        return '';
+    }
+}
+
+// v0.1.4.14 (part K): the knowledge block, then the block of the new things after its last line (or alone when the
+// knowledge block is off or empty). Without new_things_in_prompt exactly knowledgeOf.
+function knowledgeWithNewThings(agent, messages) {
+    const knowledge = knowledgeOf(agent);
+    const fresh = newThingsOf(agent, messages);
+    if (fresh === '')
+        return knowledge;
+    return knowledge === '' ? fresh : `${knowledge}\n${fresh}`;
 }
 
 export class Prompter {
@@ -245,8 +339,9 @@ export class Prompter {
         }
         // v0.1.4.8 (C1): what the bot knows, with knowledge_in_prompt, else nothing. Last, and without
         // replacement patterns, so a name in the block is never read as a placeholder.
+        // v0.1.4.14 (part K): with new_things_in_prompt the block of the new things follows it
         if (prompt.includes('$KNOWLEDGE'))
-            prompt = prompt.split('$KNOWLEDGE').join(knowledgeOf(this.agent));
+            prompt = prompt.split('$KNOWLEDGE').join(knowledgeWithNewThings(this.agent, messages));
 
         // check if there are any remaining placeholders with syntax $<word>, except $CUSTOM_SKILLS which the caller fills
         let remaining = prompt.match(/\$(?!CUSTOM_SKILLS(?![A-Z_]))[A-Z_]+/g);
@@ -305,8 +400,9 @@ export class Prompter {
                 prompt = insertSection(prompt, ''); // no manager: only the placeholder is removed
             }
             prompt = withRules(this.agent, prompt);
-            if (!knowledge_placeholder && settings.knowledge_in_prompt)
-                prompt = insertSection(prompt, knowledgeOf(this.agent)); // '' leaves the prompt as it is
+            // v0.1.4.14 (part K): the block of the new things after the knowledge block, or alone when that is off
+            if (!knowledge_placeholder && (settings.knowledge_in_prompt || settings.new_things_in_prompt === true))
+                prompt = insertSection(prompt, knowledgeWithNewThings(this.agent, messages)); // '' leaves the prompt as it is
             // v0.1.4.13 (M2): the fixed part first; a model that takes the parts (claude.js) gets [fixed, changing] and
             // marks the fixed part for the cache, every other model the joined string
             const system = fixed === null ? prompt

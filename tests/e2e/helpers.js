@@ -173,7 +173,7 @@ export async function setupSettings(name, port, overrides = {}) {
         host: '127.0.0.1',
         port,
         auth: 'offline',
-        minecraft_version: '1.21.8',
+        minecraft_version: '26.1',
         ...overrides,
     });
     return mod.default;

@@ -1,8 +1,9 @@
 // v0.1.4.8, fix round, X5 part 1 (DEFECTS_WORLD_0148.md): the bot stays asleep. After "I got up before the
 // morning." the bot still lay in the bed. mineflayer 4.33 leaves the bed with entity_action and the action
-// id 2, which since Minecraft 1.21.6 means "stop sprinting" (leave_bed is the name of id 0 now). wakeUp of
-// the home pack sends the right action, waits until bot.isSleeping is false (at most 3 s, then one more
-// try) and says that the bot got up only then. It never throws. sleepInBed and skills.goToBed use it.
+// id 2, which since Minecraft 1.21.6 means "stop sprinting" (leaving the bed is id 0 now, 'stop_sleeping' in
+// minecraft-data 3.119.0, v0.1.4.14). wakeUp of the home pack sends the right action, waits until
+// bot.isSleeping is false (at most 3 s, then one more try) and says that the bot got up only then. It never
+// throws. sleepInBed and skills.goToBed use it.
 import { describe, test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { register } from 'node:module';
@@ -27,8 +28,8 @@ function fakeClock() {
     return c;
 }
 
-// A sleeping bot of 1.21.8: the client writes packets; the server takes the bot out of the bed after
-// `afterMs` for the right packet (leave_bed), or never (`answer` false), or from the given try on.
+// A sleeping bot of 1.21.6 or later (26.1): the client writes packets; the server takes the bot out of the bed after
+// `afterMs` for the right packet (stop_sleeping), or never (`answer` false), or from the given try on.
 function sleeper({ answerFrom = 1, afterMs = 10, stringMapper = true } = {}) {
     const bot = makeFakeBot();
     bot.isSleeping = true;
@@ -37,14 +38,14 @@ function sleeper({ answerFrom = 1, afterMs = 10, stringMapper = true } = {}) {
     bot._client = {
         write(name, params) {
             bot.writes.push([name, { ...params }]);
-            if (name === 'entity_action' && params.actionId === 'leave_bed' && bot.writes.length >= answerFrom) {
+            if (name === 'entity_action' && params.actionId === 'stop_sleeping' && bot.writes.length >= answerFrom) {
                 setTimeout(() => { bot.isSleeping = false; bot.emit('wake'); }, afterMs);
                 clearTimeout(bot.sleepTimer); // the fake night of makeFakeBot does not run on
             }
         },
     };
-    // v0.1.4.12 (G1): bot.wake() of the patched mineflayer sends leave_bed by name on 1.21.6 and later; wakeUp calls it
-    bot.wake = async () => { bot.calls.push(['wake']); bot._client.write('entity_action', { entityId: 1, actionId: bot.supportFeature('entityActionUsesStringMapper') ? 'leave_bed' : 2, jumpBoost: 0 }); };
+    // v0.1.4.12 (G1): bot.wake() of the patched mineflayer sends 'stop_sleeping' by name on 1.21.6 and later (v0.1.4.14); wakeUp calls it
+    bot.wake = async () => { bot.calls.push(['wake']); bot._client.write('entity_action', { entityId: 1, actionId: bot.supportFeature('entityActionUsesStringMapper') ? 'stop_sleeping' : 2, jumpBoost: 0 }); };
     return bot;
 }
 
@@ -53,12 +54,12 @@ beforeEach(() => { cap = captureConsole(); });
 afterEach(() => { cap.restore(); });
 
 describe('X5: wakeUp of the home pack', () => {
-    test('sends entity_action leave_bed (1.21.6 and later) and says "I got up." only when bot.isSleeping is false', async () => {
+    test('sends entity_action stop_sleeping (1.21.6 and later) and says "I got up." only when bot.isSleeping is false', async () => {
         const bot = sleeper();
         const res = await W.wakeUp(bot, {});
         assert.deepEqual(res, { ok: true, woke: true, reason: null, text: 'I got up.' });
         assert.equal(bot.isSleeping, false);
-        assert.deepEqual(bot.writes, [['entity_action', { entityId: 1, actionId: 'leave_bed', jumpBoost: 0 }]]);
+        assert.deepEqual(bot.writes, [['entity_action', { entityId: 1, actionId: 'stop_sleeping', jumpBoost: 0 }]]);
         assert.equal(bot.calls.filter((c) => c[0] === 'wake').length, 1, 'through bot.wake() of the patched mineflayer (G1)');
     });
 
@@ -138,7 +139,7 @@ describe('X5: sleepInBed gets up for real', () => {
         assert.equal(res.reason, 'interrupted');
         assert.equal(res.text, 'I got up before the morning.');
         assert.equal(bot.isSleeping, false);
-        assert.ok(bot.writes.some((w) => w[1].actionId === 'leave_bed'));
+        assert.ok(bot.writes.some((w) => w[1].actionId === 'stop_sleeping'));
     });
 
     test('stopped in bed and the server keeps the bot in it: the text does not say that it got up', async () => {
@@ -182,12 +183,12 @@ describe('X5: skills.goToBed (home_pack off) gets up when it is stopped', () => 
         bot.writes = [];
         bot.supportFeature = (name) => name === 'entityActionUsesStringMapper';
         bot._client = { write(name, params) { bot.writes.push([name, params.actionId]); setTimeout(() => { bot.isSleeping = false; }, 10); } };
-        bot.wake = async () => { bot._client.write('entity_action', { entityId: 1, actionId: 'leave_bed', jumpBoost: 0 }); }; // G1
+        bot.wake = async () => { bot._client.write('entity_action', { entityId: 1, actionId: 'stop_sleeping', jumpBoost: 0 }); }; // G1
         bot.sleep = async () => { bot.isSleeping = true; };
         setTimeout(() => { bot.interrupt_code = true; }, 100);
         assert.equal(await skills.goToBed(bot), true);
         assert.equal(bot.isSleeping, false);
-        assert.deepEqual(bot.writes, [['entity_action', 'leave_bed']]);
+        assert.deepEqual(bot.writes, [['entity_action', 'stop_sleeping']]);
         assert.ok(bot.output.includes('You got up before the morning.'), bot.output);
     });
 });

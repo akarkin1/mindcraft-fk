@@ -460,6 +460,32 @@ async function jumpOnto(bot, leg, clock, inColumn) {
     return ok && inColumn() ? { ok: true, reason: null } : { ok: false, reason: 'no_path' };
 }
 
+/**
+ * The cell where the bot stands at the top of a column (v0.1.4.14, gate G-1): the entry of the leg lowered onto the
+ * floor under it, at most 2 cells and never below the cell above the top ladder. A route learned from the trail can
+ * hold an entry one cell above the floor beside the hole (the basement of the base: (403, 54, -1) over the floor at
+ * 53); the climb then reached the floor and failed, because its feet never got to the height of the entry. Never throws.
+ * @param {object} bot
+ * @param {{x: number, y: number, z: number}} entry
+ * @param {{top: number}} leg
+ * @returns {{x: number, y: number, z: number}}
+ */
+export function standingEntry(bot, entry, leg) {
+    try {
+        const free = (y) => {
+            const b = blockAt(bot, { x: entry.x, y, z: entry.z });
+            return Boolean(b) && isFree(b) && b.name !== 'ladder';
+        };
+        let y = entry.y;
+        for (let n = 0; n < 2 && y - 1 >= leg.top + 1 && free(y - 1); n++) {
+            y--;
+        }
+        return y === entry.y ? entry : { ...entry, y };
+    } catch {
+        return entry;
+    }
+}
+
 // At the top of the column with a way out above it (fix round 2, F1): the feet at the top ladder or in the
 // cell above it, and that cell an open trapdoor, or free with the entry beside it.
 function wayOutAbove(bot, leg, entry) {
@@ -511,7 +537,7 @@ async function jumpOut(bot, entry, clock, arrived) {
 export async function climbUp(bot, leg, options = {}) {
     const clock = options.clock ?? clockOf(null);
     const t0 = clock.now();
-    const entry = leg.entry ?? { ...offset({ x: leg.x, y: leg.top + 1, z: leg.z }, backOf(leg.face)) };
+    const entry = standingEntry(bot, leg.entry ?? { ...offset({ x: leg.x, y: leg.top + 1, z: leg.z }, backOf(leg.face)) }, leg);
     const arrived = () => {
         const c = feetCell(bot);
         return Boolean(c) && c.y >= entry.y && bot.entity?.onGround && !(c.x === leg.x && c.z === leg.z);

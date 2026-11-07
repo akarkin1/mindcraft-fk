@@ -13,7 +13,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { EventEmitter } from 'node:events';
 import { createRequire } from 'node:module';
-import { loadSrc } from '../helpers/load.js';
+import { loadSrc, TEST_MC_VERSION } from '../helpers/load.js';
 import { repoPath, repoUrl } from '../helpers/paths.js';
 import { makeTmpDir, removeTmpDir } from '../helpers/tmp.js';
 import { captureConsole } from '../helpers/console_capture.js';
@@ -73,7 +73,7 @@ describe('F1: the checksum of the last seen messages', () => {
 
     function client() {
         const c = new EventEmitter();
-        c.version = '1.21.8';
+        c.version = TEST_MC_VERSION;
         c.packets = [];
         c.write = (name, params) => c.packets.push({ name, params });
         chatPlugin(c, {});
@@ -126,7 +126,7 @@ describe('F1: the checksum of the last seen messages', () => {
     });
 
     test('the patch file is what node_modules has, and patch-package applies it on install', () => {
-        const patch = fs.readFileSync(repoPath('patches/minecraft-protocol+1.62.0.patch'), 'utf8').replace(/\r\n/g, '\n');
+        const patch = fs.readFileSync(repoPath('patches/minecraft-protocol+1.68.0.patch'), 'utf8').replace(/\r\n/g, '\n');
         const installed = fs.readFileSync(repoPath('node_modules/minecraft-protocol/src/client/chat.js'), 'utf8').replace(/\r\n/g, '\n');
         const added = patch.split('\n').filter((l) => l.startsWith('+') && !l.startsWith('+++')).map((l) => l.slice(1));
         const removed = patch.split('\n').filter((l) => l.startsWith('-') && !l.startsWith('---')).map((l) => l.slice(1));
@@ -135,7 +135,7 @@ describe('F1: the checksum of the last seen messages', () => {
         for (const line of removed) assert.ok(!installed.includes(line), `removed: ${line}`);
         const pkg = JSON.parse(fs.readFileSync(repoPath('package.json'), 'utf8'));
         assert.equal(pkg.scripts.postinstall, 'patch-package');
-        assert.equal(pkg.dependencies['minecraft-protocol'], '1.62.0', 'the patch is for this version');
+        assert.equal(pkg.dependencies['minecraft-protocol'], '1.68.0', 'the patch is for this version');
     });
 });
 

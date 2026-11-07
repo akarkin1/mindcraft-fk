@@ -709,8 +709,9 @@ export function usablePickaxes(inventory, material) {
     return out.sort((a, b) => PICKAXE_LEVELS[b.material] - PICKAXE_LEVELS[a.material] || b.uses - a.uses);
 }
 
-// The material of a pickaxe as an item and what else it needs to be crafted.
-const PICKAXE_MATERIAL_ITEMS = Object.freeze({ wooden: null, stone: 'cobblestone', iron: 'iron_ingot', diamond: 'diamond', golden: 'gold_ingot' });
+// The material of a pickaxe as an item and what else it needs to be crafted. v0.1.4.14 (part D): copper from copper
+// ingots; a trip never asks for a copper pickaxe (tripPickaxe gives stone for the ores of tier 1).
+const PICKAXE_MATERIAL_ITEMS = Object.freeze({ wooden: null, stone: 'cobblestone', copper: 'copper_ingot', iron: 'iron_ingot', diamond: 'diamond', golden: 'gold_ingot' });
 
 function haveMaterialFor(material, have) {
     const item = PICKAXE_MATERIAL_ITEMS[material];

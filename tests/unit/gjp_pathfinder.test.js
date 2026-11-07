@@ -1,7 +1,7 @@
 // Part P of v0.1.4.10 "Goals" (engineer E2, spec section 4, I5): the path search of mineflayer-pathfinder, patched
 // (patches/mineflayer-pathfinder+2.4.5.patch). The library is loaded as it is installed (npm install applied the
 // patch) and runs against a world in memory: the names and properties of the mining fake world
-// (tests/unit/mining_fake_bot.test.js, makeWorld), turned into blocks of prismarine-block of 1.21.8, so that the
+// (tests/unit/mining_fake_bot.test.js, makeWorld), turned into blocks of prismarine-block of 26.1, so that the
 // shapes and bounding boxes are those of the game. The moves are asserted on Movements; the walks run the path search
 // injected into a bot that moves with prismarine-physics (patched, the trapdoor over a ladder is climbable), one
 // tick per physicsTick, without timers.
@@ -16,6 +16,7 @@ import { createRequire } from 'node:module';
 import { performance } from 'node:perf_hooks';
 import { repoPath } from '../helpers/paths.js';
 import { makeWorld, REGISTRY } from './mining_fake_bot.test.js';
+import { TEST_MC_VERSION } from '../helpers/load.js';
 
 const require = createRequire(import.meta.url);
 const { Vec3 } = require('vec3');
@@ -78,7 +79,7 @@ function door(world, x, y, z, facing = 'east') {
 function simBot(world, pos) {
     const bot = new EventEmitter();
     bot.setMaxListeners(100);
-    bot.version = '1.21.8';
+    bot.version = TEST_MC_VERSION;
     bot.registry = REGISTRY;
     bot.game = { minY: world.minY, dimension: 'overworld' };
     bot.world = { setBlockStateId() {} };

@@ -78,7 +78,7 @@ describe('source: the job is made only with job_memory', () => {
         const before = SOURCE.slice(SOURCE.lastIndexOf('this.job = null;', at), at);
         assert.match(before, /^this\.job = null;\n\s+if \(settings\.job_memory === true\) \{\n\s+try \{\n\s+$/);
         const call = SOURCE.slice(at, SOURCE.indexOf('});', at) + 3);
-        assert.ok(call.includes('new JobStore(`./bots/${this.name}/${JOB_FILE}`)'), call);
+        assert.ok(call.includes('new JobStore(settings.world_memory ? null : `./bots/${this.name}/${JOB_FILE}`)'), call); // v0.1.4.14: per world with world_memory
         assert.ok(call.includes('executeCommand: (text, options) => this._runJobOrder(text, options)'), call);
         assert.ok(call.includes('askModel: (prompt) => this.prompter.promptPlan(prompt)'), call);
         assert.ok(call.includes('settings,'), call);

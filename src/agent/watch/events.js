@@ -3,7 +3,7 @@
 //   chat lines: bot.on('chat'), bot.on('whisper') for the players; agent.openChat wrapped for the lines of the bot
 //     (agent.say / sayText of the packs and the reflexes ends there too); agent.handleMessage wrapped for the
 //     last line of a player (the last order of the state tool)
-//   explosion: the packet `explosion` of bot._client (x, y, z) against the saved areas (agent.area_store)
+//   explosion: the packet `explosion` of bot._client (its center: `center` in 26.1, x, y, z in 1.21.8) against the saved areas (agent.area_store)
 //   health: bot.on('health'); death: bot.on('death'); night_awake: bot.on('time') and bot.on('sleep')
 //   failure_repeated: agent.repeat_guard.record wrapped (the results of the commands, with repeat_guard on);
 //     without a repeat guard the lines of the bot that read as a failure (looksLikeFailure)

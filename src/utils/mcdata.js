@@ -140,7 +140,8 @@ export function isHuntable(mob) {
 
 export function isHostile(mob) {
     if (!mob || !mob.name) return false;
-    return  (mob.type === 'mob' || mob.type === 'hostile') && mob.name !== 'iron_golem' && mob.name !== 'snow_golem';
+    // v0.1.4.14 (part D): the copper golem of 1.21.9 has the type 'mob' like the other golems, and is no enemy either
+    return  (mob.type === 'mob' || mob.type === 'hostile') && mob.name !== 'iron_golem' && mob.name !== 'snow_golem' && mob.name !== 'copper_golem';
 }
 
 // blocks that don't work with collectBlock, need to be manually collected

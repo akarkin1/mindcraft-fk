@@ -36,7 +36,7 @@ The same loop runs in a session on the owner's machine and in a session in the c
 | | On the owner's machine (Windows) | In the cloud |
 |---|---|---|
 | The MCP server `mindcraft` | From the repository's `.mcp.json`: the URL is `http://127.0.0.1:8090/mcp`; with `watch_local_only` on the bot needs no token | The same file; `MC_WATCH_URL` must be the tunnel's URL with `/mcp`, `MC_WATCH_TOKEN` set in the environment |
-| The client | `fnm exec --using=v20.20.2 -- node scripts/watch.js <tool>` in PowerShell (`npm` is `npm.cmd`); the URL defaults to `http://127.0.0.1:8090/mcp`, no token | `node scripts/watch.js <tool>` with `MC_WATCH_URL` and `MC_WATCH_TOKEN` |
+| The client | `fnm exec --using=v22 -- node scripts/watch.js <tool>` in PowerShell (`npm` is `npm.cmd`); the URL defaults to `http://127.0.0.1:8090/mcp`, no token | `node scripts/watch.js <tool>` with `MC_WATCH_URL` and `MC_WATCH_TOKEN` |
 | No tunnel, no network rule | Needed: the tunnel the owner opens, its host allowed in the environment | |
 
 Before the start, check the way: call `server`. A refused connection means the bot or its watch server is not

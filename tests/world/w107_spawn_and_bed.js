@@ -2,7 +2,8 @@
 // SPEC section 5 and 4.3 G1, G2): a dig in the first seconds after the spawn is done, and a bot that gets out of bed gets
 // out. Today (v0.1.4.11) the 1.21.8 server ignores every action of the bot for 3 s after the spawn (mineflayer never sends
 // player_loaded; the harness waits 3.5 s for that reason), and bot.wake() of mineflayer sends the old form of "leave bed"
-// (the home pack works around it).
+// (the home pack works around it). v0.1.4.14: mineflayer 4.39.0 sends player_loaded itself, and the patch of mineflayer
+// makes bot.wake() send 'stop_sleeping' (the name of the action in minecraft-data 3.119.0 from 1.21.6 on).
 //
 // The owner variant of the base (the dump of the owner's region when tests/world/owner_region.json exists), the owner's
 // switches of v0.1.4.11, the modes of his profile, an empty memory. The bot is never moved by the control while it plays:

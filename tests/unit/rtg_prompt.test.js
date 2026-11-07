@@ -25,6 +25,22 @@ const ROUTE_COMMANDS = ['!rememberRoute', '!routes', '!forgetRoute'];
 const MINE_COMMANDS = ['!rememberMine', '!rememberTunnel', '!collectPassedOre'];
 const NEW_COMMANDS = [...ROUTE_COMMANDS, ...MINE_COMMANDS];
 const LIMIT_ALL_ON = 17000;
+// v0.1.4.14 (part K, SPEC 4.7): the lead's decision, since the budget of v0.1.4.13 had 13 characters left: with every
+// switch on, new_things_in_prompt among them, a block of 600 and the three longest lines of the new things present, the
+// prompt may hold 17,400 characters; without the block of the new things the old 17,000 hold.
+const LIMIT_NEW_THINGS = 17400;
+const NEW_THINGS_HEADER = 'NEW SINCE 1.21.8 (true, even if you do not know it):';
+// a bot with the things of the three longest lines of the new things: a copper golem statue and a copper pickaxe in the
+// bag, a nautilus 3 blocks away; the block holds what fits in its 360 characters
+const NEW_THINGS_BOT = {
+    inventory: { items: () => [{ name: 'copper_golem_statue', count: 1 }, { name: 'copper_pickaxe', count: 1 }], slots: [] },
+    entity: { position: { x: 0.5, y: 64, z: 0.5 } }, blockAt: () => null,
+    entities: { 7: { name: 'nautilus', position: { x: 3.5, y: 64, z: 0.5 } } },
+};
+// the block those give: the copper tools line and the nautilus line (354 characters); the copper golem line does not fit
+const NEW_THINGS_BLOCK = [NEW_THINGS_HEADER,
+    'Copper tools and armour exist since 1.21.9: like stone but faster, 190 uses, from copper ingots; a copper pickaxe mines iron, copper and lapis, not diamond or gold.',
+    'A nautilus is a neutral ocean mob that dashes when hit and is tamed with pufferfish; a zombie nautilus carries a drowned with a trident.'].join('\n');
 
 let workDir;
 let originalCwd;
@@ -130,6 +146,7 @@ describe('the size of the conversing prompt (section 10, item 7)', () => {
             name: profile.name, blocked_actions: blocked, history: { memory: '' },
             self_prompter: { isStopped: () => true, isActive: () => false, isPaused: () => false, prompt: '' },
             actions: { currentActionLabel: '' }, task: { task_id: null }, npc: {}, knowledgeBlock: () => knowledge,
+            ...(switches.new_things_in_prompt === true ? { bot: NEW_THINGS_BOT } : {}), // v0.1.4.14 (part K)
         };
         const cap = captureConsole();
         try {
@@ -149,12 +166,15 @@ describe('the size of the conversing prompt (section 10, item 7)', () => {
         }
     }
 
-    test('every switch on, the new ones too, a block of 600 characters: at most 17,000 characters, the six commands offered', async (t) => {
-        const prompt = await conversingPrompt({ ...Object.fromEntries(PARTS.map((p) => [p, true])), ...SWITCHES_ON, world_memory: true }, [], fullBlock(600));
-        t.diagnostic(`v0.1.4.9, every switch on: ${prompt.length} characters`);
+    test('every switch on, the new ones too, a block of 600 characters: at most 17,400 characters with the new things (17,000 without), the six commands offered', async (t) => {
+        // v0.1.4.14 (part K): new_things_in_prompt on with the three longest lines present: 17,400; without its block 17,000
+        const prompt = await conversingPrompt({ ...Object.fromEntries(PARTS.map((p) => [p, true])), ...SWITCHES_ON, world_memory: true,
+            new_things_in_prompt: true }, [], fullBlock(600));
+        t.diagnostic(`v0.1.4.14, every switch on: ${prompt.length} characters`);
         for (const name of NEW_COMMANDS) assert.ok(prompt.includes(`\n${name}: `), name);
-        assert.ok(prompt.includes(`${fullBlock(600)}\nConversation Begin:`));
-        assert.ok(prompt.length <= LIMIT_ALL_ON, `${prompt.length} characters`);
+        assert.ok(prompt.includes(`${fullBlock(600)}\n${NEW_THINGS_BLOCK}\nConversation Begin:`));
+        assert.ok(prompt.length <= LIMIT_NEW_THINGS, `${prompt.length} characters`);
+        assert.ok(prompt.replace(`\n${NEW_THINGS_BLOCK}`, '').length <= LIMIT_ALL_ON, 'without the block of the new things');
     });
 
     test('every switch off, the commands that agent.js hides hidden: none of the six; the size for the report', async (t) => {

@@ -19,7 +19,7 @@ describe('locateServer: the default folder', () => {
     test('Linux and macOS: ~/.local/share/mindcraft/test-server, as the script', () => {
         for (const platform of ['linux', 'darwin']) {
             const found = W.locateServer({ HOME: '/home/alex' }, platform);
-            const jar = path.join('/home/alex/.local/share/mindcraft/test-server', 'server-1.21.8.jar');
+            const jar = path.join('/home/alex/.local/share/mindcraft/test-server', 'server-26.1.jar');
             assert.equal(found.missing, `server jar ${jar}`, platform);
             assert.equal(L.defaultDir(platform, { HOME: '/home/alex' }), '/home/alex/.local/share/mindcraft/test-server');
         }
@@ -34,13 +34,15 @@ describe('locateServer: the default folder', () => {
         const dir = makeTmpDir();
         try {
             const java = path.join(dir, 'java');
-            fs.writeFileSync(path.join(dir, 'server-1.21.8.jar'), 'jar');
+            fs.writeFileSync(path.join(dir, 'server-26.1.jar'), 'jar');
             fs.writeFileSync(java, '');
             fs.writeFileSync(path.join(dir, 'eula.txt'), L.eulaText(new Date('2026-09-30T00:00:00Z')));
-            const found = W.locateServer({ MC_TEST_SERVER_DIR: dir, MC_TEST_JAVA: java, HOME: '/nowhere' }, 'linux');
-            assert.deepEqual(found, { serverDir: dir, jar: path.join(dir, 'server-1.21.8.jar'), java, eula: path.join(dir, 'eula.txt') });
+            // v0.1.4.14: the java must be 25 or later; its java -version is given (the fake java is an empty file)
+            const java25 = () => 'openjdk version "25.0.5" 2026-10-20 LTS\n';
+            const found = W.locateServer({ MC_TEST_SERVER_DIR: dir, MC_TEST_JAVA: java, HOME: '/nowhere' }, 'linux', java25);
+            assert.deepEqual(found, { serverDir: dir, jar: path.join(dir, 'server-26.1.jar'), java, eula: path.join(dir, 'eula.txt') });
             fs.writeFileSync(path.join(dir, 'eula.txt'), 'eula=false\n');
-            assert.equal(W.locateServer({ MC_TEST_SERVER_DIR: dir, MC_TEST_JAVA: java }, 'linux').missing, `accepted eula.txt in ${dir}`);
+            assert.equal(W.locateServer({ MC_TEST_SERVER_DIR: dir, MC_TEST_JAVA: java }, 'linux', java25).missing, `accepted eula.txt in ${dir}`);
         } finally {
             removeTmpDir(dir);
         }

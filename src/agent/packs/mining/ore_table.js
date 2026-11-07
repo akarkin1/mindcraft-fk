@@ -16,11 +16,15 @@ export const ORES = Object.freeze([
 /** The names of the ores, in the order of the table. */
 export const ORE_NAMES = Object.freeze(ORES.map(row => row.ore));
 
-/** Pickaxe materials from the weakest, with the level of blocks they break. Golden breaks what wooden breaks. */
-export const PICKAXE_LEVELS = Object.freeze({ wooden: 0, golden: 0, stone: 1, iron: 2, diamond: 3, netherite: 4 });
+/**
+ * Pickaxe materials from the weakest, with the level of blocks they break. Golden breaks what wooden breaks.
+ * v0.1.4.14 (part D): copper (Minecraft 1.21.9 and later) breaks what stone breaks: iron, copper and lapis ore, not
+ * diamond, gold or redstone ore (the harvest tools of minecraft-data 26.1).
+ */
+export const PICKAXE_LEVELS = Object.freeze({ wooden: 0, golden: 0, stone: 1, copper: 1, iron: 2, diamond: 3, netherite: 4 });
 
-/** Uses of a new pickaxe until it breaks, by material. */
-export const PICKAXE_USES = Object.freeze({ wooden: 59, stone: 131, iron: 250, golden: 32, diamond: 1561, netherite: 2031 });
+/** Uses of a new pickaxe until it breaks, by material. Copper: 190 (maxDurability of minecraft-data 26.1). */
+export const PICKAXE_USES = Object.freeze({ wooden: 59, stone: 131, copper: 190, iron: 250, golden: 32, diamond: 1561, netherite: 2031 });
 
 /** The weakest pickaxe the bot takes on any trip (spec M1: "for any trip at least stone"). */
 export const TRIP_MIN_PICKAXE = 'stone';

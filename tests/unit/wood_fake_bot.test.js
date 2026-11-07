@@ -1,6 +1,6 @@
 // Test helper of the wood pack (spec v0.1.4.7 T): the fake bot of the home pack with what cutting
 // trees and crafting needs: drops that fall and are picked up, a jump that lifts the bot, a
-// pathfinder that stops beside a block, crafting by the recipes of minecraft-data 1.21.8, and a
+// pathfinder that stops beside a block, crafting by the recipes of minecraft-data 26.1 (the registry of home_fake_bot), and a
 // virtual clock. The file name ends in .test.js only because the owner of these tests may create
 // no other files; the tests below run only when this file is the main module.
 import { test } from 'node:test';

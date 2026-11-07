@@ -33,7 +33,7 @@ import { installAreaGuard } from './areas/area_guard.js';
 import { PlacedStore } from './areas/placed_store.js';
 import { autoHome } from './areas/auto_home.js';
 import { RuleStore } from './rules/rule_store.js';
-import { memoryPathsFor, SHARED_TEXT } from './memory_paths.js';
+import { memoryPathsFor, ownFileOf, ownWorldDir, SHARED_TEXT } from './memory_paths.js';
 import { autoEatOptions, passThrough, enterBuilding, doorIsSafe, foodItems, moveOffhandBack, createDoorService } from './packs/home/index.js';
 // v0.1.4.8 (X5): wakeUp of the home pack may not exist yet; always called with ?.
 import * as homePack from './packs/home/index.js';
@@ -145,26 +145,6 @@ function reportCostAtExit(meter) {
     }
 }
 
-/**
- * v0.1.4.12 (G2): tells the server that the client has loaded the world (packet player_loaded, new in
- * 1.21.4), so the server takes the bot's actions from the first second after a spawn. mineflayer 4.33
- * never sends it. Written only when the protocol of the bot's version has the packet. One console line.
- * Never throws. Returns true when the packet was written.
- */
-export function sendPlayerLoaded(bot) {
-    try {
-        const has = Boolean(bot?.registry?.protocol?.play?.toServer?.types?.packet_player_loaded);
-        if (!has || typeof bot?._client?.write !== 'function')
-            return false;
-        bot._client.write('player_loaded', {});
-        console.log('Sent player_loaded after the spawn.');
-        return true;
-    } catch (error) {
-        console.warn('Could not send player_loaded:', error?.message ?? error);
-        return false;
-    }
-}
-
 export class Agent {
     async start(load_mem=false, init_message=null, count_id=0, is_restart=false) {
         // lock down the realm before any component or the bot is created
@@ -229,12 +209,15 @@ export class Agent {
             }
         }
 
-        // v0.1.4.10 (I4): with job_memory, the job of the bot in bots/<name>/job.json; null without it (no object,
-        // no tick). The orders it runs itself are system orders; the model is asked only for the steps of a plan.
+        // v0.1.4.10 (I4): with job_memory, the job of the bot; null without it (no object, no tick). The orders it
+        // runs itself are system orders; the model is asked only for the steps of a plan. v0.1.4.14: with
+        // world_memory the job lives in the world's folder, bots/<name>/worlds/<seed>/job.json, and is bound at
+        // spawn once the world is known (the play of 2026-11-07: the farming of the old world resumed in a new
+        // one); without world_memory in bots/<name>/job.json as before.
         this.job = null;
         if (settings.job_memory === true) {
             try {
-                this.job = createJob(this, new JobStore(`./bots/${this.name}/${JOB_FILE}`), {
+                this.job = createJob(this, new JobStore(settings.world_memory ? null : `./bots/${this.name}/${JOB_FILE}`), {
                     settings,
                     executeCommand: (text, options) => this._runJobOrder(text, options),
                     askModel: (prompt) => this.prompter.promptPlan(prompt),
@@ -421,9 +404,7 @@ export class Agent {
             log(this.name, msg);
             process.exit(1);
         }, spawnTimeoutDuration * 1000);
-        // v0.1.4.12 (G2): player_loaded at every spawn, first of the listeners; mineflayer emits 'spawn' again
-        // after a death and a change of dimension (the respawn packet), and the server waits for it again then.
-        this.bot.on('spawn', () => sendPlayerLoaded(this.bot));
+        // mineflayer sends player_loaded itself at every spawn since 4.38.0 (#3986).
         this.bot.once('spawn', async () => {
             try {
                 clearTimeout(spawnTimeout);
@@ -445,6 +426,7 @@ export class Agent {
                     this._workStores(); // the chest index and the mine store of this world (v0.1.4.7)
                 if (settings.routes_pack && this.work_packs)
                     this._trail(); // v0.1.4.9 (I1): the trail of this world starts
+                this._bindJobToWorld(); // v0.1.4.14: the job of this world, none of another
                 const restart_note = await this._atSpawn(); // v0.1.4.8: off-hand, house, doors, restart note
                 this._jobAtSpawn(); // v0.1.4.10 (I4): a running job says that it goes on
               
@@ -865,6 +847,38 @@ export class Agent {
         return result;
     }
 
+    /**
+     * v0.1.4.14: the folder of the state that belongs to the bot in this world (the job, the note about the last
+     * exit): bots/<name>/worlds/<seed> once the world is known, else bots/<name> (no world memory, or before the
+     * login). Never throws.
+     * @returns {string}
+     */
+    _worldStateDir() {
+        try {
+            const key = settings.world_memory ? this.world_memory?.world?.key : null;
+            if (typeof key === 'string' && key.length > 0 && key !== 'unknown')
+                return ownWorldDir(this.name, key);
+        } catch (_) { /* no world yet */ }
+        return `./bots/${this.name}`;
+    }
+
+    _bindJobToWorld() {
+        // v0.1.4.14: at spawn, once the world is known: the job file of this world. A job of another world is not
+        // read; a new world starts from scratch. Without world memory the store already has its file. Never throws.
+        if (!this.job || !settings.world_memory)
+            return;
+        try {
+            const dir = this._worldStateDir();
+            const key = this.world_memory?.world?.key;
+            const file = typeof key === 'string' && key.length > 0 && key !== 'unknown' ? ownFileOf(this.name, key, JOB_FILE) : `${dir}/${JOB_FILE}`;
+            const job = this.job.bind?.(file);
+            if (job)
+                console.log(`The job of this world: ${job.command ?? job.kind ?? 'a job'} (${job.state}).`);
+        } catch (error) {
+            console.warn('Could not read the job of this world:', error);
+        }
+    }
+
     _jobAtSpawn() {
         // v0.1.4.10 (I4): at spawn, after the note about the restart: a running job says that it goes on. Never throws.
         if (!this.job)
@@ -1115,7 +1129,7 @@ export class Agent {
         let note = '';
         if (settings.restart_context) {
             try {
-                note = restartNote(readExit(`./bots/${this.name}`));
+                note = restartNote(readExit(this._worldStateDir())); // v0.1.4.14: the exit of this world
                 if (note)
                     console.log(note);
             } catch (error) {
@@ -1132,7 +1146,7 @@ export class Agent {
         // stops and is written (I1). Never throws.
         if (settings.restart_context) {
             try {
-                writeExit(`./bots/${this.name}`, {
+                writeExit(this._worldStateDir(), { // v0.1.4.14: into the world's folder when the world is known
                     reason: typeof reason === 'string' ? reason : null,
                     order: this.last_order ?? null,
                     action: actionName(this.actions?.currentActionLabel),

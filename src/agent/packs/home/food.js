@@ -22,7 +22,7 @@ function isPlainObject(value) {
     return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
-// bot.registry.foodsByName, or the foods of 1.21.8 for a bot without a registry.
+// bot.registry.foodsByName, or the foods of 26.1 (VANILLA_FOODS, v0.1.4.14) for a bot without a registry.
 function foodsOf(bot) {
     const foods = bot?.registry?.foodsByName;
     return isPlainObject(foods) && Object.keys(foods).length > 0 ? foods : VANILLA_FOODS;

@@ -7,6 +7,7 @@ import assert from 'node:assert/strict';
 import { repoUrl } from '../helpers/paths.js';
 import { makeTmpDir, removeTmpDir } from '../helpers/tmp.js';
 import { runNodeModuleSource, describeRun, RESULT_PREFIX } from '../helpers/child.js';
+import { TEST_MC_VERSION } from '../helpers/load.js';
 
 const url = (rel) => JSON.stringify(repoUrl(rel));
 
@@ -69,7 +70,7 @@ try {
     facts.placeAllowed = await outcome(bot.placeBlock({ name: 'grass_block', position: { x: 20, y: 63, z: 3 } }, { x: 0, y: 1, z: 0 }));
     facts.door = await outcome(bot.activateBlock({ name: 'oak_door', position: { x: 3, y: 64, z: 6 } }, 1, 2));
 
-    const registry = prismarineRegistry('1.21.8');
+    const registry = prismarineRegistry(${JSON.stringify(TEST_MC_VERSION)});
     const Block = prismarineBlock(registry);
     const airState = registry.blocksByName.air.defaultState;
     const movementsBot = {

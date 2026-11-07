@@ -26,7 +26,7 @@ import {
 } from './dig.js';
 import { SUPPLY_NEAR_RANGE, applySpareRule, pickaxeToCraft, supplyPlan } from './supply_logic.js';
 import { storeFullBag } from './bag.js';
-import { otherOresWords, storeKinds, withOtherOres } from './bag_logic.js';
+import { CONTAINER_NAMES as BAG_CONTAINERS, otherOresWords, storeKinds, withOtherOres } from './bag_logic.js';
 import { followDown, followUp, placeLadder, waitStanding } from './ladder.js';
 import {
     BRANCH_LENGTH, addPassedEntry, addTunnel, backOf, branchCells, branchPlan, cellOf, chooseEntrance, classify, faceNeighbours, insideShaft, isDirection, leftOf,
@@ -501,8 +501,8 @@ function knownChests(ctx, bot) {
     }
 }
 
-/** The containers the supply step looks into when the index does not know them (P1). */
-const CONTAINER_NAMES = Object.freeze(['chest', 'trapped_chest', 'barrel']);
+/** The containers the supply step looks into when the index does not know them (P1); since v0.1.4.14 the copper chests too. */
+const CONTAINER_NAMES = BAG_CONTAINERS; // chest, trapped_chest, barrel and the eight copper chests (bag_logic.js)
 
 // True when a container within 16 blocks of the bot is not in the chest index (either half of a double chest
 // counts as known when the index knows the other half). Never throws.

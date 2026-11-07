@@ -5,6 +5,12 @@ import { TEXTS, hungryText } from './texts.js';
 export const BANNED_FOOD = Object.freeze(['rotten_flesh', 'spider_eye', 'poisonous_potato', 'pufferfish', 'chicken',
     'golden_apple', 'enchanted_golden_apple', 'chorus_fruit', 'suspicious_stew']);
 
+/**
+ * v0.1.4.14 (part D, SPEC 4.3): the fish buckets that minecraft-data 26.1 lists as foods. A bucket is never food; the
+ * auto-eat plugin chooses from bot.registry.foodsByName, so autoEatOptions bans them too.
+ */
+export const FISH_BUCKETS = Object.freeze(['cod_bucket', 'salmon_bucket', 'pufferfish_bucket', 'tropical_fish_bucket']);
+
 /** The food level of a full bot. */
 export const FULL_FOOD = 20;
 /** The bot eats until the food level is at least this. */
@@ -30,19 +36,25 @@ export const AUTO_EAT_DEFAULTS = Object.freeze({
 });
 
 /**
- * The foods of Minecraft 1.21.8 (minecraft-data foods.json) with their food points and saturation,
- * in the shape of bot.registry.foodsByName. For callers without a bot, such as knownFood(ctx).
+ * The foods of Minecraft 26.1 (minecraft-data 3.119.0, pc/26.1/foods.json) with their food points and saturation,
+ * in the shape of bot.registry.foodsByName. For callers without a bot, such as knownFood(ctx). v0.1.4.14 (part D):
+ * the saturation column holds the game's values (an apple 2.4, bread 6; the table of 1.21.8 held 19.2 and 60, twice
+ * the points times the game's value), so the order of foods of the same points is the same, and every caller compares
+ * saturations, none reads one as a number of its own. The four fish buckets are listed as foods by 26.1 and are no food
+ * (isEdibleFood).
  */
 export const VANILLA_FOODS = Object.freeze(Object.fromEntries([
-    ['apple', 4, 19.2], ['mushroom_stew', 6, 86.4], ['bread', 5, 60], ['porkchop', 3, 10.8], ['cooked_porkchop', 8, 204.8],
-    ['golden_apple', 4, 76.8], ['enchanted_golden_apple', 4, 76.8], ['cod', 2, 1.6], ['salmon', 2, 1.6],
-    ['tropical_fish', 1, 0.4], ['pufferfish', 1, 0.4], ['cooked_cod', 5, 60], ['cooked_salmon', 6, 115.2], ['cookie', 2, 1.6],
-    ['melon_slice', 2, 4.8], ['dried_kelp', 1, 1.2], ['beef', 3, 10.8], ['cooked_beef', 8, 204.8], ['chicken', 2, 4.8],
-    ['cooked_chicken', 6, 86.4], ['rotten_flesh', 4, 6.4], ['spider_eye', 2, 12.8], ['carrot', 3, 21.6], ['potato', 1, 1.2],
-    ['baked_potato', 5, 60], ['poisonous_potato', 2, 4.8], ['golden_carrot', 6, 172.8], ['pumpkin_pie', 8, 76.8],
-    ['rabbit', 3, 10.8], ['cooked_rabbit', 5, 60], ['rabbit_stew', 10, 240], ['mutton', 2, 4.8], ['cooked_mutton', 6, 115.2],
-    ['chorus_fruit', 4, 19.2], ['beetroot', 1, 2.4], ['beetroot_soup', 6, 86.4], ['suspicious_stew', 6, 86.4],
-    ['sweet_berries', 2, 1.6], ['glow_berries', 2, 1.6], ['honey_bottle', 6, 14.4],
+    ['apple', 4, 2.4], ['mushroom_stew', 6, 7.2000003], ['bread', 5, 6], ['porkchop', 3, 1.8000001],
+    ['cooked_porkchop', 8, 12.8], ['golden_apple', 4, 9.6], ['enchanted_golden_apple', 4, 9.6],
+    ['pufferfish_bucket', 1, 0.2], ['salmon_bucket', 2, 0.4], ['cod_bucket', 2, 0.4], ['tropical_fish_bucket', 1, 0.2],
+    ['cod', 2, 0.4], ['salmon', 2, 0.4], ['tropical_fish', 1, 0.2], ['pufferfish', 1, 0.2], ['cooked_cod', 5, 6],
+    ['cooked_salmon', 6, 9.6], ['cookie', 2, 0.4], ['melon_slice', 2, 1.2], ['dried_kelp', 1, 0.6],
+    ['beef', 3, 1.8000001], ['cooked_beef', 8, 12.8], ['chicken', 2, 1.2], ['cooked_chicken', 6, 7.2000003],
+    ['rotten_flesh', 4, 0.8], ['spider_eye', 2, 3.2], ['carrot', 3, 3.6000001], ['potato', 1, 0.6],
+    ['baked_potato', 5, 6], ['poisonous_potato', 2, 1.2], ['golden_carrot', 6, 14.400001], ['pumpkin_pie', 8, 4.8],
+    ['rabbit', 3, 1.8000001], ['cooked_rabbit', 5, 6], ['rabbit_stew', 10, 12], ['mutton', 2, 1.2],
+    ['cooked_mutton', 6, 9.6], ['chorus_fruit', 4, 2.4], ['beetroot', 1, 1.2], ['beetroot_soup', 6, 7.2000003],
+    ['suspicious_stew', 6, 7.2000003], ['sweet_berries', 2, 0.4], ['glow_berries', 2, 0.4], ['honey_bottle', 6, 1.2],
 ].map(([name, foodPoints, saturation]) => [name, Object.freeze({ name, foodPoints, saturation })])));
 
 /** Numbers of the hunger reflex (v0.1.4.8, C2). */
@@ -78,14 +90,24 @@ function foodEntry(foods, name) {
 }
 
 /**
- * True for food that the bot may eat.
+ * True for a bucket (v0.1.4.14, part D): `cod_bucket`, `salmon_bucket`, `pufferfish_bucket` and `tropical_fish_bucket`
+ * are listed as foods by minecraft-data 26.1, and none is food: a bucket is never eaten, whatever the banned list.
+ * @param {string} name item name
+ * @returns {boolean}
+ */
+export function isBucketName(name) {
+    return typeof name === 'string' && name.endsWith('_bucket');
+}
+
+/**
+ * True for food that the bot may eat. Never a bucket (v0.1.4.14, part D), also with an empty banned list.
  * @param {string} name item name
  * @param {object} foods bot.registry.foodsByName
  * @param {string[]} [banned]
  * @returns {boolean}
  */
 export function isEdibleFood(name, foods, banned = BANNED_FOOD) {
-    return foodEntry(foods, name) !== null && !banned.includes(name);
+    return foodEntry(foods, name) !== null && !isBucketName(name) && !(Array.isArray(banned) && banned.includes(name));
 }
 
 /**
@@ -122,7 +144,7 @@ export function chooseFood(items, foods, banned = BANNED_FOOD) {
 /**
  * Options for the auto-eat plugin: the options it has now (its defaults), with
  * `priority: 'foodPoints'`, `startAt: 14`, `offhand: false` (v0.1.4.8, C1: the food stays in the main
- * hand) and the banned list of the home pack. Missing or invalid defaults are filled in, so
+ * hand) and the banned list of the home pack with the fish buckets (v0.1.4.14). Missing or invalid defaults are filled in, so
  * `eatingTimeout` is never lost. The input is not changed.
  * @param {object} current bot.autoEat.options
  * @returns {object} a new options object
@@ -139,7 +161,7 @@ export function autoEatOptions(current) {
         }
     }
     const extra = Array.isArray(base.bannedFood) ? base.bannedFood.filter(n => typeof n === 'string') : [];
-    out.bannedFood = [...new Set([...BANNED_FOOD, ...extra])];
+    out.bannedFood = [...new Set([...BANNED_FOOD, ...FISH_BUCKETS, ...extra])]; // v0.1.4.14 (part D): never a bucket
     out.priority = 'foodPoints';
     out.startAt = 14;
     out.offhand = false;
@@ -218,7 +240,7 @@ export function chooseKnownFood(known, foods) {
     const table = isPlainObject(foods) ? foods : VANILLA_FOODS;
     const totals = new Map();
     for (const k of Array.isArray(known) ? known : []) {
-        if (k && typeof k.name === 'string' && isFiniteNumber(k.count) && k.count > 0 && !BANNED_FOOD.includes(k.name)) {
+        if (k && typeof k.name === 'string' && isFiniteNumber(k.count) && k.count > 0 && !BANNED_FOOD.includes(k.name) && !isBucketName(k.name)) {
             totals.set(k.name, (totals.get(k.name) ?? 0) + k.count);
         }
     }

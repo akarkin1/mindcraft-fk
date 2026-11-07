@@ -19,7 +19,8 @@ Rules that hold for every release:
 | 0.1.4.11 | Navigation and words | Released |
 | 0.1.4.12 | Understanding and watching | Released |
 | 0.1.4.13 | Supervision | Released: `CHANGELOG.md` |
-| 0.1.4.14 | Routines | Planned: after the play of 0.1.4.13 |
+| 0.1.4.14 | Minecraft 26.1 | In work: `docs/releases/0.1.4.14/PLAN.md` |
+| 0.1.4.15 | Routines | Planned: after 0.1.4.14 |
 | Later | See the backlog | Not decided |
 
 ## 0.1.4.9 The mine, the routes of the player, and the model comparison
@@ -172,9 +173,18 @@ by a local session on `release/v0.1.4.13-voice` on 2026-10-04 and proven in a ga
 After this release: the supervisor and the bot as one mind, and part A of v0.1.4.12 (the local embedding model) after
 the routing check measures it.
 
-## 0.1.4.14 Routines
+## 0.1.4.14 Minecraft 26.1
 
-Split off 0.1.4.13 by the owner on 2026-10-04: planned after the play of 0.1.4.13.
+The owner, 2026-11-03: the upgrade of the bot to Minecraft Java 26.1 is the next release candidate. The newest
+released libraries (mineflayer 4.39.0, minecraft-protocol 1.68.0, minecraft-data 3.119.0) support 26.1 and
+nothing newer; 26.2 works only from unreleased branches of five libraries and 26.3 from none (checked on real
+servers on 2026-11-03). Node 22, Java 25 for the test server, the 8 patches regenerated, the data of 26.1 in the
+bot's tables (copper pickaxes, copper chests, the corrected foods). The plan is `docs/releases/0.1.4.14/PLAN.md`,
+the spec `SPEC.md`. About 4 days.
+
+## 0.1.4.15 Routines
+
+Split off 0.1.4.13 by the owner on 2026-10-04, moved behind the upgrade to 26.1 on 2026-11-03.
 
 | Part | Content |
 |---|---|

@@ -5,9 +5,9 @@
 import { botPos, logTo } from '../home/context.js';
 import { blockAt, freeSlots, inventoryList } from './dig.js';
 import { cellOf, roomPlan } from './mine_logic.js';
-import { BAG_RULES, PICKAXE_STONE, STONE_KEPT, bagAction, bagFullText, bagKeptText, storeKinds, storedText } from './bag_logic.js';
+import { BAG_RULES, CONTAINER_NAMES, PICKAXE_STONE, STONE_KEPT, bagAction, bagFullText, bagKeptText, storeKinds, storedText } from './bag_logic.js';
 
-const CONTAINERS = Object.freeze(['chest', 'trapped_chest', 'barrel']);
+const CONTAINERS = CONTAINER_NAMES; // chest, trapped_chest, barrel and, since v0.1.4.14, the eight copper chests
 
 // A text for the player now (ctx.say), else into the log of the command.
 function sayTo(ctx, text) {

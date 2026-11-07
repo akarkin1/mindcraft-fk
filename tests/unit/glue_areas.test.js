@@ -5,7 +5,7 @@
 //   - useDoor without a position does not throw when no oak door is near (G6).
 //
 // The bot is a fake over a small block world (tests/helpers/block_world.js) with real blocks of
-// prismarine-block for 1.21.8, so the real Movements of mineflayer-pathfinder can judge them. The
+// prismarine-block for 26.1, so the real Movements of mineflayer-pathfinder can judge them. The
 // real area store and area guard of part A are used.
 import { describe, test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
@@ -14,7 +14,7 @@ import minecraftData from 'minecraft-data';
 import prismarineBlock from 'prismarine-block';
 import { Vec3 } from 'vec3';
 import pf from 'mineflayer-pathfinder';
-import { loadSrc } from '../helpers/load.js';
+import { loadSrc, TEST_MC_VERSION } from '../helpers/load.js';
 import { makeTmpDir, removeTmpDir } from '../helpers/tmp.js';
 import { captureConsole } from '../helpers/console_capture.js';
 import { createBlockWorld } from '../helpers/block_world.js';
@@ -27,7 +27,7 @@ const skills = await loadSrc('src/agent/library/skills.js');
 const AS = await loadSrc('src/agent/areas/area_store.js');
 const AG = await loadSrc('src/agent/areas/area_guard.js');
 
-const registry = minecraftData('1.21.8');
+const registry = minecraftData(TEST_MC_VERSION);
 const Block = prismarineBlock(registry);
 mcdata.__setMcdataForTests(registry);
 

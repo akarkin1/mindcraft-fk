@@ -5,9 +5,14 @@
 // the shelter ended on the composter). The farming pack has the same list for its own walks; the packs
 // do not import each other, so the home pack keeps its own copy.
 
+// v0.1.4.14 (part D): the copper chests, a copy of COPPER_CHESTS of packs/storage/storage_logic.js (the packs do not
+// import each other); tests/unit/xd_copper_food.test.js checks that the copies hold the same names.
+export const COPPER_CHESTS = Object.freeze(['copper_chest', 'exposed_copper_chest', 'weathered_copper_chest', 'oxidized_copper_chest',
+    'waxed_copper_chest', 'waxed_exposed_copper_chest', 'waxed_weathered_copper_chest', 'waxed_oxidized_copper_chest']);
+
 /** Hollow blocks and containers: never a place to stand in or on. */
 export const NO_STAND_NAMES = Object.freeze(['composter', 'cauldron', 'water_cauldron', 'lava_cauldron', 'powder_snow_cauldron', 'hopper',
-    'chest', 'trapped_chest', 'ender_chest']);
+    'chest', 'trapped_chest', 'ender_chest', ...COPPER_CHESTS]);
 
 function plainName(name) {
     return typeof name === 'string' && name.length > 0 ? name.trim().toLowerCase().replace(/^minecraft:/, '') : '';
