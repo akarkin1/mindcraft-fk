@@ -24,6 +24,7 @@ libraries (no released library supports them on 2026-11-03).
 ### Changed
 
 - **The walk up a learned ladder** lowers a top stand cell that the teaching recorded in the air onto the floor beneath it (saved routes included); before, the bot could bounce at the top of the second ladder of the mine for ever ("I got stuck").
+- **The job and the note about the last exit belong to the world** (`bots/<bot>/worlds/<seed>/job.json` and `last_exit.json`, beside the memory of the world): in a new world the bot starts from scratch instead of saying `I was farming. I go on.` and running the farming of the old world. The old `bots/<bot>/job.json` is not read any more.
 - **The pen's gate** is closed behind the bot even when an animal stands beside the gate or presses against it from inside (the close waited for a clear block around the gate and gave up once the bot was out of reach; now only somebody in the gate's own bar holds it).
 - **"Open the pen" and "follow me"**: the gate the follow opened is handed back to the door service once the bot is through, so it closes right behind the bot instead of waiting until the bot walks away.
 - **The shelter walk** never takes a learned route whose two ends lie inside the building (the route "basement" of the owner's base took the bot down the shaft before a bed walk); it enters by the door.
