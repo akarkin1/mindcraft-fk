@@ -137,18 +137,59 @@ export const DEEP_LAYERS = Object.freeze([
 //   base  (v0.1.4.8) the layers of `deep`; the scenarios build a base like the owner's in their region
 //         with console commands (base_world.js: a house, a mine under it, a farm, a pen). Its own server,
 //         so that `env.world` tells a scenario that it runs there.
-export const WORLD_TYPES = Object.freeze(['flat', 'deep', 'base']);
+//   natural (v0.1.4.14, fix round) a generated world of the normal generator with a fixed seed, as the owner
+//         plays a new world: trees, hills, fallen trunks, no structures (so no village), no base, no chest.
+//         It has one spawn; the runner gives every scenario of this type the spawn area (MCW_SPAWN) and does
+//         not prepare regions. MCW_NATURAL_SEED replaces the seed for one run (to look at another world).
+export const WORLD_TYPES = Object.freeze(['flat', 'deep', 'base', 'natural']);
 export const MIN_Y = -64;
+export const NATURAL_SEED = '8675309';
 
-// The extra server properties of a world type.
-export function worldProperties(type = 'flat') {
+// The extra server properties of a world type; `seed` only for natural (default NATURAL_SEED).
+export function worldProperties(type = 'flat', seed = NATURAL_SEED) {
     if (type === 'flat') return {};
+    if (type === 'natural') {
+        return {
+            'level-type': 'minecraft\\:normal',
+            'level-seed': String(seed),
+            'generate-structures': 'false',
+            'spawn-protection': '0',
+        };
+    }
     if (type === 'deep' || type === 'base') {
         return {
             'generator-settings': JSON.stringify({ layers: DEEP_LAYERS, biome: 'minecraft:plains', lakes: false, features: false }),
         };
     }
     throw new Error(`unknown world type ${type}`);
+}
+
+// The natural world: the console runs its commands at the world spawn, so a marker summoned at `~ ~ ~` stands
+// there. The commands that find it (each list one call: the chunk must be loaded before the summon, and the
+// summon must be over before the marker can be read) and the reading of its answer
+// "Marker has the following entity data: [16.0d, 64.0d, 80.0d]" as { x, y, z } (whole blocks), or null.
+export const SPAWN_COMMANDS = Object.freeze({
+    load: ['forceload add ~ ~'],
+    summon: ['summon minecraft:marker ~ ~ ~ {Tags:["mcw_spawn"]}'],
+    read: ['data get entity @e[type=minecraft:marker,tag=mcw_spawn,limit=1] Pos', 'kill @e[type=minecraft:marker,tag=mcw_spawn]'],
+});
+export function spawnFromAnswer(lines) {
+    const text = (Array.isArray(lines) ? lines : [lines]).join(' ');
+    const m = /entity data: \[(-?[\d.]+)d, (-?[\d.]+)d, (-?[\d.]+)d\]/.exec(text);
+    return m ? { x: Math.floor(Number(m[1])), y: Math.floor(Number(m[2])), z: Math.floor(Number(m[3])) } : null;
+}
+
+// The runner's safety net after a scenario of the natural world: the world is not the scenario's to clear, so
+// only what scenarios leave behind goes (dropped items, experience, entities tagged `mcw`), never the animals of
+// the world; and the chunks a scenario force-loaded within 160 blocks of the spawn are released.
+export function naturalCleanup(spawn, r = 160) {
+    const box = `x=${spawn.x - r},y=-64,z=${spawn.z - r},dx=${2 * r},dy=400,dz=${2 * r}`;
+    return [
+        `kill @e[type=minecraft:item,${box}]`,
+        `kill @e[type=minecraft:experience_orb,${box}]`,
+        `kill @e[tag=mcw,type=!minecraft:player,${box}]`,
+        `forceload remove ${spawn.x - r} ${spawn.z - r} ${spawn.x + r} ${spawn.z + r}`,
+    ];
 }
 
 // What the layers of a world type put at a column: a list of { y, block } for the lowest and the

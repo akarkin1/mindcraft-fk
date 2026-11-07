@@ -6,13 +6,14 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import mineflayer from 'mineflayer';
+import { Vec3 } from 'vec3';
 import {
     check, note, scenarioMain, sleep, withTimeout, errText, importProject, startRealAgent, stopRealAgent,
     runCommand, runPhase, emitData, recordConsole, readJson, listFiles, exitSoon, MODES_OFF, MODEL, ROOT,
 } from '../e2e/helpers.js';
 import { env, haveControl, command, commands } from './control.js';
 import { OWNER_PORT } from './mc_server.js';
-import { entityPos, positions, fmt, tp, inBox, entityNumber } from './world.js';
+import { entityPos, positions, fmt, tp, inBox, entityNumber, groupLogs } from './world.js';
 
 export {
     check, note, scenarioMain, sleep, withTimeout, errText, importProject, stopRealAgent, runCommand, runPhase,
@@ -749,4 +750,48 @@ export async function foodTo(name, level, { ms = 60000, amplifier = 30 } = {}) {
 // The labels of the actions the agent ran, from the console lines of the action manager.
 export function actionLabels(logLines) {
     return logLines.map((l) => /executing code\.\.\.|Mode (\w+) finished executing/.exec(l)).filter(Boolean).map((m) => m[0]);
+}
+
+// ------------------------------------------------------------------ the natural world (v0.1.4.14, fix round)
+
+// The nearest blocks of the given names around `center` (default: the bot), read from the chunks a plain client
+// (the player bot, 26.1 registry) has loaded: [{ pos: { x, y, z }, name, distance, props }], nearest first.
+// A generated world is not built by the scenario, so this is how a scenario learns what it offers. The chunks
+// within the view distance of the server (6 chunks) are loaded once `bot.waitForChunksToLoad()` resolved.
+export function nearestBlocks(bot, names, { center = null, radius = 64, count = 64 } = {}) {
+    const ids = names.map((n) => bot.registry.blocksByName[String(n).replace(/^minecraft:/, '')]?.id).filter(Number.isInteger);
+    if (ids.length === 0) return [];
+    const c = center ?? bot.entity.position;
+    const point = new Vec3(c.x, c.y, c.z);
+    return bot.findBlocks({ point, matching: ids, maxDistance: radius, count }).map((p) => {
+        const b = bot.blockAt(p);
+        return { pos: { x: p.x, y: p.y, z: p.z }, name: b?.name ?? null, distance: p.distanceTo(point), props: b?.getProperties?.() ?? {} };
+    }).sort((a, b) => a.distance - b.distance);
+}
+
+// The chunk columns within `radius` blocks of `center` (x, z) that the bot has not loaded: [[cx, cz], ...].
+// A scenario waits until it is empty before it counts what a generated world offers (the server sends the
+// chunks for some seconds after a spawn; a count before that misses the trees of the far chunks).
+export function chunksMissing(bot, center, radius = 64) {
+    const missing = [];
+    for (let cx = Math.floor((center.x - radius) / 16); cx <= Math.floor((center.x + radius) / 16); cx++) {
+        for (let cz = Math.floor((center.z - radius) / 16); cz <= Math.floor((center.z + radius) / 16); cz++) {
+            if (!bot.world.getColumn(cx, cz)) missing.push([cx, cz]);
+        }
+    }
+    return missing;
+}
+
+// The trees of a kind within `radius` blocks of `center`, from the player bot's view: the logs grouped by trunk
+// (standing columns, with base, height and top), the fallen trunks on the ground (lying rows, with from, to,
+// length and axis), the branches (lying rows up in a crown) and the count of the leaves.
+// { logs, trunks, fallen, branches, leaves }; groupLogs (world.js) is the pure part.
+export function treesNear(bot, center, radius = 64, { log = 'oak_log', leaves = 'oak_leaves' } = {}) {
+    const logs = nearestBlocks(bot, [log], { center, radius, count: 100000 });
+    const ground = (p) => {
+        const below = bot.blockAt(new Vec3(p.x, p.y - 1, p.z));
+        return Boolean(below) && below.boundingBox === 'block' && !/_log$|_wood$|leaves$/.test(below.name);
+    };
+    const grouped = groupLogs(logs.map((l) => ({ ...l.pos, axis: l.props.axis ?? 'y', ground: ground(l.pos) })));
+    return { logs: logs.length, ...grouped, leaves: nearestBlocks(bot, [leaves], { center, radius, count: 1000000 }).length };
 }

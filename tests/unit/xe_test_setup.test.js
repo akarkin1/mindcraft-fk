@@ -21,6 +21,7 @@ const W = await loadSrc('tests/world/mc_server.js');
 const DUMP = await loadSrc('scripts/dump_region_logic.js');
 const XT = await loadSrc('tests/helpers/xt_bot.js');
 const ST = await loadSrc('tests/helpers/st_modes_env.js');
+const WW = await loadSrc('tests/world/world.js');
 
 const source = (rel) => fs.readFileSync(new URL(`../../${rel}`, import.meta.url), 'utf8');
 
@@ -161,6 +162,73 @@ describe('the console of 26.1: the old game rule names and the daytime query', (
         assert.equal(W.translationLine(2, 1), 'console: 2 commands and 1 answer of 1.21.8 translated');
         assert.equal(W.translationLine(0, 3), 'console: 3 answers of 1.21.8 translated');
         assert.match(source('tests/world/run.js'), /const consoleLine = translationLine\(servers\.reduce\(\(n, s\) => n \+ \(s\.translated \?\? 0\), 0\), servers\.reduce\(\(n, s\) => n \+ \(s\.answersTranslated \?\? 0\), 0\)\);\nif \(consoleLine\) console\.log\(consoleLine\);/);
+    });
+});
+
+describe('the natural world (fix round): a generated world of a fixed seed', () => {
+    test('the world type and its server properties', () => {
+        assert.deepEqual([...W.WORLD_TYPES], ['flat', 'deep', 'base', 'natural']);
+        assert.equal(W.NATURAL_SEED, '8675309');
+        assert.deepEqual(W.worldProperties('natural'), {
+            'level-type': 'minecraft\\:normal', 'level-seed': '8675309', 'generate-structures': 'false', 'spawn-protection': '0',
+        });
+        assert.equal(W.worldProperties('natural', 42)['level-seed'], '42', 'MCW_NATURAL_SEED replaces the seed');
+        const text = W.serverProperties(25599, W.worldProperties('natural'));
+        for (const line of ['level-type=minecraft\\:normal', 'level-seed=8675309', 'generate-structures=false', 'spawn-protection=0',
+            'white-list=false', 'difficulty=peaceful', 'online-mode=false', 'server-ip=127.0.0.1']) {
+            assert.ok(text.split('\n').includes(line), line);
+        }
+        assert.equal(text.split('\n').filter((l) => l.startsWith('level-type=')).length, 1, 'one level-type: the normal one');
+        assert.doesNotMatch(text, /generator-settings/);
+        assert.deepEqual(W.worldProperties('flat'), {}, 'the flat world as before');
+    });
+
+    test('the spawn: the console runs at the world spawn; its marker is read back', () => {
+        assert.deepEqual([...W.SPAWN_COMMANDS.load], ['forceload add ~ ~']);
+        assert.match(W.SPAWN_COMMANDS.summon[0], /^summon minecraft:marker ~ ~ ~ \{Tags:\["mcw_spawn"\]\}$/);
+        assert.deepEqual(W.spawnFromAnswer(['Marker has the following entity data: [16.0d, 64.0d, 80.0d]']), { x: 16, y: 64, z: 80 });
+        assert.deepEqual(W.spawnFromAnswer('Marker has the following entity data: [-32.5d, 81.0d, -0.5d]'), { x: -33, y: 81, z: -1 });
+        assert.equal(W.spawnFromAnswer(['No entity was found']), null);
+        assert.deepEqual(WW.parseSpawn('16,64,80'), { x: 16, y: 64, z: 80 });
+        assert.equal(WW.parseSpawn(undefined), null);
+        assert.equal(WW.parseSpawn('16,64'), null);
+    });
+
+    test('the runner: no regions, the spawn for the scenario, a cleanup that leaves the animals of the world', () => {
+        const run = source('tests/world/run.js');
+        assert.match(run, /\['natural_smoke', 'w000_natural_smoke\.js', 300, false, 'natural'\],/);
+        assert.match(run, /const ox = worldSpawn \? worldSpawn\.x : 400 \+ region \* 200;/);
+        assert.match(run, /MCW_SPAWN: `\$\{worldSpawn\.x\},\$\{worldSpawn\.y\},\$\{worldSpawn\.z\}`/);
+        assert.match(run, /if \(type === 'natural'\) \{[\s\S]*?worldSpawn = await findSpawn\(\);[\s\S]*?return;/, 'no layers, no ground at 0,0');
+        assert.doesNotMatch(run.slice(run.indexOf('const GROUPS'), run.indexOf('const args')), /natural_smoke/, 'in no group');
+        const clean = W.naturalCleanup({ x: 16, y: 64, z: 80 });
+        assert.deepEqual(clean, [
+            'kill @e[type=minecraft:item,x=-144,y=-64,z=-80,dx=320,dy=400,dz=320]',
+            'kill @e[type=minecraft:experience_orb,x=-144,y=-64,z=-80,dx=320,dy=400,dz=320]',
+            'kill @e[tag=mcw,type=!minecraft:player,x=-144,y=-64,z=-80,dx=320,dy=400,dz=320]',
+            'forceload remove -144 -80 176 240',
+        ]);
+    });
+
+    test('groupLogs: trunks, fallen trunks on the ground, branches', () => {
+        const up = (x, y, z) => ({ x, y, z, axis: 'y', ground: false });
+        const lying = (x, y, z, axis, ground = true) => ({ x, y, z, axis, ground });
+        const g = WW.groupLogs([
+            up(1, 60, 1), up(1, 61, 1), up(1, 62, 1), up(1, 64, 1), // a trunk of 3 and, after a gap, one of 1
+            up(5, 60, 5), lying(6, 60, 5, 'x'), lying(7, 60, 5, 'x'), lying(8, 60, 5, 'x'), // a stump and a fallen trunk of 3
+            lying(3, 70, 3, 'z', false), lying(3, 70, 4, 'z', false), // a branch up in a crown
+            lying(9, 60, 9, 'z'), // one lying log on the ground: no fallen trunk
+            lying(12, 60, 12, 'x'), lying(13, 60, 12, 'x', false), // a row with a log over a gap: a branch
+        ]);
+        assert.deepEqual(g.trunks.map((t) => [t.base, t.height]), [
+            [{ x: 1, y: 60, z: 1 }, 3], [{ x: 1, y: 64, z: 1 }, 1], [{ x: 5, y: 60, z: 5 }, 1],
+        ]);
+        assert.deepEqual(g.fallen, [{ from: { x: 6, y: 60, z: 5 }, to: { x: 8, y: 60, z: 5 }, length: 3, axis: 'x' }]);
+        assert.deepEqual(g.branches.map((b) => [b.from, b.length, b.axis]), [
+            [{ x: 3, y: 70, z: 3 }, 2, 'z'], [{ x: 9, y: 60, z: 9 }, 1, 'z'], [{ x: 12, y: 60, z: 12 }, 2, 'x'],
+        ]);
+        assert.deepEqual(WW.groupLogs([]), { trunks: [], fallen: [], branches: [] });
+        assert.deepEqual(WW.groupLogs(null), { trunks: [], fallen: [], branches: [] });
     });
 });
 
