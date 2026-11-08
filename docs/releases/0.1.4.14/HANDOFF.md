@@ -160,3 +160,9 @@ as the owner saw it before the fixes and passes 5 of 5 after them.
 The pure helper `pickupStands` lives in the home pack with the other shared helpers (`box_math.js`, `food_logic.js`):
 packs never import the library (P-10). The bot works with 26.1.1 and 26.1.2 too, proven on a 26.1.2 server (P-11); the
 test server stays `server-26.1.jar`.
+
+## The final gate (commit 9e4ff1f)
+
+A fresh clone on Node 22.23.4: the 7 patches apply with no warning; unit 8,747 tests (8,744 pass, 3 skipped: the
+third is the comparison with `origin/main` in `nv_words`, absent in a single-branch clone); end-to-end 17 of 17; the
+full world set on the 26.1 server with `natural_smoke` and `fresh_world` 46 of 46 in 4,403 s (G-14).
