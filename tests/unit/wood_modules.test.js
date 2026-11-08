@@ -25,7 +25,7 @@ describe('import rules', () => {
             assert.equal(require, 0);
             for (const spec of specs) {
                 if (spec.startsWith('.')) {
-                    const ok = spec.startsWith('./') || ['../home/box_math.js', '../home/context.js', '../home/motion.js'].includes(spec);
+                    const ok = spec.startsWith('./') || ['../home/box_math.js', '../home/context.js', '../home/motion.js', '../home/pickup_logic.js'].includes(spec);
                     assert.ok(ok && !/library|models|mcdata/.test(spec), `${name}.js imports ${spec}`);
                 } else {
                     assert.ok(PACKAGES.includes(spec), `${name}.js imports the package ${spec}`);

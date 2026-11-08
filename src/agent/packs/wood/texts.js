@@ -42,15 +42,45 @@ export function withArticle(name) {
     return `${/^[aeiou]/i.test(String(name)) ? 'an' : 'a'} ${name}`;
 }
 
+// v0.1.4.14: why the logs the bot saw are no tree, in words (whyNoTree of tree_logic.js)
+const NO_TREE_REASONS = Object.freeze({
+    no_leaves: 'they have no leaves, like a stump or a pile of logs',
+    several_trunks: 'they join several trunks',
+    mixed_wood: 'they are of two kinds of wood',
+    worked_wood: 'stripped logs and wood blocks are the work of a player',
+    too_big: 'they form a cluster too big for a tree',
+    unloaded: 'a block beside them is not loaded yet',
+    no_ground: 'they do not stand on the ground',
+});
+
 /**
- * `I found no tree within 48 blocks. Logs of buildings are not mine to take.` With a kind:
- * `I found no birch tree within ...`.
+ * The text when no tree was found (v0.1.4.14: what the bot saw instead):
+ * - logs refused because they touch a built block (`why.built`): `I found no tree within 48 blocks. Logs of buildings
+ *   are not mine to take.`;
+ * - trees only in or beside a protected area (`why.protectedOnly`): `I found no tree within 48 blocks outside the
+ *   protected areas.`;
+ * - logs that are no tree (`why.log`): `I found oak_log at (-294, 72, -305) but no tree I can cut: they have no leaves,
+ *   like a stump or a pile of logs.`;
+ * - nothing: `I found no tree within 48 blocks.` With a kind: `I found no birch tree within ...`.
  * @param {string|null} [kind]
  * @param {number} [range]
+ * @param {{built?: boolean, protectedOnly?: boolean, log?: {x,y,z,name}|null, reason?: string|null}|null} [why]
  * @returns {string}
  */
-export function noTreeText(kind = null, range = TREE_RANGE) {
-    return `I found no ${kind ? `${kind} ` : ''}tree within ${range} blocks. Logs of buildings are not mine to take.`;
+export function noTreeText(kind = null, range = TREE_RANGE, why = null) {
+    const head = `I found no ${kind ? `${kind} ` : ''}tree within ${range} blocks`;
+    if (why?.built) {
+        return `${head}. Logs of buildings are not mine to take.`;
+    }
+    if (why?.protectedOnly) {
+        return `${head} outside the protected areas.`;
+    }
+    const log = why?.log;
+    if (log && Number.isFinite(log.x) && Number.isFinite(log.y) && Number.isFinite(log.z) && typeof log.name === 'string') {
+        const reason = NO_TREE_REASONS[why.reason];
+        return `I found ${log.name} at (${log.x}, ${log.y}, ${log.z}) but no tree I can cut${reason ? `: ${reason}` : ''}.`;
+    }
+    return `${head}.`;
 }
 
 /**
@@ -59,8 +89,9 @@ export function noTreeText(kind = null, range = TREE_RANGE) {
  * got ...`. No sapling planted: `I had no sapling to plant.` Fewer logs than wanted and no more
  * trees: ` I found no more trees within 48 blocks.` Stopped: ` I was interrupted.` or
  * ` The time for cutting trees was over.` No tree cut: the text for no tree, `I could not reach
- * the trees I found.` or `I stopped before I cut a tree.`
- * @param {{trees: string[], logs?: Object<string, number>, planted?: number, leftover?: number,
+ * the trees I found.` or `I stopped before I cut a tree.` Logs broken but not picked up (v0.1.4.14):
+ * ` 1 log I cut lies on the ground; I could not pick it up.` after the logs got.
+ * @param {{trees: string[], logs?: Object<string, number>, planted?: number, leftover?: number, lying?: number,
  *   noMore?: boolean, stopped?: 'interrupted'|'time'|null, found?: number, kind?: string|null, range?: number}} s
  *   trees: the kind of every tree cut; logs: logs gained by name; found: trees found (when none was cut)
  * @returns {string}
@@ -72,12 +103,17 @@ export function chopText(s) {
         if (s.stopped === 'interrupted') {
             return 'I stopped before I cut a tree.';
         }
-        return (s.found ?? 0) > 0 ? 'I could not reach the trees I found.' : noTreeText(s.kind ?? null, range);
+        return (s.found ?? 0) > 0 ? 'I could not reach the trees I found.' : noTreeText(s.kind ?? null, range, s.why ?? null);
     }
     const kinds = new Set(trees);
     const kindWord = kinds.size === 1 ? `${trees[0]} ` : '';
     const list = countList(s.logs);
     const parts = [`I cut ${trees.length} ${kindWord}${plural(trees.length, 'tree', 'trees')} and got ${list || 'no logs'}.`];
+    // v0.1.4.14: logs that were broken but did not reach the bag are said, not hidden
+    const lying = Number.isFinite(s.lying) ? Math.floor(s.lying) : 0;
+    if (lying > 0) {
+        parts.push(`${lying} ${plural(lying, 'log I cut lies', 'logs I cut lie')} on the ground; I could not pick ${lying === 1 ? 'it' : 'them'} up.`);
+    }
     const planted = s.planted ?? 0;
     parts.push(planted > 0 ? `I planted ${planted} ${plural(planted, 'sapling', 'saplings')}.` : 'I had no sapling to plant.');
     const leftover = s.leftover ?? 0;

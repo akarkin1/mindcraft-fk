@@ -138,3 +138,25 @@ the bot reads the bag while a window is open.
 A fresh clone on Node 22.23.4: the 7 patches apply with no warning; unit 8,690 tests (8,688 pass, 2 skipped);
 end-to-end 17 of 17; the full world set on the 26.1 server 44 of 44 in 4,175 s (G-13). The four full runs
 before it (42 of 44 each, with different failures every time) and what they found are G-1 to G-12.
+
+## The play of 2026-11-07 (parts 4 to 7 of the fix round)
+
+The owner's first play on a new 26.1 world (DECISIONS P-1 to P-16). The gate could not see these: the test base is a
+hand-built flat world, the owner plays on a generated one. E3 added the world type `natural` (seed 8675309, a forest
+spawn, structures off; the server places some trees of the seed differently per run, so a scenario reads the trees of
+its own run with `treesNear` and never names a tree by position) and T3 wrote W122 "a fresh world" on it, which failed
+as the owner saw it before the fixes and passes 5 of 5 after them.
+
+| Finding | Fix and its test | Files |
+|---|---|---|
+| The job and the exit note of the old world resumed in the new one (P-1) | the job store is bound at spawn to `bots/<bot>/worlds/<seed>/job.json`, the exit note read and written there; `xl_job_per_world` | `src/agent/job/`, `src/agent/agent.js` (the lead) |
+| `!givePlayer` refused more than 8 of a kind (P-2); the stack landed 6 blocks behind the bot because the toss went out in the same tick as the look (P-14) | the give gives what is asked, a stack at a time, the kit rule a hint; the look at the feet, two ticks, the toss from 1.5 blocks, a second toss from 1 block after a miss; `xd_give_collect` (19) | `src/agent/library/skills.js`, `way_logic.js`, `skill_texts.js`, `repeat_guard.js` (E2) |
+| Natural oaks were "no tree" (P-3, P-7): the rest of a cut trunk hangs, a fallen trunk lies, a corner touch joined a row to a standing oak (P-13) | `judgeHanging`, `fallenRow`, `splitFallenRows`, `whyNoTree`; the no-tree answer says what was seen; `wood_tree_logic`, `wood_chop` | `src/agent/packs/wood/tree_logic.js`, `texts.js` (E4) |
+| Logs of cut trees stayed under the crown (P-12) | `sweepTree` walks the tree's cells and steps into a `pickupStands` stand for every drop; honest count | `src/agent/packs/wood/wood.js`, `src/agent/packs/home/pickup_logic.js` (E4) |
+| A forest read as "a walled yard with a roof" (P-4, P-8) | trunks are no wall, crowns no hedge and no roof, a yard's roof must be built, a wall ring mostly built; `xl_natural_terrain` (7) | `src/agent/areas/area_scan.js` (E4) |
+| The bot's own empty chest could not be collected (P-5); its item was lost after the break (P-16) | `collectOwnContainer`: the placed empty container is taken, a full one or another's refused with the reason; the item from a `pickupStands` stand | `src/agent/library/skills.js` (E2) |
+| `Recipe requires craftingTable` when the one cell did not take the table (P-15) | `placeCraftingTable` tries 8 cells; `I could not place my crafting table here.`; `xd_craft_table` (5) | `src/agent/library/skills.js` (E2) |
+
+The pure helper `pickupStands` lives in the home pack with the other shared helpers (`box_math.js`, `food_logic.js`):
+packs never import the library (P-10). The bot works with 26.1.1 and 26.1.2 too, proven on a 26.1.2 server (P-11); the
+test server stays `server-26.1.jar`.

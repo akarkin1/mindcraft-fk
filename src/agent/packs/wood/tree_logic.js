@@ -42,6 +42,15 @@ const PASSABLE = new Set(['air', 'cave_air', 'void_air', 'short_grass', 'grass',
 const PASSABLE_ENDINGS = ['_sapling', '_tulip'];
 const NOT_SOLID = new Set(['water', 'lava', 'bubble_column']);
 
+// v0.1.4.14 (the owner's first play on 26.1): the rest of a trunk whose lowest logs were cut (a cut that was stopped)
+// hangs with its crown above the ground; it is harvested when the ground lies at most this many cells below its lowest
+// log, with only cells to walk through between.
+/** The most free cells between the ground and the lowest log of a hanging trunk. */
+export const HANG_GAP = 8;
+// v0.1.4.14: a fallen tree of 26.1 (since 1.21.5): logs in one straight row on the ground, without leaves.
+/** A fallen trunk has 2 to this many logs. */
+export const FALLEN_MAX = 8;
+
 // A cluster of logs larger than this is no tree: the search stops.
 const MAX_CLUSTER = 512;
 // Branches reach at most this far from the base, sideways.
@@ -268,10 +277,17 @@ function withinSearch(origin, p, o) {
 // Lowest logs of trunks: a trunk log whose block below is ground.
 function collectBases(read, origin, o) {
     const bases = new Map();
+    const hanging = new Map();
     const add = (x, y, z) => {
         const p = { x, y, z };
         if (withinSearch(origin, p, o)) {
             bases.set(posKey(x, y, z), p);
+        }
+    };
+    const addHanging = (x, y, z) => {
+        const p = { x, y, z };
+        if (withinSearch(origin, p, o)) {
+            hanging.set(posKey(x, y, z), p);
         }
     };
     if (o.candidates) {
@@ -286,6 +302,8 @@ function collectBases(read, origin, o) {
             }
             if (isGround(read(c.x, y - 1, c.z))) {
                 add(c.x, y, c.z);
+            } else if (groundBelow(read, c.x, y, c.z) !== null) {
+                addHanging(c.x, y, c.z);
             }
         }
     } else {
@@ -301,13 +319,44 @@ function collectBases(read, origin, o) {
                     const name = read(x, y, z);
                     if (isTrunkLog(name) && isGround(below)) {
                         add(x, y, z);
+                    } else if (isTrunkLog(name) && isPassable(below) && groundBelow(read, x, y, z) !== null) {
+                        addHanging(x, y, z);
                     }
                     below = name;
                 }
             }
         }
     }
-    return [...bases.values()].sort((a, b) => dist(origin, a) - dist(origin, b) || a.x - b.x || a.y - b.y || a.z - b.z);
+    const order = (a, b) => dist(origin, a) - dist(origin, b) || a.x - b.x || a.y - b.y || a.z - b.z;
+    return { bases: [...bases.values()].sort(order), hanging: [...hanging.values()].sort(order) };
+}
+
+// v0.1.4.14: the y of the ground under a log that does not stand on ground: the first block below that is no cell to
+// walk through, when it is ground (GROUND_NAMES) or other natural solid ground and at most HANG_GAP free cells lie
+// between; else null (a log over water, over a building, or high in the air).
+function groundBelow(read, x, y, z) {
+    for (let k = 1; k <= HANG_GAP + 1; k++) {
+        const name = read(x, y - k, z);
+        if (name === null) {
+            return null;
+        }
+        if (isPassable(name)) {
+            continue;
+        }
+        return k > 1 && isNaturalGround(name) ? y - k : null;
+    }
+    return null;
+}
+
+// Ground a trunk may hang over or a fallen trunk may lie on: the ground of a trunk, and stone, sand, gravel, clay,
+// snow blocks and the like; no built block, no wood, no leaves, no liquid.
+const OTHER_GROUND = new Set(['stone', 'granite', 'diorite', 'andesite', 'deepslate', 'tuff', 'calcite', 'sand', 'red_sand',
+    'gravel', 'clay', 'snow_block', 'powder_snow', 'terracotta', 'sandstone', 'red_sandstone', 'pale_moss_block',
+    'coarse_dirt', 'dirt_path', 'farmland', 'suspicious_sand', 'suspicious_gravel']);
+
+function isNaturalGround(name) {
+    return isGround(name) || OTHER_GROUND.has(baseName(name)) || (typeof name === 'string' && name.endsWith('_terracotta')
+        && !name.includes('glazed'));
 }
 
 // All wood (trunk logs and worked wood) connected to the start, corners included.
@@ -339,6 +388,51 @@ function growCluster(read, start, height) {
         }
     }
     return { logs, overflow };
+}
+
+// v0.1.4.14 (W122, seed 8675309, read on the server): the fallen trunk of 2 logs at (11..12, 64, 103) lies with a
+// corner at the lowest log of a standing oak at (10, 64, 104); one cluster (corners included), read as two trunks,
+// and neither was cut. A part of the cluster that touches the rest by no face, and is a fallen row on the ground (2 to
+// 8 logs in a straight line, one level, on natural ground), is split off: the row and the rest are judged each alone.
+// Returns null when there is nothing to split.
+function splitFallenRows(read, logs) {
+    const keys = new Set(logs.map(p => posKey(p.x, p.y, p.z)));
+    const seen = new Set();
+    const parts = [];
+    for (const p of logs) {
+        if (seen.has(posKey(p.x, p.y, p.z))) {
+            continue;
+        }
+        const part = [];
+        const queue = [p];
+        seen.add(posKey(p.x, p.y, p.z));
+        while (queue.length > 0) {
+            const q = queue.shift();
+            part.push(q);
+            for (const [dx, dy, dz] of [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]]) {
+                const k = posKey(q.x + dx, q.y + dy, q.z + dz);
+                if (keys.has(k) && !seen.has(k)) {
+                    seen.add(k);
+                    queue.push({ x: q.x + dx, y: q.y + dy, z: q.z + dz });
+                }
+            }
+        }
+        parts.push(part);
+    }
+    if (parts.length < 2) {
+        return null;
+    }
+    const rows = [];
+    const rest = [];
+    for (const part of parts) {
+        const row = fallenRow(read, part);
+        if (row) {
+            rows.push(row);
+        } else {
+            rest.push(...part);
+        }
+    }
+    return rows.length > 0 && rest.length > 0 ? { rows, rest } : null;
 }
 
 // The trunk: a square of 2 by 2 bases around the start, or the start alone. Other bases may only
@@ -436,6 +530,74 @@ function sortLogs(logs) {
     return logs.map(p => ({ x: p.x, y: p.y, z: p.z })).sort((a, b) => a.y - b.y || a.x - b.x || a.z - b.z);
 }
 
+// v0.1.4.14: a fallen trunk: 2 to FALLEN_MAX logs at one height in one straight row along x or z without a hole, each
+// lying on natural ground. Returns the logs in the row's order, or null.
+function fallenRow(read, logs) {
+    if (logs.length < 2 || logs.length > FALLEN_MAX || new Set(logs.map(p => p.y)).size !== 1) {
+        return null;
+    }
+    const xs = new Set(logs.map(p => p.x));
+    const zs = new Set(logs.map(p => p.z));
+    let row = null;
+    if (zs.size === 1) {
+        row = [...logs].sort((a, b) => a.x - b.x);
+        if (row[row.length - 1].x - row[0].x !== row.length - 1) return null;
+    } else if (xs.size === 1) {
+        row = [...logs].sort((a, b) => a.z - b.z);
+        if (row[row.length - 1].z - row[0].z !== row.length - 1) return null;
+    } else {
+        return null;
+    }
+    return row.every(p => isNaturalGround(read(p.x, p.y - 1, p.z))) ? row : null;
+}
+
+// v0.1.4.14: the verdict on a cluster that holds no log standing on ground (the rest of a trunk whose lowest logs were
+// cut): a tree with its base at the free cell over the ground under its lowest log, or the reason why not.
+function judgeHanging(read, cluster, origin) {
+    if (cluster.overflow) {
+        return { reason: 'too_big' };
+    }
+    const names = cluster.logs.map(p => read(p.x, p.y, p.z));
+    if (names.some(isWorkedWood)) {
+        return { reason: 'worked_wood' };
+    }
+    if (new Set(names.map(woodKind)).size > 1) {
+        return { reason: 'mixed_wood' };
+    }
+    const lowY = Math.min(...cluster.logs.map(p => p.y));
+    const lows = cluster.logs.filter(p => p.y === lowY);
+    const cx = lows.reduce((n, p) => n + p.x, 0) / lows.length;
+    const cz = lows.reduce((n, p) => n + p.z, 0) / lows.length;
+    const low = [...lows].sort((a, b) => (a.x - cx) ** 2 + (a.z - cz) ** 2 - ((b.x - cx) ** 2 + (b.z - cz) ** 2) || a.x - b.x || a.z - b.z)[0];
+    const groundY = groundBelow(read, low.x, low.y, low.z);
+    if (groundY === null) {
+        return { reason: 'no_ground' };
+    }
+    const crown = countLeaves(read, cluster.logs);
+    const contact = contactProblem(read, [...cluster.logs, ...crown.leaves]);
+    if (contact) {
+        return { reason: contact };
+    }
+    if (crown.leaves.length < MIN_LEAVES || !crown.touching) {
+        return { reason: 'no_leaves' };
+    }
+    const base = { x: low.x, y: groundY + 1, z: low.z };
+    return {
+        tree: {
+            base,
+            kind: woodKind(names[0]),
+            logs: sortLogs(cluster.logs),
+            height: crown.topY - base.y + 1,
+            leaves: crown.leaves.length,
+            thick: false,
+            ground: read(base.x, groundY, base.z),
+            stand: findStand(read, [{ x: base.x, z: base.z }], base.y, origin),
+            distance: dist(origin, base),
+            hanging: true,
+        },
+    };
+}
+
 // The verdict on one cluster: a tree, or the reason why not.
 function judge(read, cluster, start, origin) {
     if (cluster.overflow) {
@@ -448,6 +610,30 @@ function judge(read, cluster, start, origin) {
     const kinds = new Set(names.map(woodKind));
     if (kinds.size > 1) {
         return { reason: 'mixed_wood' };
+    }
+    // v0.1.4.14: a fallen trunk is harvested like a tree, without leaves, and nothing is planted where it lay
+    const row = fallenRow(read, cluster.logs);
+    if (row) {
+        const contact = contactProblem(read, row);
+        if (contact) {
+            return { reason: contact };
+        }
+        const ends = [row[0], row[row.length - 1]];
+        const base = dist(origin, ends[0]) <= dist(origin, ends[1]) ? ends[0] : ends[1];
+        return {
+            tree: {
+                base: { x: base.x, y: base.y, z: base.z },
+                kind: woodKind(names[0]),
+                logs: sortLogs(row),
+                height: 1,
+                leaves: 0,
+                thick: false,
+                ground: read(base.x, base.y - 1, base.z),
+                stand: findStand(read, row.map(p => ({ x: p.x, z: p.z })), base.y, origin),
+                distance: dist(origin, base),
+                fallen: true,
+            },
+        };
     }
     const trunk = findTrunk(read, cluster.logs, start);
     if (trunk.several) {
@@ -481,7 +667,8 @@ function judge(read, cluster, start, origin) {
  * Natural trees and why the other log clusters are no trees. See findTrees for the rules and
  * the options. Rejected clusters have a reason: `too_big`, `worked_wood` (stripped logs or wood
  * blocks), `mixed_wood`, `several_trunks`, `unloaded` (a block beside the tree is not loaded),
- * `built` (a block of the tree touches a built block with a face) or `no_leaves`.
+ * `built` (a block of the tree touches a built block with a face), `no_leaves` or (v0.1.4.14) `no_ground` (a cluster that hangs
+ * over water, a building or more than HANG_GAP free cells).
  * Never throws.
  * @param {(x: number, y: number, z: number) => string|null} getBlockName
  * @param {{x: number, y: number, z: number}} origin
@@ -499,7 +686,19 @@ export function inspectTrees(getBlockName, origin, options = {}) {
         const from = blockOf(origin);
         const read = reader(getBlockName);
         const claimed = new Set();
-        for (const start of collectBases(read, from, o)) {
+        const { bases, hanging } = collectBases(read, from, o);
+        const take = (verdict, start, cluster) => {
+            if (!verdict.tree) {
+                rejected.push({ base: start, reason: verdict.reason, logs: cluster.logs.length });
+                return;
+            }
+            const t = verdict.tree;
+            if ((o.kind && t.kind !== o.kind) || o.exclude.has(treeKey(t))) {
+                return;
+            }
+            trees.push(t);
+        };
+        for (const start of bases) {
             if (trees.length >= o.max) {
                 break;
             }
@@ -510,22 +709,86 @@ export function inspectTrees(getBlockName, origin, options = {}) {
             for (const p of cluster.logs) {
                 claimed.add(posKey(p.x, p.y, p.z));
             }
-            const verdict = judge(read, cluster, start, from);
-            if (!verdict.tree) {
-                rejected.push({ base: start, reason: verdict.reason, logs: cluster.logs.length });
+            // v0.1.4.14: a fallen trunk that lies with a corner at the foot of a standing tree is two trees
+            const parts = cluster.overflow ? null : splitFallenRows(read, cluster.logs);
+            if (parts) {
+                const restStart = parts.rest.find(p => p.x === start.x && p.y === start.y && p.z === start.z)
+                    ?? sortLogs(parts.rest.filter(p => isGround(read(p.x, p.y - 1, p.z))))[0] ?? sortLogs(parts.rest)[0];
+                take(judge(read, { logs: parts.rest, overflow: false }, restStart, from), restStart, { logs: parts.rest });
+                for (const row of parts.rows) {
+                    take(judge(read, { logs: row, overflow: false }, row[0], from), row[0], { logs: row });
+                }
                 continue;
             }
-            const t = verdict.tree;
-            if ((o.kind && t.kind !== o.kind) || o.exclude.has(treeKey(t))) {
+            take(judge(read, cluster, start, from), start, cluster);
+        }
+        // v0.1.4.14: then the clusters that no log on the ground holds: the rest of a trunk whose lowest logs were cut. A
+        // branch of a standing tree is claimed by its tree above; a cluster that holds a log on the ground is that tree's.
+        for (const start of hanging) {
+            if (trees.length >= o.max) {
+                break;
+            }
+            if (claimed.has(posKey(start.x, start.y, start.z))) {
                 continue;
             }
-            trees.push(t);
+            let cluster = growCluster(read, start, o.height);
+            if (cluster.logs.some(p => isGround(read(p.x, p.y - 1, p.z)))) {
+                continue;
+            }
+            // grown again from its lowest log: the bounds of a cluster are counted from its start (a branch log first)
+            const lowest = sortLogs(cluster.logs)[0];
+            if (lowest.y < start.y) {
+                cluster = growCluster(read, lowest, o.height);
+            }
+            for (const p of cluster.logs) {
+                claimed.add(posKey(p.x, p.y, p.z));
+            }
+            take(judgeHanging(read, cluster, from), start, cluster);
         }
         trees.sort((a, b) => a.distance - b.distance);
     } catch (err) {
         console.warn('Wood pack: the search for trees failed:', err?.message ?? err);
     }
     return { trees, rejected };
+}
+
+/**
+ * Why the logs at a position are no tree (v0.1.4.14, the text of chopTrees when it found none): `built` when the wood
+ * there touches a built block with a face, else the reason of the cluster as inspectTrees gives it (`no_leaves`,
+ * `several_trunks`, `mixed_wood`, `worked_wood`, `too_big`, `unloaded`, `no_ground`), or null when they are a tree, or
+ * no trunk log stands there. Never throws.
+ * @param {(x: number, y: number, z: number) => string|null} getBlockName
+ * @param {{x: number, y: number, z: number}} pos a log
+ * @returns {string|null}
+ */
+export function whyNoTree(getBlockName, pos) {
+    try {
+        if (typeof getBlockName !== 'function' || !isPoint(pos)) {
+            return null;
+        }
+        const read = reader(getBlockName);
+        const p = blockOf(pos);
+        if (!isTrunkLog(read(p.x, p.y, p.z))) {
+            return null;
+        }
+        let cluster = growCluster(read, p, TREE_DEFAULTS.height);
+        // the part a fallen row was split off from, or the row (as inspectTrees judges them)
+        const parts = cluster.overflow ? null : splitFallenRows(read, cluster.logs);
+        if (parts) {
+            const at = (list) => list.some(q => q.x === p.x && q.y === p.y && q.z === p.z);
+            cluster = { logs: parts.rows.find(at) ?? parts.rest, overflow: false };
+        }
+        const contact = contactProblem(read, cluster.logs);
+        if (contact === 'built') {
+            return 'built';
+        }
+        const grounded = cluster.logs.filter(q => isTrunkLog(read(q.x, q.y, q.z)) && isGround(read(q.x, q.y - 1, q.z)))
+            .sort((a, b) => a.y - b.y || a.x - b.x || a.z - b.z);
+        const verdict = grounded.length > 0 ? judge(read, cluster, grounded[0], p) : judgeHanging(read, cluster, p);
+        return verdict.tree ? null : verdict.reason;
+    } catch {
+        return null;
+    }
 }
 
 /**
@@ -539,6 +802,12 @@ export function inspectTrees(getBlockName, origin, options = {}) {
  * leaves touches a built block (isBuiltBlock) with a face, so the post of a house is no tree, also
  * when leaves hang over the roof, and a tree whose crown lies on a roof is left alone. A trunk of
  * 2 by 2 logs is one tree (`thick`); two trunks joined by logs are none.
+ * v0.1.4.14 (the owner's first play on 26.1): two more shapes of natural wood are trees. A fallen trunk (since 1.21.5):
+ * 2 to FALLEN_MAX logs of one kind in one straight row along x or z, at one height, each on natural ground, none
+ * touching a built block; it needs no leaves and is marked `fallen` (nothing is planted where it lay). The rest of a
+ * trunk whose lowest logs were cut (a cut that was stopped): a cluster with leaves as above that no log on the ground
+ * holds, over natural ground at most HANG_GAP free cells below its lowest log; it is marked `hanging`, and its base is
+ * the free cell on the ground under its lowest log, so the plan builds a pillar from there.
  * @param {(x: number, y: number, z: number) => string|null} getBlockName
  * @param {{x: number, y: number, z: number}} origin
  * @param {{range?: number, height?: number, max?: number, kind?: string, candidates?: {x,y,z}[],
@@ -640,6 +909,15 @@ export function chopPlan(tree, reach = DEFAULT_REACH) {
         return empty;
     }
     const r = positiveNumber(reach, DEFAULT_REACH);
+    if (tree.fallen === true) {
+        // v0.1.4.14: a fallen trunk lies on the ground: every log from the ground, from the stand when it reaches, else
+        // from beside the log (the walk to it)
+        const stand = isPoint(tree.stand) ? blockOf(tree.stand) : null;
+        const eye = stand ? eyeOf(stand) : null;
+        const steps = sortLogs(tree.logs.filter(isPoint).map(blockOf))
+            .map(log => ({ log, stand: stand && inReach(eye, log, r) ? { ...stand } : null, from: 'ground', pillar: 0 }));
+        return { steps, pillar_blocks: 0, leftover: [] };
+    }
     const base = blockOf(tree.base);
     const footprint = tree.thick === true
         ? [[0, 0], [1, 0], [0, 1], [1, 1]].map(([dx, dz]) => ({ x: base.x + dx, z: base.z + dz }))

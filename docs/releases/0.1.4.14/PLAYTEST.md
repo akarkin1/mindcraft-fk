@@ -11,7 +11,7 @@ Everything else is v0.1.4.13 with fixes 1 and 2. Before you start: a world opene
 | Step | What you do | Why |
 |---|---|---|
 | 1 | Back up `saves/<your world>` (copy the folder while the game is closed). | The upgrade of the world is for good. |
-| 2 | In the launcher, select **26.1** and open your world once with the game alone, then close it. | The game upgrades the world and installs its Java 25 (`java-runtime-epsilon`), which the test server uses. |
+| 2 | In the launcher, select **26.1** (26.1.1 and 26.1.2 work as well, the same protocol; 26.2 and 26.3 do not) and open your world once with the game alone, then close it. | The game upgrades the world and installs its Java 25 (`java-runtime-epsilon`), which the test server uses. |
 | 3 | `fnm install 22` in PowerShell 7. | The new libraries need Node 22 or newer; `start-claude.ps1` and `start-gpt.ps1` now say `fnm use 22`. |
 
 ## 2. Get the release
@@ -72,7 +72,19 @@ at the end of the log counts its thinking as output tokens; the price is $0.10 /
 | 13 | At low food with a steak and bread in the bag. | It eats the steak first (8 food points), the bread later; it never "eats" a fish bucket if you give it one. |
 | 14 | Say "chain" to it near an iron chain, or ask about a shelf, a spear or a copper golem. | With the switch on, one line of facts; with the switch off, whatever Haiku knows (it was trained before all of this). |
 
-## 6. What I would like to know
+## 6. A new world (what your play of 2026-11-07 found, P-1 to P-16)
+
+On a new 26.1 world, in a forest, with nothing built.
+
+| Step | What you do | What should happen |
+|---|---|---|
+| 15 | Start claude on the new world. | `No memory file found` for the new seed, and no `I was farming. I go on.`, no talk of a connection that dropped: the job and the note about the last exit belong to the world now (`bots/claude/worlds/<seed>/`). |
+| 16 | Stand with it under the trees for a few minutes, speak to it twice. | No "walled yard with a roof", no question about the name of a place it has not saved. Your house, pens and farm in the old world are still read as before. |
+| 17 | "cut 8 oak logs" among natural oaks; stop it half-way once and ask again. | It cuts, the logs end in its bag (none left under the crown), it plants the saplings; the half-cut tree is cut too; never `Logs of buildings are not mine to take.` unless logs really touch something built. A trunk lying on the ground is cut as well (no sapling for it). |
+| 18 | "give me all your logs", on a slope too. | `I gave you N oak_log.`, the stack lands at your feet on the first toss; no `That is a lot`. If you take nothing, it picks the stack up and tosses it once more from one block. |
+| 19 | "make a chest and put your logs in it", then "empty the chest" and "collect the chest"; once on a slope with grass and flowers. | The crafting table goes on a cell that takes it (or `I could not place my crafting table here.`); a full chest is refused with its count; the emptied chest is collected and its item is in the bag, not on the ground. |
+
+## 7. What I would like to know
 
 - Whether `npm run reinstall` and `npm run voice:setup` rebuilt the voice and the viewer on Node 22 (the errors if not).
 - Every place the bot walks differently than on 1.21.8 (doors, trapdoors, ladders, water, the pen gates).

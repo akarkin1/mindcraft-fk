@@ -106,6 +106,43 @@ describe('!givePlayer gives what is asked (v0.1.4.14)', () => {
         assert.match(bot.output, /I could not give you 5 oak_log: MartyByrde2 picked up none; 5 lie on the ground at \(/);
     });
 
+    // W122 (a stack beyond the player on a slope, 5 of 15 runs): the player picks up nothing of the first toss; the bot
+    // walks to its stack, gets it back and tosses it once more from 1 block
+    test('the first toss is not taken: the bot picks its stack up again and tosses it once more; "I gave you 5 oak_log."', async () => {
+        const items = [makeItem('oak_log', 5, 36)];
+        const bot = giveBot(items, { takes: false });
+        let tosses = 0;
+        const toss = bot.toss;
+        bot.toss = async (type, metadata, count) => {
+            await toss(type, metadata, count);
+            tosses++;
+            if (tosses === 1) {
+                bot.entities[900] = { id: 900, name: 'item', type: 'object', position: new Vec3(3.2, 64, 2.1), getDroppedItem: () => ({ name: 'oak_log', count }) };
+            } else {
+                bot.emit('playerCollect', { username: OWNER }, { name: 'item', getDroppedItem: () => ({ name: 'oak_log', count }) });
+            }
+        };
+        const goto = bot.pathfinder.goto;
+        bot.pathfinder.goto = async (goal) => {
+            await goto(goal);
+            // the walk into a stand of pickupStands next to the stack: the server hands it back
+            if (bot.entities[900] && goal?.constructor?.name === 'GoalBlock' && Math.abs(goal.x + 0.5 - 3.2) <= 1.3 && Math.abs(goal.z + 0.5 - 2.1) <= 1.3) {
+                delete bot.entities[900];
+                items[0].count += 5;
+            }
+        };
+        assert.equal(await skills.giveToPlayer(bot, 'oak_log', OWNER, 5), true);
+        assert.deepEqual(bot.calls.tossed, [{ name: 'oak_log', count: 5 }, { name: 'oak_log', count: 5 }], 'tossed twice');
+        assert.ok(bot.calls.goals.some((g) => g?.constructor?.name === 'GoalBlock' && Math.abs(g.x - 3) <= 1 && Math.abs(g.z - 2) <= 1), 'walked into a stand by the stack');
+        assert.ok(bot.output.endsWith('I gave you 5 oak_log.\n'), bot.output);
+    });
+
+    test('the toss is aimed at the player\'s feet', async () => {
+        const bot = giveBot([makeItem('oak_log', 2, 36)]);
+        assert.equal(await skills.giveToPlayer(bot, 'oak_log', OWNER, 2), true);
+        assert.deepEqual({ x: bot.lookingAt.x, y: bot.lookingAt.y, z: bot.lookingAt.z }, { x: 6, y: 64, z: 0 }, 'the cell of the feet, not of the eyes');
+    });
+
     test('the 4th kind within a minute with a chest within 16 blocks: the give, then the hint', async () => {
         const kinds = ['bread', 'apple', 'torch', 'oak_log'];
         const bot = giveBot(kinds.map((k, i) => makeItem(k, 2, 36 + i)), { chest: true });
@@ -161,6 +198,55 @@ describe('!collectBlocks("chest") and the bot\'s own chest (v0.1.4.14)', () => {
         assert.deepEqual(bot.dug, ['3,64,0']);
         assert.equal(world.get(3, 64, 0), 'air');
         assert.ok(!bot.output.includes('No chest nearby'), bot.output);
+    });
+
+    // W122 ("I broke 1 chest and got nothing", 4 of 15 runs): the chest item rolled a block off under a leaf at head
+    // height; the bot walks into a stand of pickupStands and breaks the leaf (no protected area within 8 blocks)
+    function rolledUnderLeaves(areaNear) {
+        const s = chestScene();
+        for (let x = 3; x <= 5; x++) for (let z = -1; z <= 1; z++) s.world.set(x, 65, z, 'oak_leaves');
+        s.bot.areaGuard.areaAt = (p) => (areaNear && Math.abs(p.x - 12) <= 4 && Math.abs(p.z) <= 4 ? { name: 'home', type: 'home' } : null);
+        s.bot.areaGuard.refusal = () => null;
+        const dig = s.bot.dig;
+        let broke = false;
+        s.bot.dig = async (block) => {
+            await dig(block);
+            if (block.position.x === 3 && block.position.y === 64 && !broke) { // the chest: its item rolls to (4.5, 64, 0.5)
+                broke = true;
+                s.bot.entities[50] = { id: 50, name: 'item', type: 'object', position: new Vec3(4.5, 64, 0.5), getDroppedItem: () => ({ name: 'chest', count: 1 }) };
+            }
+        };
+        // the server hands the item over to a bot within its range whose head is free (a leaf there is dug first)
+        s.check = () => {
+            const p = s.bot.entity.position;
+            if (s.bot.entities[50] && Math.abs(p.x - 4.5) <= 1.3 && Math.abs(p.z - 0.5) <= 1.3
+                && s.world.get(Math.floor(p.x), Math.floor(p.y) + 1, Math.floor(p.z)) === 'air') {
+                delete s.bot.entities[50];
+                s.bot.inventory.add('chest', 1);
+            }
+        };
+        s.bot.gotoImpl = (goal) => {
+            if (Number.isFinite(goal?.x)) s.bot.entity.position = new Vec3(goal.x + 0.5, goal.y ?? 64, goal.z + 0.5);
+            s.check();
+        };
+        const digAgain = s.bot.dig;
+        s.bot.dig = async (block) => { await digAgain(block); s.check(); };
+        return s;
+    }
+
+    test('the chest\'s item rolled under a leaf: picked up from a stand, the leaf at head height broken', async () => {
+        const { bot } = rolledUnderLeaves(false);
+        await skills.collectBlock(bot, 'chest', 1);
+        assert.ok(bot.dug.includes('3,64,0'), 'the chest broken');
+        assert.equal(bot.dug.filter((k) => k.split(',')[1] === '65').length, 1, `one leaf broken: ${JSON.stringify(bot.dug)}`);
+        assert.equal(bot.inventory.items().filter((i) => i.name === 'chest').reduce((n, i) => n + i.count, 0), 1, bot.output);
+        assert.ok(!/got nothing/.test(bot.output), bot.output);
+    });
+
+    test('a protected area within 8 blocks of the leaf: no leaf is broken', async () => {
+        const { bot } = rolledUnderLeaves(true);
+        await skills.collectBlock(bot, 'chest', 1);
+        assert.deepEqual(bot.dug.filter((k) => k.split(',')[1] === '65'), [], 'no leaf broken');
     });
 
     test('its own chest that holds items: not broken, the text, false', async () => {

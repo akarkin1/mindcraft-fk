@@ -7,12 +7,13 @@ import { Vec3 } from 'vec3';
 import { distanceToBox } from '../home/box_math.js';
 import { botPos, clockOf, dimensionOf, entitiesWhere, listAreas, logTo } from '../home/context.js';
 import { goals, gotoGoal, makeMovements, stopMoving } from '../home/motion.js';
+import { pickupStands } from '../home/pickup_logic.js';
 import { EXEC_REACH, PLACE_LIMIT_MS, digBlock, eyeOfBot, feetOf, isAirLike, nameAt, settle, vec, waitUntil } from './actions.js';
 import { findItem, inventoryOf, itemCounts } from './inventory.js';
 import { chopStoppedText, chopText, unknownWoodText } from './texts.js';
 import { bestTool } from './tool_logic.js';
-import { DEFAULT_REACH, TREE_DEFAULTS, chopPlan, findTrees, inReach, isLeaves, isTrunkLog, normaliseWoodKind,
-    pickTree, saplingOf, treeKey, treeNearAreas } from './tree_logic.js';
+import { DEFAULT_REACH, TREE_DEFAULTS, chopPlan, findTrees, inReach, inspectTrees, isLeaves, isTrunkLog, normaliseWoodKind,
+    pickTree, saplingOf, treeKey, treeNearAreas, whyNoTree, woodKind } from './tree_logic.js';
 
 /** Upper limit of one chopTrees; checked before each tree. */
 export const CHOP_LIMIT_MS = 10 * 60 * 1000;
@@ -265,18 +266,84 @@ async function collectDrops(bot, centers, run, test = () => true) {
     }
 }
 
-// Items of the logs of the tree that lie, or still fall, within 6 blocks of its trunk. An item
-// whose name is not known yet counts.
+// The cells the drops of a tree are looked for around: its base; for a fallen trunk (v0.1.4.14) every cell of its row.
+function dropCenters(tree) {
+    return tree.fallen === true && Array.isArray(tree.logs) && tree.logs.length > 0 ? tree.logs : [tree.base];
+}
+
+// Items of the logs of the tree that lie, or still fall, within 6 blocks of its trunk (of a cell of the row of a fallen
+// trunk). An item whose name is not known yet counts.
 function logDropsNear(bot, tree, test) {
     const top = tree.base.y + (tree.height ?? 1) + 2;
+    const centers = dropCenters(tree);
     return entitiesWhere(bot, 64, e => {
         if (e.name !== 'item' || e.isValid === false) {
             return false;
         }
         const p = e.position;
-        return Math.hypot(p.x - (tree.base.x + 0.5), p.z - (tree.base.z + 0.5)) <= LOG_DROP_RADIUS
+        return centers.some(c => Math.hypot(p.x - (c.x + 0.5), p.z - (c.z + 0.5)) <= LOG_DROP_RADIUS)
             && p.y >= tree.base.y - 3 && p.y <= top && test(droppedName(e));
     });
+}
+
+/** v0.1.4.14: the drops that lie this far from a log cell of the tree, sideways, are swept. */
+export const ROW_SWEEP_RADIUS = 1.5;
+/** v0.1.4.14: a standing tree: no stand higher than this above its base is walked to (not up into the crown). */
+export const SWEEP_CLIMB = 2;
+
+// v0.1.4.14 (W122 B2, a fallen trunk of 4 logs along z under the leaves of its crown: 4 logs broken, 2 or 3 picked
+// up). Traced on the server: a log rolled into a cell beside the row whose head is in leaves; the walk to it with
+// GoalNear 1 ended a block and a half away, outside the server's pickup box, and stayed there until the wait was over.
+// After the last log of a tree the bot walks its cells (the row of a fallen trunk from the end nearer to it; the trunk
+// of a standing tree: W122 fwa2, 8 logs of three standing trees lay on the ground): for every log or sapling item
+// that lies within 1.5 blocks of a log cell, from 2 blocks below it to 1.5 above, into a cell from which the server
+// gives it (pickupStands); a cell whose head is in leaves only with the movements that break leaves (no protected area
+// within 8 blocks); for a standing tree no cell more than 2 above its base.
+async function sweepTree(bot, tree, run, test) {
+    const me = botPos(bot);
+    const cells = Array.isArray(tree.logs) && tree.logs.length > 0 ? [...tree.logs] : [tree.base];
+    const away = (c) => (me ? Math.hypot(c.x + 0.5 - me.x, c.z + 0.5 - me.z) : 0);
+    if (tree.fallen === true) {
+        if (cells.length > 1 && away(cells[0]) > away(cells[cells.length - 1])) {
+            cells.reverse();
+        }
+    } else {
+        cells.sort((p, q) => p.y - q.y || away(p) - away(q));
+    }
+    const top = tree.fallen === true ? Infinity : tree.base.y + SWEEP_CLIMB;
+    const near = (c) => entitiesWhere(bot, 64, e => {
+        if (e.name !== 'item' || e.isValid === false || !test(droppedName(e))) {
+            return false;
+        }
+        const p = e.position;
+        return Math.max(Math.abs(p.x - (c.x + 0.5)), Math.abs(p.z - (c.z + 0.5))) <= ROW_SWEEP_RADIUS && p.y >= c.y - 2 && p.y <= c.y + 1.5;
+    });
+    const read = (x, y, z) => nameAt(bot, { x, y, z });
+    const tried = new Set();
+    for (const c of cells) {
+        for (const e of near(c)) {
+            if (bot.interrupt_code || run.clock.now() >= run.deadline) {
+                return;
+            }
+            if (e.isValid === false || tried.has(e.id)) {
+                continue;
+            }
+            tried.add(e.id);
+            for (const stand of pickupStands(read, e.position, botPos(bot)).filter(st => st.y <= top).slice(0, 3)) {
+                if (e.isValid === false || bot.entities?.[e.id] !== e || bot.interrupt_code || run.clock.now() >= run.deadline) {
+                    break;
+                }
+                const movements = stand.dig ? run.movements.slice(1) : run.movements.slice(0, 1);
+                for (const m of movements) {
+                    const res = await gotoGoal(bot, new goals.GoalBlock(stand.x, stand.y, stand.z), { movements: m, timeoutMs: 6000, clock: run.clock });
+                    if (res.ok || res.reason === 'interrupted') {
+                        break;
+                    }
+                }
+                await run.clock.wait(150);
+            }
+        }
+    }
 }
 
 // Waits until the counts of the inventory did not change for 500 ms, at most `ms`.
@@ -295,16 +362,29 @@ async function quietInventory(bot, clock, ms = 3000) {
     }
 }
 
+// The names of the drops of the logs of a tree; an item whose name is not known yet counts.
+function logTestOf(tree) {
+    return n => n === null || (isTrunkLog(n) && n.startsWith(`${tree.kind}_`));
+}
+
+// The logs and the saplings of a tree (v0.1.4.14: the sweep takes the saplings under the crown too).
+function sweepTestOf(tree) {
+    const logs = logTestOf(tree);
+    const sapling = saplingOf(tree.kind);
+    return n => logs(n) || (sapling !== null && n === sapling);
+}
+
 // Found on the real server (Amendment 2, I1): a log cut from the ground falls for about a second,
 // so the answer came before the last log was picked up. After the last log the bot picks up the
 // logs of the tree until none lies within 6 blocks of the trunk, at most 5 seconds.
 async function waitForLogDrops(bot, tree, run) {
-    const test = n => n === null || (isTrunkLog(n) && n.startsWith(`${tree.kind}_`));
+    const test = logTestOf(tree);
     const start = run.clock.now();
     const sub = { ...run, deadline: start + LOG_DROP_WAIT_MS };
     while (!bot.interrupt_code && run.clock.now() - start < LOG_DROP_WAIT_MS && logDropsNear(bot, tree, test).length > 0) {
         const t = run.clock.now();
-        await collectDrops(bot, [tree.base], sub, test);
+        await sweepTree(bot, tree, sub, sweepTestOf(tree));
+        await collectDrops(bot, dropCenters(tree), sub, test);
         if (run.clock.now() - t < 250) {
             await run.clock.wait(250);
         }
@@ -384,8 +464,13 @@ async function cutTree(bot, tree, run) {
     }
     await takePillarDown(bot, state, run);
     const pick = { ...run, deadline: Math.max(run.deadline, run.clock.now() + DROP_PICKUP_MS) };
+    // the cells of the tree first (traced in W122 B2: the walks of collectDrops to a log under the leaves of the crown
+    // came to nothing for 25 s before the sweep)
+    if (!bot.interrupt_code && broken > 0) {
+        await sweepTree(bot, tree, pick, sweepTestOf(tree));
+    }
     if (!bot.interrupt_code) {
-        await collectDrops(bot, [tree.base], pick);
+        await collectDrops(bot, dropCenters(tree), pick);
     }
     if (!bot.interrupt_code && broken > 0) {
         await waitForLogDrops(bot, tree, pick);
@@ -441,6 +526,35 @@ function logCandidates(bot, range) {
     }
 }
 
+// v0.1.4.14 (the owner's first play on 26.1): what the search saw when it found no tree, for the text of chopTrees:
+// { built, protectedOnly, log: { x, y, z, name }|null, reason }. built: logs there were refused because they touch a
+// built block (only then the text says that logs of buildings are not the bot's); protectedOnly: the trees found lie in
+// or beside a protected area; log and reason: the nearest log of the kind and why it is no tree. null when the bot sees
+// no log of the kind. Never throws.
+function noTreeFacts(bot, kind, areas, range) {
+    try {
+        const origin = feetOf(bot);
+        const candidates = logCandidates(bot, range) ?? [];
+        if (!origin || candidates.length === 0) {
+            return null;
+        }
+        const read = getBlockNameOf(bot);
+        const ofKind = candidates.filter(p => !kind || woodKind(read(p.x, p.y, p.z)) === kind);
+        const res = inspectTrees(read, origin, { range, kind, max: MAX_TREES_PER_SEARCH, candidates });
+        const protectedOnly = res.trees.length > 0 && res.trees.every(t => treeNearAreas(t, areas, 2));
+        const near = ofKind.map(p => ({ ...p, d: Math.hypot(p.x - origin.x, p.y - origin.y, p.z - origin.z) }))
+            .sort((a, b) => a.d - b.d).slice(0, 6);
+        const reasons = near.map(p => whyNoTree(read, p));
+        const built = reasons.includes('built') || res.rejected.some(r => r.reason === 'built'
+            && (!kind || woodKind(read(r.base.x, r.base.y, r.base.z)) === kind));
+        const i = near.length > 0 ? 0 : -1;
+        const log = i >= 0 ? { x: near[i].x, y: near[i].y, z: near[i].z, name: read(near[i].x, near[i].y, near[i].z) } : null;
+        return { built, protectedOnly, log, reason: i >= 0 ? reasons[i] : null };
+    } catch {
+        return null;
+    }
+}
+
 // Of the nearest trees that are not near a protected area and were not tried yet, the one that
 // gives the logs still wanted in the least time (pickTree).
 function nextTree(bot, kind, done, areas, range, need) {
@@ -470,7 +584,8 @@ function nextTree(bot, kind, done, areas, range, need) {
 }
 
 function plantableTrees(bot, trees) {
-    return trees.filter(t => saplingOf(t.kind) && PLANTABLE.has(nameAt(bot, { x: t.base.x, y: t.base.y - 1, z: t.base.z }))
+    // v0.1.4.14: nothing is planted where a fallen trunk lay
+    return trees.filter(t => t.fallen !== true && saplingOf(t.kind) && PLANTABLE.has(nameAt(bot, { x: t.base.x, y: t.base.y - 1, z: t.base.z }))
         && isAirLike(nameAt(bot, t.base)));
 }
 
@@ -638,7 +753,9 @@ export async function chopTrees(bot, ctx = {}, count = 8, kind = '', options = {
         const logs = gainedLogs(bot, before);
         // I6: stopped, the text says what was cut and what was picked up
         const text = stopped === 'interrupted' ? chopStoppedText({ cut: broken, picked: sum(logs) })
-            : chopText({ trees: cut.map(t => t.kind), logs, planted, leftover, noMore, stopped, found, kind: request.kind, range });
+            : chopText({ trees: cut.map(t => t.kind), logs, planted, leftover, noMore, stopped, found, kind: request.kind, range,
+                lying: Math.max(0, sum(broken) - sum(logs)),
+                why: cut.length === 0 && found === 0 && !stopped ? noTreeFacts(bot, request.kind, areas, range) : null });
         logTo(ctx, text);
         const ok = cut.length > 0 && stopped !== 'interrupted';
         let reason = null;

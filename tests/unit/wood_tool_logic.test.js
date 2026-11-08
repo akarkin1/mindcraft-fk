@@ -252,11 +252,18 @@ describe('texts', () => {
             'I cut 1 oak tree and got no logs. I had no sapling to plant. I was interrupted.');
         assert.equal(X.chopText({ trees: ['oak'], logs: { oak_log: 4 }, planted: 1, stopped: 'time' }),
             'I cut 1 oak tree and got 4 oak_log. I planted 1 sapling. The time for cutting trees was over.');
-        assert.equal(X.chopText({ trees: [], found: 0 }), 'I found no tree within 48 blocks. Logs of buildings are not mine to take.');
-        assert.equal(X.chopText({ trees: [], found: 0, kind: 'birch' }), 'I found no birch tree within 48 blocks. Logs of buildings are not mine to take.');
+        // v0.1.4.14: the sentence about buildings only when logs were refused for touching a built block
+        assert.equal(X.chopText({ trees: [], found: 0 }), 'I found no tree within 48 blocks.');
+        assert.equal(X.chopText({ trees: [], found: 0, kind: 'birch' }), 'I found no birch tree within 48 blocks.');
+        assert.equal(X.chopText({ trees: [], found: 0, kind: 'oak', why: { built: true } }), 'I found no oak tree within 48 blocks. Logs of buildings are not mine to take.');
+        assert.equal(X.chopText({ trees: [], found: 0, kind: 'oak', why: { log: { x: -294, y: 72, z: -305, name: 'oak_log' }, reason: 'no_leaves' } }),
+            'I found oak_log at (-294, 72, -305) but no tree I can cut: they have no leaves, like a stump or a pile of logs.');
+        assert.equal(X.chopText({ trees: [], found: 0, why: { protectedOnly: true } }), 'I found no tree within 48 blocks outside the protected areas.');
+        assert.equal(X.chopText({ trees: [], found: 0, why: { log: { x: 1, y: 2, z: 3, name: 'oak_log' }, reason: 'unknown' } }),
+            'I found oak_log at (1, 2, 3) but no tree I can cut.');
         assert.equal(X.chopText({ trees: [], found: 2 }), 'I could not reach the trees I found.');
         assert.equal(X.chopText({ trees: [], found: 2, stopped: 'interrupted' }), 'I stopped before I cut a tree.');
-        assert.equal(X.noTreeText(), 'I found no tree within 48 blocks. Logs of buildings are not mine to take.');
+        assert.equal(X.noTreeText(), 'I found no tree within 48 blocks.');
         assert.equal(X.unknownWoodText('mithril'), 'I do not know the wood "mithril". I know oak, spruce, birch, jungle, acacia, dark_oak, mangrove, cherry, pale_oak, crimson and warped.');
     });
 
