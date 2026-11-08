@@ -166,3 +166,12 @@ test server stays `server-26.1.jar`.
 A fresh clone on Node 22.23.4: the 7 patches apply with no warning; unit 8,747 tests (8,744 pass, 3 skipped: the
 third is the comparison with `origin/main` in `nv_words`, absent in a single-branch clone); end-to-end 17 of 17; the
 full world set on the 26.1 server with `natural_smoke` and `fresh_world` 46 of 46 in 4,403 s (G-14).
+
+## The play of 2026-11-09 (open)
+
+The owner's play of 9e4ff1f on his machine found 15 more things (DECISIONS P-17 to P-31, and P-32 as context):
+the bot's clock stands still between the rare clock packets of 26.1 (mineflayer recomputes the time of day only on
+`update_time`; no test lets time run), a farm without a fence cannot be saved and the untyped scan saved the house
+as a pen, and the rest by impact. The owner's choice: the fixes go on `release/v0.1.4.14-rc` before the merge,
+the clock first, the farm second; nothing is fixed until he says so. A clock fix belongs in the mineflayer patch
+with a fake-server scenario where time runs and a world scenario with the daylight cycle on.

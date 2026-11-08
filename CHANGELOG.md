@@ -40,6 +40,7 @@ libraries (no released library supports them on 2026-11-03).
 ### Known issues
 
 - mineflayer 4.39.0 reads the clock of the End as 0 (the bot does not go there).
+- **The bot's clock stands still between the server's clock packets on 26.1** (the server sends them on login, on sleep and on a time change only, and mineflayer 4.39.0 recomputes the time of day only when one arrives): the bot misjudges night and refuses to sleep (DECISIONS P-17, found in the owner's play of 2026-11-09; open).
 - The scenarios of the world tests keep the game-rule names of 1.21.8; the harness translates them and prints `console: N commands of 1.21.8 translated` once per run.
 
 ## [0.1.4.13] - 2026-10-04
