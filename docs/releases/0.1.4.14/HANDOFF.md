@@ -193,3 +193,9 @@ building, the open farm harvested, the roofed pen a pen) and W125 35 of 35 (the 
 the pond, the kill drops, the snow by hand, 60 blocks with no dig), each failing before on the owner's exact
 findings; the older scenarios W06, W07, W09 and W10 pass with the typed kind (W07's farm text is the new one, W10
 types "home"). The scenarios W123, W124 and W125 join the gate's set.
+
+## The gate after part 8 (commit ebdd9a4)
+
+A fresh clone on Node 22.23.4: the 7 patches apply with no warning; unit 8,906 tests (8,904 pass, 2 skipped);
+end-to-end 18 of 18; the full world set on the 26.1 server with `natural_smoke`, `fresh_world`, `night_falls`,
+`open_farm` and `open_ground` 49 of 49 in 4,802 s (G-15).
