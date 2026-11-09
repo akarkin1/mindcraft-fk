@@ -6,7 +6,7 @@ This fork is based on [Mindcraft](https://github.com/mindcraft-bots/mindcraft) `
 
 Each release lists new settings and feature flags with their default value.
 
-## [0.1.4.14] - 2026-11-04
+## [0.1.4.14] - 2026-11-09
 
 "Minecraft 26.1": the bot plays in Minecraft Java 26.1 ("Tiny Takeover", 2026-03-24) with the libraries of
 2026 on Node 22; it knows the copper tools, the copper chests and the corrected foods of 26.1; the chat model

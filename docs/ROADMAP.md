@@ -19,8 +19,8 @@ Rules that hold for every release:
 | 0.1.4.11 | Navigation and words | Released |
 | 0.1.4.12 | Understanding and watching | Released |
 | 0.1.4.13 | Supervision | Released: `CHANGELOG.md` |
-| 0.1.4.14 | Minecraft 26.1 | In work: `docs/releases/0.1.4.14/PLAN.md` |
-| 0.1.4.15 | The base survey and Routines | Decided by the owner on 2026-11-09 (option A): two rounds on one branch, the survey first, Routines with a budget of four days and a cut rule (over the budget, the release ships the survey alone); one gate, one play of both. The plan is written after the fix round of 0.1.4.14 |
+| 0.1.4.14 | Minecraft 26.1 | Released: `CHANGELOG.md`, merged 2026-11-09 (#24) |
+| 0.1.4.15 | The base survey and Routines | In work: `docs/releases/0.1.4.15/PLAN.md`. Decided by the owner on 2026-11-09 (option A): two rounds on one branch, the survey first, Routines with a budget of four days and a cut rule (over the budget, the release ships the survey alone); one gate, one play of both |
 | 0.1.4.16 | Stability | The fixes and small items planned for 0.1.4.15 below (tunnels as beams, caves, routes and places, supplies by need, the rest), moved by the owner on 2026-11-09 |
 | Later | See the backlog | Not decided |
 
