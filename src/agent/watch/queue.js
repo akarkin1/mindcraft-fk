@@ -46,10 +46,22 @@ export function isCommandEcho(text) {
     return typeof text === 'string' && /^\*\S+ used \w+\*$/.test(text.trim());
 }
 
+// v0.1.4.14 (P-30, spec 8.9): the line of a walk that arrived; a result whose last line is this is a success whatever
+// the lines before it ("Path not found, but attempting to navigate anyway ..." stopped the queue although the bot arrived)
+export const REACHED_START = /^You have reached\b/;
+
+/** True when the last line of the text that says anything starts with `You have reached`. */
+export function endsReached(text) {
+    if (typeof text !== 'string')
+        return false;
+    const lines = text.split(/\r?\n/).map((line) => line.trim()).filter((line) => line !== '');
+    return lines.length > 0 && REACHED_START.test(lines[lines.length - 1]);
+}
+
 /**
  * True when the result of a command is a failure of the skill: `{ ok: false }` of the pack, or a line of the
  * output that starts with Failed, I could not, I cannot, Path not found, or a text the repeat guard reads as a
- * failure.
+ * failure. A text whose last line says `You have reached (x, y, z)` is no failure whatever the lines before it.
  * @param {{ok?: boolean}|null} pack the pack result of the entry of agent.running_commands
  * @param {string} text the output
  */
@@ -57,6 +69,8 @@ export function isFailureResult(pack, text) {
     if (pack && pack.ok === false)
         return true;
     if (typeof text !== 'string' || text.trim() === '')
+        return false;
+    if (endsReached(text))
         return false;
     for (const line of text.split(/\r?\n/)) {
         const clean = line.trim();
@@ -253,7 +267,9 @@ export function createQueue(agent, options = {}) {
             const pack = item.entry?.pack ?? null;
             const last = item.captured.length > 0 ? item.captured[item.captured.length - 1] : '';
             const text = typeof pack?.text === 'string' && pack.text !== '' ? pack.text : last;
-            const failed = isFailureResult(pack, text) || (!pack && item.captured.some((line) => isFailureResult(null, line)));
+            // v0.1.4.14 (P-30): the captured lines are judged together, so a walk that arrived ("You have reached") is no
+            // failure for a "Path not found, but attempting to navigate anyway" line before it
+            const failed = isFailureResult(pack, text) || (!pack && isFailureResult(null, item.captured.join('\n')));
             const stopped = pack?.reason === 'interrupted';
             finishItem(item, failed ? 'failed' : 'done', text !== '' ? text : (stopped ? 'stopped' : ''));
         }, (error) => {

@@ -11,6 +11,7 @@ Everything else is v0.1.4.13 with fixes 1 and 2. Before you start: a world opene
 | Step | What you do | Why |
 |---|---|---|
 | 1 | Back up `saves/<your world>` (copy the folder while the game is closed). | The upgrade of the world is for good. |
+| 1b | A world made on 26.2 or 26.3 and opened in 26.1 holds chunks 26.1 cannot read (your "Speed Run 1" had about 2,266 of them, status `minecraft:terrain`), and the bot's trips load unvisited land much faster than you walk. | Give the integrated server 8 GB or more of heap and a render and simulation distance of 16 before a long trip of the bot; with a 4 GB heap and distances of 32 it ran out of memory twice on 2026-11-09 (P-32). |
 | 2 | In the launcher, select **26.1** (26.1.1 and 26.1.2 work as well, the same protocol; 26.2 and 26.3 do not) and open your world once with the game alone, then close it. | The game upgrades the world and installs its Java 25 (`java-runtime-epsilon`), which the test server uses. |
 | 3 | `fnm install 22` in PowerShell 7. | The new libraries need Node 22 or newer; `start-claude.ps1` and `start-gpt.ps1` now say `fnm use 22`. |
 
@@ -83,6 +84,19 @@ On a new 26.1 world, in a forest, with nothing built.
 | 17 | "cut 8 oak logs" among natural oaks; stop it half-way once and ask again. | It cuts, the logs end in its bag (none left under the crown), it plants the saplings; the half-cut tree is cut too; never `Logs of buildings are not mine to take.` unless logs really touch something built. A trunk lying on the ground is cut as well (no sapling for it). |
 | 18 | "give me all your logs", on a slope too. | `I gave you N oak_log.`, the stack lands at your feet on the first toss; no `That is a lot`. If you take nothing, it picks the stack up and tosses it once more from one block. |
 | 19 | "make a chest and put your logs in it", then "empty the chest" and "collect the chest"; once on a slope with grass and flowers. | The crafting table goes on a cell that takes it (or `I could not place my crafting table here.`); a full chest is refused with its count; the emptied chest is collected and its item is in the bag, not on the ground. |
+
+From your play of 2026-11-09 (P-17 to P-32), on your base:
+
+| Step | What you do | What should happen |
+|---|---|---|
+| 20 | A boat ride of a few minutes with the bot aboard (`!boardBoat()`), then `!stats` and, at dusk, "go to sleep". | The watch `state` and `!stats` show the time moving during the ride; at night it sleeps instead of `Still daytime, so I can't sleep yet`. `!leaveBoat()` gets it out; no `I'm stuck!` during the ride. |
+| 21 | In the house with your two cats: "this is home" (or `!rememberArea("home", "home")`); then `!rememberArea("test", "building")` typed. | A home, never a pen; the typed building saves a building and the answer describes what it found. First forget the wrong "carrot_farm" pen over the house: `!forgetArea("carrot_farm")`. |
+| 22 | On the carrot field, with no fence: "remember this farm as carrots". | `I saved "carrots": an open farm 12 x 9 with 108 carrots.` (your sizes); `!harvest` works it; a roofed pen stays a pen. |
+| 23 | `!collectBlocks("stone", 20)` beside the house, then stand in the pit; later on the frozen shore. | No "walled yard with a roof", no "water-bound yard". |
+| 24 | Give the bot a bed on a slope and say "put the bed here", then at night "go to sleep". | The bed lies on level ground within 4 blocks, never on a pillar; it sleeps in it. |
+| 25 | Kill two sheep with the bot (`!attack("sheep")`), then "give me the wool" at the pond's edge. | `Picked up 2 items.` with the wool and mutton in the bag; the give lands on dry ground, never in the water. |
+| 26 | Send it 150 blocks across unknown land with half a food bar. | `A long way: 150 blocks with 8 food points; I do not run.`; no tunnel, no dig into a cave; on a way it cannot find it stops and says where. Without a shovel it crosses snow. |
+| 27 | `!leaveGame("the owner asked")`. | `I leave the game: the owner asked.`, the process ends and stays ended; the next start reads `The process ended because: left on request.` |
 
 ## 7. What I would like to know
 

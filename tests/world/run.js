@@ -192,6 +192,9 @@ const SCENARIOS = [
     ['natural_smoke', 'w000_natural_smoke.js', 300, false, 'natural'],
     // v0.1.4.14 fix round (tester T3): the owner's first hour on a new world (DECISIONS P-2 to P-5); in no group
     ['fresh_world', 'w122_fresh_world.js', 900, false, 'natural'],
+    ['night_falls', 'w123_night_falls.js', 600, false, 'base'], // v0.1.4.14 fix round, part 8 (T3): the clock of 26.1 runs (SPEC 8.10); in no group
+    ['open_farm', 'w124_open_farm.js', 900, false, 'base'], // part 8 (T3): the open farm and the cats (SPEC 8.10); in no group
+    ['open_ground', 'w125_open_ground.js', 900, false, 'natural'], // part 8 (T3): the open ground (SPEC 8.10); in no group
 ];
 
 // Words that select a group of scenarios (spec v0.1.4.8, W30: the work scenarios of v0.1.4.7, which run

@@ -20,7 +20,7 @@ import { TEXTS } from './texts.js';
 import { distance, eventLine, eventsSince, plainDimension, pointsText, posText, sinceMs } from './events_logic.js';
 import { TOOLS } from './mcp_logic.js';
 import {
-    DIGEST_RULES, WAIT_RULES, chatLine, createCursorStore, digestLines, isPlayerLine, parseCursor, runningOf, snapshotOf, waitTimeout,
+    DIGEST_RULES, WAIT_RULES, bagItems, chatLine, createCursorStore, digestLines, isPlayerLine, parseCursor, runningOf, snapshotOf, waitTimeout,
     wakeReason,
 } from './digest_logic.js';
 import { createQueue, runRefusal } from './queue.js';
@@ -162,12 +162,8 @@ export async function state(agent, args = {}, watch = {}) {
 export async function inventory(agent) {
     const bot = agent?.bot;
     const counts = new Map();
-    let items = [];
-    try {
-        items = bot?.inventory?.items?.() ?? [];
-    } catch {
-        items = [];
-    }
+    // v0.1.4.14 (P-30): the bag as the game has it, through the open window while one is open (bagItems)
+    const items = bagItems(bot);
     for (const item of items) {
         if (typeof item?.name === 'string' && Number.isFinite(item.count))
             counts.set(item.name, (counts.get(item.name) ?? 0) + item.count);

@@ -9,8 +9,8 @@ import { assertImportRules, assertCleanImport } from '../helpers/module_rules.js
 
 const DIR = 'src/agent/packs/home/';
 const PURE = ['box_math', 'door_logic', 'night_logic', 'creeper_logic', 'shelter_logic', 'sleep_logic', 'food_logic',
-    'texts', 'home_settings', 'context', 'area_kinds', 'pickup_logic'];
-const EXECUTING = ['motion', 'doors', 'shelter', 'sleep', 'food', 'creeper', 'index'];
+    'texts', 'home_settings', 'context', 'area_kinds', 'pickup_logic', 'bed_logic'];
+const EXECUTING = ['motion', 'doors', 'shelter', 'sleep', 'food', 'creeper', 'bed', 'index'];
 const PACKAGES = ['vec3', 'mineflayer-pathfinder'];
 // v0.1.4.8: area_kinds.js is the one module of the pack that reads the table of the area types (part D)
 const FOREIGN = { area_kinds: ['area_store.js'] };

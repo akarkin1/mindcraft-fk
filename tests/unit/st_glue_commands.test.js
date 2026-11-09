@@ -134,14 +134,14 @@ describe('item 9, I3: the guard and orders typed by the player', () => {
         assert.ok(agent.turns.some(([n, t]) => n === 'system' && /I do not break/.test(t)), JSON.stringify(agent.turns));
     });
 
-    test('the model and fences outside every area only: the refusal of the spec, with the command', LIMIT, async () => {
+    test('the model and fences outside every area only: the refusal in the words of SPEC 8.11 (v0.1.4.14, P-20; the rule of v0.1.4.8 I3 unchanged)', LIMIT, async () => {
         const { w, agent } = scene();
         for (const [x, y, z] of IN_PEN) w.set(x, y, z, 'air');
         agent.prompter.promptConvo = (() => { const r = ['!collectBlocks("oak_fence", 20)', '']; return async () => r.shift() ?? ''; })();
         await agent.handleMessage('MartyByrde2', 'we need fences, take them');
         await settle(agent);
         assert.equal(standing(w, OUTSIDE), OUTSIDE.length);
-        const text = 'oak_fence is a block that players build with. I do not break it. The player can type the command !collectBlocks("oak_fence", 20) in the chat to do it.';
+        const text = 'I do not break a oak_fence that I did not place; type the order yourself if you want it gone.';
         assert.ok(agent.turns.some(([n, t]) => n === 'system' && t.includes(text)), JSON.stringify(agent.turns));
     });
 
@@ -311,14 +311,15 @@ describe('item 10: !rememberArea with the five types, !setArea', () => {
     }
     const house = (w) => w.house({ x: 0, y: 63, z: 0, width: 7, depth: 7 });
 
-    // v0.1.4.11 (P1): the answer names the kind; "building" is the default of the parser and counts as no type, so the
-    // kind is concluded: a house with a roof, a door and a bed is a home
-    for (const type of ['home', 'building']) {
-        test(`${type}: the house the bot stands in`, LIMIT, async () => {
+    // v0.1.4.11 (P1): the answer names the kind. v0.1.4.14 (P-18, SPEC 8.2): a typed kind wins ("building" saves a
+    // building); without a type the kind is concluded: a house with a roof, a door and a bed is a home
+    for (const [typed, type, kind, sentence] of [['"home"', 'home', 'home', 'I shelter there at night.'],
+        ['"building"', 'building', 'building', 'I change nothing in it.'], [null, 'home', 'home', 'I shelter there at night.']]) {
+        test(`${typed ?? 'no type'}: the house the bot stands in`, LIMIT, async () => {
             const { store, agent } = areaScene(house, [3.5, 64, 3.5]);
-            const r = await run(agent, `!rememberArea("my_${type}", "${type}")`, false);
-            assert.equal(store.get(`my_${type}`)?.type, 'home', r);
-            assert.match(r, /^I saved "my_\w+": a home, walled, .* I shelter there at night\.$/);
+            const r = await run(agent, `!rememberArea("my_house"${typed ? `, ${typed}` : ''})`, false);
+            assert.equal(store.get('my_house')?.type, type, r);
+            assert.ok(r.startsWith(`I saved "my_house": a ${kind}, walled, `) && r.endsWith(sentence), r);
         });
     }
 

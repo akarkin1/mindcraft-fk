@@ -1283,6 +1283,46 @@ function buildingFacts(read, scan, origin) {
     };
 }
 
+// v0.1.4.14 (P-23): a pit is a hollow whose floor lies below the ground around it, its walls the ground itself, dug from
+// above: a cell of its floor sees the sky (nothing that is not passable above it up to PIT_SKY blocks), and the columns
+// just outside its box are solid ground at the height of the feet for 2 of 3 of them or more.
+const PIT_SKY = 32;
+
+function hasOpening(enclosure, kinds) {
+    return Array.isArray(enclosure?.openings) && enclosure.openings.some(o => kinds.includes(o?.kind));
+}
+
+function isPit(read, box, origin) {
+    const feet = Math.floor(origin.y);
+    let sky = false;
+    for (let x = box.min.x + 1; x <= box.max.x - 1 && !sky; x++) {
+        for (let z = box.min.z + 1; z <= box.max.z - 1 && !sky; z++) {
+            const at = read(x, feet, z);
+            if (at === null || !isPassable(at)) {
+                continue;
+            }
+            let open = true;
+            for (let y = feet + 1; y <= feet + PIT_SKY; y++) {
+                const name = read(x, y, z);
+                if (name === null) {
+                    break;
+                }
+                if (!isPassable(name)) {
+                    open = false;
+                    break;
+                }
+            }
+            sky = open;
+        }
+    }
+    if (!sky) {
+        return false;
+    }
+    const outside = ringOf({ min: { x: box.min.x - 1, z: box.min.z - 1 }, max: { x: box.max.x + 1, z: box.max.z + 1 } }, 0);
+    const ground = outside.filter(([x, z]) => isNaturalSolid(read(x, feet, z))).length;
+    return outside.length > 0 && ground * 3 >= outside.length * 2;
+}
+
 // v0.1.4.14: how many of the wall columns of a building (the ring of buildingFacts) are made by a player, of those that
 // bound it: { made, counted }. A wall of dirt or stone counts as counted but not made.
 function ringMade(read, box, origin) {
@@ -1339,7 +1379,50 @@ function groundEnclosure(read, flood) {
         return null;
     }
     const scan = fencedFound(flood, groundStats(read, flood.cells));
+    // v0.1.4.14 (P-23): the ice of a frozen ocean was "a water-bound yard 37 x 29"; water bounds a yard only when the
+    // place is at most 20 x 20 and its water is no open water
+    if (facts.border === 'water' && (scan.max.x - scan.min.x + 1 > WATER_YARD_MAX || scan.max.z - scan.min.z + 1 > WATER_YARD_MAX
+        || openWater(read, flood))) {
+        return null;
+    }
     return enclosureFound(scan.min, scan.max, facts, 'ground', scan);
+}
+
+/** v0.1.4.14 (P-23): the largest place in x and z that water bounds as a yard. */
+export const WATER_YARD_MAX = 20;
+/** v0.1.4.14 (P-23): water at the surface for this many blocks outward from a place is open water (a lake, the sea). */
+export const OPEN_WATER_REACH = 8;
+
+// v0.1.4.14 (P-23): the water that bounds the ground of a flood is open water when, for half of its water columns or
+// more, the water goes on at the surface for OPEN_WATER_REACH blocks straight outward (away from the middle of the
+// ground). A moat or a pond around a yard has land beyond it.
+function openWater(read, flood) {
+    const cells = flood.cells;
+    if (cells.length === 0) {
+        return false;
+    }
+    const cx = cells.reduce((sum, [x]) => sum + x, 0) / cells.length;
+    const cz = cells.reduce((sum, [, z]) => sum + z, 0) / cells.length;
+    let water = 0;
+    let open = 0;
+    for (const [x, z, surface] of flood.bounds) {
+        const isWater = (wx, wz) => read(wx, surface, wz) === 'water' || read(wx, surface + 1, wz) === 'water';
+        if (!isWater(x, z)) {
+            continue;
+        }
+        water++;
+        const ex = x - cx;
+        const ez = z - cz;
+        const [dx, dz] = Math.abs(ex) >= Math.abs(ez) ? [Math.sign(ex) || 1, 0] : [0, Math.sign(ez) || 1];
+        let k = 1;
+        while (k <= OPEN_WATER_REACH && isWater(x + dx * k, z + dz * k)) {
+            k++;
+        }
+        if (k > OPEN_WATER_REACH) {
+            open++;
+        }
+    }
+    return water > 0 && open * 2 >= water;
 }
 
 function buildingEnclosure(getBlockName, read, origin, opts) {
@@ -1802,12 +1885,19 @@ function enclosureOf(getBlockName, origin, opts) {
             return rock;
         }
     }
+    // v0.1.4.14 (P-18, the owner: a livestock pen may have a roof): fenced ground under a roof is the fenced ground,
+    // with its gates, never the scan of a building
+    if (roofed && roofed.border === 'fence') {
+        return roofed;
+    }
     if (roofed || hasRoof(read, ox, feet - 1, oz)) {
         const building = buildingEnclosure(getBlockName, read, origin, opts);
         // v0.1.4.14: above ground a building needs walls that are made for the most part: a crafting table and a torch
         // of the bot among the trunks of a wood were "10 x 7 walled, with a roof, 2 gaps". A room dug in rock (under rock,
         // F7) keeps its walls of rock, and so does a room under a made roof (a basement under the floor of a house).
-        if (building.found) {
+        // v0.1.4.14 (P-23): a pit (the bot's own dig after !collectBlocks("stone"), a snow hollow) is no building: a
+        // hollow below the ground around it that sees the sky needs a door or a trapdoor to be one
+        if (building.found && (hasOpening(building, ['door', 'trapdoor']) || !isPit(read, building.box, origin))) {
             const ring = ringMade(read, building.box, origin);
             if (ring.made * 2 >= ring.counted || underRock(read, ox, feet, oz) || hasMadeRoof(read, ox, feet - 1, oz, ENCLOSURE_ROOF)) {
                 return building;

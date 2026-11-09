@@ -232,7 +232,7 @@
 
         [
             {"role": "user", "content": "maple_leaf: this place is home, remember this"},
-            {"role": "assistant", "content": "I'll remember this house as home and keep it safe. !rememberArea(\"home\", \"building\")"},
+            {"role": "assistant", "content": "I'll remember this house as home and keep it safe. !rememberArea(\"home\", \"home\")"},
             {"role": "system", "content": "I saved \"home\": a home, walled, 9 x 7 with a roof, 1 door, 1 bed. I shelter there at night."},
             {"role": "assistant", "content": "Saved our home with its door. I won't break or place blocks there."}
         ],

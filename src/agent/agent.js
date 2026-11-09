@@ -45,10 +45,12 @@ import { knowledgeText, whereLine, KNOWLEDGE_HEADER } from './knowledge/knowledg
 import { unsavedEnclosure, enclosureKnowledge, ENCLOSURE_KNOWLEDGE_MS } from './areas/area_sense.js';
 import { useTunnelMeasure } from './areas/area_scan.js'; // v0.1.4.12 (T1-1)
 import { writeExit, readExit, restartNote } from './restart_context.js';
+import { LEAVE_GAME_NOTE } from './library/skill_texts.js'; // v0.1.4.14 (P-28): the exit of !leaveGame says goodbye itself
 import { RepeatGuard } from './repeat_guard.js';
 import { withTimeLimit } from '../utils/kill_timer.js';
 import { createJob, JobStore, JOB_FILE } from './job/index.js'; // v0.1.4.10: no pack; createJob runs only with job_memory
 import { shouldAnswer } from './bots_logic.js'; // v0.1.4.12, D2: which chat line the bot answers
+import { crossedMarks } from './clock_logic.js'; // v0.1.4.14 (P-17): the marks of the day the clock crossed
 
 // v0.1.4.8: the longest wait of a step at spawn that talks to the server (the move out of the off-hand)
 const SPAWN_STEP_MS = 5000;
@@ -1628,15 +1630,16 @@ export class Agent {
 
     startEvents() {
         // Custom events
+        // v0.1.4.14 (P-17, spec 8.1.3): the clock of 26.1 runs between packets and the time event comes every 20 ticks,
+        // so the marks of the day (sunrise 0, noon 6000, sunset 12000, midnight 18000) are taken as crossed since the
+        // last event, not compared exactly: a sunrise is neither missed nor doubled (clock_logic.js)
+        let lastTimeOfDay = null;
         this.bot.on('time', () => {
-            if (this.bot.time.timeOfDay == 0)
-            this.bot.emit('sunrise');
-            else if (this.bot.time.timeOfDay == 6000)
-            this.bot.emit('noon');
-            else if (this.bot.time.timeOfDay == 12000)
-            this.bot.emit('sunset');
-            else if (this.bot.time.timeOfDay == 18000)
-            this.bot.emit('midnight');
+            const timeOfDay = this.bot.time?.timeOfDay;
+            for (const mark of crossedMarks(lastTimeOfDay, timeOfDay))
+                this.bot.emit(mark);
+            if (typeof timeOfDay === 'number' && Number.isFinite(timeOfDay))
+                lastTimeOfDay = timeOfDay;
         });
 
         let prev_health = this.bot.health;
@@ -1731,7 +1734,10 @@ export class Agent {
         console.log(`Agent process ends with exit code ${code}: ${msg}`);
         // the history or the bot may not exist yet: the exit must happen in every case
         try { this.history.add('system', msg); } catch (_) { /* no history */ }
-        try { this.bot.chat(code > 1 ? 'Restarting.': 'Exiting.'); } catch (_) { /* no bot */ }
+        // v0.1.4.14 (P-28): !leaveGame said `I leave the game: <reason>.` already; no `Exiting.` after it
+        if (msg !== LEAVE_GAME_NOTE) {
+            try { this.bot.chat(code > 1 ? 'Restarting.': 'Exiting.'); } catch (_) { /* no bot */ }
+        }
         try { this.history.save(); } catch (_) { /* no history */ }
         try { this._atExit(msg); } catch (_) { /* a fake agent of a test */ }
         try { this.watch?.close?.(); } catch (_) { /* v0.1.4.12 (C): no watch server */ }

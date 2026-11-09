@@ -41,6 +41,9 @@ const SCENARIOS = [
     // v0.1.4.5
     ['skill_guardrails', 's16_skill_guardrails.js'],
     ['playtest_fixes', 's17_playtest_fixes.js'],
+    // v0.1.4.14 fix round, part 8 (T3 with E1, SPEC 8.1.5): the clock of 26.1 runs between the packets; a third field is
+    // the time limit of the scenario in ms (60 s without one)
+    ['night_falls', 's18_night_falls.js', 90000],
 ];
 
 const args = process.argv.slice(2);
@@ -61,7 +64,7 @@ function repoBotsListing() {
     try { return fs.readdirSync(path.join(ROOT, 'bots')).sort().join(','); } catch { return '(missing)'; }
 }
 
-function runScenario(name, file) {
+function runScenario(name, file, timeoutMs = SCENARIO_TIMEOUT_MS) {
     return new Promise((resolve) => {
         const tmp = makeTempDir();
         const t0 = Date.now();
@@ -83,14 +86,14 @@ function runScenario(name, file) {
         const timer = setTimeout(() => {
             timedOut = true;
             killTree(child);
-        }, SCENARIO_TIMEOUT_MS);
+        }, timeoutMs);
         child.on('exit', (code, signal) => {
             clearTimeout(timer);
             setTimeout(() => {
                 const ms = Date.now() - t0;
                 let removed = false;
                 try { removed = removeDir(tmp); } catch (e) { lines.push('cleanup error: ' + e.message); }
-                resolve({ name, code, signal, timedOut, ms, lines, tmp, removed });
+                resolve({ name, code, signal, timedOut, ms, lines, tmp, removed, timeoutMs });
             }, 100);
         });
     });
@@ -100,13 +103,13 @@ const botsBefore = repoBotsListing();
 const tStart = Date.now();
 const outcomes = [];
 console.log(`e2e v0.1.4.3: node ${process.version}, repository ${ROOT}, ${selected.length} scenario(s)`);
-for (const [name, file] of selected) {
-    const r = await runScenario(name, file);
+for (const [name, file, timeoutMs] of selected) {
+    const r = await runScenario(name, file, timeoutMs);
     const checkLines = r.lines.filter((l) => /^(\s*\[\w+\] )?(CHECK|NOTE) /.test(l));
     const failedChecks = r.lines.filter((l) => /^(\s*\[\w+\] )?CHECK FAIL /.test(l));
     const pass = !r.timedOut && r.code === 0 && failedChecks.length === 0 && r.removed;
     let reason = '';
-    if (r.timedOut) reason = `timeout after ${SCENARIO_TIMEOUT_MS / 1000} s, process tree killed`;
+    if (r.timedOut) reason = `timeout after ${r.timeoutMs / 1000} s, process tree killed`;
     else if (!r.removed) reason = `temp directory ${r.tmp} could not be removed`;
     else if (failedChecks.length) reason = failedChecks.map((l) => l.trim()).join('\n    ');
     else if (r.code !== 0) reason = `exit code ${r.code} ${r.signal || ''}`;

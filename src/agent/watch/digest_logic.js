@@ -101,14 +101,32 @@ export function usesLeft(item) {
     return Math.max(0, Math.floor(max - used));
 }
 
+/**
+ * The items of the bag as the game has them now. v0.1.4.14 (P-30, spec 8.9): the source of the inventory lag: while a
+ * window is open (a chest, a furnace, the crafting table through the whole craft), mineflayer applies the set_slot
+ * packets to bot.currentWindow and copies its inventory section into bot.inventory only when the window closes
+ * (lib/plugins/inventory.js, copyInventory), so bot.inventory.items() is the bag of before the window for seconds. The
+ * open window's inventory section (its last 36 slots: the main inventory and the hotbar) is read instead while one is
+ * open; armour and the off hand are not part of a container window and come from bot.inventory as before.
+ * @param {object} bot
+ * @returns {Array<{name: string, count: number, slot?: number}>}
+ */
+export function bagItems(bot) {
+    try {
+        const window = bot?.currentWindow;
+        const start = window?.inventoryStart;
+        const end = window?.inventoryEnd;
+        if (window && Array.isArray(window.slots) && isFiniteNumber(start) && isFiniteNumber(end) && end > start)
+            return window.slots.slice(start, end).filter((item) => item && typeof item.name === 'string');
+        return bot?.inventory?.items?.() ?? [];
+    } catch {
+        return [];
+    }
+}
+
 function inventoryOf(bot) {
     const counts = {};
-    let items = [];
-    try {
-        items = bot?.inventory?.items?.() ?? [];
-    } catch {
-        items = [];
-    }
+    const items = bagItems(bot);
     for (const item of items) {
         if (typeof item?.name === 'string' && isFiniteNumber(item.count))
             counts[item.name] = (counts[item.name] ?? 0) + item.count;

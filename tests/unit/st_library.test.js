@@ -26,6 +26,9 @@ const storeMod = await loadSrc('src/agent/areas/area_store.js');
 const LIMIT = { timeout: 30000 };
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const FENCE_TEXT = 'oak_fence is a block that players build with. I do not break it. The player can type the command !collectBlocks("oak_fence", 20) in the chat to do it.';
+// v0.1.4.14 (P-20, SPEC 8.11): the same rule, the refusal of collectBlock in the words of 8.11; the guard's own text (FENCE_TEXT)
+// stays for bot.dig
+const NOT_PLACED_FENCE = 'I do not break a oak_fence that I did not place; type the order yourself if you want it gone.';
 
 let cap;
 let dir;
@@ -78,7 +81,7 @@ describe('B1: collectBlock and the guard', () => {
         assert.equal(got, false);
         assert.deepEqual(bot.broken, []);
         for (const [, x, y, z] of PEN) assert.equal(w.get(x, y, z), 'oak_fence');
-        assert.equal(bot.output, `${FENCE_TEXT}\n`);
+        assert.equal(bot.output, `${NOT_PLACED_FENCE}\n`);
     });
 
     test('protect_built_blocks off: the fences are taken, as in v0.1.4.7', LIMIT, async () => {

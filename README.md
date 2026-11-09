@@ -20,8 +20,8 @@ Do not connect this bot to public servers with coding enabled. This project allo
 # Getting Started
 ## Requirements
 
-- [Minecraft Java Edition](https://www.minecraft.net/en-us/store/minecraft-java-bedrock-edition-pc) (up to v1.21.11, recommend v1.21.6)
-- [Node.js Installed](https://nodejs.org/) (Node v18 or v20 LTS recommended. Node v24+ may cause issues with native dependencies)
+- [Minecraft Java Edition](https://www.minecraft.net/en-us/store/minecraft-java-bedrock-edition-pc) 26.1 (26.1.1 and 26.1.2 speak the same protocol and work too; 26.2 and 26.3 wait for the libraries). A world made on 26.2 or 26.3 and opened in 26.1 holds chunks 26.1 cannot read, and the bot's trips load unvisited land fast: give the integrated server 8 GB or more of heap and a render and simulation distance of 16 before a long trip.
+- [Node.js Installed](https://nodejs.org/) 22 (`fnm install 22`; the start scripts switch to it by themselves; Node 24 has no prebuilt `gl` for the viewer, so the install fails there)
 - At least one API key from a supported API provider. See [supported APIs](#model-customization). OpenAI is the default.
 
 > [!Important]

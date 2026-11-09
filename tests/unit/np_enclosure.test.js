@@ -241,7 +241,9 @@ describe('kindOf: each rule and the order (I5)', () => {
 
     test('the order: the first rule that fits wins', () => {
         const all = C({ animals: { pig: 2 }, crops: { carrots: 3 }, beds: 1, chests: 1 });
-        assert.equal(K.kindOf(ENC({ roof: true, floor: 'tilled', openings: DOOR }), all), 'pen');
+        // v0.1.4.14 (P-18, SPEC 8.2, the owner: a pen is surrounded by a fence, roof or not): judged by its border
+        assert.equal(K.kindOf(ENC({ roof: true, floor: 'tilled', openings: DOOR }), all), 'pen', 'a fence ring (the default)');
+        assert.equal(K.kindOf(ENC({ border: 'wall', roof: true, floor: 'tilled', openings: DOOR }), all), 'farm', 'a wall ring is never a pen');
         assert.equal(K.kindOf(ENC({ roof: true, floor: 'tilled', openings: DOOR }), { ...all, animals: {} }), 'farm');
         assert.equal(K.kindOf(ENC({ roof: true, floor: 'built', openings: DOOR }), { ...all, animals: {} }), 'home');
         assert.equal(K.kindOf(ENC({ roof: true, floor: 'built', openings: DOOR }), { ...all, animals: {}, beds: 0 }), 'storage');

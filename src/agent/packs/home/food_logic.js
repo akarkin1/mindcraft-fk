@@ -18,6 +18,19 @@ export const EAT_UNTIL = 18;
 /** The health of an unhurt bot. A hurt bot eats until the food level is FULL_FOOD (v0.1.4.8, C1). */
 export const FULL_HEALTH = 20;
 
+/** v0.1.4.14 (P-29, SPEC 8.4.6): below this many food points the bot never sprints (the game's rule: 6 or fewer cannot). */
+export const SPRINT_MIN_FOOD = 7;
+
+/**
+ * v0.1.4.14 (P-29): true when the bot may sprint with `food` points; an unreadable food level allows it. One rule for every
+ * Movements of the skills (runRule of skills.js) and of the home pack (makeMovements of motion.js).
+ * @param {number} food
+ * @returns {boolean}
+ */
+export function maySprint(food) {
+    return !Number.isFinite(food) || food >= SPRINT_MIN_FOOD;
+}
+
 /**
  * The defaults of mineflayer-auto-eat 3.3.6, used when the bot has no options object. `offhand` is
  * false since v0.1.4.8 (C1): the plugin moved the whole stack into the off-hand (slot 45), where

@@ -167,11 +167,29 @@ A fresh clone on Node 22.23.4: the 7 patches apply with no warning; unit 8,747 t
 third is the comparison with `origin/main` in `nv_words`, absent in a single-branch clone); end-to-end 17 of 17; the
 full world set on the 26.1 server with `natural_smoke` and `fresh_world` 46 of 46 in 4,403 s (G-14).
 
-## The play of 2026-11-09 (open)
+## The play of 2026-11-09 (fix round, part 8)
 
-The owner's play of 9e4ff1f on his machine found 15 more things (DECISIONS P-17 to P-31, and P-32 as context):
-the bot's clock stands still between the rare clock packets of 26.1 (mineflayer recomputes the time of day only on
-`update_time`; no test lets time run), a farm without a fence cannot be saved and the untyped scan saved the house
-as a pen, and the rest by impact. The owner's choice: the fixes go on `release/v0.1.4.14-rc` before the merge,
-the clock first, the farm second; nothing is fixed until he says so. A clock fix belongs in the mineflayer patch
-with a fake-server scenario where time runs and a world scenario with the daylight cycle on.
+The owner's play of 9e4ff1f on his machine found 15 more things (DECISIONS P-17 to P-31, P-32 as context), led by
+the bot's clock standing still in a boat. The spec of the round is SPEC.md section 8; E1, E2, E4 and the tester T3
+built it in one day with three cuts by the usage limit.
+
+| Finding | Fix and its proof | Files |
+|---|---|---|
+| The clock froze in a boat (P-17): 26.1's per-second packet carries only the age, the clock state comes on login and `time set`, and mineflayer advanced the clock on `physicsTick`, which stops while riding, dead or in an unloaded chunk | the patched `time.js` runs the clock on its own 50 ms timer; riding 30 s: 1 tick from the server (613 behind before); standing: worst 2 ticks; `time set` within 1 s; `xl_time_runs` (15), `xl_day_marks` (8), the end-to-end `s18_night_falls` (fails before), W123 with a riding part | `patches/mineflayer+4.39.0.patch`, `src/agent/clock_logic.js`, `agent.js` (E1) |
+| Farms without a fence, the house a pen (P-18) | `open_farm.js` (pure) finds the connected farmland; a typed kind wins (the parser's default is `auto`; a typed kind with nothing found saves nothing); pets are no livestock; the border decides a pen (fence) from a building (wall), roof or not; `xl_open_farm_pets`; W124 | `src/agent/areas/open_farm.js`, `area_kind.js`, `area_scan.js`, the `rememberArea` block of `actions.js`, `farming.js` (E4) |
+| Tunnels on long walks, snow, ice (P-19) | the destructive fallback only within 32 blocks and never below the start level or into water (`xd_way_fallback`); snow by hand (`xl_snow_by_hand`); the climb from water onto ice measured from the surface (`xl_ice_from_water`); W125 | `skills.js`, `way_logic.js` (E2); `patches/mineflayer-pathfinder+2.4.5.patch`, one line of `skills.js` (E1) |
+| `I broke 2 black_bed and got nothing.` (P-20) | the count is of the blocks gone; the refusal text names the rule; the placed store covers beds (`xd_collect_count`, `xl_placed_bed`) | `skills.js` (E2), `area_guard.js` (E4) |
+| The 400 "assistant message prefill" (P-21) | the turns end with the `_` filler when the last is the assistant's (`xl_closing_turn`); the race behind it is in the roadmap for 0.1.4.16 | `src/models/claude.js` (E1) |
+| `respondFunc is not a function` (P-22) | a page line is kept until the bot can answer (`xl_page_line_kept`) | `mindserver_proxy.js` (E1) |
+| Pits and the frozen ocean as yards (P-23) | a pit that sees the sky is no building; water bounds a yard only up to 20 x 20 and never open water (`xl_natural_terrain`, 12) | `area_scan.js` (E4) |
+| Beds on a pillar (P-24) | `bed_logic.js` (pure) and `bed.js`: two level cells, a stand beside, within 4 blocks (`xl_bed_place`); W125 | `src/agent/packs/home/bed_logic.js`, `bed.js`, `actions.js` (E4) |
+| The give into the water (P-25), the kill drops (P-26), the reflex in a boat (P-27), the commands (P-28), the sprint (P-29) | a dry side first; `pickUpKillDrops` from the pickup stands; the unstuck mode quiet with `bot.vehicle`; `!boardBoat`, `!leaveBoat`, `!leaveGame` (the prompt budget raised by 200 for their docs); `maySprint` in `food_logic.js`, the long-way line; `xd_kill_give`, `xd_ride_quiet`, `xd_boat_leave`, `xd_run_rules`; W125 | `skills.js`, `skill_texts.js`, `modes.js`, `actions.js`, `food_logic.js`, `motion.js` (E2) |
+| The watch tooling (P-30) | `You have reached` ends a success; `bagItems` reads the bag through an open window for the `inventory` tool, the digest and the prompt (`xl_reached_is_success`, `xl_bag_live`, `xd_bag_prompt`) | `watch/queue.js`, `watch/digest_logic.js` (E1), `full_state.js` (E2) |
+
+The suites with every change in: unit 8,906 tests (8,904 pass, 2 skipped), end-to-end 18 of 18 (the new
+`night_falls` among them); on the server, against the worktree, W123 passes with the boat (the clock within 2
+ticks riding and standing; `!leaveBoat` after E1's dismount fix), W124 36 of 36 (the home with cats, the typed
+building, the open farm harvested, the roofed pen a pen) and W125 35 of 35 (the bed on the slope, the give beside
+the pond, the kill drops, the snow by hand, 60 blocks with no dig), each failing before on the owner's exact
+findings; the older scenarios W06, W07, W09 and W10 pass with the typed kind (W07's farm text is the new one, W10
+types "home"). The scenarios W123, W124 and W125 join the gate's set.

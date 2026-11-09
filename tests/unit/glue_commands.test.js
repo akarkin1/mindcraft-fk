@@ -90,7 +90,7 @@ describe('!rememberArea(name, type)', () => {
     test('a building: the reply of the spec, the area is saved with its door', async () => {
         const { world, house } = makeWorld();
         const agent = makeAgent({ at: { x: house.inside.x + 0.5, y: house.inside.y, z: house.inside.z + 0.5 }, world });
-        const reply = await command('!rememberArea').perform(agent, 'home', 'building');
+        const reply = await command('!rememberArea').perform(agent, 'home', 'auto'); // v0.1.4.14 (P-18): the parser's default is "auto"
         // v0.1.4.11 (P1): without a type the kind is concluded: the house has a roof, a door and a bed, so it is a home
         assert.match(reply, /^I saved "home": a home, walled, \d+ x \d+ with a roof, 1 door, 1 bed, 1 chest\. I shelter there at night\.$/);
         const area = agent.area_store.get('home');
@@ -113,20 +113,25 @@ describe('!rememberArea(name, type)', () => {
     test('no building found: a box of 25 x 13 x 25 blocks around the bot, source radius', async () => {
         const agent = makeAgent({ at: { x: 100.5, y: 64, z: 100.5 } });
         // v0.1.4.11 (P1): without a type nothing is saved where no border is found; with the type home the box as before
-        assert.equal(await command('!rememberArea').perform(agent, 'home', 'building'),
+        assert.equal(await command('!rememberArea').perform(agent, 'home', 'auto'),
             'I find no border around me: no fence, wall, hedge or water within 24 blocks. Stand inside the place and say it again.');
         assert.equal(agent.area_store.size, 0);
-        const reply = await command('!rememberArea').perform(agent, 'home', 'home');
-        assert.equal(reply, 'I found no building here. I saved a box of 25 x 13 x 25 blocks around this place as "home". Use !setArea to correct it.');
-        const area = agent.area_store.get('home');
-        assert.deepEqual([area.min, area.max], [{ x: 88, y: 60, z: 88 }, { x: 112, y: 72, z: 112 }]);
-        assert.equal(area.source, 'radius');
+        // v0.1.4.14 (the lead's decision, W07): a typed kind with nothing found saves nothing either, P1's answer
+        for (const typed of ['home', 'building']) {
+            assert.equal(await command('!rememberArea').perform(agent, 'home', typed),
+                'I find no border around me: no fence, wall, hedge or water within 24 blocks. Stand inside the place and say it again.', typed);
+        }
+        assert.equal(agent.area_store.size, 0);
+        // the mine keeps its box of v0.1.4.10
+        assert.match(await command('!rememberArea').perform(agent, 'mine', 'mine'), /^I saved a box of 25 x 13 x 25 blocks around this place as the mine "mine"\./);
+        assert.equal(agent.area_store.get('mine').source, 'radius');
     });
 
     // v0.1.4.8 (D5, part G): the farm is looked for with findFencedGroundNear, its reason gives the text
     test('a farm without a fence: the text of the scan, nothing is saved', async () => {
         const agent = makeAgent({ at: { x: 100.5, y: 64, z: 100.5 } });
-        assert.equal(await command('!rememberArea').perform(agent, 'farm', 'farm'), 'I see no fence within 6 blocks of me. Stand inside the fence or next to its gate and try again.');
+        // v0.1.4.14 (P-18, SPEC 8.11): no fence and no farmland: the open farm's text
+        assert.equal(await command('!rememberArea').perform(agent, 'farm', 'farm'), 'I see no farmland within 24 blocks of me and no fence. Stand on the field and say it again.');
         assert.equal(agent.area_store.size, 0);
     });
 
@@ -159,7 +164,7 @@ describe('!setArea, !forgetArea, !areas, !allowChanges', () => {
     test('!setArea keeps the doors of a scanned area that are inside the new box', async () => {
         const { world, house } = makeWorld();
         const agent = makeAgent({ at: { x: house.inside.x + 0.5, y: house.inside.y, z: house.inside.z + 0.5 }, world });
-        await command('!rememberArea').perform(agent, 'home', 'building');
+        await command('!rememberArea').perform(agent, 'home', 'auto');
         const door = agent.area_store.get('home').entrances[0];
         const reply = await command('!setArea').perform(agent, 'home', 'building', -2, 62, -2, 10, 70, 10);
         assert.ok(reply.endsWith(', 1 door.'), reply);
@@ -349,7 +354,7 @@ describe('the defaults of R4 in the parameter definitions', () => {
     const DEFAULTS = [
         ['!followPlayer', 'follow_dist', 4], ['!goToPlayer', 'closeness', 3], ['!collectBlocks', 'num', 1], ['!craftRecipe', 'num', 1],
         ['!goToCoordinates', 'closeness', 1], ['!searchForBlock', 'search_range', 64], ['!searchForEntity', 'search_range', 64],
-        ['!givePlayer', 'num', 1], ['!stay', 'type', 30], ['!rememberArea', 'type', 'building'], ['!allowChanges', 'minutes', 10],
+        ['!givePlayer', 'num', 1], ['!stay', 'type', 30], ['!rememberArea', 'type', 'auto'], ['!allowChanges', 'minutes', 10],
     ];
     for (const [name, param, value] of DEFAULTS) {
         test(`${name}: ${param} has the default ${JSON.stringify(value)}, and it is the last parameter or all after it have one`, () => {

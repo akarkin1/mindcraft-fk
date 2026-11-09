@@ -347,3 +347,260 @@ export function surfaceRoutes(routes, feet, atSurface) {
     }
     return out.sort((a, b) => a.d - b.d);
 }
+
+// ------------------------------------------------------------------ v0.1.4.14, the play of 2026-11-09 (SPEC 8.3.1, 8.4)
+
+/**
+ * P-19 (SPEC 8.3.1): the destructive fallback of goToGoal ("Path not found, but attempting to navigate anyway") runs only
+ * for a way of at most `maxWay` blocks; it never digs a block below the bot's start level minus `digBelowStart`, and
+ * never one touching water or lava.
+ */
+export const FALLBACK_RULES = Object.freeze({ maxWay: 32, digBelowStart: 1 });
+
+// Water, lava and the plants that stand in water (a kelp or seagrass cell is water).
+const WET = new Set([...LIQUIDS, 'kelp', 'kelp_plant', 'seagrass', 'tall_seagrass']);
+
+function cellOf(p) {
+    return { x: Math.floor(p.x), y: Math.floor(p.y + 0.01), z: Math.floor(p.z) };
+}
+
+/**
+ * The cell a goal of the path finder aims at, or null when the goal has no one cell that can be read: GoalBlock,
+ * GoalNear, GoalGetToBlock and GoalFollow carry x, y, z; GoalXZ and GoalNearXZ x and z (the y is the feet's);
+ * GoalLookAtBlock and GoalPlaceBlock carry pos. A composite or inverted goal has none.
+ * @param {object} goal
+ * @param {{x, y, z}|null} [feet]
+ * @returns {{x: number, y: number, z: number}|null}
+ */
+export function goalPoint(goal, feet = null) {
+    if (goal === null || typeof goal !== 'object') {
+        return null;
+    }
+    const p = isPoint(goal.pos) ? goal.pos : goal;
+    if (!Number.isFinite(p.x) || !Number.isFinite(p.z)) {
+        return null;
+    }
+    if (Number.isFinite(p.y)) {
+        return { x: Math.floor(p.x), y: Math.floor(p.y), z: Math.floor(p.z) };
+    }
+    return isPoint(feet) ? { x: Math.floor(p.x), y: cellOf(feet).y, z: Math.floor(p.z) } : null;
+}
+
+/**
+ * P-19: whether the destructive fallback may run: the way from the feet to the goal's cell, as the crow flies, is at most
+ * 32 blocks. A goal without a cell is allowed, as before. `blocks` is the way, rounded; `point` the goal's cell.
+ * @param {{x, y, z}} feet
+ * @param {object} goal
+ * @returns {{allowed: boolean, blocks: number|null, point: {x, y, z}|null}}
+ */
+export function fallbackAllowed(feet, goal) {
+    const point = goalPoint(goal, feet);
+    if (!point || !isPoint(feet)) {
+        return { allowed: true, blocks: null, point };
+    }
+    const blocks = Math.hypot(point.x + 0.5 - feet.x, point.y - feet.y, point.z + 0.5 - feet.z);
+    return { allowed: blocks <= FALLBACK_RULES.maxWay, blocks: Math.round(blocks), point };
+}
+
+/**
+ * P-19: true when the fallback may dig the block at `pos`: not below the start level minus 1, and none of its 6
+ * neighbours is water or lava. read(x, y, z) gives the name of a block, or null for one that is not loaded (rock).
+ * @param {(x: number, y: number, z: number) => string|null} read
+ * @param {{x, y, z}} pos the block
+ * @param {number} startY the y of the bot's feet when the walk began
+ * @returns {boolean}
+ */
+export function mayDigOnFallback(read, pos, startY) {
+    if (typeof read !== 'function' || !isPoint(pos)) {
+        return false;
+    }
+    const p = { x: Math.floor(pos.x), y: Math.floor(pos.y), z: Math.floor(pos.z) };
+    if (Number.isFinite(startY) && p.y < Math.floor(startY + 0.01) - FALLBACK_RULES.digBelowStart) {
+        return false;
+    }
+    for (const [dx, dy, dz] of [[0, 1, 0], [0, -1, 0], [1, 0, 0], [-1, 0, 0], [0, 0, 1], [0, 0, -1]]) {
+        let name = null;
+        try {
+            name = read(p.x + dx, p.y + dy, p.z + dz);
+        } catch {
+            name = null;
+        }
+        if (typeof name === 'string' && WET.has(name)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+/** P-19, word for word: `I found no way to (10, 64, -20) without digging; I stopped at (3, 64, -2), 19 blocks away.` */
+export function noWayText(goal, at, blocks) {
+    return `I found no way to ${cellWords(goal)} without digging; I stopped at ${cellWords(at)}, ${Math.round(blocks)} blocks away.`;
+}
+
+/** P-20, word for word: `I do not break a black_bed that I did not place; type the order yourself if you want it gone.` */
+export function notPlacedText(name) {
+    return `I do not break a ${name} that I did not place; type the order yourself if you want it gone.`;
+}
+
+/** P-20, word for word: `I broke 0 black_bed: the black_bed at (3, 64, 0) did not break.` (the reason without a final period). */
+export function brokeNoneText(name, reason) {
+    return `I broke 0 ${name}: ${String(reason ?? '').replace(/[\s.]+$/, '')}.`;
+}
+
+/** P-20: the reason of brokeNoneText for a block that stood after the dig (the server kept it). */
+export function stoodReason(name, pos) {
+    return `the ${name} at ${cellWords(pos)} did not break`;
+}
+
+/**
+ * P-25: the give looks at the line to the player at ground level and `behind` blocks past him; it tries up to `sides`
+ * sides of the player and tosses from `tossFrom` block there.
+ */
+export const GIVE_WATER_RULES = Object.freeze({ behind: 2, sides: 3, tossFrom: 1 });
+
+// The cells the bot stands in freely (air and the low plants); everything else that is not wet is ground.
+const FREE = new Set([...EMPTY, 'short_grass', 'grass', 'tall_grass', 'fern', 'large_fern', 'dead_bush', 'snow', 'dandelion',
+    'poppy', 'short_dry_grass', 'tall_dry_grass', 'leaf_litter', 'pink_petals', 'wildflowers']);
+
+function nameAt(read, x, y, z) {
+    try {
+        const n = read(x, y, z);
+        return typeof n === 'string' ? n : null;
+    } catch {
+        return null;
+    }
+}
+
+function isWet(read, x, y, z) {
+    const n = nameAt(read, x, y, z);
+    return n !== null && WET.has(n);
+}
+
+// The cells of the line from `from` to `to` (x and z) and `behind` more blocks past `to`, sampled every half block.
+function lineCells(from, to, behind) {
+    const dx = to.x - from.x;
+    const dz = to.z - from.z;
+    const len = Math.hypot(dx, dz);
+    const ux = len < 1e-6 ? 1 : dx / len;
+    const uz = len < 1e-6 ? 0 : dz / len;
+    const cells = new Map();
+    for (let d = 0; d <= len + behind + 1e-6; d += 0.5) {
+        const x = Math.floor(from.x + ux * d);
+        const z = Math.floor(from.z + uz * d);
+        cells.set(`${x},${z}`, { x, z });
+    }
+    return [...cells.values()];
+}
+
+/**
+ * P-25: true when water or lava lies on the line from the bot to the player at ground level (the player's feet level and
+ * the block below it), or within `behind` blocks past the player on that line (a tossed stack flies past him).
+ * @param {(x: number, y: number, z: number) => string|null} read
+ * @param {{x, y, z}} from the bot
+ * @param {{x, y, z}} to the player
+ * @param {number} [behind]
+ * @returns {boolean}
+ */
+export function wetLine(read, from, to, behind = GIVE_WATER_RULES.behind) {
+    if (typeof read !== 'function' || !isPoint(from) || !isPoint(to)) {
+        return false;
+    }
+    const y = cellOf(to).y;
+    return lineCells(from, to, behind).some((c) => isWet(read, c.x, y, c.z) || isWet(read, c.x, y - 1, c.z));
+}
+
+// A cell the bot can stand in: feet and head free, ground below (neither free nor wet nor unknown).
+function standable(read, c) {
+    const feet = nameAt(read, c.x, c.y, c.z);
+    const head = nameAt(read, c.x, c.y + 1, c.z);
+    const below = nameAt(read, c.x, c.y - 1, c.z);
+    return feet !== null && FREE.has(feet) && head !== null && FREE.has(head) && below !== null && !FREE.has(below) && !WET.has(below);
+}
+
+/**
+ * P-25: the cells beside the player (the four neighbours of his cell) from which the line to him (where he stands, as the
+ * toss flies) and 2 blocks past him is dry and the bot can stand, nearest to the bot first, at most 3; the side the bot
+ * stands on is left out.
+ * @param {(x: number, y: number, z: number) => string|null} read
+ * @param {{x, y, z}} player the player's position
+ * @param {{x, y, z}|null} from the bot
+ * @returns {{x: number, y: number, z: number}[]}
+ */
+export function drySides(read, player, from = null) {
+    if (typeof read !== 'function' || !isPoint(player)) {
+        return [];
+    }
+    const p = cellOf(player);
+    const out = [];
+    for (const [dx, dz] of Object.values(WALL_SIDES)) {
+        const c = { x: p.x + dx, y: p.y, z: p.z + dz };
+        if (isPoint(from) && Math.floor(from.x) === c.x && Math.floor(from.z) === c.z) {
+            continue;
+        }
+        if (!standable(read, c) || wetLine(read, { x: c.x + 0.5, y: c.y, z: c.z + 0.5 }, player)) {
+            continue;
+        }
+        out.push(c);
+    }
+    const d = (c) => (isPoint(from) ? Math.hypot(c.x + 0.5 - from.x, c.z + 0.5 - from.z) : 0);
+    return out.sort((a, b) => d(a) - d(b) || a.x - b.x || a.z - b.z).slice(0, GIVE_WATER_RULES.sides);
+}
+
+/** P-25, word for word: `I could not give you 1 black_bed: water all around you; come to dry ground.` */
+export function wetGiveText(count, item) {
+    return giveFailedText(`${count} ${item}`, 'water all around you; come to dry ground');
+}
+
+/** P-26: the drops of a kill are taken for up to 3 s after the death, within 4 blocks of where the mob died. */
+export const KILL_DROP_RULES = Object.freeze({ windowMs: 3000, range: 4 });
+
+/**
+ * P-29: a walk of more than 200 blocks with 10 food points or fewer is announced first (longWayText) and walked without
+ * sprinting. The sprint rule itself (no sprint below 7 food points) is maySprint of the home pack's food_logic.js, which
+ * every Movements of the skills and of the home pack reads: one home (packs never import the library).
+ */
+export const LONG_WAY_RULES = Object.freeze({ blocks: 200, food: 10 });
+
+/** P-29: true for a walk of more than 200 blocks with 10 food points or fewer. */
+export function isLongWay(blocks, food) {
+    return Number.isFinite(blocks) && blocks > LONG_WAY_RULES.blocks && Number.isFinite(food) && food <= LONG_WAY_RULES.food;
+}
+
+/** P-29, word for word: `A long way: 320 blocks with 8 food points; I do not run.` */
+export function longWayText(blocks, food) {
+    return `A long way: ${Math.round(blocks)} blocks with ${Math.round(food)} food points; I do not run.`;
+}
+
+/** P-28: a boat within this many blocks of the bot is boarded. */
+export const BOAT_RANGE = 6;
+
+/** P-28: true for the name of a boat or raft entity (oak_boat, oak_chest_boat, bamboo_raft, bamboo_chest_raft). */
+export function isBoatName(name) {
+    return typeof name === 'string' && (name.endsWith('_boat') || name.endsWith('_raft'));
+}
+
+/**
+ * P-28: the nearest boat among `entities` within `range` blocks of `from`, or null.
+ * @param {object[]} entities the entities of the bot (bot.entities as a list)
+ * @param {{x, y, z}} from
+ * @param {number} [range]
+ * @returns {object|null}
+ */
+export function nearestBoat(entities, from, range = BOAT_RANGE) {
+    if (!Array.isArray(entities) || !isPoint(from)) {
+        return null;
+    }
+    let best = null;
+    let bestD = Infinity;
+    for (const e of entities) {
+        if (!e || !isBoatName(e.name) || !isPoint(e.position)) {
+            continue;
+        }
+        const d = Math.hypot(e.position.x - from.x, e.position.y - from.y, e.position.z - from.z);
+        if (d <= range && d < bestD) {
+            best = e;
+            bestD = d;
+        }
+    }
+    return best;
+}

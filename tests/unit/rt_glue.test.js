@@ -30,8 +30,10 @@ const ROUTES = await loadSrc('src/agent/packs/routes/index.js');
 const LIMIT = { timeout: 30000 };
 // v0.1.4.14 (part K, SPEC 4.7): the lead's decision, since the budget of v0.1.4.13 had 13 characters left: with every
 // switch on, new_things_in_prompt among them, a block of 600 and the three longest lines of the new things present, the
-// prompt may hold 17,400 characters; without the block of the new things the old 17,000 hold.
-const LIMIT_NEW_THINGS = 17400;
+// prompt may hold 17,400 characters; without the block of the new things the old 17,000 hold. Fix round, part 8 (P-28): the
+// three commands !boardBoat, !leaveBoat and !leaveGame add 173 characters of docs; the lead raised both limits by 200
+// (17,000 to 17,200 and 17,400 to 17,600), as R1-7 did once in this release.
+const LIMIT_NEW_THINGS = 17600;
 const NEW_THINGS_HEADER = 'NEW SINCE 1.21.8 (true, even if you do not know it):';
 // a bot with the things of the three longest lines of the new things: a copper golem statue and a copper pickaxe in the
 // bag, a nautilus 3 blocks away; the block holds what fits in its 360 characters
@@ -453,14 +455,15 @@ describe('G7: the conversing prompt', () => {
         }
     }
 
-    test('every switch on: at most 17,400 characters with the new things (17,000 without); the six commands are in it', LIMIT, async (t) => {
-        // v0.1.4.14 (part K): new_things_in_prompt on with the three longest lines present: 17,400; without its block 17,000
+    test('every switch on: at most 17,600 characters with the new things (17,200 without); the six commands are in it', LIMIT, async (t) => {
+        // v0.1.4.14 (part K): new_things_in_prompt on with the three longest lines present: 17,400; without its block 17,000;
+        // part 8 (P-28): 17,600 and 17,200 for the three commands' docs
         const prompt = await conversing({ ...Object.fromEntries(PARTS.map((p) => [p, true])), ...SWITCHES_ON, world_memory: true, new_things_in_prompt: true });
         t.diagnostic(`every switch on: ${prompt.length} characters`);
         for (const name of [...ROUTE_COMMANDS, ...MINE_COMMANDS]) assert.ok(prompt.includes(`\n${name}: `), name);
         assert.ok(prompt.includes(`\n${NEW_THINGS_BLOCK}\n`), 'the block of the new things');
         assert.ok(prompt.length <= LIMIT_NEW_THINGS, `${prompt.length} characters`);
-        assert.ok(prompt.replace(`\n${NEW_THINGS_BLOCK}`, '').length <= 17000, 'without the block of the new things');
+        assert.ok(prompt.replace(`\n${NEW_THINGS_BLOCK}`, '').length <= 17200, 'without the block of the new things');
     });
 
     test('every switch off: none of the six commands', LIMIT, async (t) => {

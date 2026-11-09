@@ -143,10 +143,10 @@ describe('SPEC 4.2 the patch files', () => {
         }
     });
 
-    test('the mineflayer patch changes bed.js, chest.js (round 2: the copper chests), craft.js (round 2: one unit at a time), digging.js, entities.js, physics.js, place_block.js and inventory.js (the stale stateId of a closed window, G-4)', () => {
+    test('the mineflayer patch changes bed.js, chest.js (round 2: the copper chests), craft.js (round 2: one unit at a time), digging.js, entities.js, physics.js, place_block.js, inventory.js (the stale stateId of a closed window, G-4) and time.js (fix round 8, P-17: the clock runs between packets)', () => {
         const patch = read('patches/mineflayer+4.39.0.patch');
         const changed = [...patch.matchAll(/^diff --git a\/node_modules\/mineflayer\/(\S+)/gm)].map((m) => m[1]).sort();
-        assert.deepEqual(changed, ['lib/plugins/bed.js', 'lib/plugins/chest.js', 'lib/plugins/craft.js', 'lib/plugins/digging.js', 'lib/plugins/entities.js', 'lib/plugins/inventory.js', 'lib/plugins/physics.js', 'lib/plugins/place_block.js']);
+        assert.deepEqual(changed, ['lib/plugins/bed.js', 'lib/plugins/chest.js', 'lib/plugins/craft.js', 'lib/plugins/digging.js', 'lib/plugins/entities.js', 'lib/plugins/inventory.js', 'lib/plugins/physics.js', 'lib/plugins/place_block.js', 'lib/plugins/time.js']);
     });
 });
 

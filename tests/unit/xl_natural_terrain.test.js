@@ -138,3 +138,71 @@ describe('natural terrain is no building and no yard', () => {
         assert.equal(cabin.roof, true);
     });
 });
+
+// v0.1.4.14, fix round part 8 (P-23, SPEC 8.5): the owner's play of 2026-11-09. "I am in a walled yard 7 x 7 with a roof"
+// for the bot's own dig pits after !collectBlocks("stone") and for snowy hollows, and "a water-bound yard 37 x 29" on a
+// frozen ocean. A pit (a hollow below the ground around it that sees the sky) is no building without a door or a
+// trapdoor; water bounds a yard only up to 20 x 20 and when it is no open water.
+describe('pits, snow hollows and frozen water are no yard (P-23)', () => {
+    // the bot's pit: 7 x 7 and 5 deep in the stone under the grass, cobblestone where it filled holes in two walls, a
+    // torch, its crafting table, a cut at the south side, and a lid of cobblestone it put over the north half
+    function pit({ lid = 'half' } = {}) {
+        const w = createBlockWorld().flatGround(63);
+        w.fill(-20, 40, -20, 20, 59, 20, 'stone');
+        w.fill(0, 59, 0, 6, 63, 6, 'air');
+        for (let x = 0; x <= 6; x++) { w.set(x, 60, -1, 'cobblestone'); w.set(x, 61, -1, 'cobblestone'); w.set(x, 60, 7, 'cobblestone'); }
+        for (let z = 0; z <= 6; z++) { w.set(-1, 60, z, 'cobblestone'); w.set(7, 60, z, 'cobblestone'); w.set(7, 61, z, 'cobblestone'); }
+        w.fill(3, 60, 7, 3, 62, 7, 'air');
+        w.set(0, 61, 3, 'wall_torch');
+        w.set(6, 59, 6, 'crafting_table');
+        if (lid === 'half') w.fill(0, 64, 0, 6, 64, 3, 'cobblestone');
+        if (lid === 'whole') w.fill(0, 64, 0, 6, 64, 6, 'cobblestone');
+        return w;
+    }
+    const at = { x: 2.5, y: 59, z: 2.5 };
+
+    test('the bot\'s dig pit with a lid over half of it: no building, no yard (it was "a walled yard ... with a roof")', () => {
+        const r = S.scanEnclosure(pit().getBlockName, at, { tunnelAt: null });
+        assert.equal(r.found, false, `${r.border} ${JSON.stringify(r.box)}`);
+        assert.equal(S.scanEnclosure(pit({ lid: 'none' }).getBlockName, at, { tunnelAt: null }).found, false);
+    });
+
+    test('the same hollow with a door is a building; closed over all of it a cellar, as before', () => {
+        const d = pit();
+        d.set(3, 60, 7, 'oak_door');
+        d.set(3, 61, 7, 'oak_door');
+        assert.equal(S.scanEnclosure(d.getBlockName, at, { tunnelAt: null }).found, true, 'a door');
+        assert.equal(S.scanEnclosure(pit({ lid: 'whole' }).getBlockName, at, { tunnelAt: null }).found, true, 'no sky');
+    });
+
+    test('a snow hollow: snow blocks and snow layers are natural, no border', () => {
+        const w = createBlockWorld().flatGround(63, 'snow_block', 'dirt');
+        w.fill(-20, 64, -20, 20, 64, 20, 'snow');
+        w.fill(0, 61, 0, 5, 64, 5, 'air');
+        w.fill(-1, 64, -1, 6, 65, 6, 'snow_block');
+        w.fill(0, 64, 0, 5, 65, 5, 'air');
+        w.set(4, 61, 4, 'crafting_table');
+        assert.equal(S.scanEnclosure(w.getBlockName, { x: 2.5, y: 61, z: 2.5 }, { tunnelAt: null }).found, false);
+    });
+
+    test('the ice of a frozen ocean, 37 x 29 with holes: no water-bound yard; a floe of 9 x 9 in the open sea neither', () => {
+        const w = createBlockWorld().flatGround(50, 'sand');
+        w.fill(-40, 51, -40, 40, 62, 40, 'water');
+        w.fill(-18, 62, -14, 18, 62, 14, 'ice');
+        w.set(0, 62, 3, 'water');
+        assert.equal(S.scanEnclosure(w.getBlockName, { x: 0.5, y: 63, z: 0.5 }).found, false, 'more than 20 x 20');
+        const floe = createBlockWorld().flatGround(50, 'sand');
+        floe.fill(-40, 51, -40, 40, 62, 40, 'water');
+        floe.fill(-4, 62, -4, 4, 62, 4, 'packed_ice');
+        assert.equal(S.scanEnclosure(floe.getBlockName, { x: 0.5, y: 63, z: 0.5 }).found, false, 'open water');
+    });
+
+    test('a yard of 9 x 9 in a moat 2 wide with land beyond it is still water-bound', () => {
+        const w = createBlockWorld().flatGround(63);
+        w.fill(-3, 63, -3, 11, 63, 11, 'water');
+        w.fill(-1, 63, -1, 9, 63, 9, 'grass_block');
+        const r = S.scanEnclosure(w.getBlockName, { x: 4.5, y: 64, z: 4.5 });
+        assert.equal(r.found, true, r.reason);
+        assert.equal(r.border, 'water');
+    });
+});

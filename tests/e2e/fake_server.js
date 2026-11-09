@@ -17,12 +17,16 @@
 //                                          (position packet) as a vanilla server would; off by default
 //   --floor=<y>           [E2E_FLOOR]      send the 3 x 3 chunks around the spawn with a stone floor at
 //                                          height y, so the bot has physics and can walk; no chunks by default
+//   --time=<ticks>        [E2E_TIME]       the clock of the dimension at login (totalTicks of update_time), 6000
+//   --rate=<number>       [E2E_RATE]       the rate of that clock (1: the daylight cycle runs, 0: it stands), 1
+//                                          (v0.1.4.14 fix round, part 8, SPEC 8.1.5: the clock runs between packets)
 //
 // stdin commands: "chat" prints the chat messages received so far on one line
 // "CHAT <json array>"; "kick <json>" sends every client a kick_disconnect packet whose reason is
 // the given value (the NBT form of Minecraft 1.21, for example
 // {"type":"compound","value":{"translate":{"type":"string","value":"multiplayer.disconnect.x"}}})
-// and closes its connection; "quit" (or closing stdin) stops the server.
+// and closes its connection; "time <ticks> [rate]" sends every client one more update_time with that clock
+// (a time change, as `time set` makes the server send one); "quit" (or closing stdin) stops the server.
 import readline from 'node:readline';
 import mc from 'minecraft-protocol';
 import minecraftData from 'minecraft-data';
@@ -51,6 +55,8 @@ const [posX, posY, posZ] = String(param('pos', 'E2E_POS', '0.5,64,0.5')).split('
 const answerCommands = String(param('commands', 'E2E_COMMANDS', 'false')) === 'true';
 const floorParam = String(param('floor', 'E2E_FLOOR', ''));
 const floorY = floorParam === '' ? null : Number(floorParam);
+const clockTicks = Number(param('time', 'E2E_TIME', '6000'));
+const clockRate = Number(param('rate', 'E2E_RATE', '1'));
 
 const out = (line) => process.stdout.write(line + '\n');
 const log = (...parts) => out('[srv] ' + parts.join(' '));
@@ -78,6 +84,15 @@ function toWords(value) {
 }
 
 const chats = [];
+
+// The update_time packet of 26.1: the age of the world and the clock of the dimension (totalTicks, partialTick, rate);
+// the nether has no clock. totalTicks is a varlong, which minecraft-protocol reads and writes as a plain number.
+function timePacket(ticks, rate) {
+    return {
+        age: toWords(age),
+        clockUpdates: clockIndex < 0 ? [] : [{ id: clockIndex, totalTicks: Math.trunc(ticks), partialTick: 0, rate }],
+    };
+}
 
 // With --floor=<y>: the 3 x 3 chunks around the spawn, stone at height y, full sky light.
 function sendFloor(client) {
@@ -180,12 +195,8 @@ server.on('playerJoin', (client) => {
         iconBytes: undefined,
     });
     // 26.1: the time of day is the state of a clock (totalTicks, partialTick, rate) in clockUpdates; 1.21.8
-    // sent { age, time, tickDayTime }. Time 6000 with the daylight cycle on (rate 1), as before. totalTicks is a
-    // varlong, which minecraft-protocol reads and writes as a plain number.
-    client.write('update_time', {
-        age: toWords(age),
-        clockUpdates: clockIndex < 0 ? [] : [{ id: clockIndex, totalTicks: 6000, partialTick: 0, rate: 1 }],
-    });
+    // sent { age, time, tickDayTime }. Time 6000 with the daylight cycle on (rate 1) by default (--time, --rate).
+    client.write('update_time', timePacket(clockTicks, clockRate));
     client.write('position', {
         teleportId: 1,
         x: posX, y: posY, z: posZ,
@@ -198,7 +209,7 @@ server.on('playerJoin', (client) => {
     }
     // mineflayer emits 'spawn' on the first update_health with health > 0
     client.write('update_health', { health: 20, food: 20, foodSaturation: 5 });
-    log(`sent login (seed [${seedHigh}, ${seedLow}], dimension ${dimension} #${dimIndex}, hardcore ${hardcore}), server_data, update_time (age ${age}), position (${posX}, ${posY}, ${posZ}), update_health`);
+    log(`sent login (seed [${seedHigh}, ${seedLow}], dimension ${dimension} #${dimIndex}, hardcore ${hardcore}), server_data, update_time (age ${age}, clock ${clockTicks} rate ${clockRate}), position (${posX}, ${posY}, ${posZ}), update_health`);
 });
 
 let stopping = false;
@@ -218,6 +229,15 @@ rl.on('line', (line) => {
     const cmd = line.trim();
     if (cmd === 'chat') out('CHAT ' + JSON.stringify(chats));
     else if (cmd === 'quit') stop('quit command');
+    else if (cmd.startsWith('time ')) {
+        const [ticks, rate] = cmd.slice(5).trim().split(/\s+/).map(Number);
+        if (!Number.isFinite(ticks)) { log('time: bad ticks:', cmd); return; }
+        const packet = timePacket(ticks, Number.isFinite(rate) ? rate : clockRate);
+        for (const client of Object.values(server.clients || {})) {
+            try { client.write('update_time', packet); } catch (err) { log('time error:', err && err.message); }
+        }
+        log(`time: update_time (clock ${Math.trunc(ticks)} rate ${packet.clockUpdates[0]?.rate ?? '-'}) sent to ${Object.keys(server.clients || {}).length} client(s)`);
+    }
     else if (cmd.startsWith('kick ')) {
         let reason;
         try { reason = JSON.parse(cmd.slice(5)); } catch (err) { log('kick: bad json:', err.message); return; }

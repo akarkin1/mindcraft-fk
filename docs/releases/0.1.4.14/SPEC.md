@@ -339,3 +339,148 @@ short (follow me through the pens, the mine, a mining trip, sleep, the superviso
 things: a copper pickaxe in the bag during a mining trip, a copper chest as the mine's chest, a steak and
 bread in the bag at low food. What I would like to know: whether the voice and the viewer rebuilt on Node
 22, and every place the bot walks differently than on 1.21.8.
+
+## 8. Round 3: the play of 2026-11-09 (fix round, part 8)
+
+The rules of section 0 hold. The findings are DECISIONS.md P-17 to P-32; the owner's order: the clock first, the
+farm second, then the rest by impact. Owners by file: **E1** `patches/`, `src/models/claude.js`,
+`src/agent/mindserver_proxy.js`, `src/agent/watch/`, the `time` listener of `src/agent/agent.js`, the fake server of
+the end-to-end tests (with T3): P-17, P-19 (snow and ice), P-21, P-22, P-30. **E2** `src/agent/library/skills.js`,
+`src/agent/modes.js`, the new commands in `src/agent/commands/actions.js`: P-19 (the fallback), P-20 (the text),
+P-25, P-26, P-27, P-28, P-29. **E4** `src/agent/areas/`, `src/agent/packs/home/`, the `rememberArea` block of
+`actions.js`, the farming pack's reading of a farm: P-18, P-20 (the placed store), P-23, P-24. **T3** the
+scenarios of 8.10. The lead: P-31 (closed: the table is right, Haiku 5.5 is $0.10 / $0.50 and Sonnet 5.5 is priced
+as Sonnet 5; cache reads at a tenth explain the figure), P-32 (the docs). Two engineers may touch `actions.js`
+and `agent.js`: edits only, never a whole-file write, and a line to the lead when done.
+
+### 8.1 The clock (P-17, E1)
+
+1. When the server sends `clockUpdates` (26.1), `bot.time.time`, `bigTime`, `timeOfDay`, `day`, `isDay` and
+   `moonPhase` follow the clock of the current dimension every physics tick: between packets they advance with the
+   clock's `rate` (with rate 0 they stand still), a packet sets them to the server's value. With the old packet
+   shape (1.21.8) nothing changes.
+2. The `time` event fires on every packet and, between packets, at most once per 20 ticks (the cadence of the
+   packets of 1.21.8) and only when the fields changed.
+3. Listeners that compared exact values (`agent.js`, the `time` listener: `== 0`, `6000`, `12000`, `18000`)
+   take the crossing of the mark since the last event, so a sunrise is neither missed nor doubled.
+4. The change lives in `patches/mineflayer+4.39.0.patch` (`lib/plugins/time.js`); a unit test on the patched
+   file (`xl_time_runs`: a fake client sends one `update_time` with rate 1, 40 physics ticks later `timeOfDay` is
+   40 more and `time` fired twice; rate 0: unchanged; a second packet sets the value; the old packet shape
+   unchanged).
+5. The fake server of the end-to-end tests gets the scenario `night_falls` (T3 with E1): one `update_time` at
+   login with `totalTicks` 12700 and rate 1, no later packet; 30 s later the agent's `!stats` says the night
+   label and the night event of the watch fires. Before the fix the scenario fails.
+
+### 8.2 Farms and pens (P-18, E4)
+
+1. `kindOf`: cats, wolves and parrots are pets, not animals of the pen rule. What makes a pen is its border: a pen
+   is surrounded by a fence (the border `fence`, its openings gates) and holds animals of one kind or more, with a
+   roof or without one (the owner, 2026-11-09: "a livestock pen can be with roof or without it, but it needs to be
+   surrounded by a fence"). A walled enclosure (the border `wall`, doors) is never a pen whatever stands inside
+   it: a home (a roof, a door, a bed), a storage, a building, by the rules as they were. A fenced enclosure
+   without animals is a yard; a farm needs no fence (point 3). The base's house, pens, farm and room keep their
+   kinds.
+2. A typed kind wins: `!rememberArea(name, kind)` saves the kind the player named and the answer describes what was
+   found (`I saved "home": a building, walled, 6 x 8 with a roof, 2 doors, 2 cats, ...`). A typed kind with nothing
+   found saves nothing, like the untyped scan (P1 of v0.1.4.11): the answer is P1's `I find no border around me ...
+   Stand inside the place and say it again.`; the box of v0.1.4.10 is never saved for a typed kind.
+3. `!rememberArea(name, "farm")` with no fence saves the open farm: the connected farmland (with the water, the
+   crops and the paths among it) within 24 blocks of the bot, boxed with a margin of 1 and a height of 2,
+   border `open`. `I saved "<name>": an open farm 9 x 5 with 28 carrots and 12 potatoes.`; no farmland:
+   `I see no farmland within 24 blocks of me and no fence. Stand on the field and say it again.` A fenced farm as
+   before. The farming pack works an open farm as any farm (its field is the farmland of the box).
+4. Tests: `kindOf` (cats, a roof and a bed: home; sheep and a gate without a roof: pen; sheep, a door and a roof:
+   building), the open-farm box on a fake field, the typed kind; W124 (8.10).
+
+### 8.3 The path finder (P-19)
+
+1. E2, `goToGoal`: the destructive fallback ("Path not found, but attempting to navigate anyway") runs only for a
+   way of at most 32 blocks; a longer way is walked as near as the path finder gets without digging, then
+   `I found no way to (x, y, z) without digging; I stopped at (x, y, z), N blocks away.` The fallback never digs a
+   block below the bot's start level minus 1 and never a block touching water or lava.
+2. E1: `snow` (the layer) and `snow_block` are breakable by hand for the path finder and for the check
+   `Cannot break ... with current tools` (the game breaks them by hand; only the drop needs a shovel); the fix
+   where the rule lives (the pathfinder patch or the check in `skills.js`, which E1 may edit for this one line).
+3. E1: the climb from water onto ice (`ice`, `packed_ice`, `blue_ice`, `frosted_ice`): why the path finder or the
+   physics refuse it, fixed if small; else a known issue (4.8) with the words the bot says.
+4. Tests: the fallback decision (lengths, the dig floor, water), the snow rule; W125 (8.10).
+
+### 8.4 The library (E2)
+
+1. P-20: `collectedText` counts the blocks that are gone after the dig, never the attempts: `I broke 0 black_bed:
+   <the reason>.` A block the bot placed itself (E4 makes `placedByBot` cover every block the bot placed, beds
+   included) may be collected on any order, typed or not; a block somebody else built only on a typed order (the
+   owner's rule of v0.1.4.8); the refusal names it: `I do not break a black_bed that I did not place; type the
+   order yourself if you want it gone.`
+2. P-25: before the toss, water or lava on the line from the bot to the player at ground level, or within 2
+   blocks behind the player: the bot walks to a side where the line is dry (up to 3 sides) and tosses from 1
+   block; none: `I could not give you N item: water all around you; come to dry ground.`
+3. P-26: after a kill the drops are taken from the stands of `pickupStands` for up to 3 s after the death (the drop
+   lands late); `Picked up N items.` counts what the bag gained.
+4. P-27: the unstuck mode is quiet while `bot.vehicle` is set; "I'm stuck!" never fires in a boat or a minecart.
+5. P-28: `!boardBoat()` boards the nearest boat within 6 blocks (`I boarded the boat.`, `I see no boat within 6
+   blocks.`); `!leaveBoat()` (`I left the boat.`, `I am not in a boat.`); `!leaveGame(reason)` says
+   `I leave the game: <reason>.`, writes the exit note `left on request` and exits with code 0 (E2 reads
+   `start-claude.ps1` and the supervise skill: if they restart on every exit, the note says so and the handoff
+   names it).
+6. P-29: no sprinting below 7 food points; a walk of more than 200 blocks with 10 food points or fewer is
+   announced first: `A long way: N blocks with F food points; I do not run.`
+
+### 8.5 The area sense (P-23, E4)
+
+A hollow whose floor lies below the ground around it and whose walls are the ground itself (dirt, stone, snow, sand,
+gravel, ice) is a pit, no building: "a building of dirt or stone is walled too" applies only to walls that stand
+above the ground. A water-bound area of more than 20 x 20, or whose water is open water (water at the surface for
+8 blocks or more outward), is no yard. Snow blocks and snow layers are natural. Fake layouts of the pit, the snow
+hollow and the frozen ocean in `xl_natural_terrain`; the house, pen, farm and room scenarios unchanged.
+
+### 8.6 Beds (P-24, E4)
+
+A bed is placed on two level ground cells with air above them, each support block with at least two solid
+neighbours at its level (no pillar), within 1 block of the bot, with a free cell beside the bed to stand on;
+otherwise the bot looks within 4 blocks for such a place and walks there; none: `I found no level ground for the bed
+within 4 blocks.` `!placeHere("<kind>_bed")` and the bed of the sleep pack use the same rule.
+
+### 8.7 The model class (P-21, E1)
+
+The messages sent to Claude end with a user turn: when the last turn is the assistant's, the filler of
+`strictFormat` (`_`) closes the list, in `claude.js` after `strictFormat`. E1 verifies with the turns of a command
+answer which path produces the trailing assistant turn and fixes the source too if it is ours. A unit test with a
+turn list ending in the assistant's.
+
+### 8.8 The proxy (P-22, E1)
+
+A `send-message` from the page before `respondFunc` exists is kept (up to 20 lines) and delivered when it is set;
+the page gets `The bot is not ready yet; your line is kept.` A unit test.
+
+### 8.9 The watch tooling (P-30, E1)
+
+`run` of the watch server counts a result whose last line is `You have reached (x, y, z)` as a success whatever
+the lines before it; the inventory of `state` and of the view is read from the bag at the request, not from a
+cached tick (E1 names the lag's source and fixes it if small).
+
+### 8.10 The scenarios (T3) and the gate
+
+W123 "the night falls" (base world): `gamerule doDaylightCycle true` (the harness translates it), `time set
+12000`, nobody sleeps; after 60 s the bot's clock (through `!stats` and the watch `state`) is within 100 ticks of
+the server's `time query daytime`; at 13000 and more "is it night?" is answered with the night and `!goToBed` is
+not refused as daytime; `time set 1000` sets the bot's clock within 1 s; the cycle off again at the end. Against
+9e4ff1f the scenario fails (the clock stands at 12000). W124 "the open farm and the cats" (base world): the house
+with 2 cats and a bed, `!rememberArea("home", "building")` saves a building; a field of farmland with carrots
+and no fence, `!rememberArea("carrots", "farm")` saves an open farm with its crops and the farming pack can work
+it; the pen with its chickens stays a pen; a pit dug beside the house raises no yard. W125 "the open ground"
+(natural world): a bed placed on a slope lies on level ground and the bot sleeps in it; a give beside a pond
+reaches the player; a summoned sheep killed and its drops in the bag; a snow field (`setblock`) crossed without a
+shovel; a way of 60 blocks to a goal behind a hill ends without a tunnel. T3 writes W123 first and runs it against
+9e4ff1f: it must fail; then W124 and W125. The gate of section 6 with `natural_smoke fresh_world night_falls
+(end-to-end) W123 W124 W125`.
+
+### 8.11 Texts, word for word
+
+`I saved "<name>": an open farm <w> x <d> with <crops>.` · `I see no farmland within 24 blocks of me and no fence.
+Stand on the field and say it again.` · `I found no way to (x, y, z) without digging; I stopped at (x, y, z), N
+blocks away.` · `I broke 0 <block>: <reason>.` · `I do not break a <block> that I did not place; type the order
+yourself if you want it gone.` · `I could not give you N <item>: water all around you; come to dry ground.` ·
+`I boarded the boat.` · `I see no boat within 6 blocks.` · `I left the boat.` · `I am not in a boat.` ·
+`I leave the game: <reason>.` · `A long way: N blocks with F food points; I do not run.` · `I found no level
+ground for the bed within 4 blocks.` · `The bot is not ready yet; your line is kept.`

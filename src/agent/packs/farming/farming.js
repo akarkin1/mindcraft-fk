@@ -137,7 +137,7 @@ function gatesOf(entrances) {
  * @param {object} [ctx] { areas }
  * @param {string} [areaName]
  * @returns {{ok: boolean, reason: string|null, text: string,
- *   farm: {name: string|null, box: {min: object, max: object}, gates: {x,y,z,kind}[], source: 'area'|'scan'}|null}}
+ *   farm: {name: string|null, box: {min: object, max: object}, gates: {x,y,z,kind}[], source: 'area'|'scan', open?: boolean}|null}}
  *   reason `no_farm` with the text of the spec, or the farms known when the name is unknown
  */
 export function findFarm(bot, ctx = {}, areaName = '') {
@@ -148,7 +148,9 @@ export function findFarm(bot, ctx = {}, areaName = '') {
         const choice = chooseFarmArea(listAreas(ctx, dimension), { name, pos, dimension });
         if (choice.area) {
             const a = choice.area;
-            const farm = { name: a.name, box: { min: { ...a.min }, max: { ...a.max } }, gates: gatesOf(a.entrances), source: 'area' };
+            // v0.1.4.14 (P-18): an open farm (no fence) is worked on its farmland only, never on the ground around it
+            const farm = { name: a.name, box: { min: { ...a.min }, max: { ...a.max } }, gates: gatesOf(a.entrances), source: 'area',
+                open: a.border === 'open' };
             return outcome(true, null, '', { farm });
         }
         if (choice.reason === 'unknown_name') {
@@ -310,6 +312,9 @@ function farmReadBox(farm) {
 function readField(s) {
     const get = blockReader(s);
     s.cells = s.farm ? fieldCells(get, s.farm.box) : [];
+    if (s.farm?.open === true) {
+        s.cells = s.cells.filter(c => c.ground === 'farmland' || isCropBlock(c.above));
+    }
     s.box = fieldBox(s.cells);
     s.movements = null;
     s.avoid = s.farm ? noStandBlocks(get, farmReadBox(s.farm)) : [];

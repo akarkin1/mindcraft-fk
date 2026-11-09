@@ -23,11 +23,13 @@ const F = await loadSrc('src/agent/rules/example_filter.js');
 const DEFAULT = JSON.parse(fs.readFileSync(repoPath('profiles/defaults/_default.json'), 'utf8'));
 const CLAUDE = JSON.parse(fs.readFileSync(repoPath('profiles/claude.json'), 'utf8'));
 
-const LIMIT_ALL_ON = 17000;
+// v0.1.4.14 fix round, part 8 (P-28): the three commands !boardBoat, !leaveBoat and !leaveGame add 173 characters of docs;
+// the lead raised both limits by 200 (17,000 to 17,200 and 17,400 to 17,600), as R1-7 did once in this release.
+const LIMIT_ALL_ON = 17200;
 // v0.1.4.14 (part K, SPEC 4.7): the lead's decision, since the budget of v0.1.4.13 had 13 characters left: with every
 // switch on, new_things_in_prompt among them, a block of 600 and the three longest lines of the new things present, the
-// prompt may hold 17,400 characters; without the block of the new things the old 17,000 hold.
-const LIMIT_NEW_THINGS = 17400;
+// prompt may hold 17,400 characters; without the block of the new things the old 17,000 hold (17,600 and 17,200 since part 8).
+const LIMIT_NEW_THINGS = 17600;
 const NEW_THINGS_HEADER = 'NEW SINCE 1.21.8 (true, even if you do not know it):';
 // a bot with the things of the three longest lines of the new things: a copper golem statue and a copper pickaxe in the
 // bag, a nautilus 3 blocks away; the block holds what fits in its 360 characters
@@ -218,11 +220,12 @@ describe('the size of the conversing prompt (section 11, item 12)', () => {
         assert.ok(prompt.length <= 11000, `${prompt.length} characters`);
     });
 
-    test('every switch on, with a block of 600 characters: at most 17,400 characters with the new things (17,000 without)', async (t) => {
+    test('every switch on, with a block of 600 characters: at most 17,600 characters with the new things (17,200 without)', async (t) => {
         const on = Object.fromEntries(PARTS.map((p) => [p, true]));
         const block = fullBlock(600);
         assert.equal(block.length, 600);
-        // v0.1.4.14 (part K): new_things_in_prompt on with the three longest lines present: 17,400; without its block 17,000
+        // v0.1.4.14 (part K): new_things_in_prompt on with the three longest lines present: 17,400; without its block 17,000;
+        // part 8 (P-28): 17,600 and 17,200 for the three commands' docs
         const prompt = await conversingPrompt({ ...on, ...NEW_SWITCHES, world_memory: true, new_things_in_prompt: true }, block);
         t.diagnostic(`all switches on: ${prompt.length} characters (the block of knowledge ${block.length})`);
         assert.ok(prompt.includes(`${block}\n${NEW_THINGS_BLOCK}\nConversation Begin:`), 'the blocks before the conversation');

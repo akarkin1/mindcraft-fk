@@ -4,7 +4,8 @@
 //                                     table holds no line the code lacks, and the order is the spec's.
 //   describe 'SPEC 4.7 the block'   : NEW_THINGS_LIMIT 3; the header is the text of the spec (SPEC 4.5 D and 4.7); at most
 //                                     3 lines and 360 characters; the knowledge block of 600.
-//   describe 'SPEC 4.7 the budget'  : every prompt-size test allows 17,400 with the block and holds 17,000 without (read as text).
+//   describe 'SPEC 4.7 the budget'  : every prompt-size test allows 17,600 with the block and holds 17,200 without (read as text;
+//                                      17,400 and 17,000 until fix round part 8 raised both by 200 for the three commands of P-28).
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -74,20 +75,22 @@ describe('SPEC 4.7 the budget', () => {
         assert.ok(files.includes('gjg_prompt.test.js') && files.includes('stg_prompt.test.js'), files.join(', '));
     });
 
-    test('each allows 17,400 with the block of the new things and holds 17,000 without it', () => {
+    // v0.1.4.14 fix round, part 8 (P-28): the three commands !boardBoat, !leaveBoat and !leaveGame add 173 characters of docs;
+    // the lead raised both limits by 200 (17,000 to 17,200 and 17,400 to 17,600), as R1-7 did once in this release
+    test('each allows 17,600 with the block of the new things and holds 17,200 without it (part 8)', () => {
         for (const f of files) {
             const src = fs.readFileSync(repoPath(`tests/unit/${f}`), 'utf8');
-            assert.match(src, /const LIMIT_NEW_THINGS = 17400;/, f);
+            assert.match(src, /const LIMIT_NEW_THINGS = 17600;/, f);
             const allOn = src.match(/const LIMIT_ALL_ON = (\d+);/);
-            if (allOn) assert.equal(allOn[1], '17000', f);
-            assert.match(src, /\.length <= (LIMIT_ALL_ON|17000), 'without the block of the new things'\)/, `${f}: the old limit without the block`);
-            assert.doesNotMatch(src, /LIMIT_ALL_ON = (?!17000;)\d+/, f);
+            if (allOn) assert.equal(allOn[1], '17200', f);
+            assert.match(src, /\.length <= (LIMIT_ALL_ON|17200), 'without the block of the new things'\)/, `${f}: the limit without the block`);
+            assert.doesNotMatch(src, /LIMIT_ALL_ON = (?!17200;)\d+/, f);
         }
     });
 
-    test('stg_prompt: LIMIT_ALL_ON 17000 and LIMIT_NEW_THINGS 17400', () => {
+    test('stg_prompt: LIMIT_ALL_ON 17200 and LIMIT_NEW_THINGS 17600', () => {
         const src = fs.readFileSync(repoPath('tests/unit/stg_prompt.test.js'), 'utf8');
-        assert.match(src, /^const LIMIT_ALL_ON = 17000;$/m);
-        assert.match(src, /^const LIMIT_NEW_THINGS = 17400;$/m);
+        assert.match(src, /^const LIMIT_ALL_ON = 17200;$/m);
+        assert.match(src, /^const LIMIT_NEW_THINGS = 17600;$/m);
     });
 });
