@@ -77,7 +77,7 @@ claude mcp add --transport http mindcraft <url> --header "Authorization: Bearer 
 server is not seen by a session in the cloud.
 
 Without the MCP server the session can use the client: `node scripts/watch.js <tool>` with `MC_WATCH_URL` and
-`MC_WATCH_TOKEN` in its environment (on your machine `fnm exec --using=v20.20.2 -- node scripts/watch.js <tool>`).
+`MC_WATCH_TOKEN` in its environment (on your machine `fnm exec --using=v22 -- node scripts/watch.js <tool>`).
 
 ## 5. The one sentence
 

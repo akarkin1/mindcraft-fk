@@ -1,0 +1,415 @@
+diff --git a/node_modules/mineflayer/lib/plugins/bed.js b/node_modules/mineflayer/lib/plugins/bed.js
+index 9b526f6..27b56bf 100644
+--- a/node_modules/mineflayer/lib/plugins/bed.js
++++ b/node_modules/mineflayer/lib/plugins/bed.js
+@@ -70,7 +70,7 @@ function inject (bot) {
+     } else {
+       bot._client.write('entity_action', {
+         entityId: bot.entity.id,
+-        actionId: 2,
++        actionId: bot.registry.version['>=']('1.21.6') ? 'stop_sleeping' : 2,
+         jumpBoost: 0
+       })
+     }
+diff --git a/node_modules/mineflayer/lib/plugins/chest.js b/node_modules/mineflayer/lib/plugins/chest.js
+index 82e85ff..a507593 100644
+--- a/node_modules/mineflayer/lib/plugins/chest.js
++++ b/node_modules/mineflayer/lib/plugins/chest.js
+@@ -4,6 +4,10 @@ module.exports = inject
+ 
+ function inject (bot) {
+   const allowedWindowTypes = ['minecraft:generic', 'minecraft:chest', 'minecraft:dispenser', 'minecraft:ender_chest', 'minecraft:shulker_box', 'minecraft:hopper', 'minecraft:container', 'minecraft:dropper', 'minecraft:trapped_chest', 'minecraft:barrel', 'minecraft:white_shulker_box', 'minecraft:orange_shulker_box', 'minecraft:magenta_shulker_box', 'minecraft:light_blue_shulker_box', 'minecraft:yellow_shulker_box', 'minecraft:lime_shulker_box', 'minecraft:pink_shulker_box', 'minecraft:gray_shulker_box', 'minecraft:light_gray_shulker_box', 'minecraft:cyan_shulker_box', 'minecraft:purple_shulker_box', 'minecraft:blue_shulker_box', 'minecraft:brown_shulker_box', 'minecraft:green_shulker_box', 'minecraft:red_shulker_box', 'minecraft:black_shulker_box']
++  // v0.1.4.14: the 8 copper chests of 26.1 are chests (COPPER_CHESTS of src/agent/packs/storage/storage_logic.js)
++  allowedWindowTypes.push('minecraft:copper_chest', 'minecraft:exposed_copper_chest', 'minecraft:weathered_copper_chest',
++    'minecraft:oxidized_copper_chest', 'minecraft:waxed_copper_chest', 'minecraft:waxed_exposed_copper_chest',
++    'minecraft:waxed_weathered_copper_chest', 'minecraft:waxed_oxidized_copper_chest')
+   function matchWindowType (window) {
+     for (const type of allowedWindowTypes) {
+       if (window.type.startsWith(type)) return true
+diff --git a/node_modules/mineflayer/lib/plugins/craft.js b/node_modules/mineflayer/lib/plugins/craft.js
+index fb2766a..e202aaa 100644
+--- a/node_modules/mineflayer/lib/plugins/craft.js
++++ b/node_modules/mineflayer/lib/plugins/craft.js
+@@ -15,9 +15,17 @@ function inject (bot) {
+       throw new Error('Recipe requires craftingTable, but one was not supplied: ' + JSON.stringify(recipe))
+     }
+ 
++    // v0.1.4.14 (Mindcraft fork): on 26.1 a craft could resolve before the server's correction (at the table a craft of
++    // several, and under load a craft of one; in the 2x2 grid of the inventory right after a closed furnace window, whose
++    // cause, the stale stateId of the closed container, inventory.js now handles), and the server could make fewer than
++    // asked. Every craft, at the table and in the 2x2 grid, takes the server's state of the window it used (the table's,
++    // or the inventory's) after each unit and lets its slots settle, then lets bot.inventory settle and checks the count
++    // it made.
++    const resultBefore = bot.inventory.count(recipe.result.id, recipe.result.metadata)
+     try {
+       for (let i = 0; i < count; i++) {
+         await craftOnce(recipe, craftingTable)
++        await settleUnit(craftingTable ? windowCraftingTable : bot.inventory)
+       }
+ 
+       if (windowCraftingTable) {
+@@ -27,6 +35,12 @@ function inject (bot) {
+         await bot.closeWindow(windowCraftingTable)
+         windowCraftingTable = undefined
+       }
++      await settle(bot.inventory)
++      const made = Math.floor((bot.inventory.count(recipe.result.id, recipe.result.metadata) - resultBefore) / recipe.result.count)
++      // fewer than asked while the ingredients for one more are there: the truth for the caller; gone: a real shortage
++      if (made < count && requirementsMetForRecipe(recipe, 1, craftingTable)) {
++        throw new Error(`missing ingredient: crafted ${made} of ${count}`)
++      }
+     } catch (err) {
+       if (windowCraftingTable) {
+         bot.closeWindow(windowCraftingTable)
+@@ -36,6 +50,33 @@ function inject (bot) {
+     }
+   }
+ 
++  // v0.1.4.14: the server's state of the window after one unit (at most 1 s), then no slot change for 50 ms (at most 500 ms)
++  async function settleUnit (window) {
++    let timer
++    await Promise.race([bot._syncWindow(window), new Promise((resolve) => { timer = setTimeout(resolve, 1000) })])
++    clearTimeout(timer)
++    await settle(window)
++  }
++
++  function settle (window, quietMs = 50, maxMs = 500) {
++    return new Promise((resolve) => {
++      let quiet = null
++      const done = () => {
++        clearTimeout(quiet)
++        clearTimeout(max)
++        window.removeListener('updateSlot', bump)
++        resolve()
++      }
++      const bump = () => {
++        clearTimeout(quiet)
++        quiet = setTimeout(done, quietMs)
++      }
++      const max = setTimeout(done, maxMs)
++      window.on('updateSlot', bump)
++      bump()
++    })
++  }
++
+   async function craftOnce (recipe, craftingTable) {
+     if (craftingTable) {
+       if (!windowCraftingTable) {
+diff --git a/node_modules/mineflayer/lib/plugins/digging.js b/node_modules/mineflayer/lib/plugins/digging.js
+index 5ae5552..af28eef 100644
+--- a/node_modules/mineflayer/lib/plugins/digging.js
++++ b/node_modules/mineflayer/lib/plugins/digging.js
+@@ -244,6 +244,9 @@ function inject (bot) {
+       enchantments = enchantments.concat(helmetEnchantments)
+     }
+ 
++    if (block.material === 'incorrect_for_wooden_tool')
++      block.material = 'mineable/pickaxe'
++
+     const creative = bot.game.gameMode === 'creative'
+     return block.digTime(
+       type,
+diff --git a/node_modules/mineflayer/lib/plugins/entities.js b/node_modules/mineflayer/lib/plugins/entities.js
+index 9fcb6f9..203e0b7 100644
+--- a/node_modules/mineflayer/lib/plugins/entities.js
++++ b/node_modules/mineflayer/lib/plugins/entities.js
+@@ -232,7 +232,9 @@ function inject (bot) {
+       : addNewNonPlayer(packet.entityId, packet.objectUUID, packet.type, packet)
+     // 1.8 omits velocity when objectData is 0
+     if (packet.velocity) {
+-      entity.velocity.update(conv.fromNotchVelocity(new Vec3(packet.velocity.x, packet.velocity.y, packet.velocity.z)))
++      const vel = new Vec3(packet.velocity.x, packet.velocity.y, packet.velocity.z)
++      // 1.21.9+: the velocity is an lpVec3 already in blocks per tick (mineflayer #4167)
++      entity.velocity.update(bot.supportFeature('entityVelocityIsLpVec3') ? vel : conv.fromNotchVelocity(vel))
+     }
+     bot.emit('entitySpawn', entity)
+   })
+@@ -286,7 +288,8 @@ function inject (bot) {
+     // entity velocity
+     const entity = fetchEntity(packet.entityId)
+     const notchVel = new Vec3(packet.velocity.x, packet.velocity.y, packet.velocity.z)
+-    entity.velocity.update(conv.fromNotchVelocity(notchVel))
++    // 1.21.9+: the velocity is an lpVec3 already in blocks per tick (mineflayer #4167)
++    entity.velocity.update(bot.supportFeature('entityVelocityIsLpVec3') ? notchVel : conv.fromNotchVelocity(notchVel))
+   })
+ 
+   bot._client.on('entity_destroy', (packet) => {
+@@ -778,6 +781,19 @@ function inject (bot) {
+     const passengerEntities = passengers.map((passengerId) => fetchEntity(passengerId))
+     const vehicle = entityId === -1 ? null : bot.entities[entityId]
+ 
++    // v0.1.4.14 (Mindcraft fork): a passenger that was in the vehicle and is not in the new list left it (the server of
++    // 26.1 sends the vehicle with the list without it, never -1 for the bot); upstream kept bot.vehicle set for ever
++    if (vehicle && Array.isArray(vehicle.passengers)) {
++      for (const gone of vehicle.passengers.filter((p) => !passengerEntities.includes(p))) {
++        vehicle.passengers.splice(vehicle.passengers.indexOf(gone), 1)
++        gone.vehicle = null
++      }
++    }
++    if (vehicle && bot.vehicle === vehicle && !passengers.includes(bot.entity.id)) {
++      bot.vehicle = null
++      bot.emit('dismount', vehicle)
++    }
++
+     for (const passengerEntity of passengerEntities) {
+       const originalVehicle = passengerEntity.vehicle
+       if (originalVehicle) {
+@@ -885,11 +901,23 @@ function inject (bot) {
+   function dismount () {
+     if (bot.vehicle) {
+       if (bot.supportFeature('newPlayerInputPacket')) {
+-        bot._client.write('player_input', {
+-          inputs: {
+-            jump: true
+-          }
+-        })
++        // v0.1.4.14 (Mindcraft fork): since 1.21.2 the client leaves a vehicle with the shift input of player_input (the
++        // unmount flag 0x02 of steer_vehicle before); upstream sent jump, which the server reads as the vehicle's jump,
++        // and the bot stayed in the boat on 26.1. The flag is held until the server took the bot out (the dismount
++        // event) or for 200 ms, then the input goes back to the sneak control's state, as the game's client does.
++        bot._client.write('player_input', { inputs: { shift: true } })
++        let released = false
++        const release = () => {
++          if (released) return
++          released = true
++          clearTimeout(timer)
++          bot.removeListener('dismount', release)
++          if (bot._client.state !== 'play') return
++          bot._client.write('player_input', { inputs: { shift: bot.getControlState?.('sneak') === true } })
++        }
++        const timer = setTimeout(release, 200)
++        if (timer.unref) timer.unref()
++        bot.once('dismount', release)
+       } else {
+         bot._client.write('steer_vehicle', {
+           sideways: 0.0,
+diff --git a/node_modules/mineflayer/lib/plugins/inventory.js b/node_modules/mineflayer/lib/plugins/inventory.js
+index bab0eef..3f89618 100644
+--- a/node_modules/mineflayer/lib/plugins/inventory.js
++++ b/node_modules/mineflayer/lib/plugins/inventory.js
+@@ -31,8 +31,9 @@ function inject (bot, { hideErrors }) {
+ 
+   let nextActionNumber = 0 // < 1.17
+   let stateId = -1
++  let stateWindowId = null // v0.1.4.14: the window whose packet set stateId
+   if (bot.supportFeature('stateIdUsed')) {
+-    const listener = packet => { stateId = packet.stateId }
++    const listener = packet => { stateId = packet.stateId; stateWindowId = packet.windowId }
+     bot._client.on('window_items', listener)
+     bot._client.on('set_slot', listener)
+   }
+@@ -579,6 +580,13 @@ function inject (bot, { hideErrors }) {
+       }
+     }
+     const window = bot.currentWindow || bot.inventory
++    // v0.1.4.14 (Mindcraft fork): stateId is one for all windows. After a container closed it still held the container's,
++    // and on 26.1 the first clicks on the inventory with it were dropped or applied out of order (a craft in the 2x2 grid
++    // right after a closed furnace left the planks on the cursor). A click on another window than the one of the last
++    // stateId first fetches that window's state (at most 1 s).
++    if (bot.supportFeature('stateIdUsed') && stateWindowId !== window.id) {
++      await withTimeout(syncWindow(window), 1000).catch(() => {})
++    }
+ 
+     assert.ok(mode >= 0 && mode <= 6)
+     const actionId = createActionNumber()
+diff --git a/node_modules/mineflayer/lib/plugins/physics.js b/node_modules/mineflayer/lib/plugins/physics.js
+index bd36f96..25499bb 100644
+--- a/node_modules/mineflayer/lib/plugins/physics.js
++++ b/node_modules/mineflayer/lib/plugins/physics.js
+@@ -239,7 +239,7 @@ function inject (bot, { physicsEnabled, maxCatchupTicks }) {
+     }
+     bot._client.write('entity_action', {
+       entityId: bot.entity.id,
+-      actionId: bot.supportFeature('entityActionUsesStringMapper') ? 'start_elytra_flying' : 8,
++      actionId: bot.registry.version['>=']('1.21.6') ? 'start_fall_flying' : 8,
+       jumpBoost: 0
+     })
+   }
+@@ -254,7 +254,7 @@ function inject (bot, { physicsEnabled, maxCatchupTicks }) {
+     } else if (control === 'sprint') {
+       bot._client.write('entity_action', {
+         entityId: bot.entity.id,
+-        actionId: bot.supportFeature('entityActionUsesStringMapper')
++        actionId: bot.registry.version['>=']('1.21.6')
+           ? (state ? 'start_sprinting' : 'stop_sprinting')
+           : (state ? 3 : 4),
+         jumpBoost: 0
+diff --git a/node_modules/mineflayer/lib/plugins/place_block.js b/node_modules/mineflayer/lib/plugins/place_block.js
+index dc86e1e..4582967 100644
+--- a/node_modules/mineflayer/lib/plugins/place_block.js
++++ b/node_modules/mineflayer/lib/plugins/place_block.js
+@@ -26,7 +26,7 @@ function inject (bot) {
+     const onAck = () => { acked = true }
+     bot.on(`blockUpdate:${referenceBlock.position}`, onAck)
+     const [, newBlock] = await onceWithCleanup(bot, `blockUpdate:${dest}`, {
+-      timeout: 5000,
++      timeout: 500,
+       // oldBlock and newBlock are both null when the world unloads
+       checkCondition: (oldBlock, newBlock) => !oldBlock || !newBlock || oldBlock.type !== newBlock.type || (acked && inFlight.get(key) === 1)
+     }).catch((err) => {
+diff --git a/node_modules/mineflayer/lib/plugins/time.js b/node_modules/mineflayer/lib/plugins/time.js
+index da729db..b23808d 100644
+--- a/node_modules/mineflayer/lib/plugins/time.js
++++ b/node_modules/mineflayer/lib/plugins/time.js
+@@ -1,5 +1,20 @@
+ module.exports = inject
+ 
++// v0.1.4.14 (Mindcraft fork, P-17): the integrated server of 26.1 sends update_time rarely (on login, on sleep, on a time
++// change; the dedicated server still every second). Upstream advanced the clocks of clockUpdates on physicsTick, which
++// mineflayer stops while the bot rides (mount), is dead, or stands in an unloaded chunk, and recomputed the fields of
++// bot.time only on a packet: the bot's clock stood still for minutes during a boat ride. Now the clocks advance on a
++// steady timer of CLOCK_TICK_MS (a game tick, 20 a second, as physicsTick does when it runs) that starts at the first
++// clock packet and ends with the bot, and the fields of bot.time (time, bigTime, timeOfDay, day, isDay, moonPhase)
++// follow the clock of the current dimension: between packets they advance with the clock's rate (rate 0: they stand
++// still), a packet sets them to the server's value (a lagging server runs its ticks slower; the next packet corrects
++// the clock). The time event fires on every packet and, between packets, at most once per TIME_EVENT_TICKS ticks (the
++// cadence of the packets of 1.21.8) and only when the fields changed since the last event. The old packet shape
++// (1.21.8) sets no clock, so nothing changes there.
++const TIME_EVENT_TICKS = 20
++const CLOCK_TICK_MS = 50
++const CLOCK_CATCHUP_TICKS = 400 // at most 20 s of ticks in one step of the timer (a stalled event loop)
++
+ function inject (bot) {
+   bot.time = {
+     doDaylightCycle: null,
+@@ -13,43 +28,123 @@ function inject (bot) {
+     age: null,
+     clocks: {}
+   }
++  let ticksSinceTimeEvent = 0 // v0.1.4.14: clock ticks since the last time event
++  let changedSinceTimeEvent = false // v0.1.4.14: the fields changed on a tick since the last time event
++  let clockTimer = null // v0.1.4.14: the timer of the clocks, from the first clock packet to the end
++  let clockLast = 0 // the time of the last step of the timer (performance.now)
++  let clockAccumulator = 0 // the milliseconds not yet turned into ticks
++
++  // v0.1.4.14: the fields of bot.time from a time (a BigInt); true when they changed
++  function setTimeFields (time, doDaylightCycle) {
++    // When doDaylightCycle is false, we need to take the absolute value of time
++    const finalTime = doDaylightCycle ? time : (time < 0n ? -time : time)
++    const changed = bot.time.bigTime !== finalTime || bot.time.doDaylightCycle !== doDaylightCycle
++
++    bot.time.doDaylightCycle = doDaylightCycle
++    bot.time.bigTime = finalTime
++    bot.time.time = Number(finalTime)
++    bot.time.timeOfDay = bot.time.time % 24000
++    bot.time.day = Math.floor(bot.time.time / 24000)
++    bot.time.isDay = bot.time.timeOfDay >= 0 && bot.time.timeOfDay < 13000
++    bot.time.moonPhase = bot.time.day % 8
++    return changed
++  }
++
++  // v0.1.4.14: the ticks of a clock as a BigInt (the protocol reads the varlong as a number)
++  function clockTicks (clock) {
++    return typeof clock.totalTicks === 'bigint' ? clock.totalTicks : BigInt(Math.round(clock.totalTicks))
++  }
++
++  // v0.1.4.14: `ticks` game ticks of every clock (the step upstream took on physicsTick), the fields of bot.time after
++  // each, and the time event every TIME_EVENT_TICKS ticks when they changed
++  function advanceClocks (ticks) {
++    for (let i = 0; i < ticks; i++) {
++      for (const clock of Object.values(bot.time.clocks)) {
++        clock.partialTick += clock.rate
++        const fullTicks = Math.floor(clock.partialTick)
++        clock.partialTick -= fullTicks
++        clock.totalTicks += fullTicks
++      }
++      const clock = bot.time.clocks[bot.game.dimension]
++      if (!clock) continue
++      if (setTimeFields(clockTicks(clock), clock.rate > 0)) changedSinceTimeEvent = true
++      ticksSinceTimeEvent++
++      if (changedSinceTimeEvent && ticksSinceTimeEvent >= TIME_EVENT_TICKS) {
++        ticksSinceTimeEvent = 0
++        changedSinceTimeEvent = false
++        bot.emit('time')
++      }
++    }
++  }
++
++  // v0.1.4.14: a step of the timer: the whole ticks of the time passed since the last step
++  function runClocks () {
++    const now = performance.now()
++    clockAccumulator += now - clockLast
++    clockLast = now
++    const ticks = Math.floor(clockAccumulator / CLOCK_TICK_MS)
++    clockAccumulator -= ticks * CLOCK_TICK_MS
++    if (ticks > 0) advanceClocks(Math.min(ticks, CLOCK_CATCHUP_TICKS))
++  }
++
++  // v0.1.4.14: the timer from the first clock packet on; the step starts afresh when the packet carried the clock of
++  // the current dimension (its value is the truth now), never on the packets that carry only the age (every second on
++  // the dedicated server), which would drop the rest of a tick each time
++  function startClocks (restart) {
++    if (restart || clockTimer === null) {
++      clockLast = performance.now()
++      clockAccumulator = 0
++    }
++    if (clockTimer !== null) return
++    clockTimer = setInterval(runClocks, CLOCK_TICK_MS)
++    if (clockTimer.unref) clockTimer.unref()
++  }
++
++  function stopClocks () {
++    if (clockTimer === null) return
++    clearInterval(clockTimer)
++    clockTimer = null
++  }
++
+   bot._client.on('update_time', (packet) => {
+     const age = longToBigInt(packet.age)
+     let time
+     let doDaylightCycle
+     if (packet.clockUpdates) {
++      let ownClock = false // v0.1.4.14: the packet carried the clock of the current dimension (the periodic packet carries none)
+       for (const update of packet.clockUpdates) {
+-        bot.time.clocks[bot.registry.dimensionsById[update.id].name] = update
++        const name = bot.registry.dimensionsById[update.id].name
++        bot.time.clocks[name] = update
++        if (name === bot.game.dimension) ownClock = true
+       }
+       time = BigInt(bot.time.clocks[bot.game.dimension]?.totalTicks ?? 0)
+       doDaylightCycle = bot.time.clocks[bot.game.dimension]?.rate > 0
++      startClocks(ownClock)
+     } else {
+       time = longToBigInt(packet.time)
+       doDaylightCycle = (packet.tickDayTime !== undefined) ? !!packet.tickDayTime : time >= 0n
+     }
+-    // When doDaylightCycle is false, we need to take the absolute value of time
+-    const finalTime = doDaylightCycle ? time : (time < 0n ? -time : time)
+-
+-    bot.time.doDaylightCycle = doDaylightCycle
+-    bot.time.bigTime = finalTime
+-    bot.time.time = Number(finalTime)
+-    bot.time.timeOfDay = bot.time.time % 24000
+-    bot.time.day = Math.floor(bot.time.time / 24000)
+-    bot.time.isDay = bot.time.timeOfDay >= 0 && bot.time.timeOfDay < 13000
+-    bot.time.moonPhase = bot.time.day % 8
++    setTimeFields(time, doDaylightCycle)
+     bot.time.bigAge = age
+     bot.time.age = Number(age)
+ 
++    ticksSinceTimeEvent = 0
++    changedSinceTimeEvent = false
+     bot.emit('time')
+   })
+-  bot.on('physicsTick', () => {
+-    for (const clock of Object.values(bot.time.clocks)) {
+-      clock.partialTick += clock.rate
+-      const fullTicks = Math.floor(clock.partialTick)
+-      clock.partialTick -= fullTicks
+-      clock.totalTicks += fullTicks
++  // v0.1.4.14: a dimension change (a portal; game.js sets bot.game.dimension and emits game): the fields follow the
++  // clock of the new dimension at once, with the event when they changed
++  bot.on('game', () => {
++    const clock = bot.time.clocks[bot.game.dimension]
++    if (!clock) return
++    if (setTimeFields(clockTicks(clock), clock.rate > 0)) {
++      ticksSinceTimeEvent = 0
++      changedSinceTimeEvent = false
++      bot.emit('time')
+     }
+   })
++  bot.on('kicked', stopClocks)
++  bot.on('end', stopClocks)
+ }
+ 
+ function longToBigInt (arr) {

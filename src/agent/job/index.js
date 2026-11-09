@@ -758,6 +758,21 @@ export function createJob(agent, store, options = {}) {
         },
 
         /**
+         * v0.1.4.14: the job file of the world the bot is in (bots/<name>/worlds/<seed>/job.json), bound at spawn
+         * once the world is known; a job of another world never resumes here. Never throws.
+         * @param {string|null} filePath
+         * @returns {object|null} the job of that world, or null
+         */
+        bind(filePath) {
+            try {
+                return typeof store?.bind === 'function' ? store.bind(filePath) : getJob();
+            } catch (error) {
+                errorResult('bind to the world', error);
+                return null;
+            }
+        },
+
+        /**
          * The text of the job for a player who asks: the status line, the Last-job line (F27), or `I have no job.`
          * @returns {string}
          */

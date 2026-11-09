@@ -8,13 +8,14 @@ import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
+import { TEST_MC_VERSION } from '../helpers/load.js';
 
 const require = createRequire(import.meta.url);
 const { Vec3 } = require('vec3');
 const prismarineRegistry = require('prismarine-registry');
 
-/** The real registry of 1.21.8: foods, blocks, items. Movements of the pathfinder need it. */
-export const REGISTRY = prismarineRegistry('1.21.8');
+/** The real registry of the version the bot plays (TEST_MC_VERSION): foods, blocks, items. Movements of the pathfinder need it. */
+export const REGISTRY = prismarineRegistry(TEST_MC_VERSION);
 
 const EMPTY_NAMES = new Set(['air', 'cave_air', 'void_air', 'water', 'lava', 'short_grass', 'tall_grass', 'fern', 'torch',
     'wall_torch', 'dandelion', 'poppy']);

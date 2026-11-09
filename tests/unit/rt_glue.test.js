@@ -28,6 +28,24 @@ const MINING = await loadSrc('src/agent/packs/mining/index.js');
 const ROUTES = await loadSrc('src/agent/packs/routes/index.js');
 
 const LIMIT = { timeout: 30000 };
+// v0.1.4.14 (part K, SPEC 4.7): the lead's decision, since the budget of v0.1.4.13 had 13 characters left: with every
+// switch on, new_things_in_prompt among them, a block of 600 and the three longest lines of the new things present, the
+// prompt may hold 17,400 characters; without the block of the new things the old 17,000 hold. Fix round, part 8 (P-28): the
+// three commands !boardBoat, !leaveBoat and !leaveGame add 173 characters of docs; the lead raised both limits by 200
+// (17,000 to 17,200 and 17,400 to 17,600), as R1-7 did once in this release.
+const LIMIT_NEW_THINGS = 17600;
+const NEW_THINGS_HEADER = 'NEW SINCE 1.21.8 (true, even if you do not know it):';
+// a bot with the things of the three longest lines of the new things: a copper golem statue and a copper pickaxe in the
+// bag, a nautilus 3 blocks away; the block holds what fits in its 360 characters
+const NEW_THINGS_BOT = {
+    inventory: { items: () => [{ name: 'copper_golem_statue', count: 1 }, { name: 'copper_pickaxe', count: 1 }], slots: [] },
+    entity: { position: { x: 0.5, y: 64, z: 0.5 } }, blockAt: () => null,
+    entities: { 7: { name: 'nautilus', position: { x: 3.5, y: 64, z: 0.5 } } },
+};
+// the block those give: the copper tools line and the nautilus line (354 characters); the copper golem line does not fit
+const NEW_THINGS_BLOCK = [NEW_THINGS_HEADER,
+    'Copper tools and armour exist since 1.21.9: like stone but faster, 190 uses, from copper ingots; a copper pickaxe mines iron, copper and lapis, not diamond or gold.',
+    'A nautilus is a neutral ocean mob that dashes when hit and is tamed with pufferfish; a zombie nautilus carries a drowned with a trident.'].join('\n');
 const BASE = { language: 'en', blocked_actions: [], max_commands: -1, show_command_syntax: 'full', world_memory: true, protected_areas: false,
     home_pack: false, storage_pack: false, farming_pack: false, wood_pack: false, mining_pack: false, protect_built_blocks: false,
     allow_insecure_coding: false, narrate_behavior: false, routes_pack: false, mine_routes: false, skills_over_code: false, ore_sense_range: 0 };
@@ -409,6 +427,7 @@ describe('G7: the conversing prompt', () => {
     // the prompt that promptConvo sends, with the real Prompter and profiles/claude.json, the blocked commands of the
     // routing check (the copy of Agent.start), no conversation
     async function conversing(switches) {
+        const newThings = switches.new_things_in_prompt === true ? { bot: NEW_THINGS_BOT } : {}; // v0.1.4.14 (part K)
         const profile = JSON.parse(fs.readFileSync(repoPath('profiles/claude.json'), 'utf8'));
         const settings = { ...M.routing.runSettings(M.fileSettings, profile, false), ...switches };
         G.settingsModule.setSettings(settings);
@@ -416,7 +435,7 @@ describe('G7: the conversing prompt', () => {
         const agent = {
             name: profile.name, blocked_actions: blocked, history: { memory: '' },
             self_prompter: { isStopped: () => true, isActive: () => false, isPaused: () => false, prompt: '' },
-            actions: { currentActionLabel: '' }, task: { task_id: null }, npc: {}, knowledgeBlock: () => block600(),
+            actions: { currentActionLabel: '' }, task: { task_id: null }, npc: {}, knowledgeBlock: () => block600(), ...newThings,
         };
         const c = captureConsole();
         try {
@@ -436,11 +455,15 @@ describe('G7: the conversing prompt', () => {
         }
     }
 
-    test('every switch on: at most 17,000 characters; the six commands are in it', LIMIT, async (t) => {
-        const prompt = await conversing({ ...Object.fromEntries(PARTS.map((p) => [p, true])), ...SWITCHES_ON, world_memory: true });
+    test('every switch on: at most 17,600 characters with the new things (17,200 without); the six commands are in it', LIMIT, async (t) => {
+        // v0.1.4.14 (part K): new_things_in_prompt on with the three longest lines present: 17,400; without its block 17,000;
+        // part 8 (P-28): 17,600 and 17,200 for the three commands' docs
+        const prompt = await conversing({ ...Object.fromEntries(PARTS.map((p) => [p, true])), ...SWITCHES_ON, world_memory: true, new_things_in_prompt: true });
         t.diagnostic(`every switch on: ${prompt.length} characters`);
         for (const name of [...ROUTE_COMMANDS, ...MINE_COMMANDS]) assert.ok(prompt.includes(`\n${name}: `), name);
-        assert.ok(prompt.length <= 17000, `${prompt.length} characters`);
+        assert.ok(prompt.includes(`\n${NEW_THINGS_BLOCK}\n`), 'the block of the new things');
+        assert.ok(prompt.length <= LIMIT_NEW_THINGS, `${prompt.length} characters`);
+        assert.ok(prompt.replace(`\n${NEW_THINGS_BLOCK}`, '').length <= 17200, 'without the block of the new things');
     });
 
     test('every switch off: none of the six commands', LIMIT, async (t) => {

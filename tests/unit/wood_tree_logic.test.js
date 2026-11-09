@@ -223,14 +223,17 @@ describe('findTrees: the owner\'s house is safe', () => {
         assert.deepEqual(res.rejected.map(r => r.reason), ['built']);
     });
 
-    test('a fallen trunk without leaves, and a stump', () => {
+    // v0.1.4.14 (the owner's first play on 26.1): a fallen trunk of a generated world (since 1.21.5) is a tree to
+    // harvest, without leaves and without a sapling; until then it was "several trunks" and the owner's new world had
+    // fewer trees. A stump of one log without leaves stays no tree.
+    test('a fallen trunk is a tree without leaves; a stump is none', () => {
         const w = flat();
         for (let x = 5; x <= 9; x++) w.set(x, 64, 5, 'oak_log');
         w.set(3, 64, 12, 'birch_log');
         for (let x = 5; x <= 8; x++) w.set(x, 64, 12, 'birch_log');
         const res = T.inspectTrees(w.getBlockName, { x: 0, y: 64, z: 8 }, { range: 20 });
-        assert.deepEqual(res.trees, []);
-        assert.ok(res.rejected.some(r => r.reason === 'several_trunks'));
+        assert.deepEqual(res.trees.map(t => [t.kind, t.fallen, t.logs.length, t.leaves]).sort(), [['birch', true, 4, 0], ['oak', true, 5, 0]]);
+        assert.deepEqual(res.trees.find(t => t.kind === 'oak').base, { x: 5, y: 64, z: 5 }, 'the end nearer to the bot');
         assert.equal(res.rejected.find(r => r.base.x === 3)?.reason, 'no_leaves');
     });
 
@@ -529,5 +532,117 @@ describe('treeNearAreas and treeKey', () => {
     test('treeKey', () => {
         assert.equal(T.treeKey(t), '10,64,10');
         assert.equal(T.treeKey(null), null);
+    });
+});
+
+describe('v0.1.4.14: natural wood of 26.1 that is no standing tree', () => {
+    test('a fallen trunk that touches a built block, one on planks, one with a gap, one too long, an L: none is a tree', () => {
+        const w = flat();
+        for (let x = 5; x <= 8; x++) w.set(x, 64, 5, 'oak_log');
+        w.set(9, 64, 5, 'oak_planks'); // the end of a bench
+        w.fill(4, 63, 10, 8, 63, 10, 'oak_planks');
+        for (let x = 4; x <= 8; x++) w.set(x, 64, 10, 'oak_log'); // a row on a floor: no base at all
+        for (const x of [12, 13, 15, 16]) w.set(x, 64, 14, 'oak_log'); // a gap: two rows of two
+        for (let x = 0; x <= 8; x++) w.set(x, 64, 20, 'spruce_log'); // 9 logs
+        for (const [x, z] of [[12, 2], [13, 2], [13, 3]]) w.set(x, 64, z, 'birch_log'); // an L
+        const res = T.inspectTrees(w.getBlockName, { x: 6, y: 64, z: 8 }, { range: 30 });
+        const fallen = res.trees.filter(t => t.fallen);
+        assert.deepEqual(fallen.map(t => `${t.kind}:${t.logs.length}`).sort(), ['oak:2', 'oak:2'], 'only the two rows of two of the gap');
+        assert.equal(res.rejected.find(r => r.base.x >= 5 && r.base.x <= 8 && r.base.z === 5)?.reason, 'built');
+        assert.ok(!res.trees.some(t => t.base.z === 10), 'the row on the planks has no base');
+        assert.ok(!res.trees.some(t => t.kind === 'spruce' || t.kind === 'birch'), 'too long, an L');
+    });
+
+    test('the rest of a cut tree: the crown and the top logs over the ground, a tree with its base on the ground', () => {
+        const w = flat();
+        const t = w.tree({ x: 5, y: G, z: 5 });
+        const trunk = t.trunk.slice().sort((a, b) => a.y - b.y);
+        for (const p of trunk.slice(0, 3)) w.set(p.x, p.y, p.z, 'air'); // the bot cut 3 logs and was stopped
+        const [tree] = T.findTrees(w.getBlockName, { x: 0, y: 64, z: 0 }, { range: 10 });
+        assert.ok(tree, 'found');
+        assert.equal(tree.hanging, true);
+        assert.deepEqual(tree.base, { x: 5, y: 64, z: 5 }, 'the free cell on the grass under the lowest log');
+        assert.equal(tree.logs.length, trunk.length - 3);
+        const plan = T.chopPlan(tree);
+        assert.equal(plan.steps.length + plan.leftover.length, tree.logs.length);
+        assert.ok(plan.steps.every(st => st.from === 'ground' || st.stand?.x === 5), 'from the ground, or from the place of the trunk up');
+    });
+
+    test('a crown over water, over a building or high in the air is no tree; a branch of a standing tree stays its own', () => {
+        const water = flat();
+        const t1 = water.tree({ x: 5, y: G, z: 5 });
+        for (const p of t1.trunk.filter(p => p.y < 67)) water.set(p.x, p.y, p.z, 'air');
+        water.set(5, 63, 5, 'water');
+        assert.deepEqual(T.findTrees(water.getBlockName, { x: 0, y: 64, z: 0 }, { range: 10 }), [], 'over water');
+        const roof = flat();
+        const t2 = roof.tree({ x: 5, y: G, z: 5 });
+        for (const p of t2.trunk.filter(p => p.y < 67)) roof.set(p.x, p.y, p.z, 'air');
+        roof.set(5, 64, 5, 'oak_planks');
+        assert.deepEqual(T.findTrees(roof.getBlockName, { x: 0, y: 64, z: 0 }, { range: 10 }), [], 'over a built block');
+        const high = flat();
+        const t3 = high.tree({ x: 5, y: G, z: 5 });
+        for (const p of t3.trunk) high.set(p.x, p.y, p.z, 'air');
+        for (const p of t3.trunk) high.set(p.x, p.y + 12, p.z, 'oak_log');
+        for (const p of t3.leaves) { high.set(p.x, p.y, p.z, 'air'); high.set(p.x, p.y + 12, p.z, 'oak_leaves'); }
+        assert.deepEqual(T.findTrees(high.getBlockName, { x: 0, y: 64, z: 0 }, { range: 10, height: 40 }), [], 'more than 8 cells up');
+        // the acacia of the branches test: one standing tree, found once, from its base
+        const ac = flat();
+        column(ac, 5, 64, 5, 4, 'acacia_log');
+        ac.set(6, 68, 5, 'acacia_log');
+        ac.set(7, 69, 5, 'acacia_log');
+        crown(ac, 7, 70, 5);
+        const trees = T.findTrees(ac.getBlockName, { x: 7, y: 69, z: 5 }, { range: 10, candidates: [{ x: 7, y: 69, z: 5 }, { x: 5, y: 64, z: 5 }] });
+        assert.equal(trees.length, 1);
+        assert.deepEqual(trees[0].base, { x: 5, y: 64, z: 5 });
+        assert.equal(trees[0].hanging, undefined);
+    });
+
+    test('the plan of a fallen trunk: every log from the ground', () => {
+        const w = flat();
+        for (let x = 5; x <= 10; x++) w.set(x, 64, 5, 'oak_log');
+        const [tree] = T.findTrees(w.getBlockName, { x: 2, y: 64, z: 5 }, { range: 20 });
+        const plan = T.chopPlan(tree);
+        assert.equal(plan.steps.length, 6);
+        assert.ok(plan.steps.every(st => st.from === 'ground' && st.pillar === 0));
+        assert.equal(plan.pillar_blocks, 0);
+        assert.deepEqual(plan.leftover, []);
+    });
+});
+
+describe('findTrees: a fallen trunk at the foot of a standing oak (v0.1.4.14, W122, read on the server)', () => {
+    // seed 8675309: every block but air, dirt and stone in x 9..15, y 62..67, z 101..107, as the bot read them (run fdc2)
+    const LAYOUT = {
+        grass_block: '9,63,101 9,63,102 9,63,103 9,63,104 9,64,105 9,64,106 9,64,107 10,63,101 10,63,102 10,63,103'
+            + ' 10,64,105 10,64,106 10,64,107 11,63,101 11,63,102 11,63,104 11,64,105 11,64,106 11,64,107'
+            + ' 12,63,101 12,63,102 12,63,104 12,64,105 12,64,106 12,64,107 13,64,101 13,64,102 13,64,103'
+            + ' 13,64,104 13,64,105 13,65,106 13,65,107 14,64,101 14,64,102 14,64,103 14,64,104 14,65,105'
+            + ' 14,65,107 15,65,101 15,65,102 15,65,104 15,65,105 15,66,106 15,66,107',
+        leaf_litter: '9,64,101 9,64,102 9,64,103 9,64,104 9,65,105 9,65,106 9,65,107 10,64,101 10,64,102 10,64,103'
+            + ' 10,65,106 11,64,102 11,64,104 11,65,105 11,65,106 12,64,102 12,64,104 12,65,105 12,65,106'
+            + ' 12,65,107 13,65,103 13,65,104 13,65,105 13,66,106 13,66,107 14,65,104 14,66,107 15,66,104'
+            + ' 15,66,105',
+        oak_leaves: '9,66,101 9,66,102 9,66,103 9,66,104 9,66,105 9,66,106 9,67,101 9,67,102 9,67,103 9,67,104'
+            + ' 9,67,105 9,67,106 10,66,102 10,66,103 10,66,105 10,66,106 10,67,102 10,67,103 10,67,105'
+            + ' 10,67,106 11,66,102 11,66,103 11,66,104 11,66,105 11,66,106 11,67,102 11,67,103 11,67,104'
+            + ' 11,67,105 11,67,106 12,66,102 12,66,103 12,66,104 12,66,105 12,66,106 12,67,103 12,67,104'
+            + ' 12,67,105 12,67,106 12,67,107 13,67,104 13,67,105 13,67,106 13,67,107 14,67,104 14,67,105'
+            + ' 14,67,107 15,67,104 15,67,105 15,67,106 15,67,107',
+        oak_log: '10,64,104 10,65,104 10,66,104 10,67,104 11,64,103 12,64,103 14,66,106 14,67,106 15,66,103',
+        short_grass: '10,65,107 13,65,101',
+    };
+    const blocks = new Map();
+    for (const [name, list] of Object.entries(LAYOUT)) for (const k of list.split(' ')) blocks.set(k, name);
+    const read = (x, y, z) => blocks.get(`${x},${y},${z}`) ?? (y <= 63 ? 'dirt' : 'air');
+
+    test('the row of 2 logs touches the oak at a corner only: two trees, the row fallen', () => {
+        assert.equal(T.whyNoTree(read, { x: 11, y: 64, z: 103 }), null);
+        assert.equal(T.whyNoTree(read, { x: 10, y: 64, z: 104 }), null);
+        const trees = T.findTrees(read, { x: 10, y: 64, z: 103 }, { range: 8 });
+        const row = trees.find(t => t.fallen === true);
+        assert.ok(row, JSON.stringify(trees.map(t => t.base)));
+        assert.deepEqual(row.logs.map(p => [p.x, p.y, p.z]).sort(), [[11, 64, 103], [12, 64, 103]]);
+        const oak = trees.find(t => t.base.x === 10 && t.base.z === 104);
+        assert.ok(oak && !oak.fallen && oak.logs.length === 4, JSON.stringify(oak));
+        assert.equal(T.pickTree(trees, 2, { x: 10, y: 64, z: 103 }), row, 'asked for 2 logs beside it, the row');
     });
 });

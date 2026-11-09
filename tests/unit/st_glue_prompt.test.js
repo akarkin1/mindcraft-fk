@@ -57,6 +57,24 @@ const INVENTORY = ['INVENTORY', '- oak_log: 12', '- oak_planks: 8', '- cobblesto
     '- torch: 9', '- raw_iron: 5', '- stone_sword: 1', '- stone_pickaxe: 1', 'WEARING: Nothing'].join('\n');
 
 const BLOCK = 'WHAT YOU KNOW (from memory, no need to check):\nYou are in the area "farm" (farm), on the surface.\nChest (11, 67, 53): wheat 28.\nAreas: farm (farm, 1 gate).';
+// v0.1.4.14 (part K, SPEC 4.7): the lead's decision, since the budget of v0.1.4.13 had 13 characters left: with every
+// switch on, new_things_in_prompt among them, a block of 600 and the three longest lines of the new things present, the
+// prompt may hold 17,400 characters; without the block of the new things the old 17,000 hold. Fix round, part 8 (P-28): the
+// three commands !boardBoat, !leaveBoat and !leaveGame add 173 characters of docs; the lead raised both limits by 200
+// (17,000 to 17,200 and 17,400 to 17,600), as R1-7 did once in this release.
+const LIMIT_NEW_THINGS = 17600;
+const NEW_THINGS_HEADER = 'NEW SINCE 1.21.8 (true, even if you do not know it):';
+// a bot with the things of the three longest lines of the new things: a copper golem statue and a copper pickaxe in the
+// bag, a nautilus 3 blocks away; the block holds what fits in its 360 characters
+const NEW_THINGS_BOT = {
+    inventory: { items: () => [{ name: 'copper_golem_statue', count: 1 }, { name: 'copper_pickaxe', count: 1 }], slots: [] },
+    entity: { position: { x: 0.5, y: 64, z: 0.5 } }, blockAt: () => null,
+    entities: { 7: { name: 'nautilus', position: { x: 3.5, y: 64, z: 0.5 } } },
+};
+// the block those give: the copper tools line and the nautilus line (354 characters); the copper golem line does not fit
+const NEW_THINGS_BLOCK = [NEW_THINGS_HEADER,
+    'Copper tools and armour exist since 1.21.9: like stone but faster, 190 uses, from copper ingots; a copper pickaxe mines iron, copper and lapis, not diamond or gold.',
+    'A nautilus is a neutral ocean mob that dashes when hit and is tamed with pufferfish; a zombie nautilus carries a drowned with a trident.'].join('\n');
 
 // The prompt that promptConvo sends to the model.
 async function promptOf(conversing, { settings = {}, blocked = [], knowledge = null, rules = null } = {}) {
@@ -68,6 +86,7 @@ async function promptOf(conversing, { settings = {}, blocked = [], knowledge = n
         actions: { currentActionLabel: '' },
     };
     if (knowledge !== null) agent.knowledgeBlock = () => knowledge;
+    if (settings.new_things_in_prompt === true) agent.bot = NEW_THINGS_BOT; // v0.1.4.14 (part K)
     if (rules) agent.rule_store = { list: () => rules.map((text, i) => ({ id: i + 1, text })) };
     const prompter = Object.create(M.prompter.Prompter.prototype);
     const examples = new M.examples.Examples(null, 2);
@@ -134,14 +153,18 @@ describe('item 7: the size of the conversing prompt', () => {
 
     const SKILL_COMMANDS = ['!skills', '!forgetSkill', '!disableSkill', '!enableSkill', '!useSkill'];
 
-    test('the switches of the packs and of this release on, a block of 600 characters: 17,000 characters or less', async (t) => {
+    test('the switches of the packs and of this release on, a block of 600 characters: 17,600 characters or less with the new things (17,200 without)', async (t) => {
         const block = fullBlock();
         assert.equal(block.length, 600);
-        const prompt = await promptOf(CLAUDE.conversing, { settings: ALL_ON, blocked: [...SPEC.blocked_actions.default, ...SKILL_COMMANDS], knowledge: block });
-        t.diagnostic(`packs and v0.1.4.8 on, skill commands hidden, no rule saved: ${prompt.length} characters`);
-        assert.ok(prompt.includes(block));
+        // v0.1.4.14 (part K): new_things_in_prompt on with the three longest lines present: 17,400; without its block 17,000;
+        // part 8 (P-28): 17,600 and 17,200 for the three commands' docs
+        const prompt = await promptOf(CLAUDE.conversing, { settings: { ...ALL_ON, new_things_in_prompt: true },
+            blocked: [...SPEC.blocked_actions.default, ...SKILL_COMMANDS], knowledge: block });
+        t.diagnostic(`packs and v0.1.4.8 on, skill commands hidden, no rule saved, the new things: ${prompt.length} characters`);
+        assert.ok(prompt.includes(`${block}\n${NEW_THINGS_BLOCK}`));
         for (const name of ['!pickUpItems', '!closeDoor', '!chests', '!mineOre', '!chopTrees', '!rememberArea']) assert.ok(prompt.includes(`\n${name}: `), name);
-        assert.ok(prompt.length <= 17000, `${prompt.length} characters`);
+        assert.ok(prompt.length <= LIMIT_NEW_THINGS, `${prompt.length} characters`);
+        assert.ok(prompt.replace(`\n${NEW_THINGS_BLOCK}`, '').length <= 17200, 'without the block of the new things');
     });
 
     // T1-Q5, decided by the tech lead: the limit of 17,000 holds for the packs and the switches of v0.1.4.8
@@ -225,7 +248,8 @@ describe('item 8: profiles/claude.json', () => {
 
     test('the file is valid JSON with the name and the model of the owner', () => {
         assert.equal(CLAUDE.name, 'claude');
-        assert.equal(typeof CLAUDE.model, 'string');
+        // v0.1.4.14 (part H, SPEC 4.9): the model may be an object with its params ({ model, params: { output_config } })
+        assert.equal(typeof (typeof CLAUDE.model === 'object' && CLAUDE.model !== null ? CLAUDE.model.model : CLAUDE.model), 'string');
         assert.ok(CLAUDE_TEXT.length > 0);
     });
 });

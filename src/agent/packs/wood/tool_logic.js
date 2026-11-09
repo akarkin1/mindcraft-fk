@@ -16,8 +16,10 @@ export const MATERIALS = Object.freeze([
 ]);
 /** Golden tools are known but never crafted. They mine like wooden ones. */
 export const GOLDEN = Object.freeze({ name: 'golden', item: 'gold_ingot', level: 0, craftable: false });
+/** Copper tools (1.21.9, v0.1.4.14): known, used when the bot has one, never crafted (stone from cobblestone is cheaper). They mine like stone ones. */
+export const COPPER = Object.freeze({ name: 'copper', item: 'copper_ingot', level: 1, craftable: false });
 /** Uses until a tool breaks. */
-export const TOOL_USES = Object.freeze({ wooden: 59, stone: 131, iron: 250, golden: 32, diamond: 1561, netherite: 2031 });
+export const TOOL_USES = Object.freeze({ wooden: 59, stone: 131, copper: 190, iron: 250, golden: 32, diamond: 1561, netherite: 2031 });
 /** Material and sticks per tool. */
 export const RECIPES = Object.freeze({
     pickaxe: Object.freeze({ material: 3, sticks: 2 }),
@@ -31,9 +33,9 @@ export const TOOL_KINDS = Object.freeze(Object.keys(RECIPES));
 /** What craftSupplies makes. `planks` stands for the planks of any wood. */
 export const SUPPLY_NAMES = Object.freeze(['torch', 'ladder', 'chest', 'crafting_table', 'stick', 'planks']);
 
-// Preference between tools of one kind (spec S2): netherite, diamond, iron, stone, golden, wooden.
-const RANK = Object.freeze({ wooden: 0, golden: 1, stone: 2, iron: 3, diamond: 4, netherite: 5 });
-const ALL_MATERIALS = [...MATERIALS, GOLDEN];
+// Preference between tools of one kind (spec S2): netherite, diamond, iron, copper, stone, golden, wooden.
+const RANK = Object.freeze({ wooden: 0, golden: 1, stone: 2, copper: 3, iron: 4, diamond: 5, netherite: 6 });
+const ALL_MATERIALS = [...MATERIALS, GOLDEN, COPPER];
 const MATERIAL_WORDS = Object.freeze({ wood: 'wooden', gold: 'golden', cobblestone: 'stone', cobble: 'stone', diamonds: 'diamond' });
 const COAL = ['coal', 'charcoal'];
 
@@ -359,6 +361,9 @@ export function chooseMaterial(kind, minMaterial, inventory, options = {}) {
     }
     if (!minMaterial || minMaterial === 'golden') {
         return 'wooden';
+    }
+    if (minMaterial === 'copper') {
+        return 'stone'; // v0.1.4.14: a copper tool is never crafted; stone is its tier
     }
     return minMaterial;
 }

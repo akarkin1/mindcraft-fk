@@ -3,7 +3,7 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
-import { loadSrc } from '../helpers/load.js';
+import { loadSrc, TEST_MC_VERSION } from '../helpers/load.js';
 
 const F = await loadSrc('src/agent/packs/home/food_logic.js');
 const Z = await loadSrc('src/agent/packs/home/sleep_logic.js');
@@ -11,12 +11,14 @@ const T = await loadSrc('src/agent/packs/home/texts.js');
 const H = await loadSrc('src/agent/packs/home/home_settings.js');
 
 const require = createRequire(import.meta.url);
-const FOOD_LIST = require('minecraft-data/minecraft-data/data/pc/1.21.8/foods.json');
+const FOOD_LIST = require('minecraft-data')(TEST_MC_VERSION).foodsArray;
 const FOODS = Object.fromEntries(FOOD_LIST.map(f => [f.name, f]));
 const item = (name, count = 1) => ({ name, count });
 
 const SPEC_BANNED = ['rotten_flesh', 'spider_eye', 'poisonous_potato', 'pufferfish', 'chicken', 'golden_apple',
     'enchanted_golden_apple', 'chorus_fruit', 'suspicious_stew'];
+// v0.1.4.14 (part D, SPEC 4.3): the plugin also gets the four fish buckets of 26.1 banned: a bucket is never food
+const PLUGIN_BANNED = [...SPEC_BANNED, 'cod_bucket', 'salmon_bucket', 'pufferfish_bucket', 'tropical_fish_bucket'];
 
 // The defaults of mineflayer-auto-eat 3.3.6 (dist/index.js).
 const PLUGIN_DEFAULTS = Object.freeze({
@@ -72,7 +74,7 @@ describe('food_logic: autoEatOptions', () => {
         assert.equal(opts.equipOldItem, true);
         assert.equal(opts.checkOnItemPickup, true);
         assert.equal(opts.ignoreInventoryCheck, false);
-        assert.deepEqual([...opts.bannedFood].sort(), [...SPEC_BANNED].sort());
+        assert.deepEqual([...opts.bannedFood].sort(), [...PLUGIN_BANNED].sort());
         assert.deepEqual(current.bannedFood, PLUGIN_DEFAULTS.bannedFood, 'the current object is not changed');
         assert.equal(current.priority, 'saturation');
     });
@@ -107,7 +109,7 @@ describe('food_logic: autoEatOptions', () => {
         assert.equal(opts.offhand, false);
         const bad = F.autoEatOptions({ ...PLUGIN_DEFAULTS, eatingTimeout: -1, bannedFood: 'none' });
         assert.equal(bad.eatingTimeout, 3000);
-        assert.deepEqual([...bad.bannedFood].sort(), [...SPEC_BANNED].sort());
+        assert.deepEqual([...bad.bannedFood].sort(), [...PLUGIN_BANNED].sort());
     });
 });
 

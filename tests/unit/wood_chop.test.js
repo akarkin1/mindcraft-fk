@@ -311,7 +311,8 @@ describe('chopTrees: which trees', () => {
         }
         world.set(1, 65, 1, 'oak_leaves');
         const res = await W.chopTrees(bot, ctx, 8, '', opts);
-        assert.equal(res.text, 'I found no tree within 48 blocks. Logs of buildings are not mine to take.');
+        // v0.1.4.14: the text says what the bot saw; logs of buildings only for wood that touches a built block
+        assert.equal(res.text, 'I found oak_log at (0, 64, 3) but no tree I can cut: they join several trunks.');
         assert.equal(res.ok, false);
         assert.equal(res.reason, 'no_tree');
         assert.deepEqual(digs(bot), []);
@@ -321,7 +322,7 @@ describe('chopTrees: which trees', () => {
         const near = scene({ areas: [{ name: 'home', min: { x: 12, y: 60, z: 0 }, max: { x: 20, y: 80, z: 8 } }] });
         plantTree(near.world, { x: 10, z: 3 });
         const res = await W.chopTrees(near.bot, near.ctx, 4, '', near.opts);
-        assert.equal(res.text, 'I found no tree within 48 blocks. Logs of buildings are not mine to take.');
+        assert.equal(res.text, 'I found no tree within 48 blocks outside the protected areas.', 'v0.1.4.14: what the bot saw');
         assert.deepEqual(digs(near.bot), []);
         const far = scene({ areas: () => [{ name: 'home', min: { x: 13, y: 60, z: 0 }, max: { x: 20, y: 80, z: 8 } }] });
         plantTree(far.world, { x: 10, z: 3 });
@@ -380,5 +381,118 @@ describe('chopTrees: stops and failures', () => {
         const broken = await W.chopTrees({ get entity() { throw new Error('gone'); } }, ctx, 4, '', opts);
         assert.equal(broken.ok, false);
         assert.match(broken.text, /^I could not cut trees: /);
+    });
+});
+
+// v0.1.4.14 (the owner's first play on 26.1): five times "I found no oak tree within 48 blocks. Logs of buildings are
+// not mine to take." beside oak logs 2 to 3 blocks away in a new world: the bot had cut the lowest logs of the tree and
+// been stopped, and the crown hung over the grass; and the sentence about buildings was said for every no-tree answer.
+describe('chopTrees: natural wood of 26.1 and the text when there is no tree', () => {
+    test('the rest of a tree the bot was stopped in: the hanging logs are cut, a sapling is planted on the ground', async () => {
+        const { world, bot, ctx, opts } = scene();
+        const tree = plantTree(world, { x: 10, z: 3 });
+        const trunk = tree.trunk.slice().sort((a, b) => a.y - b.y);
+        for (const p of trunk.slice(0, 2)) world.set(p.x, p.y, p.z, 'air');
+        give(bot, 'oak_sapling', 1);
+        const res = await W.chopTrees(bot, ctx, 3, '', opts);
+        assert.equal(res.trees, 1, res.text);
+        assert.equal(res.logs, trunk.length - 2);
+        assert.deepEqual(logsLeft(world), []);
+        assert.equal(world.nameAt(10, 64, 3), 'oak_sapling');
+    });
+
+    test('a fallen trunk on the grass is cut; no sapling where it lay', async () => {
+        const { world, bot, ctx, opts } = scene();
+        for (let x = 8; x <= 11; x++) world.set(x, 64, 3, 'oak_log');
+        give(bot, 'oak_sapling', 1);
+        const res = await W.chopTrees(bot, ctx, 4, '', opts);
+        assert.equal(res.text, 'I cut 1 oak tree and got 4 oak_log. I had no sapling to plant.');
+        assert.deepEqual(logsLeft(world), []);
+        assert.equal(count(bot, 'oak_sapling'), 1, 'not planted');
+    });
+
+    // W122 B2 on the real server (traced): a fallen trunk of 4 logs along z under the leaves of its crown, 4 logs
+    // broken, 3 picked up. One log rolled into a cell beside the row whose head is in leaves; no cell within 1 block
+    // of it was free, the bot stayed beside the row, outside the server's pickup box.
+    function fallenUnderLeaves(areas = []) {
+        const s = scene({ pos: [10.5, 64, 1.5], areas });
+        for (let z = 0; z <= 3; z++) s.world.set(8, 64, z, 'oak_log');
+        for (let x = 6; x <= 8; x++) for (let z = -1; z <= 4; z++) s.world.set(x, 65, z, 'oak_leaves');
+        s.bot.serverPickup = true;
+        s.bot.rollDrop = (p) => (p.x === 8 && p.y === 64 && p.z === 2 ? { x: 7, y: 64, z: 2 } : null);
+        return s;
+    }
+
+    test('a fallen trunk: the bot breaks the leaf over a cell beside a rolled log, stands there and gets every log', async () => {
+        const { world, bot, ctx, opts } = fallenUnderLeaves();
+        const res = await W.chopTrees(bot, ctx, 4, '', opts);
+        assert.deepEqual(logsLeft(world), []);
+        assert.equal(res.cut, 4);
+        assert.equal(count(bot, 'oak_log'), 4);
+        assert.equal(res.text, 'I cut 1 oak tree and got 4 oak_log. I had no sapling to plant.');
+        assert.ok(Object.values(bot.entities).every(e => e.name !== 'item'), 'no log is left on the ground');
+        // one leaf, over a cell of the row within the pickup box of the log at (7.5, 64, 2.5), the one nearest to the bot
+        const dug = bot.calls.filter(c => c[0] === 'pathDig').map(c => c.slice(1, 4));
+        assert.equal(dug.length, 1, JSON.stringify(dug));
+        assert.ok(dug[0][0] === 8 && dug[0][1] === 65 && dug[0][2] >= 1 && dug[0][2] <= 3, JSON.stringify(dug));
+    });
+
+    test('a fallen trunk near an area (no leaves broken): the log the bot cannot reach is counted honestly', async () => {
+        const { bot, ctx, opts } = fallenUnderLeaves([{ name: 'home', min: { x: 12, y: 60, z: 0 }, max: { x: 20, y: 80, z: 8 } }]);
+        const res = await W.chopTrees(bot, ctx, 4, '', opts);
+        assert.equal(res.cut, 4);
+        assert.equal(res.logs, 3);
+        assert.equal(bot.calls.filter(c => c[0] === 'pathDig').length, 0);
+        assert.equal(res.text, 'I cut 1 oak tree and got 3 oak_log. 1 log I cut lies on the ground; I could not pick it up.'
+            + ' I had no sapling to plant. I found no more trees within 48 blocks.');
+    });
+
+    // W122 fwa1..fwb3: up to 10 of 18 logs of standing trees lay on the ground ("10 logs I cut lie on the ground").
+    // A log rolled to a corner of the trunk under low leaves; no free cell lay within 1 block of it (GoalNear 1), but
+    // the trunk's own cell, free once cut, holds it within the server's pickup range.
+    function standingUnderLeaves(to) {
+        const s = scene({ pos: [12.5, 64, 3.5] });
+        const tree = plantTree(s.world, { x: 10, z: 3 });
+        const low = [[7, 3], [7, 4], [7, 5], [8, 2], [8, 3], [8, 4], [8, 5], [9, 2], [9, 3], [9, 4], [9, 5], [10, 4], [10, 5], [11, 5]];
+        for (const [x, z] of low) {
+            s.world.set(x, 65, z, 'oak_leaves');
+        }
+        s.bot.serverPickup = true;
+        s.bot.rollDrop = (p) => (p.x === 10 && p.y === 66 && p.z === 3 ? to : null);
+        return { ...s, tree };
+    }
+
+    test('a standing tree: a log that rolled to a corner of the trunk under low leaves is picked up from the trunk cell', async () => {
+        const { world, bot, ctx, opts, tree } = standingUnderLeaves({ x: 9, y: 64, z: 4 });
+        const res = await W.chopTrees(bot, ctx, tree.trunk.length, '', opts);
+        assert.deepEqual(logsLeft(world), []);
+        assert.equal(res.cut, tree.trunk.length);
+        assert.equal(count(bot, 'oak_log'), tree.trunk.length, res.text);
+        assert.ok(!/on the ground/.test(res.text), res.text);
+    });
+
+    test('a standing tree: a log that rolled 2 blocks off under the leaves is not walked to, and is said', async () => {
+        const { bot, ctx, opts, tree } = standingUnderLeaves({ x: 8, y: 64, z: 4 });
+        const res = await W.chopTrees(bot, ctx, tree.trunk.length, '', opts);
+        assert.equal(res.cut, tree.trunk.length);
+        assert.equal(res.logs, tree.trunk.length - 1);
+        assert.equal(bot.calls.filter(c => c[0] === 'pathDig').length, 0);
+        assert.match(res.text, /^I cut 1 oak tree and got 4 oak_log\. 1 log I cut lies on the ground; I could not pick it up\./);
+    });
+
+    test('the sentence about buildings only for logs that touch a built block', async () => {
+        const built = scene();
+        for (let y = 64; y <= 66; y++) built.world.set(4, y, 3, 'oak_log');
+        built.world.set(5, 65, 3, 'oak_planks');
+        const r1 = await W.chopTrees(built.bot, built.ctx, 4, 'oak', built.opts);
+        assert.equal(r1.text, 'I found no oak tree within 48 blocks. Logs of buildings are not mine to take.');
+        const stump = scene();
+        stump.world.set(4, 64, 3, 'oak_log');
+        const r2 = await W.chopTrees(stump.bot, stump.ctx, 4, 'oak', stump.opts);
+        assert.equal(r2.text, 'I found oak_log at (4, 64, 3) but no tree I can cut: they have no leaves, like a stump or a pile of logs.');
+        assert.deepEqual(digs(stump.bot), []);
+        const none = scene();
+        const r3 = await W.chopTrees(none.bot, none.ctx, 4, 'oak', none.opts);
+        assert.equal(r3.text, 'I found no oak tree within 48 blocks.');
     });
 });

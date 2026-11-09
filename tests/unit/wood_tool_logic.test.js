@@ -27,7 +27,7 @@ describe('tables', () => {
     });
 
     test('TOOL_USES and RECIPES', () => {
-        assert.deepEqual({ ...L.TOOL_USES }, { wooden: 59, stone: 131, iron: 250, golden: 32, diamond: 1561, netherite: 2031 });
+        assert.deepEqual({ ...L.TOOL_USES }, { wooden: 59, stone: 131, copper: 190, iron: 250, golden: 32, diamond: 1561, netherite: 2031 });
         assert.deepEqual(JSON.parse(JSON.stringify(L.RECIPES)), {
             pickaxe: { material: 3, sticks: 2 }, axe: { material: 3, sticks: 2 }, shovel: { material: 1, sticks: 2 },
             hoe: { material: 2, sticks: 2 }, sword: { material: 2, sticks: 1 },
@@ -252,11 +252,18 @@ describe('texts', () => {
             'I cut 1 oak tree and got no logs. I had no sapling to plant. I was interrupted.');
         assert.equal(X.chopText({ trees: ['oak'], logs: { oak_log: 4 }, planted: 1, stopped: 'time' }),
             'I cut 1 oak tree and got 4 oak_log. I planted 1 sapling. The time for cutting trees was over.');
-        assert.equal(X.chopText({ trees: [], found: 0 }), 'I found no tree within 48 blocks. Logs of buildings are not mine to take.');
-        assert.equal(X.chopText({ trees: [], found: 0, kind: 'birch' }), 'I found no birch tree within 48 blocks. Logs of buildings are not mine to take.');
+        // v0.1.4.14: the sentence about buildings only when logs were refused for touching a built block
+        assert.equal(X.chopText({ trees: [], found: 0 }), 'I found no tree within 48 blocks.');
+        assert.equal(X.chopText({ trees: [], found: 0, kind: 'birch' }), 'I found no birch tree within 48 blocks.');
+        assert.equal(X.chopText({ trees: [], found: 0, kind: 'oak', why: { built: true } }), 'I found no oak tree within 48 blocks. Logs of buildings are not mine to take.');
+        assert.equal(X.chopText({ trees: [], found: 0, kind: 'oak', why: { log: { x: -294, y: 72, z: -305, name: 'oak_log' }, reason: 'no_leaves' } }),
+            'I found oak_log at (-294, 72, -305) but no tree I can cut: they have no leaves, like a stump or a pile of logs.');
+        assert.equal(X.chopText({ trees: [], found: 0, why: { protectedOnly: true } }), 'I found no tree within 48 blocks outside the protected areas.');
+        assert.equal(X.chopText({ trees: [], found: 0, why: { log: { x: 1, y: 2, z: 3, name: 'oak_log' }, reason: 'unknown' } }),
+            'I found oak_log at (1, 2, 3) but no tree I can cut.');
         assert.equal(X.chopText({ trees: [], found: 2 }), 'I could not reach the trees I found.');
         assert.equal(X.chopText({ trees: [], found: 2, stopped: 'interrupted' }), 'I stopped before I cut a tree.');
-        assert.equal(X.noTreeText(), 'I found no tree within 48 blocks. Logs of buildings are not mine to take.');
+        assert.equal(X.noTreeText(), 'I found no tree within 48 blocks.');
         assert.equal(X.unknownWoodText('mithril'), 'I do not know the wood "mithril". I know oak, spruce, birch, jungle, acacia, dark_oak, mangrove, cherry, pale_oak, crimson and warped.');
     });
 
@@ -274,5 +281,33 @@ describe('texts', () => {
         assert.equal(X.unknownMaterialText('mithril'), 'I do not know the material "mithril". I know wooden, stone, iron, diamond and netherite.');
         assert.equal(X.unknownSupplyText('lava'), 'I cannot craft "lava" with this command. I craft torch, ladder, chest, crafting_table, stick and planks.');
         assert.equal(X.notCraftableText('netherite_pickaxe'), 'I cannot craft a netherite_pickaxe. It is made at a smithing table, which I do not use.');
+    });
+});
+
+// v0.1.4.14 "Minecraft 26.1": copper tools (1.21.9) are known like golden ones, never crafted, and mine like stone.
+describe('copper tools (v0.1.4.14)', () => {
+    test('COPPER is known, not craftable, level 1, 190 uses; not in MATERIALS', () => {
+        assert.deepEqual({ ...L.COPPER }, { name: 'copper', item: 'copper_ingot', level: 1, craftable: false });
+        assert.ok(!L.MATERIALS.some(m => m.name === 'copper'));
+        assert.equal(L.TOOL_USES.copper, 190);
+        assert.equal(L.materialLevel('copper'), 1);
+        assert.deepEqual(L.parseTool('minecraft:copper_axe'), { kind: 'axe', material: 'copper' });
+        assert.equal(L.usesLeft({ name: 'copper_axe' }), 190);
+    });
+
+    test('a copper axe ranks above stone and below iron; it serves a need of stone, not of iron', () => {
+        const stone = { name: 'stone_axe', count: 1, uses_left: 100 };
+        const copper = { name: 'copper_axe', count: 1, uses_left: 50 };
+        const iron = { name: 'iron_axe', count: 1, uses_left: 10 };
+        assert.deepEqual(L.bestTool([stone, copper], 'axe', ''), copper);
+        assert.deepEqual(L.bestTool([stone, copper, iron], 'axe', ''), iron);
+        assert.deepEqual(L.bestTool([copper], 'axe', 'stone'), copper);
+        assert.equal(L.bestTool([copper], 'axe', 'iron'), null);
+    });
+
+    test('copper is never crafted: the steps miss the tool itself; a need of copper chooses stone', () => {
+        assert.deepEqual(L.craftSteps('pickaxe', 'copper', inv('copper_ingot', 9)), { steps: [], missing: [{ name: 'copper_pickaxe', count: 1 }] });
+        assert.equal(L.chooseMaterial('pickaxe', 'copper', []), 'stone');
+        assert.equal(L.chooseMaterial('pickaxe', 'copper', inv('cobblestone', 3, 'stick', 2)), 'stone');
     });
 });

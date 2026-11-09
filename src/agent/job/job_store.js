@@ -138,6 +138,19 @@ export class JobStore {
     }
 
     /**
+     * v0.1.4.14: binds the store to another file and reads it (the job of the world the bot is in:
+     * bots/<name>/worlds/<seed>/job.json, known only after the login). A job held in memory is dropped: it
+     * belonged to no world. null makes the store live in memory only. Never throws.
+     * @param {string|null} filePath
+     * @returns {object|null} a copy of the job of that file
+     */
+    bind(filePath) {
+        this.filePath = typeof filePath === 'string' && filePath.length > 0 ? filePath : null;
+        this._job = null;
+        return this.load();
+    }
+
+    /**
      * Sets the job and writes the file. Never throws.
      * @param {object} job
      * @returns {object|null} a copy of the saved job, null when it is no valid job

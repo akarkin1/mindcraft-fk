@@ -1,6 +1,6 @@
 // Test helper of the wood pack (spec v0.1.4.7 T): the fake bot of the home pack with what cutting
 // trees and crafting needs: drops that fall and are picked up, a jump that lifts the bot, a
-// pathfinder that stops beside a block, crafting by the recipes of minecraft-data 1.21.8, and a
+// pathfinder that stops beside a block, crafting by the recipes of minecraft-data 26.1 (the registry of home_fake_bot), and a
 // virtual clock. The file name ends in .test.js only because the owner of these tests may create
 // no other files; the tests below run only when this file is the main module.
 import { test } from 'node:test';
@@ -76,15 +76,21 @@ export function dropItem(bot, name, pos, n = 1) {
     return entity;
 }
 
-/** Items within reach of the bot's body go into the inventory, as on a server. */
+/**
+ * Items within reach of the bot's body go into the inventory, as on a server. With bot.serverPickup the
+ * reach is the server's: the box of the player (0.6 x 1.8) grown by 1 sideways and 0.5 up and down, against the box of the item (0.25).
+ */
 export function pickup(bot) {
     const p = bot.entity.position;
+    const near = (dx, dy, dz) => (bot.serverPickup
+        ? Math.abs(dx) <= 1.425 && Math.abs(dz) <= 1.425 && dy > -0.75 && dy < 2.3
+        : Math.hypot(dx, dz) <= 1.6 && dy >= -1 && dy <= 2.3);
     for (const e of Object.values(bot.entities)) {
         if (e.name !== 'item') continue;
         const dx = e.position.x - p.x;
         const dz = e.position.z - p.z;
         const dy = e.position.y - p.y;
-        if (Math.hypot(dx, dz) <= 1.6 && dy >= -1 && dy <= 2.3) {
+        if (near(dx, dy, dz)) {
             const d = e.getDroppedItem();
             give(bot, d.name, d.count);
             e.isValid = false;
@@ -105,7 +111,8 @@ function dropOf(bot, name) {
 /**
  * The goto of the fake: GoalBlock needs a free standing place at the goal; GoalNear goes to the
  * free standing place within range that is nearest to the bot. Goals whose key is in
- * bot.unreachable, and places in bot.blocked, give NoPath.
+ * bot.unreachable, and places in bot.blocked, give NoPath. With movements that may dig, GoalBlock
+ * breaks a leaf the head would be in (a 'pathDig' call).
  */
 export async function nearGoto(bot, goal) {
     const g = { x: Math.floor(goal.x), y: Math.floor(goal.y), z: Math.floor(goal.z) };
@@ -113,6 +120,13 @@ export async function nearGoto(bot, goal) {
     const world = bot.world;
     let cell = null;
     if (goal.rangeSq === undefined) {
+        // movements that may break leaves (bot.pathfinder.movements.canDig) break a leaf the head would be in
+        const head = world.block(g.x, g.y + 1, g.z);
+        if (!isStandable(world, g.x, g.y, g.z) && bot.pathfinder.movements?.canDig && head?.name?.endsWith('_leaves')
+            && isEmpty(world, g.x, g.y, g.z) && world.block(g.x, g.y - 1, g.z)?.boundingBox !== 'empty') {
+            bot.calls.push(['pathDig', g.x, g.y + 1, g.z, head.name]);
+            world.set(g.x, g.y + 1, g.z, 'air');
+        }
         if (isStandable(world, g.x, g.y, g.z)) cell = g;
     } else {
         const r = Math.ceil(Math.sqrt(goal.rangeSq));
@@ -199,7 +213,8 @@ export function makeClock(onWait = null) {
 /**
  * The fake bot of the wood pack. bot.world is the world of the home fake (grass at 63, dirt,
  * stone below 60). Extras: bot.leafDrop (the item a dug leaf drops), bot.failPlace (number of
- * placements that do nothing), bot.unreachable (keys of goals without a path).
+ * placements that do nothing), bot.unreachable (keys of goals without a path), bot.serverPickup (the
+ * pickup reach of the server), bot.rollDrop(pos) (where the item of a dug block comes to lie instead).
  */
 export function makeWoodBot({ world = makeWorld(), pos = [0.5, 64, 0.5] } = {}) {
     const bot = makeFakeBot({ world, pos });
@@ -216,7 +231,7 @@ export function makeWoodBot({ world = makeWorld(), pos = [0.5, 64, 0.5] } = {}) 
         const name = world.nameAt(p.x, p.y, p.z);
         await baseDig(block, forceLook);
         const drop = dropOf(bot, name);
-        if (drop) dropItem(bot, drop, { x: p.x, y: p.y, z: p.z });
+        if (drop) dropItem(bot, drop, bot.rollDrop?.(p) ?? { x: p.x, y: p.y, z: p.z });
         pickup(bot);
     };
     bot.placeBlock = async (ref, face) => {

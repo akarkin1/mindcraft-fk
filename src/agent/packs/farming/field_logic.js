@@ -318,8 +318,12 @@ export function stepPenalty(cells) {
  * know. In the long run of the world tests the bot fell into the composter of the farm and never came out.
  */
 const HOLLOW = new Set(['composter', 'cauldron', 'water_cauldron', 'lava_cauldron', 'powder_snow_cauldron', 'hopper']);
+// v0.1.4.14 (part D): the copper chests, a copy of COPPER_CHESTS of packs/storage/storage_logic.js (the farming pack does
+// not import the storage pack); tests/unit/xd_copper_food.test.js checks that the copies hold the same names.
+export const COPPER_CHESTS = Object.freeze(['copper_chest', 'exposed_copper_chest', 'weathered_copper_chest', 'oxidized_copper_chest',
+    'waxed_copper_chest', 'waxed_exposed_copper_chest', 'waxed_weathered_copper_chest', 'waxed_oxidized_copper_chest']);
 /** Containers the bot never stands on. */
-const CONTAINERS = new Set(['chest', 'trapped_chest', 'ender_chest']);
+const CONTAINERS = new Set(['chest', 'trapped_chest', 'ender_chest', ...COPPER_CHESTS]);
 /** Plants and thin blocks without collision that a bot stands in, besides air, crops, flowers and saplings. */
 const THIN = new Set(['short_grass', 'grass', 'tall_grass', 'fern', 'large_fern', 'dead_bush', 'leaf_litter']);
 /** Blocks that are no ground to stand on. */

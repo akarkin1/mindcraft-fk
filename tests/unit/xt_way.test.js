@@ -1,7 +1,7 @@
 // WAITS FOR PART Q (SPEC 4.6, engineer E4, round 2): written from the spec before the part landed; the tests of Q5,
 // Q7 and Q8 are expected to fail until it does. Tests from the spec (v0.1.4.13, section 6, T1):
-// Q5 the kit rule of `!givePlayer` (giveToPlayer): `num` more than 8 of one kind gives
-//    `That is a lot. Say "put my stuff in the chest" and I put it in the nearest chest.` and nothing is thrown.
+// Q5 the kit rule of `!givePlayer` (giveToPlayer). v0.1.4.14 (the owner's play of 2026-11-07): no refusal any more: the
+//    bot gives what is asked, as many as it has, a stack at a time.
 // Q7 no shaft (`!goToCoordinates`, goToPosition): a target more than 3 blocks below the bot with a path that is
 //    destructive straight down (every step within 1 block of the vertical line) is refused:
 //    `I do not dig a shaft 64 blocks down. Say "dig down" if you mean it, or show me stairs.`; a target reached by
@@ -23,7 +23,7 @@ import { MC, makeFakeBot, makeItem, move } from '../helpers/xt_bot.js';
 register('../helpers/mcdata_hooks.js', import.meta.url);
 
 const OWNER = 'MartyByrde2';
-const KIT_TEXT = 'That is a lot. Say "put my stuff in the chest" and I put it in the nearest chest.';
+const KIT_TEXT = 'That is a lot.'; // v0.1.4.14: the old refusal, never said any more
 // the correction of 2026-10-04 (the owner): the refusal names the ladders, since "dig down" led to a bare shaft too
 const shaftText = (n, have = 0) => `I do not dig a shaft ${n} blocks down without ladders: I have ${have} and need ${n + 2}. Bring me ladders or show me stairs.`;
 const PEN_TEXT = 'That is a pen with 26 chickens; I do not open its gate. Say "open the pen" if you mean it.';
@@ -78,11 +78,11 @@ describe('SPEC 4.6 Q5: the kit rule of !givePlayer', () => {
         return bot;
     }
 
-    test('9 of one kind: the text, and nothing is thrown', async () => {
+    test('9 of one kind (v0.1.4.14): thrown, no refusal', async () => {
         const bot = giveBot();
         await within(8000, skills.giveToPlayer(bot, 'iron_ingot', OWNER, 9)).catch((e) => { bot.output += `\n[${e.message}]`; });
-        assert.ok(bot.output.includes(KIT_TEXT), `the kit text: ${bot.output}`);
-        assert.deepEqual(bot.calls.tossed, [], 'nothing is thrown');
+        assert.ok(!bot.output.includes(KIT_TEXT), bot.output);
+        assert.deepEqual(bot.calls.tossed, [{ name: 'iron_ingot', count: 9 }], 'the 9 are thrown');
     });
 
     test('8 of one kind is no kit: no such text', async () => {

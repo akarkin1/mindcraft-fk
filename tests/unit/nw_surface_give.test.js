@@ -115,7 +115,7 @@ describe('W4: goToSurface on the fake bot', () => {
 
 describe('W5: the texts of giveToPlayer, word for word', () => {
     test('all taken, some on the ground', () => {
-        assert.equal(TEXTS.GIVE_TEXTS.given(44, 'wheat', 'MartyByrde2'), 'Gave 44 wheat to MartyByrde2.');
+        assert.equal(TEXTS.GIVE_TEXTS.given(44, 'wheat', 'MartyByrde2'), 'I gave you 44 wheat.'); // v0.1.4.14
         assert.equal(TEXTS.GIVE_TEXTS.partly('MartyByrde2', 40, 44, 'wheat', { x: 8.4, y: 63, z: 28.7 }),
             'MartyByrde2 took 40 of 44 wheat; 4 lie on the ground at (8, 63, 28).');
         assert.equal(TEXTS.GIVE_TEXTS.partly('MartyByrde2', 43, 44, 'wheat', { x: 8, y: 63, z: 28 }),
@@ -155,10 +155,10 @@ function giveScene(taken) {
 }
 
 describe('W5: giveToPlayer counts what the player took', () => {
-    test('all 8 taken: "Gave 8 wheat to MartyByrde2.", true, no listener left', async () => {
+    test('all 8 taken: "I gave you 8 wheat." (v0.1.4.14), true, no listener left', async () => {
         const { bot, events } = giveScene(8);
         assert.equal(await skills.giveToPlayer(bot, 'wheat', 'MartyByrde2', 8), true);
-        assert.ok(bot.output.endsWith('Gave 8 wheat to MartyByrde2.\n'), bot.output);
+        assert.ok(bot.output.endsWith('I gave you 8 wheat.\n'), bot.output);
         assert.equal(events.listenerCount('playerCollect'), 0);
     });
 
@@ -169,9 +169,9 @@ describe('W5: giveToPlayer counts what the player took', () => {
         assert.equal(events.listenerCount('playerCollect'), 0);
     });
 
-    test('none taken: 0 of 8, false', async () => {
+    test('none taken: the failure said plainly (v0.1.4.14), false', async () => {
         const { bot } = giveScene(0);
         assert.equal(await skills.giveToPlayer(bot, 'wheat', 'MartyByrde2', 8), false);
-        assert.ok(bot.output.endsWith('MartyByrde2 took 0 of 8 wheat; 8 lie on the ground at (6, 64, 1).\n'), bot.output);
+        assert.ok(bot.output.endsWith('I could not give you 8 wheat: MartyByrde2 picked up none; 8 lie on the ground at (6, 64, 1).\n'), bot.output);
     });
 });

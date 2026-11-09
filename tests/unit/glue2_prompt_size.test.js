@@ -22,8 +22,26 @@ import { captureConsole } from '../helpers/console_capture.js';
 const T = await loadSrc('tests/routing/commands.js');
 const S = await loadSrc('scripts/routing_check.js');
 
-const LIMIT_ALL_ON = 17000;
+// v0.1.4.14 fix round, part 8 (P-28): the three commands !boardBoat, !leaveBoat and !leaveGame add 173 characters of docs;
+// the lead raised both limits by 200 (17,000 to 17,200 and 17,400 to 17,600), as R1-7 did once in this release.
+const LIMIT_ALL_ON = 17200;
 const LIMIT_ALL_OFF = 11000;
+// v0.1.4.14 (part K, SPEC 4.7): the lead's decision, since the budget of v0.1.4.13 had 13 characters left: with every
+// switch on, new_things_in_prompt among them, a block of 600 and the three longest lines of the new things present, the
+// prompt may hold 17,400 characters; without the block of the new things the old 17,000 hold (17,600 and 17,200 since part 8).
+const LIMIT_NEW_THINGS = 17600;
+const NEW_THINGS_HEADER = 'NEW SINCE 1.21.8 (true, even if you do not know it):';
+// a bot with the things of the three longest lines of the new things: a copper golem statue and a copper pickaxe in the
+// bag, a nautilus 3 blocks away; the block holds what fits in its 360 characters
+const NEW_THINGS_BOT = {
+    inventory: { items: () => [{ name: 'copper_golem_statue', count: 1 }, { name: 'copper_pickaxe', count: 1 }], slots: [] },
+    entity: { position: { x: 0.5, y: 64, z: 0.5 } }, blockAt: () => null,
+    entities: { 7: { name: 'nautilus', position: { x: 3.5, y: 64, z: 0.5 } } },
+};
+// the block those give: the copper tools line and the nautilus line (354 characters); the copper golem line does not fit
+const NEW_THINGS_BLOCK = [NEW_THINGS_HEADER,
+    'Copper tools and armour exist since 1.21.9: like stone but faster, 190 uses, from copper ingots; a copper pickaxe mines iron, copper and lapis, not diamond or gold.',
+    'A nautilus is a neutral ocean mob that dashes when hit and is tamed with pufferfish; a zombie nautilus carries a drowned with a trident.'].join('\n');
 const PARTS_0146 = ['cost_meter', 'protected_areas', 'player_rules', 'home_pack'];
 const PARTS_0147 = ['storage_pack', 'farming_pack', 'wood_pack', 'mining_pack'];
 const NEW_COMMANDS = PARTS_0147.flatMap((part) => T.PART_COMMANDS[part]);
@@ -96,6 +114,7 @@ async function conversingPrompt(switches, knowledge = '') {
         self_prompter: { isStopped: () => true, isActive: () => false, isPaused: () => false, prompt: '' },
         actions: { currentActionLabel: '' }, task: { task_id: null }, npc: {},
         knowledgeBlock: () => knowledge,
+        ...(switches.new_things_in_prompt === true ? { bot: NEW_THINGS_BOT } : {}), // v0.1.4.14 (part K)
     };
     const cap = captureConsole();
     try {
@@ -159,13 +178,16 @@ describe('the size of the conversing prompt (spec v0.1.4.7, section 7)', () => {
         return lines.join('\n').slice(0, max);
     };
 
-    test('every switch of the fork on (v0.1.4.8), with a block of 600 characters: at most 17,000 characters', async (t) => {
+    test('every switch of the fork on (v0.1.4.8), with a block of 600 characters: at most 17,600 characters with the new things (17,200 without)', async (t) => {
         const knowledge = block(600);
-        const prompt = await conversingPrompt({ ...switchesOf(true, true), ...SWITCHES_0148 }, knowledge);
-        t.diagnostic(`every switch on (v0.1.4.8): ${prompt.length} characters`);
-        assert.ok(prompt.includes(`${knowledge}\nConversation Begin:`), 'the block is in the prompt');
+        // v0.1.4.14 (part K): new_things_in_prompt on with the three longest lines present: 17,400; without its block 17,000;
+        // part 8 (P-28): 17,600 and 17,200 for the three commands' docs
+        const prompt = await conversingPrompt({ ...switchesOf(true, true), ...SWITCHES_0148, new_things_in_prompt: true }, knowledge);
+        t.diagnostic(`every switch on (v0.1.4.14): ${prompt.length} characters`);
+        assert.ok(prompt.includes(`${knowledge}\n${NEW_THINGS_BLOCK}\nConversation Begin:`), 'the blocks are in the prompt');
         for (const name of ['!pickUpItems', '!closeDoor', ...NEW_COMMANDS]) assert.ok(prompt.includes(`\n${name}: `), name);
-        assert.ok(prompt.length <= LIMIT_ALL_ON, `${prompt.length} characters`);
+        assert.ok(prompt.length <= LIMIT_NEW_THINGS, `${prompt.length} characters`);
+        assert.ok(prompt.replace(`\n${NEW_THINGS_BLOCK}`, '').length <= LIMIT_ALL_ON, 'without the block of the new things');
     });
 
     test('every part of v0.1.4.6 and v0.1.4.7 on: at most 17,000 characters, every new command offered', async (t) => {

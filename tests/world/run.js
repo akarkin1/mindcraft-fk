@@ -1,9 +1,11 @@
 // World test runner of releases v0.1.4.6 and v0.1.4.7 (`npm run test:world`): tests on a REAL
 // Minecraft server.
 //
-// One server process per world type: the official Minecraft 1.21.8 server from MC_TEST_SERVER_DIR
-// (default %LOCALAPPDATA%\Mindcraft\test-server) with the Java of MC_TEST_JAVA (default: the Java 21 of
-// the Minecraft launcher). It runs on 127.0.0.1, port 25599 or the next free one, offline mode, in a
+// One server process per world type: the official Minecraft 26.1 server (v0.1.4.14; 1.21.8 before) from
+// MC_TEST_SERVER_DIR (default %LOCALAPPDATA%\Mindcraft\test-server) with the Java 25 of MC_TEST_JAVA (default:
+// the Java of the Minecraft launcher, java-runtime-epsilon, else the JRE of `get_test_server.js --jdk` in
+// <dir>/jdk/). A Java below 25 is refused with one line and exit 1 (mc_server.js, chooseJava). It runs on
+// 127.0.0.1, port 25599 or the next free one, offline mode, in a
 // fresh temp directory (os.tmpdir()/mc-world-*) that is removed at the end. The server folder is only
 // read. Without server or Java: "World tests skipped: no test server found.", exit 0.
 // World types (mc_server.js): `flat`, the default flat world with the ground at y -61, for the
@@ -42,14 +44,15 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
-    locateServer, McServer, findFreePort, killPid, pidAlive, OWNER_PORT, WORLD_TYPES, worldProperties, worldProbes,
+    locateServer, McServer, findFreePort, killPid, pidAlive, OWNER_PORT, WORLD_TYPES, worldProperties, worldProbes, translationLine,
+    NATURAL_SEED, SPAWN_COMMANDS, spawnFromAnswer, naturalCleanup,
 } from './mc_server.js';
 
 const WORLD_DIR = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(WORLD_DIR, '..', '..');
 const TMP_PREFIX = 'mc-world-';
 
-// name, file, timeout in seconds, depends on monsters, world type ('flat' when not given)
+// name, file, timeout in seconds, depends on monsters, world type ('flat' when not given; 'deep', 'base', 'natural')
 const SCENARIOS = [
     ['baseline', 'w01_baseline.js', 180, false],
     ['flags_off', 'w02_flags_off.js', 240, false],
@@ -182,6 +185,16 @@ const SCENARIOS = [
     ['full_bag', 'w118_full_bag.js', 350, false, 'base'],
     ['quiet_supervisor', 'w119_quiet_supervisor.js', 240, false, 'base'], // v0.1.4.13 fix1
     ['worn_spare_block', 'w120_worn_spare_block.js', 360, false, 'base'], // v0.1.4.13 fix 2
+    // v0.1.4.14 "Minecraft 26.1" (tester T3): the copper pickaxe, the copper chest, the food choice, the new things in the
+    // prompt, knockback and dig time (SPEC 4.5)
+    ['copper_age', 'w121_copper_age.js', 1200, false, 'base'],
+    // v0.1.4.14 fix round: the natural world (a generated world of a fixed seed, mc_server.js); in no group
+    ['natural_smoke', 'w000_natural_smoke.js', 300, false, 'natural'],
+    // v0.1.4.14 fix round (tester T3): the owner's first hour on a new world (DECISIONS P-2 to P-5); in no group
+    ['fresh_world', 'w122_fresh_world.js', 900, false, 'natural'],
+    ['night_falls', 'w123_night_falls.js', 600, false, 'base'], // v0.1.4.14 fix round, part 8 (T3): the clock of 26.1 runs (SPEC 8.10); in no group
+    ['open_farm', 'w124_open_farm.js', 900, false, 'base'], // part 8 (T3): the open farm and the cats (SPEC 8.10); in no group
+    ['open_ground', 'w125_open_ground.js', 900, false, 'natural'], // part 8 (T3): the open ground (SPEC 8.10); in no group
 ];
 
 // Words that select a group of scenarios (spec v0.1.4.8, W30: the work scenarios of v0.1.4.7, which run
@@ -218,6 +231,10 @@ const logDir = process.env.MCW_LOG_DIR ? path.resolve(process.env.MCW_LOG_DIR) :
 const profile = (process.env.MCW_PROFILE || '').trim();
 
 const loc = locateServer();
+if (loc.refused) {
+    console.log(loc.refused);
+    process.exit(1);
+}
 if (loc.missing) {
     console.log('World tests skipped: no test server found.');
     console.log(`  (missing: ${loc.missing}; set MC_TEST_SERVER_DIR and MC_TEST_JAVA)`);
@@ -267,7 +284,9 @@ async function makeServer(type) {
     if (port === OWNER_PORT) throw new Error('refusing the port of the owner');
     const s = new McServer({ ...loc, dir: path.join(runDir, 'server-' + type), port, echo: null });
     s.worldType = type;
-    s.prepare(worldProperties(type));
+    // the natural world: the fixed seed, or MCW_NATURAL_SEED to look at another world
+    s.seed = type === 'natural' ? (process.env.MCW_NATURAL_SEED || NATURAL_SEED) : null;
+    s.prepare(type === 'natural' ? worldProperties(type, s.seed) : worldProperties(type));
     servers.push(s);
     return s;
 }
@@ -335,11 +354,14 @@ const controlUrl = `http://127.0.0.1:${control.address().port}`;
 
 // The world state every scenario starts from; a scenario changes what it needs in its region.
 const WORLD_DEFAULTS = [
-    'gamerule doDaylightCycle false', 'gamerule doWeatherCycle false', 'weather clear',
-    'gamerule doMobSpawning false', 'gamerule doInsomnia false', 'gamerule doPatrolSpawning false',
-    'gamerule doTraderSpawning false', 'gamerule randomTickSpeed 0', 'gamerule announceAdvancements false',
-    'gamerule doImmediateRespawn true', 'gamerule playersSleepingPercentage 100',
-    'gamerule doFireTick false', 'gamerule mobGriefing true',
+    // the game rules by their names of 26.1 (1.21.8: doDaylightCycle, doWeatherCycle, doMobSpawning, doInsomnia,
+    // doPatrolSpawning, doTraderSpawning, randomTickSpeed, announceAdvancements, doImmediateRespawn,
+    // playersSleepingPercentage, doFireTick false, mobGriefing; mc_server.js GAMERULES_26_1)
+    'gamerule advance_time false', 'gamerule advance_weather false', 'weather clear',
+    'gamerule spawn_mobs false', 'gamerule spawn_phantoms false', 'gamerule spawn_patrols false',
+    'gamerule spawn_wandering_traders false', 'gamerule random_tick_speed 0', 'gamerule show_advancement_messages false',
+    'gamerule immediate_respawn true', 'gamerule players_sleeping_percentage 100',
+    'gamerule fire_spread_radius_around_player 0', 'gamerule mob_griefing true',
     'difficulty peaceful', 'time set 6000',
 ];
 
@@ -380,6 +402,25 @@ function makeScenarioDir() {
 
 let regionIndex = 0;
 let groundY = null;
+let worldSpawn = null; // the world spawn of the natural world, { x, y, z } (the feet of a player there); null elsewhere
+
+// The world spawn of the natural world (mc_server.js, SPAWN_COMMANDS): a marker summoned by the console, which
+// runs at the spawn, read back and killed; the spawn chunk is force-loaded meanwhile, tried for up to 20 s.
+async function findSpawn() {
+    await server.commands(SPAWN_COMMANDS.load);
+    try {
+        for (let i = 0; i < 20; i++) {
+            await new Promise((r) => setTimeout(r, 1000));
+            const summoned = (await server.commands(SPAWN_COMMANDS.summon))[0];
+            if (!summoned.some((l) => /^Summoned new/.test(l))) continue;
+            const at = spawnFromAnswer((await server.commands(SPAWN_COMMANDS.read))[0]);
+            if (at) return at;
+        }
+    } finally {
+        await server.commands(['forceload remove ~ ~']);
+    }
+    throw new Error('could not find the world spawn of the natural world');
+}
 
 // The node flags of MCW_PROFILE (part K of v0.1.4.13), none without it.
 function profileArgs() {
@@ -396,8 +437,9 @@ function runScenarioOnce(name, file, timeoutS, run) {
     return new Promise((resolve) => {
         const tmp = makeScenarioDir();
         const region = regionIndex++;
-        const ox = 400 + region * 200;
-        const oz = 0;
+        // a generated world has one spawn: every scenario of the natural world gets it, no region on the x axis
+        const ox = worldSpawn ? worldSpawn.x : 400 + region * 200;
+        const oz = worldSpawn ? worldSpawn.z : 0;
         const t0 = Date.now();
         const lines = [];
         const serverFrom = server.lines.length;
@@ -409,6 +451,7 @@ function runScenarioOnce(name, file, timeoutS, run) {
                 MCW_CONTROL: controlUrl, MCW_TOKEN: token, MCW_SERVER_PORT: String(port),
                 MCW_REGION_X: String(ox), MCW_REGION_Z: String(oz), MCW_GROUND_Y: String(groundY),
                 MCW_RUN: String(run), MCW_REGION: String(region), MCW_TMP: tmp, MCW_WORLD: server.worldType,
+                ...(worldSpawn ? { MCW_SPAWN: `${worldSpawn.x},${worldSpawn.y},${worldSpawn.z}` } : {}),
             },
             stdio: ['ignore', 'pipe', 'pipe'],
             windowsHide: true,
@@ -429,7 +472,7 @@ function runScenarioOnce(name, file, timeoutS, run) {
             // the scenario cleans its region; this is the safety net for a scenario that died
             let cleanup = [];
             try {
-                cleanup = await server.commands([
+                cleanup = await server.commands(worldSpawn ? [...naturalCleanup(worldSpawn), ...WORLD_DEFAULTS] : [
                     `kill @e[type=!minecraft:player,x=${ox - 120},y=-64,z=${oz - 120},dx=240,dy=400,dz=240]`,
                     `forceload remove ${ox - 120} ${oz - 120} ${ox + 120} ${oz + 120}`,
                     // v0.1.4.8: the copies of snapshots lie 100 to 300 blocks south of the region (world.js)
@@ -485,7 +528,7 @@ function report(r, timeoutS, label) {
         fs.writeFileSync(path.join(logDir, `${r.name}_run${r.run}.log`), r.lines.join('\n') + '\n');
         fs.writeFileSync(path.join(logDir, `${r.name}_run${r.run}_server.log`), r.serverLines.join('\n') + '\n');
     }
-    console.log(`${j.pass ? 'PASS' : 'FAIL'} ${label} (${(r.ms / 1000).toFixed(1)} s, ${server.worldType} world, region x=${r.ox})${j.pass ? '' : '\n    reason: ' + j.reason}`);
+    console.log(`${j.pass ? 'PASS' : 'FAIL'} ${label} (${(r.ms / 1000).toFixed(1)} s, ${server.worldType} world, ${server.worldType === 'natural' ? `spawn (${r.ox}, ${worldSpawn?.y}, ${r.oz})` : `region x=${r.ox}`})${j.pass ? '' : '\n    reason: ' + j.reason}`);
     return j.pass;
 }
 
@@ -526,6 +569,15 @@ async function runWorld(type, list) {
         await server.start();
         console.log(`${type} world: server ready on 127.0.0.1:${port} after ${(server.startMs / 1000).toFixed(1)} s (pid ${server.pid})`);
         await server.commands(WORLD_DEFAULTS);
+        worldSpawn = null;
+        if (type === 'natural') {
+            // a generated world: no layers to prove and no regions; the scenarios get the spawn
+            worldSpawn = await findSpawn();
+            groundY = worldSpawn.y - 1;
+            console.log(`natural world: seed ${server.seed}, the world spawn is at (${worldSpawn.x}, ${worldSpawn.y}, ${worldSpawn.z})`);
+            for (const s of list) await runScenario(s);
+            return;
+        }
         const layers = await verifyWorld(type);
         console.log(`${type} world: layers at 0,0: ${layers.lines.join(', ')}`);
         if (!layers.ok) throw new Error(`the ${type} world does not have its layers: the server did not accept generator-settings`);
@@ -579,6 +631,10 @@ if (JSON.stringify(serverFolderAfter) !== JSON.stringify(serverFolderBefore)) {
 }
 for (const p of hygieneProblems) console.log(`FAIL hygiene: ${p}`);
 if (!hygieneProblems.length) console.log(`hygiene: no server process left (pid ${servers.map((s) => s.pid).join(', ')} ended), no ${TMP_PREFIX}* temp directory left, repository bots/ unchanged, server folder unchanged (logs not compared)`);
+
+// v0.1.4.14: how many console commands of the 1.21.8 scenarios were spoken in the words of 26.1 (mc_server.js)
+const consoleLine = translationLine(servers.reduce((n, s) => n + (s.translated ?? 0), 0), servers.reduce((n, s) => n + (s.answersTranslated ?? 0), 0));
+if (consoleLine) console.log(consoleLine);
 
 const failed = outcomes.filter((o) => !o.pass);
 const total = ((Date.now() - tStart) / 1000).toFixed(1);

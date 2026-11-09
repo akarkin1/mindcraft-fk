@@ -47,9 +47,10 @@ export const ENTRANCE_KINDS = Object.freeze(['door', 'gate', 'trapdoor']);
 export const AREA_FLAG_NAMES = Object.freeze(['no_enter']);
 
 /**
- * The kinds of the border of an area (v0.1.4.11, I5), as scanEnclosure of area_scan.js gives them.
+ * The kinds of the border of an area (v0.1.4.11, I5), as scanEnclosure of area_scan.js gives them; `open` for an open
+ * farm (v0.1.4.14, P-18), the farmland without a fence.
  */
-export const AREA_BORDERS = Object.freeze(['fence', 'wall', 'glass', 'hedge', 'water', 'mixed']);
+export const AREA_BORDERS = Object.freeze(['fence', 'wall', 'glass', 'hedge', 'water', 'mixed', 'open']);
 
 /** Largest box of an area, in blocks. */
 export const MAX_AREA_SIZE = Object.freeze({ x: 64, y: 48, z: 64 });

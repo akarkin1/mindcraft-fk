@@ -7,16 +7,17 @@ import { describe, test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { createRequire } from 'node:module';
+import { TEST_MC_VERSION } from '../helpers/load.js';
 
 const require = createRequire(import.meta.url);
 const { Vec3 } = require('vec3');
-const REGISTRY = require('prismarine-registry')('1.21.8');
+const REGISTRY = require('prismarine-registry')(TEST_MC_VERSION);
 const Block = require('prismarine-block')(REGISTRY);
 const pf = require('mineflayer-pathfinder');
 
 /**
  * A world of stone up to y 63 and air above; set() puts a block with properties. blockAt gives blocks of
- * prismarine-block of 1.21.8, the properties not given at the value of the default state.
+ * prismarine-block of 26.1, the properties not given at the value of the default state.
  */
 function makeWorld({ groundY = 63 } = {}) {
     const cells = new Map();
@@ -50,7 +51,7 @@ function makeWorld({ groundY = 63 } = {}) {
 /** A bot as the Movements read it: registry, blockAt, an empty inventory, no entities. */
 function moveBot(world) {
     return {
-        version: '1.21.8',
+        version: TEST_MC_VERSION,
         registry: REGISTRY,
         game: { minY: -64, height: 384, dimension: 'overworld' },
         entity: { position: new Vec3(0.5, 64, 0.5), effects: {}, onGround: true, height: 1.8 },

@@ -129,7 +129,7 @@ describe('ensureTool', () => {
         const res = await K.ensureTool(bot, ctx, 'sword', '', opts);
         assert.equal(res.ok, false);
         assert.equal(res.reason, 'missing');
-        assert.equal(res.text, 'I need 2 oak_log for a wooden_sword and have none. I found no tree within 48 blocks. Logs of buildings are not mine to take.');
+        assert.equal(res.text, 'I need 2 oak_log for a wooden_sword and have none. I found no tree within 48 blocks.'); // v0.1.4.14: no building seen
     });
 
     test('no stone nearby: the wooden pickaxe was made, the stone one not', async () => {

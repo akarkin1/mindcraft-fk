@@ -63,8 +63,13 @@ describe('Q7: the shaft rule', () => {
 });
 
 describe('Q5: the kit rule', () => {
-    test('the text, word for word', () => {
-        assert.equal(W.KIT_TEXT, 'That is a lot. Say "put my stuff in the chest" and I put it in the nearest chest.');
+    // v0.1.4.14 (the owner's play of 2026-11-07): a kit is no refusal any more; the hint after the give, word for word
+    test('the hint, word for word; no refusal text', () => {
+        assert.equal(W.KIT_HINT, 'If you want it all, say "put my stuff in the chest".');
+        assert.equal(W.KIT_TEXT, undefined);
+        assert.equal(W.wantsKitHint(4, true), true);
+        assert.equal(W.wantsKitHint(4, false), false, 'no chest within 16 blocks: no hint');
+        assert.equal(W.wantsKitHint(3, true), false, '3 kinds: no hint');
     });
 
     test('more than 8 of one kind is a kit; 8 is not', () => {

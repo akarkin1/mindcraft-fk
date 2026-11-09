@@ -1,13 +1,40 @@
-import { 
+import {
     getPosition,
     getBiomeName,
     getNearbyPlayerNames,
-    getInventoryCounts,
     getNearbyEntityTypes,
     getBlockAtPosition,
     getFirstBlockAboveHead
 } from "./world.js";
 import convoManager from '../conversation.js';
+import { bagItems } from '../watch/digest_logic.js'; // v0.1.4.14 (P-30): the bag as an open window shows it
+
+// v0.1.4.14 (P-30, E1's finding): while a window is open (a craft, a chest, a furnace) mineflayer copies the inventory
+// section into bot.inventory only at close, so the bag the model saw in the prompt lagged by the window's lifetime (a bed
+// looked lost twice). The counts come from bagItems (the open window's inventory section, else bot.inventory.items()); the
+// slots no container window carries (the armour, the off-hand, the crafting grid) from bot.inventory.slots, as
+// getInventoryCounts counted them, so without a window the counts are the same as before. Never throws.
+function bagCounts(bot) {
+    const counts = {};
+    const add = (item) => {
+        if (item && typeof item.name === 'string' && Number.isFinite(item.count))
+            counts[item.name] = (counts[item.name] ?? 0) + item.count;
+    };
+    try {
+        for (const item of bagItems(bot))
+            add(item);
+        const inventory = bot?.inventory;
+        const start = Number.isFinite(inventory?.inventoryStart) ? inventory.inventoryStart : 9;
+        const end = Number.isFinite(inventory?.inventoryEnd) ? inventory.inventoryEnd : 45;
+        (Array.isArray(inventory?.slots) ? inventory.slots : []).forEach((item, i) => {
+            if (i < start || i >= end)
+                add(item);
+        });
+    } catch {
+        // what was counted stands
+    }
+    return counts;
+}
 
 export function getFullState(agent) {
     const bot = agent.bot;
@@ -64,8 +91,8 @@ export function getFullState(agent) {
             firstBlockAboveHead: getFirstBlockAboveHead(bot, null, 32)
         },
         inventory: {
-            counts: getInventoryCounts(bot),
-            stacksUsed: bot.inventory.items().length,
+            counts: bagCounts(bot), // P-30: live while a window is open; getInventoryCounts of world.js is the same without one
+            stacksUsed: bagItems(bot).length,
             totalSlots: bot.inventory.slots.length,
             equipment: {
                 helmet: helmet ? helmet.name : null,

@@ -8,7 +8,7 @@
 // placed), built blocks outside every area with protect_built_blocks (D3), the blocks that the bot
 // placed (D4), and refusal(), areaAt(), isBuilt(), placedByBot() on the view (I3).
 import { normalizeDimension, normalizeAreaName, typeRank } from './area_store.js';
-import { isBuiltBlock } from './area_scan.js';
+import { COPPER_CHESTS, isBuiltBlock } from './area_scan.js'; // v0.1.4.14 (part D): the copper chests
 import { PlacedStore } from './placed_store.js';
 
 /** Blocks that may be broken inside a farm: ripe or not, the crops. */
@@ -30,7 +30,7 @@ const PLANTABLE = new Set(PLANTABLE_ITEMS);
 const RISKY_ITEMS = new Set(['flint_and_steel', 'fire_charge', 'bone_meal']);
 // Blocks whose own use wins over the item in the hand (unless the player sneaks).
 const OWN_USE_BLOCKS = new Set(['chest', 'trapped_chest', 'ender_chest', 'barrel', 'crafting_table', 'furnace',
-    'smoker', 'blast_furnace']);
+    'smoker', 'blast_furnace', ...COPPER_CHESTS]); // v0.1.4.14: the copper chests too
 // A block that becomes one of these is gone: the bot no longer counts it as placed by itself.
 const GONE_NAMES = new Set(['air', 'cave_air', 'void_air', 'water', 'lava']);
 const EMPTY = Object.freeze([]);
@@ -362,9 +362,43 @@ function createGuard(bot, options) {
         return built;
     }
 
+    // v0.1.4.14 (P-20): the other cell of a block of two (a bed: its head and its foot; a door: its two halves), or null.
+    function otherPart(block, x, y, z) {
+        try {
+            const name = baseName(block?.name);
+            if (name === null) {
+                return null;
+            }
+            const props = typeof block.getProperties === 'function' ? block.getProperties() : (block._properties ?? {});
+            if (name.endsWith('_bed')) {
+                const dir = { north: [0, -1], south: [0, 1], east: [1, 0], west: [-1, 0] }[props?.facing];
+                if (!dir) {
+                    return null;
+                }
+                const sign = props.part === 'head' ? -1 : 1; // the head lies toward the facing of the bed
+                return { x: x + dir[0] * sign, y, z: z + dir[1] * sign };
+            }
+            if (name.endsWith('_door')) {
+                return { x, y: props?.half === 'upper' ? y - 1 : y + 1, z };
+            }
+        } catch {
+            // no part known
+        }
+        return null;
+    }
+
+    // The bot placed the block at x, y, z, or the other part of it (P-20: a bed the bot placed is its own, both halves).
+    function placedBlock(block, x, y, z) {
+        if (isPlaced(x, y, z)) {
+            return true;
+        }
+        const other = block ? otherPart(block, x, y, z) : null;
+        return other !== null && isPlaced(other.x, other.y, other.z);
+    }
+
     // A built block that the bot did not place: players build with it.
     function builtByPlayer(block, x, y, z) {
-        return builtName(block.name) && !isPlaced(x, y, z);
+        return builtName(block.name) && !placedBlock(block, x, y, z);
     }
 
     function playerOrdered() {
@@ -735,7 +769,18 @@ function createGuard(bot, options) {
      */
     function placedByBot(pos) {
         try {
-            return isPosition(pos) && isPlaced(Math.floor(pos.x), Math.floor(pos.y), Math.floor(pos.z));
+            if (!isPosition(pos)) {
+                return false;
+            }
+            const x = Math.floor(pos.x);
+            const y = Math.floor(pos.y);
+            const z = Math.floor(pos.z);
+            if (isPlaced(x, y, z)) {
+                return true;
+            }
+            // the other part of a bed or a door: the block is read where the position is a vector (the library's calls)
+            const block = typeof bot.blockAt === 'function' && typeof pos.floored === 'function' ? bot.blockAt(pos.floored()) : null;
+            return placedBlock(block, x, y, z);
         } catch {
             return false;
         }
@@ -935,9 +980,61 @@ function createGuard(bot, options) {
             if (verdict) {
                 return refuse(target, verdict, null);
             }
+            let at = null;
+            try {
+                at = target !== null && typeof reference.position.offset === 'function' ? reference.position.offset(face.x, face.y, face.z) : null;
+            } catch {
+                at = null;
+            }
+            const before = at === null ? null : blockNameAt(at);
             const result = Reflect.apply(original, this, args);
-            return target === null ? result : whenDone(result, () => notePlaced(target));
+            if (target === null) {
+                return result;
+            }
+            return at === null ? whenDone(result, () => notePlaced(target)) : whenSettled(result, (ok) => notePlacedBlock(at, before, ok));
         };
+    }
+
+    // v0.1.4.14 (P-20): the bot's own bed was not its own: the place call of a bed often ends with a timeout of the
+    // block update although the bed stands, and its head was never noted. After a call that succeeded the target is
+    // noted as before; after one that failed only when the block there changed; and the other part of a bed or a
+    // door with it.
+    function notePlacedBlock(at, before, ok) {
+        try {
+            const target = floored(at);
+            const block = typeof bot.blockAt === 'function' ? bot.blockAt(at) : null;
+            const name = baseName(block?.name ?? null);
+            const changed = name !== null && !['air', 'cave_air', 'void_air', 'water', 'lava'].includes(name) && name !== baseName(before);
+            if (ok) {
+                notePlaced(target); // as before: a call that succeeded placed its block
+            } else if (changed) {
+                notePlaced(target); // P-20: the call failed, but the block stands
+            }
+            if (!changed) {
+                return;
+            }
+            const other = otherPart(block, target.x, target.y, target.z);
+            if (other !== null && baseName(blockNameAt(at.offset(other.x - target.x, other.y - target.y, other.z - target.z))) === name) {
+                notePlaced(other);
+            }
+        } catch {
+            // the note is a help
+        }
+    }
+
+    // Runs `after` when the call settled, fulfilled or rejected; the result and the errors of the call stay the same.
+    function whenSettled(result, after) {
+        if (result !== null && typeof result === 'object' && typeof result.then === 'function') {
+            return result.then((value) => {
+                after(true);
+                return value;
+            }, (err) => {
+                after(false);
+                throw err;
+            });
+        }
+        after(true);
+        return result;
     }
 
     function isSneaking() {

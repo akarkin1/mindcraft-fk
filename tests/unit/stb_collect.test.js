@@ -19,6 +19,9 @@ const skills = await loadSrc('src/agent/library/skills.js');
 mcdata.__setMcdataForTests(registry);
 
 const FENCE_TEXT = 'oak_fence is a block that players build with. I do not break it. The player can type the command !collectBlocks("oak_fence", 20) in the chat to do it.';
+// v0.1.4.14 (P-20, SPEC 8.11): the same rule, in the words of 8.11: a built block refused by the guard (reason built_block) is
+// answered with this text, whatever text the guard gives
+const NOT_PLACED = 'I do not break a oak_fence that I did not place; type the order yourself if you want it gone.';
 const AREA_TEXT = 'The oak_log at this place belongs to the area "home". I do not break it.';
 const MESSAGE = 'All oak_log blocks nearby belong to a protected area. I look for others farther away.';
 
@@ -130,7 +133,7 @@ describe('B1: collectBlock asks the guard for every block', () => {
         bot.areaGuard = guard;
         assert.equal(await skills.collectBlock(bot, 'oak_fence', 20), false);
         assert.deepEqual(bot.broken, []);
-        assert.equal(bot.output, `${FENCE_TEXT}\n`);
+        assert.equal(bot.output, `${NOT_PLACED}\n`);
         assert.deepEqual(searchRanges(bot), [64], 'a wider search does not help for built blocks');
         assert.ok(guard.asked.length >= 4 && guard.asked.every((a) => a[3] === 'break'), JSON.stringify(guard.asked));
     });
@@ -140,7 +143,7 @@ describe('B1: collectBlock asks the guard for every block', () => {
         bot.areaGuard = fakeGuard(world, (name, pos) => (name === 'oak_fence' && pos.x !== 4 ? { reason: 'built_block', area: null, text: FENCE_TEXT } : null));
         assert.equal(await skills.collectBlock(bot, 'oak_fence', 3), true);
         assert.deepEqual(bot.broken, ['oak_fence@4,64,0']);
-        assert.equal(bot.output, `${FENCE_TEXT}\nCollected 1 oak_fence.\n`);
+        assert.equal(bot.output, `${NOT_PLACED}\nCollected 1 oak_fence.\n`);
     });
 
     test('refused by an area: the text of v0.1.4.6 once, the range doubles, then the text of the refusal', async () => {
@@ -152,11 +155,15 @@ describe('B1: collectBlock asks the guard for every block', () => {
         assert.deepEqual(bot.broken, []);
     });
 
-    test('a refusal without a text: a short text of its own, no claim about players or areas', async () => {
+    test('a built_block refusal without a text: the text of 8.11 (v0.1.4.14); another reason without a text: a short text of its own', async () => {
         const { world, bot } = scene(fences.slice(0, 1));
         bot.areaGuard = fakeGuard(world, () => ({ reason: 'built_block', area: null, text: '' }));
         assert.equal(await skills.collectBlock(bot, 'oak_fence', 1), false);
-        assert.equal(bot.output, 'I may not break the oak_fence nearby.\n');
+        assert.equal(bot.output, `${NOT_PLACED}\n`);
+        const other = scene(fences.slice(0, 1));
+        other.bot.areaGuard = fakeGuard(other.world, () => ({ reason: 'area', area: 'home', text: '' }));
+        assert.equal(await skills.collectBlock(other.bot, 'oak_fence', 1), false);
+        assert.ok(other.bot.output.endsWith('I may not break the oak_fence nearby.\n'), other.bot.output);
     });
 
     test('a guard whose refusal() throws allows the block (bot.dig is guarded as well)', async () => {

@@ -3,15 +3,17 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
-import { loadSrc } from '../helpers/load.js';
+import { loadSrc, TEST_MC_VERSION } from '../helpers/load.js';
 
 const F = await loadSrc('src/agent/packs/home/food_logic.js');
 const T = await loadSrc('src/agent/packs/home/texts.js');
 const H = await loadSrc('src/agent/packs/home/home_settings.js');
 
 const require = createRequire(import.meta.url);
-const FOOD_LIST = require('minecraft-data/minecraft-data/data/pc/1.21.8/foods.json');
+const FOOD_LIST = require('minecraft-data')(TEST_MC_VERSION).foodsArray;
 const FOODS = Object.fromEntries(FOOD_LIST.map(f => [f.name, f]));
+// v0.1.4.14 (part D, SPEC 4.3): VANILLA_FOODS is the food table of 26.1, read from minecraft-data by version
+const FOODS_26_1 = require('minecraft-data')('26.1').foodsByName;
 
 const MIN = 60 * 1000;
 const KNOWN = [{ name: 'bread', count: 5, chest: { x: 11, y: 67, z: 53 } }];
@@ -194,10 +196,10 @@ describe('I7: the food of the known chests', () => {
         assert.deepEqual(F.listKnownFood([chests[0]], { foods: FOODS }), []);
     });
 
-    test('without the registry: the foods of 1.21.8; without a position: the largest count first', () => {
+    test('without the registry: the foods of 26.1 (v0.1.4.14); without a position: the largest count first', () => {
         assert.deepEqual(F.listKnownFood(chests).map(k => k.name), ['cooked_beef', 'apple', 'bread']);
         assert.equal(F.VANILLA_FOODS.bread.foodPoints, 5);
-        assert.deepEqual(Object.keys(F.VANILLA_FOODS).sort(), Object.keys(FOODS).sort());
+        assert.deepEqual(Object.keys(F.VANILLA_FOODS).sort(), Object.keys(FOODS_26_1).sort());
         assert.deepEqual(F.listKnownFood(null), []);
     });
 

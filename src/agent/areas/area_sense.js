@@ -4,7 +4,7 @@
 // v0.1.4.12 (F1 to F4): underground the sense names only a tunnel of a known mine (rockText), says nothing in a tunnel
 // of no mine, in a cave or in any other place, and never asks for a name; it never touches the controls of the bot (F9).
 import { Vec3 } from 'vec3';
-import { scanEnclosure, useTunnelMeasure } from './area_scan.js';
+import { COPPER_CHESTS, scanEnclosure, useTunnelMeasure } from './area_scan.js'; // v0.1.4.14 (part D): the copper chests
 import { kindOf, senseText, rockText } from './area_kind.js';
 import { whereAmI as whereAmIOf } from '../reflex/where_am_i.js';
 
@@ -35,7 +35,7 @@ const CROPS = new Map([['wheat', 'wheat'], ['carrots', 'carrots'], ['potatoes', 
     ['attached_pumpkin_stem', 'pumpkin_stem'], ['sweet_berry_bush', 'sweet_berry_bush'], ['nether_wart', 'nether_wart'],
     ['torchflower_crop', 'torchflower_crop'], ['pitcher_crop', 'pitcher_crop']]);
 
-const CHESTS = new Set(['chest', 'trapped_chest', 'barrel']);
+const CHESTS = new Set(['chest', 'trapped_chest', 'barrel', ...COPPER_CHESTS]); // v0.1.4.14: a copper chest is a chest
 const FURNACES = new Set(['furnace', 'blast_furnace', 'smoker']);
 
 function plainName(name) {

@@ -7,13 +7,21 @@ import agentSettings from "../settings.js";
 import { isOreName, oreInSight, oreKind, outOfSightText, sightRange, SIGHT_TEXT_DISTANCE } from "./ore_sight_logic.js";
 import { ladderStepTowards, ladderWayTowards, STEP_RULES } from "./ladder_pass.js";
 import { findOpenables, openDoor, passThrough, reserveDoor } from "../packs/home/doors.js";
+import { noteTowardReserved, releasePassedToward } from "./toward_doors.js";
 import { walkNear } from "../packs/home/motion.js";
-import { GIVE_TEXTS, SURFACE_TEXTS } from "./skill_texts.js";
+import { BOAT_TEXTS, GIVE_TEXTS, SURFACE_TEXTS } from "./skill_texts.js";
 import { sideOf } from "../packs/home/door_logic.js";
 import { acquireEatLock } from "../packs/home/eat_lock.js";
+import { pickupStands } from "../packs/home/pickup_logic.js"; // v0.1.4.14 (W122): where the bot stands to get a drop
 import { wakeUp } from "../packs/home/wake.js";
 // v0.1.4.13 (part Q): the way and the safety (Q2, Q5, Q7), the drops left alone (Q5, Q6), the gate of a pen (Q8)
-import { KIT_TEXT, SHAFT_RULES, dropOf, isKit, isShaftPath, kindsGiven, ladderShaftText, laddersNeeded, noLaddersText, routeText, shaftStoppedText, surfaceRoutes } from "./way_logic.js";
+import { KIT_HINT, KIT_HINT_RANGE, SHAFT_RULES, containerFullText, dropOf, giveFailedText, givenNoneText, isContainerName, isShaftPath, kindsGiven,
+    ladderShaftText, laddersNeeded, noLaddersText, notMineText, routeText, shaftStoppedText, surfaceRoutes, unsafeBlockText, wantsKitHint,
+    // v0.1.4.14, the play of 2026-11-09 (SPEC 8.3.1, 8.4): the fallback of the way (P-19), the honest count (P-20), the give beside
+    // water (P-25), the drops of a kill (P-26), the boats (P-28), the sprint and the long way (P-29)
+    BOAT_RANGE, KILL_DROP_RULES, brokeNoneText, drySides, fallbackAllowed, isLongWay, longWayText, mayDigOnFallback,
+    nearestBoat, noWayText, notPlacedText, stoodReason, wetGiveText, wetLine } from "./way_logic.js";
+import { maySprint } from "../packs/home/food_logic.js"; // v0.1.4.14 (P-29): no sprint below 7 food points, one rule for every walk
 import { digLadderShaft, ladderCount } from "./ladder_shaft.js";
 import { leftAlone, startTossing, takeLeaveText } from "../reflex/drop_watch.js";
 import { leaveThingsText } from "../reflex/drop_logic.js";
@@ -90,13 +98,15 @@ export async function craftRecipe(bot, itemName, num=1) {
             // Try to place crafting table
             let hasTable = world.getInventoryCounts(bot)['crafting_table'] > 0;
             if (hasTable) {
-                let pos = world.getNearestFreeSpace(bot, 1, 6);
-                await placeBlock(bot, 'crafting_table', pos.x, pos.y, pos.z);
-                craftingTable = world.getNearestBlock(bot, 'crafting_table', craftingTableRange);
-                if (craftingTable) {
-                    recipes = bot.recipesFor(mc.getItemId(itemName), null, 1, craftingTable);
-                    placedTable = true;
+                // v0.1.4.14 (W122, the forest floor: slopes, leaves, grass and flowers): the cells around the bot are tried
+                // in turn; when none takes the table the bot says so, never the library's "Recipe requires craftingTable"
+                craftingTable = await placeCraftingTable(bot);
+                if (!craftingTable) {
+                    log(bot, TABLE_NOT_PLACED);
+                    return false;
                 }
+                recipes = bot.recipesFor(mc.getItemId(itemName), null, 1, craftingTable);
+                placedTable = true;
             }
             else {
                 log(bot, `Crafting ${itemName} requires a crafting table.`)
@@ -126,7 +136,16 @@ export async function craftRecipe(bot, itemName, num=1) {
     const requiredIngredients = mc.ingredientsFromPrismarineRecipe(recipe); //Items required to use the recipe once.
     const craftLimit = mc.calculateLimitingResource(inventory, requiredIngredients);
     
-    await bot.craft(recipe, Math.min(craftLimit.num, num), craftingTable);
+    try {
+        await bot.craft(recipe, Math.min(craftLimit.num, num), craftingTable);
+    } catch (err) {
+        // v0.1.4.14: the library's text of a missing table is no answer for the player
+        if (/requires craftingTable/i.test(`${err?.message ?? err}`)) {
+            log(bot, TABLE_NOT_PLACED);
+            return false;
+        }
+        throw err;
+    }
     if(craftLimit.num<num) log(bot, `Not enough ${craftLimit.limitingResource} to craft ${num}, crafted ${craftLimit.num}. You now have ${world.getInventoryCounts(bot)[itemName]} ${itemName}.`);
     else log(bot, `Successfully crafted ${itemName}, you now have ${world.getInventoryCounts(bot)[itemName]} ${itemName}.`);
     if (placedTable) {
@@ -138,6 +157,60 @@ export async function craftRecipe(bot, itemName, num=1) {
     bot.armorManager.equipAll(); 
 
     return true;
+}
+
+// v0.1.4.14 (W122): the answer when no cell around the bot takes the crafting table, word for word.
+const TABLE_NOT_PLACED = 'I could not place my crafting table here.';
+// The blocks a placed table may replace besides air: plants without collision (grass, ferns, flowers), never a torch,
+// a rail, a sign, a liquid and the like.
+const NOT_REPLACED = /(water|lava|fire|torch|rail|sign|button|lever|plate|redstone|portal|ladder|vine|wire|banner|head|skull|bubble|light|web|scaffolding)/;
+
+// v0.1.4.14 (W122): the cells for a crafting table around the bot, nearest first, the bot's own level first: within 2
+// blocks sideways and 1 up or down (a slope), not the bot's own column, the cell air or a plant without collision, the
+// block under it solid. At most 8. Never throws.
+function tableCells(bot) {
+    const out = [];
+    try {
+        const me = bot.entity.position;
+        const feet = new Vec3(Math.floor(me.x), Math.floor(me.y), Math.floor(me.z));
+        for (let dy = -1; dy <= 1; dy++)
+            for (let dx = -2; dx <= 2; dx++)
+                for (let dz = -2; dz <= 2; dz++) {
+                    if (dx === 0 && dz === 0)
+                        continue;
+                    const p = feet.offset(dx, dy, dz);
+                    const at = bot.blockAt(p);
+                    const below = bot.blockAt(p.offset(0, -1, 0));
+                    if (!at || !below)
+                        continue;
+                    const row = bot.registry?.blocksByName?.[at.name];
+                    const free = ['air', 'cave_air'].includes(at.name) || ((at.boundingBox ?? row?.boundingBox) === 'empty' && !NOT_REPLACED.test(at.name));
+                    if (!free || (below.boundingBox ?? bot.registry?.blocksByName?.[below.name]?.boundingBox) !== 'block')
+                        continue;
+                    out.push({ p, d: Math.abs(dy) * 10 + Math.hypot(dx, dz) });
+                }
+    } catch (err) {
+        // the cells found so far
+    }
+    return out.sort((a, b) => a.d - b.d).slice(0, 8).map(c => c.p);
+}
+
+// v0.1.4.14 (W122): places the crafting table of the bag on the first cell around the bot that takes it (placeBlock
+// breaks a flower or grass in the way); the table block, or null when no cell took it. Never throws.
+async function placeCraftingTable(bot) {
+    for (const p of tableCells(bot)) {
+        if (bot.interrupt_code)
+            return null;
+        try {
+            await placeBlock(bot, 'crafting_table', p.x, p.y, p.z);
+        } catch (err) {
+            // the next cell
+        }
+        const block = bot.blockAt(p);
+        if (block?.name === 'crafting_table')
+            return block;
+    }
+    return null;
 }
 
 export async function wait(bot, milliseconds) {
@@ -386,6 +459,7 @@ export async function attackEntity(bot, entity, kill=true) {
         await bot.attack(entity);
     }
     else {
+        const bagBefore = bagCounts(bot); // P-26: the text counts what the bag gained
         bot.pvp.attack(entity);
         while (world.getNearbyEntities(bot, 24).includes(entity)) {
             await new Promise(resolve => setTimeout(resolve, 1000));
@@ -394,9 +468,90 @@ export async function attackEntity(bot, entity, kill=true) {
                 return false;
             }
         }
+        const diedAt = Date.now();
         log(bot, `Successfully killed ${entity.name}.`);
-        await pickupNearbyItems(bot);
+        // v0.1.4.14 (P-26, the play of 2026-11-09): the drops from the stands of pickupStands for up to 3 s after the death
+        // (wool and mutton were lost in 5 of 9 sheep kills: the old walk stopped outside the pickup box, and a drop lands late)
+        await pickUpKillDrops(bot, entity.position ?? pos, diedAt, bagBefore);
         return true;
+    }
+}
+
+// P-26: the drops of a kill. For up to 3 s after the death (KILL_DROP_RULES.windowMs: a drop lands late) every dropped
+// item within 4 blocks of where the mob died is taken from a stand of pickupStands (pickUpAt), each once; the items the
+// drop watch leaves alone (the bot's own toss, a player's death drops) are left. Then `Picked up N items.` with what the
+// bag gained. Never throws.
+async function pickUpKillDrops(bot, where, diedAt, bagBefore) {
+    const tried = new Set();
+    try {
+        const end = diedAt + KILL_DROP_RULES.windowMs;
+        const center = where && Number.isFinite(where.x) ? new Vec3(where.x, where.y, where.z) : bot.entity.position.clone();
+        for (;;) {
+            if (bot.interrupt_code)
+                break;
+            const drop = nearestDropAround(bot, center, KILL_DROP_RULES.range, tried);
+            if (!drop) {
+                if (Date.now() >= end)
+                    break;
+                await new Promise(resolve => setTimeout(resolve, 200));
+                continue;
+            }
+            tried.add(drop.id);
+            const gone = () => (bot.entities?.[drop.id] ? 0 : 1);
+            await pickUpAt(bot, () => (gone() ? null : bot.entities[drop.id].position), gone, droppedItemOf(drop)?.name ?? 'item');
+        }
+    } catch (err) {
+        // what was picked up is counted below
+    }
+    log(bot, `Picked up ${bagGain(bagBefore, bagCounts(bot))} items.`);
+}
+
+// The nearest dropped item within `range` of `center` that is not in `tried` and not left alone by the drop watch, or null.
+function nearestDropAround(bot, center, range, tried) {
+    try {
+        let best = null;
+        for (const entity of Object.values(bot.entities ?? {})) {
+            if (entity?.name !== 'item' || !entity.position || tried.has(entity.id) || entity.position.distanceTo(center) > range)
+                continue;
+            let leave = false;
+            try {
+                leave = leftAlone(bot, entity) !== null;
+            } catch (err) {
+                leave = false;
+            }
+            if (leave)
+                continue;
+            if (!best || entity.position.distanceTo(center) < best.position.distanceTo(center))
+                best = entity;
+        }
+        return best;
+    } catch (err) {
+        return null;
+    }
+}
+
+// The counts of the bag from its stacks (bot.inventory.items() and the off-hand), for a gain; {} when it cannot be read.
+function bagCounts(bot) {
+    const out = {};
+    try {
+        for (const item of bot.inventory?.items?.() ?? [])
+            if (typeof item?.name === 'string' && Number.isFinite(item.count))
+                out[item.name] = (out[item.name] ?? 0) + item.count;
+        const off = world.getOffhandItem(bot);
+        if (typeof off?.name === 'string' && Number.isFinite(off.count))
+            out[off.name] = (out[off.name] ?? 0) + off.count;
+    } catch (err) {
+        // what was counted stands
+    }
+    return out;
+}
+
+// The items the bag gained between two bagCounts, all kinds together.
+function bagGain(before, after) {
+    try {
+        return Object.values(world.getInventoryGain(before, after)).reduce((n, count) => n + count, 0);
+    } catch (err) {
+        return 0;
     }
 }
 
@@ -556,6 +711,16 @@ async function collectBlocks(bot, blockType, num, exclude, blocktypes, breaks, t
     let refusedBuilt = 0;
     let refusal = null; // the first refusal of the last search: its text is the answer when every candidate is refused
     let refusedAll = false;
+    // v0.1.4.14 (the owner's play of 2026-11-07): a container is a candidate only when the bot placed it (the placed blocks
+    // of v0.1.4.8 D4, bot.areaGuard.placedByBot); one it did not place is never broken. A block the safety of the path
+    // search refuses is remembered, so the answer names it instead of "No chest nearby to collect."
+    let notMine = null; // the first container of the kind the bot did not place
+    let unsafe = null; // the first block of the kind the path search keeps safe: { name, pos, why }
+    let containerStop = false;
+    // v0.1.4.14 (P-20, the play of 2026-11-09): the blocks this call dug and counted, "x,y,z" -> { name, pos }; the count of
+    // the answer is of the blocks that are gone, never of the attempts ("I broke 2 black_bed" while the bed stood)
+    const attempted = new Map();
+    let stood = null; // the first dug block that did not break: the server kept it
     const guardAllows = (block) => {
         let allowed = true;
         try {
@@ -602,6 +767,8 @@ async function collectBlocks(bot, blockType, num, exclude, blocktypes, breaks, t
         refused = 0;
         refusedBuilt = 0;
         refusal = null;
+        notMine = null;
+        unsafe = null;
         names = new Map();
         hidden = 0;
         hiddenNear = null;
@@ -624,7 +791,20 @@ async function collectBlocks(bot, blockType, num, exclude, blocktypes, breaks, t
                 return false; // v0.1.4.9 (C1): inside the rock, no candidate
             }
 
-            return (movements.safeToBreak(block) || unsafeBlocks.includes(block.name)) && guardAllows(block);
+            if (isContainerName(block.name)) {
+                if (!block.position)
+                    return true; // the palette of a section
+                if (!placedByBot(bot, block.position)) {
+                    notMine = notMine ?? block;
+                    return false; // v0.1.4.14: never a container the bot did not place
+                }
+                return guardAllows(block); // the path search keeps chests: the bot opens and breaks its own by hand
+            }
+            if (movements.safeToBreak(block) || unsafeBlocks.includes(block.name))
+                return guardAllows(block);
+            if (block.position && unsafe === null)
+                unsafe = { name: block.name, pos: block.position, why: unsafeWhy(bot, movements, block) };
+            return false;
         }, range, 1);
 
         // Blocks that players build with are refused everywhere: a wider search does not help (v0.1.4.8)
@@ -636,14 +816,24 @@ async function collectBlocks(bot, blockType, num, exclude, blocktypes, breaks, t
         }
         if (blocks.length === 0) {
             if (refused > 0 && refusal) {
-                // v0.1.4.8 (B1): every candidate was refused, the text of the guard says why
-                log(bot, refusalText(refusal, `I may not break the ${blockType} nearby.`));
+                // v0.1.4.8 (B1): every candidate was refused, the text of the guard says why. v0.1.4.14 (P-20): a block somebody
+                // else built, on an order nobody typed (the supervisor's run, the model's), gets notPlacedText; a block the
+                // bot placed itself is no built block for the guard (placedByBot), so it is collected on any order
+                log(bot, refusal.reason === 'built_block' ? notPlacedText(blockType) : refusalText(refusal, `I may not break the ${blockType} nearby.`));
                 refusedAll = true;
             }
             else if (hidden > 0) {
                 // v0.1.4.9 (C1): every candidate is out of sight
                 log(bot, outOfSightText(blockType, { ore: oreKind(hiddenNear), near: hiddenNear !== null, mining: currentSetting('mining_pack') === true }));
                 outOfSight = true;
+            }
+            else if (collected === 0 && notMine) {
+                log(bot, notMineText(notMine.name)); // v0.1.4.14
+                containerStop = true;
+            }
+            else if (collected === 0 && unsafe) {
+                log(bot, unsafeBlockText(unsafe.name, unsafe.pos, unsafe.why)); // v0.1.4.14: which block and why
+                containerStop = true;
             }
             else if (collected === 0)
                 log(bot, `No ${blockType} nearby to collect.`);
@@ -652,6 +842,27 @@ async function collectBlocks(bot, blockType, num, exclude, blocktypes, breaks, t
             break;
         }
         const block = blocks[0];
+        if (isContainerName(block.name)) {
+            // v0.1.4.14: the bot's own container, by hand: walk to it, look into it, break it only when it is empty
+            const own = await collectOwnContainer(bot, block);
+            if (!own.ok) {
+                log(bot, own.text);
+                containerStop = true;
+                break;
+            }
+            collected++;
+            brokenNames[block.name] = (brokenNames[block.name] ?? 0) + 1;
+            const cell = `${block.position.x},${block.position.y},${block.position.z}`;
+            dug.add(cell);
+            attempted.set(cell, { key: cell, name: block.name, pos: block.position });
+            if (bot.interrupt_code)
+                break;
+            continue;
+        }
+        // P-20: a block the server put back after its dig is the nearest candidate again and is dug once more, within the
+        // number asked (X11), as before; attempted keeps every cell dug, and the count after the loop is of the cells whose
+        // block is gone
+        const key = `${block.position.x},${block.position.y},${block.position.z}`;
         target.pos = block.position; // X11: after this block broke, the walk to its drops breaks no block of these types
         target.broken = false;
         await bot.tool.equipForBlock(block);
@@ -688,7 +899,8 @@ async function collectBlocks(bot, blockType, num, exclude, blocktypes, breaks, t
             if (success) {
                 collected++;
                 brokenNames[block.name] = (brokenNames[block.name] ?? 0) + 1;
-                dug.add(`${block.position.x},${block.position.y},${block.position.z}`);
+                dug.add(key);
+                attempted.set(key, { key, name: block.name, pos: block.position });
             }
             await autoLight(bot);
         }
@@ -710,30 +922,132 @@ async function collectBlocks(bot, blockType, num, exclude, blocktypes, breaks, t
     }
     if (refusedAll && collected === 0)
         return false; // v0.1.4.8 (B1): the text of the guard is the whole answer
+    if (containerStop && collected === 0)
+        return false; // v0.1.4.14: the text of the container (or of the refused block) is the whole answer
     if (outOfSight && collected === 0 && breaks.count() === 0)
         return false; // v0.1.4.9 (C1): nothing broke, the text of the sight is the whole answer
-    const result = await collectResult(bot, blockType, mostBroken(brokenNames, breaks.names()), collected, invBefore);
+    // P-20: the own count is of the cells dug whose block is gone, never of the attempts: a block that came back after its
+    // dig (the server refused it; mineflayer resolves the dig all the same) is not broken, and a cell dug twice counts once.
+    // A short settle first, so that the server's correction of the last dig has arrived.
+    if (attempted.size > 0 && breaks.listening())
+        await new Promise(resolve => setTimeout(resolve, BREAK_SETTLE_MS));
+    if (attempted.size > 0) {
+        collected = 0;
+        for (const name of Object.keys(brokenNames))
+            delete brokenNames[name];
+        for (const a of attempted.values()) {
+            if (breaks.cameBack(a.key)) {
+                stood = stood ?? a;
+                continue;
+            }
+            collected++;
+            brokenNames[a.name] = (brokenNames[a.name] ?? 0) + 1;
+        }
+    }
+    const result = await collectResult(bot, blockType, mostBroken(brokenNames, breaks.names()), collected, invBefore, stood);
     log(bot, result.text);
     return result.got;
+}
+
+// v0.1.4.14: true when the bot placed the block at `pos` itself (the placed blocks of v0.1.4.8 D4, kept by the guard of
+// protected areas); false without the guard. Never throws.
+function placedByBot(bot, pos) {
+    try {
+        return bot.areaGuard?.placedByBot?.(pos) === true;
+    } catch (err) {
+        return false;
+    }
+}
+
+// v0.1.4.14: why the path search keeps a block: `never` (its list of blocks never broken), `liquid` (water or lava beside
+// or above would flow in), else `unsafe`.
+function unsafeWhy(bot, movements, block) {
+    try {
+        if (movements?.blocksCantBreak?.has?.(block.type))
+            return 'never';
+        for (const [dx, dy, dz] of [[0, 1, 0], [1, 0, 0], [-1, 0, 0], [0, 0, 1], [0, 0, -1]]) {
+            const near = bot.blockAt(block.position.offset(dx, dy, dz));
+            if (near && (near.name === 'water' || near.name === 'lava'))
+                return 'liquid';
+        }
+    } catch (err) {
+        // unknown
+    }
+    return 'unsafe';
+}
+
+// v0.1.4.14: collects a container the bot placed: it walks within 2 blocks, opens it and counts what it holds; an empty
+// one is broken and its item picked up, one that holds items is left with containerFullText. { ok, text }. Never throws.
+async function collectOwnContainer(bot, block) {
+    const p = block.position;
+    try {
+        if (!placedByBot(bot, p))
+            return { ok: false, text: notMineText(block.name) };
+        await goToPosition(bot, p.x, p.y, p.z, 2);
+        if (bot.interrupt_code)
+            return { ok: false, text: `I stopped before the ${block.name} at (${p.x}, ${p.y}, ${p.z}).` };
+        const here = bot.blockAt(p);
+        if (!here || here.name !== block.name)
+            return { ok: false, text: `The ${block.name} at (${p.x}, ${p.y}, ${p.z}) is gone.` };
+        let count = 0;
+        let window = null;
+        try {
+            window = await bot.openContainer(here);
+            for (const item of window.containerItems?.() ?? [])
+                count += Number.isFinite(item?.count) ? item.count : 1;
+        } catch (err) {
+            return { ok: false, text: `I could not look into the ${block.name} at (${p.x}, ${p.y}, ${p.z}), so I do not break it: ${err?.message ?? err}.` };
+        } finally {
+            try {
+                window?.close?.();
+            } catch (err) {
+                // closed already
+            }
+        }
+        if (count > 0)
+            return { ok: false, text: containerFullText(block.name, p, count) };
+        try {
+            await bot.tool?.equipForBlock?.(here);
+        } catch (err) {
+            // the hand breaks a chest too
+        }
+        await bot.dig(here);
+        // v0.1.4.14 (W122, "I broke 1 chest and got nothing"): the item of the chest from a stand of pickupStands (a leaf
+        // at head height over the drop, or a drop that rolled), then the old pickup for whatever is left
+        const item = here.name; // the item of a chest, a barrel or a copper chest has the name of its block
+        const start = Date.now();
+        while (!groundItemAt(bot, item) && Date.now() - start < 1000)
+            await new Promise(resolve => setTimeout(resolve, 100));
+        if ((await pickUpDrop(bot, item)) === 0)
+            await pickupNearbyItems(bot);
+        return { ok: true, text: '' };
+    } catch (err) {
+        return { ok: false, text: `Failed to collect ${block.name}: ${err?.message ?? err}.` };
+    }
 }
 
 // v0.1.4.8, fix round (X11): the blocks of the given types that break within 8 blocks of the bot while
 // collectBlock runs, seen in the block updates of mineflayer: the digs of collectBlock and those of the
 // path search on its way. A block that comes back (the server refused the dig) is taken off again.
 const BREAK_WATCH_RANGE = 8;
+const BREAK_SETTLE_MS = 300; // v0.1.4.14 (P-20): the server's answer to the last dig arrives within this
 
 function watchBreaks(bot, blocktypes, target = {}) {
     const broken = new Map(); // "x,y,z" -> name
+    const returned = new Set(); // P-20: the cells whose block came back after a break (the server refused the dig)
     const onUpdate = (oldBlock, newBlock) => {
         try {
             const p = newBlock?.position ?? oldBlock?.position;
             if (!p)
                 return;
             const key = `${p.x},${p.y},${p.z}`;
-            if (newBlock && blocktypes.includes(newBlock.name))
-                broken.delete(key);
+            if (newBlock && blocktypes.includes(newBlock.name)) {
+                if (broken.delete(key))
+                    returned.add(key);
+            }
             else if (oldBlock && blocktypes.includes(oldBlock.name) && bot.entity.position.distanceTo(p) <= BREAK_WATCH_RANGE) {
                 broken.set(key, oldBlock.name);
+                returned.delete(key);
                 const t = target.pos;
                 if (t && t.x === p.x && t.y === p.y && t.z === p.z)
                     target.broken = true;
@@ -754,6 +1068,8 @@ function watchBreaks(bot, blocktypes, target = {}) {
     return {
         count: () => broken.size,
         has: (key) => broken.has(key), // v0.1.4.9 (C1): a cell dug in this call is open for the sight of ore
+        cameBack: (key) => returned.has(key), // P-20: the block of the cell was dug and is back
+        listening: () => listening,
         names: () => {
             const out = {};
             for (const name of broken.values())
@@ -842,8 +1158,9 @@ function itemList(items) {
     return items.map(item => `${item.count} ${item.name}`).join(', ');
 }
 
-// The text of collectBlock. broken: {name: count} of the broken blocks; got: sumItemCounts of the gain.
-function collectedText(blockType, broken, got, hasShears) {
+// The text of collectBlock. broken: {name: count} of the broken blocks; got: sumItemCounts of the gain; stood (v0.1.4.14,
+// P-20): { name, pos } of a dug block that did not break, for `I broke 0 black_bed: the black_bed at (x, y, z) did not break.`
+function collectedText(blockType, broken, got, hasShears, stood = null) {
     const brokenList = world.sumItemCounts(broken);
     const brokenCount = brokenList.reduce((n, b) => n + b.count, 0);
     if (got.length > 0) {
@@ -852,8 +1169,11 @@ function collectedText(blockType, broken, got, hasShears) {
             return `Collected ${itemList(got)}.`;
         return `I broke ${itemList(brokenList)} and got ${itemList(got)}.`;
     }
-    if (brokenCount === 0)
+    if (brokenCount === 0) {
+        if (stood)
+            return brokeNoneText(blockType, stoodReason(stood.name, stood.pos));
         return `Collected 0 ${blockType}.`;
+    }
     let text = `I broke ${itemList(brokenList)} and got nothing.`;
     const names = brokenList.map(b => b.name);
     if (!hasShears && names.every(name => NEEDS_SHEARS.has(name)))
@@ -861,9 +1181,9 @@ function collectedText(blockType, broken, got, hasShears) {
     return text;
 }
 
-async function collectResult(bot, blockType, broken, collected, before) {
+async function collectResult(bot, blockType, broken, collected, before, stood = null) {
     if (!before)
-        return { text: `Collected ${collected} ${blockType}.`, got: collected > 0 };
+        return { text: stood && collected <= 0 ? brokeNoneText(blockType, stoodReason(stood.name, stood.pos)) : `Collected ${collected} ${blockType}.`, got: collected > 0 };
     let after = inventoryCounts(bot) ?? before;
     let gained = world.getInventoryGain(before, after);
     const total = () => Object.values(gained).reduce((n, count) => n + count, 0);
@@ -873,7 +1193,7 @@ async function collectResult(bot, blockType, broken, collected, before) {
         gained = world.getInventoryGain(before, after);
     }
     const got = world.sumItemCounts(gained);
-    return { text: collectedText(blockType, broken, got, (after.shears ?? 0) > 0), got: got.length > 0 };
+    return { text: collectedText(blockType, broken, got, (after.shears ?? 0) > 0, stood), got: got.length > 0 };
 }
 
 // v0.1.4.8 (B1): the refusal of the guard for a position, or null. Only the guard of v0.1.4.8 has
@@ -1541,12 +1861,12 @@ function notHungryText(bot) {
 
 export async function giveToPlayer(bot, itemType, username, num=1) {
     /**
-     * Give one of the specified item to the specified player
+     * Give the specified item to the specified player: as many as asked and as the bot has, a stack at a time.
      * @param {MinecraftBot} bot, reference to the minecraft bot.
      * @param {string} itemType, the name of the item to give.
      * @param {string} username, the username of the player to give the item to.
-     * @param {number} num, the number of items to give. Defaults to 1.
-     * @returns {Promise<boolean>} true if the item was given, false otherwise.
+     * @param {number} num, the number of items to give. Defaults to 1; -1 gives all the bot has.
+     * @returns {Promise<boolean>} true if the player took some of the items, false otherwise.
      * @example
      * await skills.giveToPlayer(bot, "oak_log", "player1");
      **/
@@ -1554,34 +1874,27 @@ export async function giveToPlayer(bot, itemType, username, num=1) {
         log(bot, `You cannot give items to yourself.`);
         return false;
     }
-    // v0.1.4.13 (Q5, a correction, no switch): a kit (more than 8 of one kind, or more than 3 kinds within a minute) is
-    // not thrown: the player's things go into a chest
-    const now = Date.now();
-    const given = (givenKinds.get(bot) ?? []).filter(g => now - g.at < 60000);
-    if (isKit(num, kindsGiven(given, itemType, now))) {
-        log(bot, KIT_TEXT);
-        return false;
-    }
+    // v0.1.4.14 (the owner's play of 2026-11-07, no switch): no kit refusal any more. The bot gives what is asked, as many
+    // as it has, a stack at a time (each stack thrown from 2 blocks, the step back and the 30 s hold of v0.1.4.13), and
+    // says the count; more than 3 kinds within a minute with a chest within 16 blocks add KIT_HINT after the give
     let player = bot.players[username]?.entity
     if (!player) {
-        log(bot, `Could not find ${username}.`);
+        log(bot, giveFailedText(itemType, `I cannot find ${username}`));
         return false;
     }
+    const have = countCarried(bot, itemType);
+    if (have <= 0) {
+        log(bot, giveFailedText(itemType, `I have no ${itemType}`));
+        return false;
+    }
+    const now = Date.now();
+    const given = (givenKinds.get(bot) ?? []).filter(g => now - g.at < 60000);
+    const kinds = kindsGiven(given, itemType, now);
     givenKinds.set(bot, [...given, { item: itemType, at: now }]);
-    // Q5: the toss from 2 blocks (v0.1.4.12: 3, then at least 5 when the bot stood too close)
-    await goToPlayer(bot, username, GIVE_RULES.tossFrom);
-    // if we are 2 below the player
-    if (bot.entity.position.y < player.position.y - 1) {
-        await goToPlayer(bot, username, 1);
-    }
-    // too close: one step to 2 blocks
-    if (bot.entity.position.distanceTo(player.position) < GIVE_RULES.tooClose && !bot.interrupt_code) {
-        await moveAwayFromEntity(bot, player, GIVE_RULES.tossFrom);
-    }
+    const want = num === -1 || !Number.isFinite(num) ? have : Math.min(Math.max(1, Math.floor(num)), have);
+    const stack = bot.registry?.itemsByName?.[itemType]?.stackSize ?? 64;
 
-    await bot.lookAt(player.position);
     // v0.1.4.11, W5: the items the player picked up are counted; the text says how many he took and where the rest lie
-    const before = world.getInventoryCounts(bot)[itemType] ?? 0;
     let taken = 0;
     let dropped = 0;
     const onCollect = (collector, collected) => {
@@ -1593,42 +1906,242 @@ export async function giveToPlayer(bot, itemType, username, num=1) {
         taken += Number.isFinite(item?.count) && item.count > 0 ? item.count : Math.max(1, dropped - taken);
     };
     bot.on('playerCollect', onCollect);
-    // Q5: the items of this toss are left alone by the item reflex for 30 s
-    const tossing = startTossing(bot);
+    const water = { wet: false }; // P-25: set by tossStackTo when the line to the player is wet on every side
     try {
-        // F3: the toss says nothing itself; the texts of W5 below say what the player took
-        const thrown = await tossItems(bot, itemType, num);
-        tossing();
-        if (thrown > 0) {
-            dropped = Math.max(0, before - (world.getInventoryCounts(bot)[itemType] ?? 0)) || num;
-            let start = Date.now();
+        // one toss: the stack, the step back, the wait for the pickup; the count thrown
+        const tossOnce = async (count, from) => {
+            const thrown = await tossStackTo(bot, player, username, itemType, count, from, water);
+            if (thrown <= 0)
+                return 0;
+            dropped += thrown;
+            const start = Date.now();
             // Q5: 3 blocks back, so that the server does not give the items back to the bot when they may be picked up
             await stepBackFrom(bot, player, GIVE_RULES.stepBack);
-            while (taken < dropped && !bot.interrupt_code) {
+            while (taken < dropped && !bot.interrupt_code && Date.now() - start <= GIVE_RULES.waitMs) {
                 await new Promise(resolve => setTimeout(resolve, 500));
-                if (Date.now() - start > 3000) {
-                    break;
+            }
+            return thrown;
+        };
+        while (dropped < want && !bot.interrupt_code) {
+            player = bot.players[username]?.entity ?? player;
+            const takenBefore = taken;
+            const thrown = await tossOnce(Math.min(stack, want - dropped), GIVE_RULES.tossFrom);
+            if (thrown <= 0)
+                break;
+            // v0.1.4.14 (W122, the stack beyond the player on a slope): the player picked up none of it: the bot picks
+            // its stack up again and tosses it once more from 1 block; a second miss gives the honest text below
+            if (taken === takenBefore && !bot.interrupt_code) {
+                const back = await pickUpOwnDrop(bot, itemType);
+                if (back > 0) {
+                    dropped = Math.max(0, dropped - back);
+                    player = bot.players[username]?.entity ?? player;
+                    await tossOnce(back, GIVE_RULES.retryFrom);
                 }
             }
-            if (taken >= dropped) {
-                log(bot, GIVE_TEXTS.given(dropped, itemType, username));
-                return true;
-            }
-            log(bot, GIVE_TEXTS.partly(username, taken, dropped, itemType, groundItemAt(bot, itemType) ?? bot.entity.position));
-            return taken > 0;
         }
     } finally {
-        tossing();
         bot.removeListener('playerCollect', onCollect);
     }
-    log(bot, `Failed to give ${itemType} to ${username}, it was never received.`);
-    return false;
+    if (dropped <= 0) {
+        if (water.wet && !bot.interrupt_code)
+            log(bot, wetGiveText(want, itemType)); // P-25, word for word
+        else
+            log(bot, giveFailedText(itemType, bot.interrupt_code ? 'I was stopped' : 'nothing could be thrown'));
+        return false;
+    }
+    const hint = wantsKitHint(kinds, containerNear(bot, KIT_HINT_RANGE)) ? ` ${KIT_HINT}` : '';
+    if (taken >= dropped) {
+        log(bot, GIVE_TEXTS.given(dropped, itemType, username) + hint);
+        return true;
+    }
+    const at = groundItemAt(bot, itemType) ?? bot.entity.position;
+    if (taken <= 0) {
+        // v0.1.4.14: a failed give says so plainly, so that the model never reads it as a success
+        log(bot, givenNoneText(username, dropped, itemType, at) + hint);
+        return false;
+    }
+    log(bot, GIVE_TEXTS.partly(username, taken, dropped, itemType, at) + hint);
+    return true;
 }
 
-// v0.1.4.13 (Q5): the distances of the give: the toss from 2 blocks, a bot nearer than 1.5 steps back to 2 first, after
-// the toss 3 blocks back (the server gives a thrown item to whoever stands on it once 2 s have passed); the step back
-// takes at most 2 s. The kinds given in the last minute, per bot, for the kit rule.
-const GIVE_RULES = Object.freeze({ tossFrom: 2, tooClose: 1.5, stepBack: 3, stepBackMs: 2000 });
+// v0.1.4.14: what the bot carries of an item: the stacks of the inventory and of the off-hand.
+function countCarried(bot, itemType) {
+    let n = 0;
+    let slots = 0;
+    try {
+        slots = world.getInventoryCounts(bot)[itemType] ?? 0; // the slots of mineflayer, the off-hand included
+    } catch (err) {
+        slots = 0;
+    }
+    try {
+        for (const item of bot.inventory.items())
+            if (item?.name === itemType && Number.isFinite(item.count))
+                n += item.count;
+        const off = world.getOffhandItem(bot);
+        if (off?.name === itemType && Number.isFinite(off.count))
+            n += off.count;
+    } catch (err) {
+        // what was counted stands
+    }
+    return Math.max(n, slots);
+}
+
+// v0.1.4.14: one stack of a give (Q5 of v0.1.4.13 for each stack): from `from` blocks (1.5, as close as the collision
+// allows; 1 for the second toss), on the player's level, one step back when nearer than 1 block, the look at the player's
+// feet (a short arc: on a slope a stack thrown at the eyes from 2 blocks landed beyond his reach), the toss; the items of
+// this toss are left alone by the item reflex for 30 s. The count thrown.
+async function tossStackTo(bot, player, username, itemType, count, from = GIVE_RULES.tossFrom, state = null) {
+    await goToPlayer(bot, username, from);
+    if (bot.interrupt_code)
+        return 0;
+    // if we are 2 below the player
+    if (bot.entity.position.y < player.position.y - 1) {
+        await goToPlayer(bot, username, 1);
+    }
+    // too close: one step back
+    if (bot.entity.position.distanceTo(player.position) < GIVE_RULES.tooClose && !bot.interrupt_code) {
+        await moveAwayFromEntity(bot, player, from);
+    }
+    // v0.1.4.14 (P-25, the play of 2026-11-09): water or lava on the line to the player at ground level, or within 2 blocks
+    // behind him (the stack flew into the water): the bot walks to a side of him where the line is dry (up to 3 sides,
+    // drySides) and tosses from 1 block there; none: state.wet, and the caller says wetGiveText
+    const read = (x, y, z) => bot.blockAt(new Vec3(x, y, z))?.name ?? null;
+    if (wetLine(read, bot.entity.position, player.position)) {
+        let dry = false;
+        for (const side of drySides(read, player.position, bot.entity.position)) {
+            if (bot.interrupt_code)
+                return 0;
+            try {
+                await walkWith(bot, new pf.goals.GoalBlock(side.x, side.y, side.z), noDigMovements(bot), GIVE_RULES.pickupWalkMs);
+            } catch (err) {
+                // measured below
+            }
+            if (!wetLine(read, bot.entity.position, player.position)) {
+                dry = true;
+                break;
+            }
+        }
+        if (!dry) {
+            if (state)
+                state.wet = true;
+            return 0;
+        }
+    }
+    const feet = player.position;
+    await bot.lookAt(typeof feet?.offset === 'function' ? feet.offset(0, 0.1, 0) : feet, true); // the feet, not the eyes
+    // W122: the look reaches the server before the toss (a stack thrown in the same tick flew the way the bot had faced
+    // on its walk, 6 blocks behind it)
+    if (typeof bot.waitForTicks === 'function')
+        await bot.waitForTicks(2);
+    const before = countCarried(bot, itemType);
+    const tossing = startTossing(bot);
+    try {
+        // F3: the toss says nothing itself; the texts of W5 say what the player took
+        const thrown = await tossItems(bot, itemType, count);
+        if (thrown <= 0)
+            return 0;
+        return Math.max(0, before - countCarried(bot, itemType)) || thrown;
+    } finally {
+        tossing();
+    }
+}
+
+// v0.1.4.14 (W122): the bot's own stack that the player did not pick up: the bot walks onto the nearest dropped item of
+// the kind within 8 blocks (no digging, at most 6 s) and waits up to 2.5 s until the server hands it over (a thrown item
+// waits 2 s before anyone may take it). The count it got back. Never throws.
+async function pickUpOwnDrop(bot, itemType) {
+    return pickUpDrop(bot, itemType);
+}
+
+// v0.1.4.14 (W122): a dropped item of the kind within 8 blocks, picked up from a stand of pickupStands (home/
+// pickup_logic.js: a cell from which the server's pickup range touches the item): the bot walks into the stand (no
+// digging, at most 6 s), breaks the leaf at head height of a stand that has one when no protected area is within 8
+// blocks and the guard allows it, and waits up to 2.5 s for the server to hand the item over; at most 3 stands. Without
+// a stand, the walk onto the item as before. The count it got. Never throws.
+async function pickUpDrop(bot, itemType) {
+    const before = countCarried(bot, itemType);
+    return await pickUpAt(bot, () => groundItemAt(bot, itemType), () => Math.max(0, countCarried(bot, itemType) - before), itemType);
+}
+
+// v0.1.4.14 (W122, P-26): the walk into a stand of pickupStands for a dropped item. `locate()` gives the item's position
+// now (null once it is gone), `gained()` what the bot got of it (more than 0 ends the wait), `label` names it in the
+// console lines. Never throws.
+async function pickUpAt(bot, locate, gained, label = 'item') {
+    try {
+        const at = locate();
+        if (!at || at.distanceTo(bot.entity.position) > 8 || bot.interrupt_code)
+            return 0;
+        const waitGain = async () => {
+            const start = Date.now();
+            while (gained() === 0 && !bot.interrupt_code && Date.now() - start <= GIVE_RULES.pickupWaitMs)
+                await new Promise(resolve => setTimeout(resolve, 250));
+            return gained();
+        };
+        const nameAt = (x, y, z) => bot.blockAt(new Vec3(x, y, z))?.name ?? null;
+        const stands = pickupStands(nameAt, at, bot.entity.position)
+            .filter(s => !s.dig || (!protectedAreaNear(bot, s.dig, 8) && !guardRefusal(bot, new Vec3(s.dig.x, s.dig.y, s.dig.z), 'break')));
+        const cell = (p) => `(${Math.floor(p.x)}, ${Math.floor(p.y)}, ${Math.floor(p.z)})`;
+        console.log(`Skills: picking up ${label} at ${cell(at)} from ${stands.length} stands (${stands.slice(0, 3).map(cell).join(', ')}); the bot at ${cell(bot.entity.position)}`);
+        for (const stand of stands.slice(0, 3)) {
+            if (bot.interrupt_code)
+                break;
+            await walkWith(bot, new pf.goals.GoalBlock(stand.x, stand.y, stand.z), noDigMovements(bot), GIVE_RULES.pickupWalkMs);
+            const now = locate();
+            console.log(`Skills: at ${cell(bot.entity.position)} for the stand ${cell(stand)}, the item ${now ? `at ${cell(now)}` : 'gone'}`);
+            if (stand.dig) {
+                const leaf = bot.blockAt(new Vec3(stand.dig.x, stand.dig.y, stand.dig.z));
+                if (leaf && /_leaves$/.test(leaf.name))
+                    await bot.dig(leaf);
+            }
+            if (await waitGain() > 0)
+                return gained();
+        }
+        // no stand, or none of them got it: the walk onto the item, as before
+        const left = locate();
+        if (left && !bot.interrupt_code) {
+            await walkWith(bot, new pf.goals.GoalNear(Math.floor(left.x), Math.floor(left.y), Math.floor(left.z), 1), noDigMovements(bot), GIVE_RULES.pickupWalkMs);
+            return await waitGain();
+        }
+        return gained();
+    } catch (err) {
+        return 0;
+    }
+}
+
+// v0.1.4.14: true when a saved area of the guard lies within `range` blocks of `pos` (sampled every 4 blocks of the
+// cube, and the cell itself). Never throws.
+function protectedAreaNear(bot, pos, range) {
+    try {
+        const areaAt = bot.areaGuard?.areaAt;
+        if (typeof areaAt !== 'function')
+            return false;
+        for (let dx = -range; dx <= range; dx += 4)
+            for (let dy = -range; dy <= range; dy += 4)
+                for (let dz = -range; dz <= range; dz += 4)
+                    if (areaAt({ x: pos.x + dx, y: pos.y + dy, z: pos.z + dz }))
+                        return true;
+        return false;
+    } catch (err) {
+        return true; // unknown: no leaf is broken
+    }
+}
+
+// v0.1.4.14: true when a chest (or a barrel) stands within `range` blocks of the bot. Never throws.
+function containerNear(bot, range) {
+    try {
+        return world.getNearestBlocksWhere(bot, block => isContainerName(block?.name), range, 1).length > 0;
+    } catch (err) {
+        return false;
+    }
+}
+
+// v0.1.4.13 (Q5): the distances of the give: after the toss 3 blocks back (the server gives a thrown item to whoever
+// stands on it once 2 s have passed); the step back takes at most 2 s; the wait for the pickup 3 s. v0.1.4.14 (W122):
+// the toss from 1.5 blocks (as close as the collision allows), a bot nearer than 1 block steps back first; a stack
+// nobody took is picked up again (a walk of at most 6 s, a wait of 2.5 s) and tossed once more from 1 block. The kinds
+// given in the last minute, per bot, for the kit hint.
+const GIVE_RULES = Object.freeze({ tossFrom: 1.5, tooClose: 1, retryFrom: 1, stepBack: 3, stepBackMs: 2000, waitMs: 3000,
+    pickupWalkMs: 6000, pickupWaitMs: 2500 });
 const givenKinds = new WeakMap();
 
 // Q5: walks `blocks` further away from the player (the cell that far behind the bot on the line from the player), at
@@ -1693,7 +2206,7 @@ export async function goToGoal(bot, goal) {
     if (bot.interrupt_code)
         return false; // v0.1.4.8 (B3): a stopped action starts no walk
 
-    const nonDestructiveMovements = new pf.Movements(bot);
+    const nonDestructiveMovements = runRule(bot, new pf.Movements(bot));
     const dontBreakBlocks = ['glass', 'glass_pane'];
     for (let block of dontBreakBlocks) {
         nonDestructiveMovements.blocksCantBreak.add(mc.getBlockId(block));
@@ -1701,7 +2214,7 @@ export async function goToGoal(bot, goal) {
     nonDestructiveMovements.placeCost = 2;
     nonDestructiveMovements.digCost = 10;
 
-    const destructiveMovements = new pf.Movements(bot);
+    const destructiveMovements = runRule(bot, new pf.Movements(bot));
 
     let final_movements = destructiveMovements;
 
@@ -1714,13 +2227,104 @@ export async function goToGoal(bot, goal) {
         log(bot, `Found destructive path.`);
     }
     else {
+        // v0.1.4.14 (P-19, the play of 2026-11-09, SPEC 8.3.1): the fallback that digs its way runs only for a way of at most
+        // 32 blocks (on legs of 120 blocks it dug into a cave and under water); a longer way is walked as near as the path
+        // finder gets without digging, then noWayText. The fallback never digs below the start level minus 1 and never a
+        // block touching water or lava (restrictFallbackDigging).
+        const way = fallbackAllowed(bot.entity.position, goal);
+        if (!way.allowed)
+            return await walkNearWithoutDigging(bot, goal, way.point);
         log(bot, `Path not found, but attempting to navigate anyway using destructive movements.`);
+        restrictFallbackDigging(bot, destructiveMovements, bot.entity.position.y);
     }
 
     if (bot.interrupt_code)
         return false;
 
     return (await walkWith(bot, goal, final_movements)) === 'arrived';
+}
+
+// v0.1.4.14 (P-29): the sprint rule of every walk of the skills: no sprint below 7 food points (the game refuses it and the
+// physics would run ahead of the server), and none while a long walk holds the run (holdRun). Returns the movements.
+function runRule(bot, movements) {
+    try {
+        movements.allowSprinting = maySprint(bot.food) && !runHeld.has(bot);
+    } catch (err) {
+        // the movements keep their default
+    }
+    return movements;
+}
+const runHeld = new WeakSet(); // the bots whose current walk is a long way with little food
+
+function holdRun(bot) {
+    runHeld.add(bot);
+}
+
+function releaseRun(bot) {
+    runHeld.delete(bot);
+}
+
+// P-19: the dig rule of the fallback as a break exclusion of the path search (Movements.exclusionAreasBreak, which
+// safeToBreak reads): never (cost 100) a block below the start level minus 1 or one touching water or lava. The path
+// finder's dontCreateFlow keeps the top and the four sides dry already; the block below is ours. Never throws.
+function restrictFallbackDigging(bot, movements, startY) {
+    try {
+        if (!Array.isArray(movements.exclusionAreasBreak))
+            movements.exclusionAreasBreak = [];
+        const read = (x, y, z) => bot.blockAt(new Vec3(x, y, z))?.name ?? null;
+        movements.exclusionAreasBreak.push(block => (block?.position && !mayDigOnFallback(read, block.position, startY) ? 100 : 0));
+    } catch (err) {
+        // the path search keeps its own rules
+    }
+}
+
+// P-19: the long way (more than 32 blocks) with no path found in a second: the bot walks as near as the path finder gets
+// without digging, round by round (a search of up to 10 s, the partial path to its best node, walked while each round
+// brings it 1 block or more nearer; a search that finds a way after all walks it), then says noWayText. The text is
+// noted (noWaySaid) so that goToPosition does not say where it stopped a second time. true only when it arrived.
+const NO_WAY_ROUNDS = 10;
+const noWaySaid = new WeakMap(); // bot -> when noWayText was said last
+
+async function walkNearWithoutDigging(bot, goal, point) {
+    const aim = new Vec3(point.x + 0.5, point.y, point.z + 0.5);
+    const far = () => bot.entity.position.distanceTo(aim);
+    const budget = { leftMs: PLAYER_SEARCH.totalMs }; // at most 20 s of search in all, as the walk to the player (F15)
+    for (let round = 0; round < NO_WAY_ROUNDS && !bot.interrupt_code; round++) {
+        const r = await searchWithoutDigging(bot, goal, budget);
+        if (!r || r.status === 'interrupted' || r.status === 'budget')
+            break;
+        if (r.status === 'success') {
+            try {
+                if ((await walkWith(bot, goal, noDigMovements(bot))) === 'arrived')
+                    return true;
+            } catch (err) {
+                // measured below
+            }
+            break;
+        }
+        const end = r.path[r.path.length - 1];
+        const before = far();
+        if (!end || aim.distanceTo(new Vec3(end.x + 0.5, end.y, end.z + 0.5)) > before - 1)
+            break; // the best node brings the bot no nearer
+        try {
+            await walkWith(bot, new pf.goals.GoalNear(end.x, end.y, end.z, 1), noDigMovements(bot));
+        } catch (err) {
+            // a walk that ends short is measured below
+        }
+        if (far() > before - 1 || r.status === 'noPath')
+            break; // no nearer, or the search had looked at every cell it can reach
+    }
+    if (bot.interrupt_code)
+        return false;
+    log(bot, noWayText(point, bot.entity.position, far()));
+    noWaySaid.set(bot, Date.now());
+    return false;
+}
+
+// True when noWayText was said for this bot since `time` (goToPosition then says no second stop line).
+function noWaySaidSince(bot, time) {
+    const at = noWaySaid.get(bot);
+    return Number.isFinite(at) && at >= time;
 }
 
 // The walk of goToGoal with the chosen movements: with the old door timer, or through doors while the
@@ -2025,6 +2629,14 @@ export async function goToPosition(bot, x, y, z, min_distance=2) {
     }
 
     const target = new Vec3(x, y, z);
+    // v0.1.4.14 (P-29, the play of 2026-11-09): a walk of more than 200 blocks with 10 food points or fewer is announced
+    // first and walked without sprinting (the bot sprinted its food away on legs of 450 blocks and starved); below 7 food
+    // points no walk of the skills sprints (runRule)
+    const began = Date.now();
+    const way = bot.entity.position.distanceTo(target);
+    const noRun = isLongWay(way, bot.food);
+    if (noRun)
+        log(bot, longWayText(way, bot.food));
     // v0.1.4.13 (Q7, a correction, no switch): a target more than 3 blocks below is never reached by a bare shaft dug
     // straight down (the shaft of 2026-10-04 killed the owner); stairs, a ladder or a slope are walked. The correction of
     // 2026-10-04: with the depth + 2 ladders in the bag the shaft is dug with a ladder on every block; without them the
@@ -2041,11 +2653,15 @@ export async function goToPosition(bot, x, y, z, min_distance=2) {
         }
     }
     let nearest = bot.entity.position.distanceTo(target);
+    // v0.1.4.14 (P-19, spec 8.3.2, E1): snow (the layer) and snow_block break by hand in the game (minecraft-data lists
+    // the shovels as their harvestTools because only the drop needs one: 0.5 s and 1 s by hand), so the check lets the
+    // path finder through them without a shovel; "Cannot break snow with current tools" stopped the owner's bot
+    const BREAKS_BY_HAND = new Set(['snow', 'snow_block']);
     const checkDigProgress = () => {
         if (bot.targetDigBlock) {
             const targetBlock = bot.targetDigBlock;
             const itemId = bot.heldItem ? bot.heldItem.type : null;
-            if (!targetBlock.canHarvest(itemId)) {
+            if (!targetBlock.canHarvest(itemId) && !BREAKS_BY_HAND.has(targetBlock.name)) {
                 log(bot, `Pathfinding stopped: Cannot break ${targetBlock.name} with current tools.`);
                 bot.pathfinder.stop();
                 bot.stopDigging();
@@ -2069,6 +2685,8 @@ export async function goToPosition(bot, x, y, z, min_distance=2) {
     };
     
     const progressInterval = setInterval(checkDigProgress, 1000);
+    if (noRun)
+        holdRun(bot); // P-29: the walks of this order do not sprint
 
     try {
         // v0.1.4.9 (L4 of the play test, "no idea about up and down"; a correction of the path search, no switch):
@@ -2100,7 +2718,9 @@ export async function goToPosition(bot, x, y, z, min_distance=2) {
             return true;
         }
         else {
-            log(bot, `I stopped at ${positionText(bot)}, ${Math.round(distance)} blocks from the goal.`);
+            // v0.1.4.14 (P-19): noWayText of the long way says already where the bot stopped and how far
+            if (!noWaySaidSince(bot, began))
+                log(bot, `I stopped at ${positionText(bot)}, ${Math.round(distance)} blocks from the goal.`);
             return false;
         }
     } catch (err) {
@@ -2108,6 +2728,9 @@ export async function goToPosition(bot, x, y, z, min_distance=2) {
         clearInterval(progressInterval);
         log(bot, `I stopped at ${positionText(bot)}, ${Math.round(bot.entity.position.distanceTo(target))} blocks from the goal.`);
         return false;
+    } finally {
+        if (noRun)
+            releaseRun(bot);
     }
 }
 
@@ -2418,7 +3041,7 @@ function caveText(at) {
 function noDigMovements(bot) {
     const movements = new pf.Movements(bot);
     movements.canDig = false;
-    return movements;
+    return runRule(bot, movements); // v0.1.4.14 (P-29): no sprint below 7 food points
 }
 
 // The walk of goToPlayer: without digging, as goToGoal walks once it has chosen its movements.
@@ -2505,6 +3128,7 @@ async function openTowardPlayer(bot, player, opened) {
                 break;
             opened.add(`${door.x},${door.y},${door.z}`);
             reserveDoor(bot, door, 20000);
+            noteTowardReserved(bot, door, sideOf(door, me));
             if (await openDoor(bot, door))
                 count++;
         }
@@ -2793,6 +3417,7 @@ export async function goToPlayer(bot, username, distance=3) {
         }
     } finally {
         cave.stop();
+        releasePassedToward(bot, true); // v0.1.4.14 (W116): the walk ends, so do the reservations of its approach
     }
     if (cave.at && !bot.interrupt_code) {
         log(bot, caveText(cave.at));
@@ -2874,6 +3499,7 @@ export async function followPlayer(bot, username, distance=4) {
 
     while (!bot.interrupt_code) {
         await new Promise(resolve => setTimeout(resolve, 500));
+        releasePassedToward(bot); // v0.1.4.14 (W116): the gates and doors the approach opened, once passed
         // in cheat mode, if the distance is too far, teleport to the player
         const distance_from_player = bot.entity.position.distanceTo(player.position);
 
@@ -2951,6 +3577,7 @@ export async function followPlayer(bot, username, distance=4) {
         if (cave.check()) {
             log(bot, caveText(cave.at));
             clearInterval(doorCheckInterval);
+            releasePassedToward(bot, true);
             return false;
         }
         // v0.1.4.11 (N2): a bot that stands still away from the player asks the path search, at most every 5 s,
@@ -2980,6 +3607,7 @@ export async function followPlayer(bot, username, distance=4) {
                 if (cave.at || again === 'none') {
                     log(bot, cave.at ? caveText(cave.at) : NO_WAY_TO_PLAYER);
                     clearInterval(doorCheckInterval);
+                    releasePassedToward(bot, true);
                     return false;
                 }
                 bot.pathfinder.setMovements(move);
@@ -3041,6 +3669,7 @@ export async function followPlayer(bot, username, distance=4) {
         }
     }
     clearInterval(doorCheckInterval);
+    releasePassedToward(bot, true);
     return true;
 }
 
@@ -4089,4 +4718,81 @@ function openableCell(block) {
     const props = typeof block.getProperties === 'function' ? block.getProperties() : block._properties;
     const y = block.name.endsWith('_door') && props?.half === 'upper' ? p.y - 1 : p.y;
     return `(${p.x}, ${y}, ${p.z})`;
+}
+
+// ------------------------------------------------------------------ v0.1.4.14 (P-28, SPEC 8.4.5): boats
+
+export async function boardBoat(bot) {
+    /**
+     * Board the nearest boat within 6 blocks.
+     * @param {MinecraftBot} bot, reference to the minecraft bot.
+     * @returns {Promise<boolean>} true when the bot sits in the boat.
+     * @example
+     * await skills.boardBoat(bot);
+     **/
+    if (bot.vehicle) {
+        log(bot, BOAT_TEXTS.boarded);
+        return true;
+    }
+    const boat = nearestBoat(Object.values(bot.entities ?? {}), bot.entity.position, BOAT_RANGE);
+    if (!boat) {
+        log(bot, BOAT_TEXTS.none);
+        return false;
+    }
+    const at = { x: boat.position.x, y: boat.position.y, z: boat.position.z };
+    try {
+        if (bot.entity.position.distanceTo(boat.position) > BOAT_RULES.reach && !bot.interrupt_code) {
+            // to the shore beside the boat, without digging
+            await walkWith(bot, new pf.goals.GoalNear(Math.floor(at.x), Math.floor(at.y), Math.floor(at.z), 2), noDigMovements(bot), BOAT_RULES.walkMs);
+        }
+        if (bot.interrupt_code)
+            return false;
+        await bot.lookAt(boat.position, true);
+        bot.mount(boat);
+        await waitUntil(bot, () => Boolean(bot.vehicle), BOAT_RULES.waitMs);
+    } catch (err) {
+        // said below
+    }
+    if (bot.vehicle) {
+        log(bot, BOAT_TEXTS.boarded);
+        return true;
+    }
+    log(bot, BOAT_TEXTS.notBoarded(at));
+    return false;
+}
+
+export async function leaveBoat(bot) {
+    /**
+     * Get out of the boat (or the minecart) the bot rides.
+     * @param {MinecraftBot} bot, reference to the minecraft bot.
+     * @returns {Promise<boolean>} true when the bot is out.
+     * @example
+     * await skills.leaveBoat(bot);
+     **/
+    if (!bot.vehicle) {
+        log(bot, BOAT_TEXTS.notIn);
+        return false;
+    }
+    try {
+        bot.dismount();
+        await waitUntil(bot, () => !bot.vehicle, BOAT_RULES.waitMs);
+    } catch (err) {
+        // said below
+    }
+    if (!bot.vehicle) {
+        log(bot, BOAT_TEXTS.left);
+        return true;
+    }
+    log(bot, BOAT_TEXTS.notLeft);
+    return false;
+}
+
+// The bot mounts a boat from within `reach` blocks (the walk to it takes at most walkMs); the server seats it, or lets it
+// out, within waitMs.
+const BOAT_RULES = Object.freeze({ reach: 2.5, walkMs: 10000, waitMs: 2000 });
+
+async function waitUntil(bot, test, ms) {
+    const end = Date.now() + ms;
+    while (!test() && Date.now() < end && !bot.interrupt_code)
+        await new Promise(resolve => setTimeout(resolve, 100));
 }

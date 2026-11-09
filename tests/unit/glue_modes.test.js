@@ -17,7 +17,7 @@ import { register } from 'node:module';
 import { pathToFileURL } from 'node:url';
 import minecraftData from 'minecraft-data';
 import { Vec3 } from 'vec3';
-import { loadSrc } from '../helpers/load.js';
+import { loadSrc, TEST_MC_VERSION } from '../helpers/load.js';
 import { repoPath } from '../helpers/paths.js';
 import { makeTmpDir, removeTmpDir } from '../helpers/tmp.js';
 import { captureConsole } from '../helpers/console_capture.js';
@@ -46,7 +46,7 @@ async function importQuietly() {
 const { settingsModule, mcdata, modes, actions } = await importQuietly();
 const settings = settingsModule.default;
 settingsModule.setSettings({ language: 'en', home_pack: true, narrate_behavior: false });
-mcdata.__setMcdataForTests(minecraftData('1.21.8'));
+mcdata.__setMcdataForTests(minecraftData(TEST_MC_VERSION));
 
 const ALL_OFF = { self_preservation: false, unstuck: false, cowardice: false, self_defense: false, hunting: false, item_collecting: false,
     torch_placing: false, elbow_room: false, idle_staring: false, cheat: false, creeper_safety: false, night_shelter: false, door_closing: false,

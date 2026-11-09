@@ -29,9 +29,10 @@ export function makeTeacher(orders) {
     const player = orders.player;
     const name = orders.name;
     const t = { player, name, log: [] };
-    // The 1.21.8 server ignores every action of a client for 60 ticks after its spawn until it sends player_loaded,
-    // which the plain mineflayer player never sends (README, game mechanics): the teacher acts 4 s after it was made
-    // (made right after the order channel connected its player) at the earliest.
+    // The server ignores every action of a client for 60 ticks after its spawn until it sends player_loaded, which
+    // the plain mineflayer player of 4.33 never sent (README, game mechanics): the teacher acts 4 s after it was made
+    // (made right after the order channel connected its player) at the earliest. mineflayer 4.39.0 (v0.1.4.14) sends
+    // the packet itself; the margin stays.
     const born = Date.now();
     const loaded = () => sleep(Math.max(0, 4000 - (Date.now() - born)));
     const record = (line) => { t.log.push(line); note(`teacher: ${line}`); };

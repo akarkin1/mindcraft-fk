@@ -5,6 +5,7 @@ import { Vec3 } from 'vec3';
 import { containsPos, expandBox } from './box_math.js';
 import { botPos, clockOf } from './context.js';
 import { goalAvoiding, isNoStandBlock, isNoStandCell } from './stand_logic.js';
+import { maySprint } from './food_logic.js'; // v0.1.4.14 (P-29): no sprint below 7 food points
 
 /** Goals of mineflayer-pathfinder. */
 export const goals = pf.goals;
@@ -98,7 +99,9 @@ export function makeMovements(bot, options = {}) {
     m.scafoldingBlocks = [];
     m.exclusionAreasPlace.push(() => 100);
     m.canOpenDoors = options.doors !== false;
-    m.allowSprinting = options.sprint !== false;
+    // v0.1.4.14 (P-29, the play of 2026-11-09): never a sprint below 7 food points (the game refuses it; the bot sprinted its
+    // food away and starved), whatever the caller asks
+    m.allowSprinting = options.sprint !== false && maySprint(bot?.food);
     return m;
 }
 

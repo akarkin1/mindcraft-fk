@@ -5,10 +5,11 @@ import convoManager from '../conversation.js';
 import { Vec3 } from 'vec3';
 import { normalizeBox, contains, boxSize } from '../areas/area_geometry.js';
 import { scanBuilding, scanWithoutType, findFencedGroundNear, scanEnclosure, scanText } from '../areas/area_scan.js';
-import { kindOf, typeOfKind, savedText, kindChangedText } from '../areas/area_kind.js';
+import { kindOf, typeOfKind, savedText, kindChangedText, openFarmText, NO_FARMLAND_TEXT } from '../areas/area_kind.js';
+import { findOpenFarm } from '../areas/open_farm.js';
 import { countContents } from '../areas/area_sense.js';
 import { AREA_TYPES, normalizeAreaName, replaceRefusal, sameBox, sameBoxText } from '../areas/area_store.js';
-import { goToShelter, sleepInBed, eatBestFood, enterBuilding, passThrough, closeNear } from '../packs/home/index.js';
+import { goToShelter, sleepInBed, eatBestFood, enterBuilding, passThrough, closeNear, placeBed } from '../packs/home/index.js';
 import { REMEMBER_RULE_DESCRIPTION, rememberRuleReply, forgetRuleReply } from '../rules/rule_commands.js';
 import { areaFlagOf } from '../rules/rule_logic.js';
 import { isDiggingRequest, digRefusalText, oreOfRequest } from '../dig_request_logic.js';
@@ -16,6 +17,7 @@ import { oreInSight, sightRange } from '../library/ore_sight_logic.js';
 // v0.1.4.13 (part Q, Q8): "open the pen" for a pen nobody saved
 import { isPenWord, penAllowedText, noPenText } from '../areas/keep_out_logic.js';
 import { permitPenNear } from '../areas/pen_gate.js';
+import { leaveGameText, LEAVE_GAME_NOTE } from '../library/skill_texts.js'; // v0.1.4.14 (P-28): !leaveGame
 
 
 // v0.1.4.8, I5 (S3, S4): a command that was stopped starts no turn of the model. What it did so far goes
@@ -819,6 +821,23 @@ async function fetchToGive(agent, item_name, num) {
     }
 }
 
+// v0.1.4.14 (P-18, SPEC 8.2 point 3): the open farm, the connected farmland within 24 blocks of the bot (findOpenFarm),
+// border open; without farmland the text of 8.11.
+function rememberOpenFarm(agent, store, name) {
+    const bot = agent.bot;
+    const farm = findOpenFarm(blockNameOf(bot), bot.entity.position);
+    if (!farm.found)
+        return NO_FARMLAND_TEXT;
+    const dimension = bot.game?.dimension;
+    const same = sameAreaAs(store, name, farm, dimension);
+    if (same)
+        return sameBoxText(same.name);
+    const contents = countContents(bot, farm);
+    const area = store.set({ name, type: 'farm', kind: 'farm', min: farm.min, max: farm.max, dimension, entrances: [], source: 'scan',
+        contents, border: 'open' });
+    return openFarmText(area.name, farm.field, contents); // the size of the field itself, the box keeps its margin
+}
+
 // v0.1.4.8 (D5, P5): !rememberArea for a farm or a pen: the fenced ground at or near the bot. From
 // outside the fence the ground behind the gate is saved, and with the home pack the bot walks in through
 // the gate with passThrough. Returns the reply.
@@ -828,6 +847,9 @@ async function rememberFenced(agent, store, name, type) {
         return AREAS_OFF;
     const bot = agent.bot;
     const scan = findFencedGroundNear(blockNameOf(bot), bot.entity.position, 6, { type });
+    // v0.1.4.14 (P-18, SPEC 8.2): a farm with no fence near is the open farm, the farmland around the bot
+    if (!scan?.found && type === 'farm' && scan?.reason === 'no_fence_near')
+        return rememberOpenFarm(agent, store, name);
     if (!scan?.found)
         return scan?.text || `I found no fenced ground here. Stand inside the fence and try again.`;
     const facts = scanEnclosure(blockNameOf(bot), scan.inside ? bot.entity.position : (scan.start ?? bot.entity.position), { mode: 'ground', type });
@@ -1087,18 +1109,19 @@ export const actionsList = [
         description: 'Save the place you stand in as a protected area; without a type you conclude the kind (home, building, farm, pen, mine) from what is there. Use this when the player says "this is home", "this is the farm" or "this is the mine".',
         params: {
             'name': { type: 'string', description: 'The name of the area, for example "home".' },
-            'type': { type: 'string', description: 'home, building, farm, pen or mine.', default: 'building' }
+            'type': { type: 'string', description: 'home, building, farm, pen or mine.', default: 'auto' }
         },
         perform: async function (agent, name, type) {
             const store = agent.area_store;
             if (!store)
                 return AREAS_OFF;
-            if (!AREA_TYPES.includes(type))
+            if (type !== 'auto' && !AREA_TYPES.includes(type))
                 return AREA_TYPE_TEXT;
             try {
-                // v0.1.4.11 (P1): the parser fills in "building" for a missing type, so "building" is no type: the kind
-                // is what the scan of the enclosure finds (kindOf). A type is the owner's word for the kind.
-                const untyped = type === 'building';
+                // v0.1.4.11 (P1): without a type the kind is what the scan of the enclosure finds (kindOf). v0.1.4.14
+                // (P-18): the parser fills in "auto" for a missing type, so a typed "building" is a type too: a typed kind
+                // wins, and the answer describes what was found.
+                const untyped = type === 'auto';
                 const clean = normalizeAreaName(name) ?? '';
                 if (clean.length < 1 || clean.length > 64)
                     return areaErrorText(new TypeError('bad name'), name);
@@ -1119,7 +1142,7 @@ export const actionsList = [
                 const bot = agent.bot;
                 const origin = bot.entity.position;
                 const dimension = bot.game?.dimension;
-                if (type === 'home' || untyped) {
+                if (type === 'home' || type === 'building' || untyped) {
                     // v0.1.4.10 (R3): with area_floors the scan stops at a floor. v0.1.4.11 (I5): without a type the one
                     // scan of the enclosure (a fence, a wall, a hedge, water); "home" is the scan of a building
                     const scan = scanEnclosure(blockNameOf(bot), origin, { ...(scanOptions() ?? {}), mode: untyped ? 'auto' : 'building' });
@@ -1135,6 +1158,9 @@ export const actionsList = [
                     }
                     if (untyped)
                         return scan.text || scanText('no_border'); // P1: nothing is saved
+                    // v0.1.4.14 (the lead's decision, W07): a typed home or building with nothing found saves nothing
+                    // either, P1's answer word for word; the box of v0.1.4.10 is left to the mine and to !setArea
+                    return scanText('no_border');
                 }
                 // the mine: as v0.1.4.10
                 const scan = type === 'mine' ? scanBuilding(blockNameOf(bot), origin, scanOptions()) : null;
@@ -1145,7 +1171,7 @@ export const actionsList = [
                     const area = store.set({ name, type, min: scan.min, max: scan.max, dimension, entrances: scan.entrances ?? [], source: 'scan' });
                     return withMine(`${areaSavedText(area)} Tell me if that is wrong.`);
                 }
-                // a mine or a home where no building is found: a box as v0.1.4.10
+                // a mine where no building is found: a box as v0.1.4.10
                 // no building found: a box around the bot, 12 blocks in x and z, 4 below and 8 above
                 const x = Math.floor(origin.x), y = Math.floor(origin.y), z = Math.floor(origin.z);
                 const box = normalizeBox({ x: x - 12, y: y - 4, z: z - 12 }, { x: x + 12, y: y + 8, z: z + 12 });
@@ -1444,6 +1470,14 @@ export const actionsList = [
         description: 'Place a block where you stand. Only single blocks or torches, NOT to build.',
         params: {'type': { type: 'BlockOrItemName', description: 'The block type to place.' }},
         perform: runAsAction(async (agent, type) => {
+            // v0.1.4.14 (P-24, SPEC 8.6): a bed only on level ground, from the cell behind its foot (placeBed of the
+            // home pack); in cheat mode the /setblock of placeBlock as before
+            if (settings.home_pack && typeof type === 'string' && type.endsWith('_bed') && !agent.bot.modes?.isOn?.('cheat')) {
+                const placed = await placeBed(agent.bot, {}, type);
+                if (placed.text)
+                    skills.log(agent.bot, placed.text);
+                return;
+            }
             let pos = agent.bot.entity.position;
             await skills.placeBlock(agent.bot, type, pos.x, pos.y, pos.z);
         })
@@ -2049,4 +2083,54 @@ export const actionsList = [
             return withSkillNotices(agent, output);
         }
     },
+    // v0.1.4.14 (P-28, the play of 2026-11-09, SPEC 8.4.5): the boats and the leave. The docs are as short as they can be:
+    // the prompt budget of v0.1.4.12 (17,000 characters with every switch on) is a rule of the release.
+    {
+        name: '!boardBoat',
+        description: 'Board the nearest boat.',
+        params: {},
+        perform: runAsAction(async (agent) => {
+            await skills.boardBoat(agent.bot);
+        })
+    },
+    {
+        name: '!leaveBoat',
+        description: 'Get out of the boat.',
+        params: {},
+        perform: runAsAction(async (agent) => {
+            await skills.leaveBoat(agent.bot);
+        })
+    },
+    {
+        name: '!leaveGame',
+        description: 'Leave the game for good when the player asks.',
+        params: {'reason': { type: 'string', description: 'Why.' }},
+        perform: async function (agent, reason) {
+            return await leaveGame(agent, reason);
+        }
+    },
 ];
+
+// v0.1.4.14 (P-28): the bot says `I leave the game: <reason>.` in the chat, writes the exit note `left on request`
+// (restart_context.js, read by the next process as "The process ended because: left on request.") and exits with code 0,
+// which the mind server does not restart (agent_process.js restarts only an exit code above 0 that is not a signal);
+// start-claude.ps1 runs node once and the supervise skill restarts nothing. The chat line gets a moment to reach the
+// server before the exit. Never throws; returns the text (a fake agent of a test does not exit).
+const LEAVE_GAME_WAIT_MS = 500;
+
+async function leaveGame(agent, reason) {
+    const why = typeof reason === 'string' && reason.trim() !== '' ? reason.trim().replace(/[\s.]+$/, '') : 'you asked me to';
+    const text = leaveGameText(why);
+    try {
+        await agent.openChat(text);
+    } catch (error) {
+        console.warn('Could not say goodbye:', error);
+    }
+    await new Promise((resolve) => setTimeout(resolve, LEAVE_GAME_WAIT_MS));
+    try {
+        agent.cleanKill(LEAVE_GAME_NOTE, 0);
+    } catch (error) {
+        console.warn('Could not leave the game:', error);
+    }
+    return text;
+}

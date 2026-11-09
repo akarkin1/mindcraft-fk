@@ -1,6 +1,6 @@
 // Spec v0.1.4.8, part F: F1 (the chat kick, S12) -- the checksum of the last seen messages that
 // minecraft-protocol 1.62.0 sends with every chat of Minecraft 1.21.5 and later, and the patch
-// patches/minecraft-protocol+1.62.0.patch.
+// patches/minecraft-protocol+1.62.0.patch (since v0.1.4.14 patches/minecraft-protocol+1.68.0.patch).
 //
 // The client keeps the last seen signatures in a ring of 20 (LastSeenMessagesWithInvalidation of
 // src/client/chat.js): message n goes to index (n - 1) % 20. getAcknowledgements() walks the ring
@@ -23,12 +23,13 @@ import fs from 'node:fs';
 import { EventEmitter } from 'node:events';
 import { createRequire } from 'node:module';
 import { repoPath } from '../helpers/paths.js';
+import { TEST_MC_VERSION } from '../helpers/load.js';
 
 const require = createRequire(repoPath('package.json'));
 const chatPlugin = require('minecraft-protocol/src/client/chat.js');
 const { computeChatChecksum } = require('minecraft-protocol/src/datatypes/checksums.js');
 
-const VERSION = '1.21.8';
+const VERSION = TEST_MC_VERSION;
 const RING = 20;
 const MESSAGES = 25;
 
@@ -44,7 +45,7 @@ function javaArraysHashCode(bytes) {
 
 // LastSeenMessages.computeChecksum(): start 1; for each signature of the window, oldest first,
 // 31 * value + the checksum of the signature; the low byte; 0 becomes 1. Returned as the unsigned
-// byte that goes on the wire (the field is u8 in minecraft-data 1.21.8).
+// byte that goes on the wire (the field is u8 in minecraft-data 1.21.8 and 26.1).
 function referenceChecksum(windowOldestFirst) {
     let value = 1;
     for (const signature of windowOldestFirst)
@@ -84,7 +85,7 @@ function signature(n) {
     return Buffer.concat(parts);
 }
 
-// The real chat plugin on a fake client of 1.21.8: it records what the client writes.
+// The real chat plugin on a fake client of the version the bot plays: it records what the client writes.
 function newClient() {
     const client = new EventEmitter();
     client.version = VERSION;
@@ -223,7 +224,7 @@ describe('after 40 messages the ring is in window order again', () => {
 });
 
 describe('the patch file', () => {
-    const patch = fs.readFileSync(repoPath('patches/minecraft-protocol+1.62.0.patch'), 'utf8');
+    const patch = fs.readFileSync(repoPath('patches/minecraft-protocol+1.68.0.patch'), 'utf8');
 
     test('changes only src/client/chat.js of minecraft-protocol, in two places', () => {
         const files = [...patch.matchAll(/^diff --git a\/(\S+)/gm)].map((m) => m[1]);
@@ -238,6 +239,6 @@ describe('the patch file', () => {
     test('npm install applies it: postinstall runs patch-package', () => {
         const pkg = JSON.parse(fs.readFileSync(repoPath('package.json'), 'utf8'));
         assert.equal(pkg.scripts.postinstall, 'patch-package');
-        assert.equal(pkg.dependencies['minecraft-protocol'], '1.62.0');
+        assert.equal(pkg.dependencies['minecraft-protocol'], '1.68.0');
     });
 });

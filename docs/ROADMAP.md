@@ -19,7 +19,9 @@ Rules that hold for every release:
 | 0.1.4.11 | Navigation and words | Released |
 | 0.1.4.12 | Understanding and watching | Released |
 | 0.1.4.13 | Supervision | Released: `CHANGELOG.md` |
-| 0.1.4.14 | Routines | Planned: after the play of 0.1.4.13 |
+| 0.1.4.14 | Minecraft 26.1 | In work: `docs/releases/0.1.4.14/PLAN.md` |
+| 0.1.4.15 | The base survey and Routines | Decided by the owner on 2026-11-09 (option A): two rounds on one branch, the survey first, Routines with a budget of four days and a cut rule (over the budget, the release ships the survey alone); one gate, one play of both. The plan is written after the fix round of 0.1.4.14 |
+| 0.1.4.16 | Stability | The fixes and small items planned for 0.1.4.15 below (tunnels as beams, caves, routes and places, supplies by need, the rest), moved by the owner on 2026-11-09 |
 | Later | See the backlog | Not decided |
 
 ## 0.1.4.9 The mine, the routes of the player, and the model comparison
@@ -172,9 +174,20 @@ by a local session on `release/v0.1.4.13-voice` on 2026-10-04 and proven in a ga
 After this release: the supervisor and the bot as one mind, and part A of v0.1.4.12 (the local embedding model) after
 the routing check measures it.
 
-## 0.1.4.14 Routines
+## 0.1.4.14 Minecraft 26.1
 
-Split off 0.1.4.13 by the owner on 2026-10-04: planned after the play of 0.1.4.13.
+The owner, 2026-11-03: the upgrade of the bot to Minecraft Java 26.1 is the next release candidate. The newest
+released libraries (mineflayer 4.39.0, minecraft-protocol 1.68.0, minecraft-data 3.119.0) support 26.1 and
+nothing newer; 26.2 works only from unreleased branches of five libraries and 26.3 from none (checked on real
+servers on 2026-11-03). Node 22, Java 25 for the test server, the 8 patches regenerated, the data of 26.1 in the
+bot's tables (copper pickaxes, copper chests, the corrected foods). The plan is `docs/releases/0.1.4.14/PLAN.md`,
+the spec `SPEC.md`. About 4 days.
+
+## 0.1.4.16 Stability (the list planned for 0.1.4.15 until 2026-11-09)
+
+Split off 0.1.4.13 by the owner on 2026-10-04, moved behind the upgrade to 26.1 on 2026-11-03. On 2026-11-09 the owner
+moved Routines into 0.1.4.15 with the base survey (option A, above) and this list to 0.1.4.16; one row from the fix
+round of 0.1.4.14 joins it at the end.
 
 | Part | Content |
 |---|---|
@@ -194,8 +207,42 @@ Split off 0.1.4.13 by the owner on 2026-10-04: planned after the play of 0.1.4.1
 | Orders stay orders | The bot's model stopped the supervisor's commands, turned off its unstuck reflex, left the mine after "wait", made a mine without a yes. About 0.5 day. |
 | Code that cannot be stopped | Generated code that ran `collectBlock` in a loop ended the process (`refused stop after 10 seconds`). About 0.5 day. |
 | The load of the laptop | Only if it remains in the play after the quiet supervisor of the fix of 0.1.4.13. |
+| The history race (0.1.4.14, P-21) | `history.add` awaits the memory summary at `max_messages` while a concurrent `handleMessage` pushes the assistant's command turn, so the turns can end with the bot's own line; the model class closes them with a user turn since 0.1.4.14, the race itself is to be removed (one add at a time, or the summary off the add path). About 0.5 day. |
 
-Setting `routines` (off).
+Setting `routines` (off) belongs to 0.1.4.15 now.
+
+## The base survey (brief of 2026-11-09, not started)
+
+From the owner's gameplay session of 2026-11-09, relayed to the lead with the owner's decisions; the plan and the
+spec are written under `docs/releases/<version>/` when the owner says so. The problem in the owner's words: each
+time the bot comes to a base the owner has to stand it at every place and name it, which is tedious and broken
+today (an unfenced farm cannot be saved; the house was saved as a pen because of 2 cats). The last base: a house,
+a villager trading hall, three unfenced farms (potatoes, carrots, wheat), three fenced pens (pigs, cows, chickens),
+a happy ghast leashed to a fence gate, sugar cane by the shore; underground a basement under the house, a ladder,
+then a mine or a cave entrance. The owner will move between several bases.
+
+The owner's decisions: (1) the survey may read the loaded blocks around the bot (the one exception to the no-x-ray
+rule of v0.1.4.13; its block getter refuses ore names, so it can never find ore); (2) save first, then ask: every
+place found is saved at once with source `survey`, one report line, and the owner corrects by name ("rename X to
+Y", "forget X"); never a dialog that holds the result back; (3) plain words in the chat ("here is the base, scan
+it") map to `!surveyBase`, no automatic trigger in the first version; (4) the underground is part of the base.
+
+| Round | Content | Where |
+|---|---|---|
+| 1 | The defects without a switch: pets (cat, wolf, parrot) do not make a pen and a home is judged before a pen (`kindOf`); `!rememberArea(name, "farm")` without a fence saves the connected farmland at the bot's feet as an open farm. The wrong "carrot_farm" pen over the owner's house in his `areas.json` is his to forget once the commands exist. | v0.1.4.14 fix round part 8 (DECISIONS P-18) |
+| 2 | A `survey` pack (`src/agent/packs/survey/`: `survey_logic.js` pure, `survey.js`, `texts.js`, `index.js`), switch `base_survey` (off), `survey_radius` (48; the owner's last base needs 64), zero model calls. One pass over the loaded blocks for seeds (farmland and crops, fence gates and fence loops, doors and beds and chests and furnaces and workstations, villagers at job sites, sugar cane by water, a leashed entity with its knot, a nether portal, trapdoors and ladder columns); seeds to places with the area code (`fieldBox`, `scanPenBehindGate`, `scanEnclosure` in building mode with floors, `kindOf`, the places store), names by the main crop or the majority species (`potato_farm`, `cow_pen`), a new kind `trading_hall`, dedupe through `AreaStore`; the underground from each building: the trapdoor and ladder to the basement (a building, shelter), openings in its rock walls to a mine entrance (a place and a route) or a cave mouth (keep-out), the way house, trapdoor, ladder, basement, mine in the `RouteStore`. Save all with source `survey` and a `base` tag, one line: `I found 12 places: house (2 beds), basement (9 chests, 5 furnaces), trading hall (7 villagers), potato farm 14 x 9, ... All saved. Say "rename X to Y" or "forget X" to correct.`; `!renameArea(old, new)`, `!forgetArea(name)`. Tests: a unit test per detector on synthetic grids, one end-to-end scenario on the fake server with a tiny base, one world test with a built base (house, trapdoor, ladder, basement, a tunnel, an unfenced farm, a pen, cane). To verify there: the climb of a ladder through a trapdoor. | The survey release |
+| 3 | The `base` tag and `bases.json` per world (name, centre, dimension), `!goToBase(name)` to its home door, a survey on return reports the differences only; later an offer on arrival behind `survey_offer` and a walk for bases larger than the loaded radius. | The same release if it fits |
+
+Also: the supervise skill's step 3 gets the base from one `run ['!surveyBase("east")']` and `places`; texts plain and
+short with numbers, nothing claimed that the code did not check.
+
+The owner's answers of 2026-11-09 to the lead's questions: the survey scans everything the server has loaded around
+the bot, capped by `survey_radius` with 128 as the default (64 was already the ceiling of his last base); the
+survey saves all at once and the owner's words are respected: an area the owner saved or named himself is never
+renamed, re-boxed or forgotten by a survey (unless the attempt failed and the bot said so, or the owner says so
+explicitly), the survey adds what is new and says where its finds lie inside the owner's areas; only a survey's own
+places are updated by a later survey. Testing: the scenarios of both features run once each as they land, the full
+world set once in the gate at the end for both together; the fake server carries what it can.
 
 ## Backlog
 

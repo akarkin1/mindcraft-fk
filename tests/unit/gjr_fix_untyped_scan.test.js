@@ -9,7 +9,7 @@ import assert from 'node:assert/strict';
 import path from 'node:path';
 import { register } from 'node:module';
 import minecraftData from 'minecraft-data';
-import { loadSrc } from '../helpers/load.js';
+import { loadSrc, TEST_MC_VERSION } from '../helpers/load.js';
 import { makeTmpDir, removeTmpDir } from '../helpers/tmp.js';
 import { captureConsole } from '../helpers/console_capture.js';
 import { createBlockWorld, vec } from '../helpers/block_world.js';
@@ -45,7 +45,7 @@ const NOW = () => new Date('2026-10-01T10:00:00Z');
 
 let cap;
 let dir;
-before(() => M.mcdata.__setMcdataForTests(minecraftData('1.21.8')));
+before(() => M.mcdata.__setMcdataForTests(minecraftData(TEST_MC_VERSION)));
 after(() => M.mcdata.__setMcdataForTests(null));
 beforeEach(() => {
     cap = captureConsole();
@@ -131,7 +131,7 @@ describe('T3-6: !rememberArea without a type inside a pen', () => {
         const s = penBesideHouse();
         const agent = areaAgent(s.world, s.inPen);
         const parsed = M.index.parseCommandMessage('!rememberArea("chicken pen")');
-        assert.deepEqual(parsed.args, ['chicken pen', 'building'], 'the parser fills in the default');
+        assert.deepEqual(parsed.args, ['chicken pen', 'auto'], 'the parser fills in the default (v0.1.4.14, P-18: "auto")');
         const reply = await command('!rememberArea').perform(agent, ...parsed.args);
         // v0.1.4.11 (P1, I5): the box is still the pen's; the kind is concluded: no animal in it, so a yard (type building)
         assert.equal(reply, 'I saved "chicken_pen": a yard, fenced, 9 x 9, 1 gate. I change nothing in it.');
@@ -146,7 +146,7 @@ describe('T3-6: !rememberArea without a type inside a pen', () => {
         const s = penBesideHouse();
         const agent = areaAgent(s.world, s.inPen);
         agent.bot.entities = { 7: { id: 7, name: 'chicken', type: 'animal', position: vec(15.5, 64, 4.5) } };
-        const reply = await command('!rememberArea').perform(agent, 'chicken pen', 'building');
+        const reply = await command('!rememberArea').perform(agent, 'chicken pen', 'auto');
         assert.equal(reply, 'I saved "chicken_pen": a pen, fenced, 9 x 9, 1 gate, 1 chicken. I keep its gate closed and pick nothing up inside it.');
         assert.equal(agent.area_store.get('chicken pen').type, 'pen');
         assert.deepEqual(boxOf(agent.area_store.get('chicken pen')), PEN_BOX);
@@ -171,7 +171,7 @@ describe('T3-6: !rememberArea without a type inside a pen', () => {
     test('without a type inside the house: the house, as before', async () => {
         const s = penBesideHouse();
         const agent = areaAgent(s.world, s.inHouse);
-        const reply = await command('!rememberArea').perform(agent, 'house', 'building');
+        const reply = await command('!rememberArea').perform(agent, 'house', 'auto');
         assert.match(reply, /^I saved "house": a home, walled, 13 x 13 with a roof, 1 door, 1 bed, 1 chest\. /); // v0.1.4.11 (P1): the kind is concluded
         assert.deepEqual(boxOf(agent.area_store.get('house')), HOUSE_BOX);
     });
@@ -180,7 +180,7 @@ describe('T3-6: !rememberArea without a type inside a pen', () => {
         const s = penBesideHouse();
         const agent = areaAgent(s.world, s.inPen);
         await command('!rememberArea').perform(agent, 'pen', 'pen');
-        assert.equal(await command('!rememberArea').perform(agent, 'chicken pen', 'building'), 'That is the area "pen" already.');
+        assert.equal(await command('!rememberArea').perform(agent, 'chicken pen', 'auto'), 'That is the area "pen" already.');
         assert.equal(agent.area_store.list().length, 1);
     });
 });

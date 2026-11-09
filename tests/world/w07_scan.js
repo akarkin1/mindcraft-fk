@@ -3,8 +3,9 @@
 //   1. inside a built house: !rememberArea("home", "building") (v0.1.4.11: the answer of P1) saves a box that covers the house and
 //      is at most 2 blocks bigger on every side, and the door is found;
 //   2. inside a fenced field: !rememberArea("wheat_farm", "farm") finds the farm and its gate;
-//   3. on an open field: !rememberArea("field", "farm") saves nothing and says that no fence is near (v0.1.4.8,
-//      D5: the text of the reason no_fence_near);
+//   3. on an open field: !rememberArea("field", "farm") saves nothing and says that no farmland and no fence are near
+//      (v0.1.4.14, SPEC 8.11: `I see no farmland within 24 blocks of me and no fence. Stand on the field and say it
+//      again.`; before, v0.1.4.8 D5: the text of the reason no_fence_near);
 //   4. on an open field, type building: v0.1.4.11 (P1) saves nothing and says "I find no border around me: ...";
 //      (the fallback box of section 6 of v0.1.4.6 is gone);
 //   5. !areas lists the areas.
@@ -94,10 +95,11 @@ await scenarioMain({
             await placeBot(agent, open, 0);
             const r3 = await command_(agent, '!rememberArea("field", "farm")', 30000);
             note(`3: ${JSON.stringify(r3)}`);
-            // v0.1.4.8, D5: every failure of a scan has its own text that says what to do; here the reason is
-            // no_fence_near: "I see no fence within 6 blocks of me. Stand inside the fence or next to its gate ..."
-            check(/^I see no fence within \d+ blocks of me\. .*try again\.$/.test(r3), '3: open field, farm: the reply says that no fence is near and what to do (D5, reason no_fence_near)',
-                JSON.stringify(r3.slice(0, 200)));
+            // v0.1.4.14 (P-18, SPEC 8.2.3 and 8.11): a farm with no fence near is the open farm, the farmland around the bot;
+            // with no farmland either the answer says so and what to do (before, v0.1.4.8 D5: "I see no fence within 6
+            // blocks of me. Stand inside the fence or next to its gate and try again.")
+            const NO_FARMLAND = 'I see no farmland within 24 blocks of me and no fence. Stand on the field and say it again.';
+            check(r3 === NO_FARMLAND, `3: open field, farm: the reply is \`${NO_FARMLAND}\` (8.11)`, JSON.stringify(r3.slice(0, 200)));
             const after3 = readAreas(agent).areas || {};
             check(!('field' in after3) && Object.keys(after3).length === 2, '3: open field, farm: nothing is saved', JSON.stringify(Object.keys(after3)));
 

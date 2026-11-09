@@ -37,9 +37,11 @@ await scenarioMain({
             agent = s.agent;
             await resetBot(NAME);
             await placeBot(agent, h.inside, 0);
-            const saved = await command_(agent, '!rememberArea("home", "building")', 30000);
+            // v0.1.4.14 (P-18, SPEC 8.2.2): a typed kind wins, so "this is home" is typed as home (a typed "building" saves a
+            // building, which the sleep pack enters all the same: a walled area of either type; the house is the bot's home here)
+            const saved = await command_(agent, '!rememberArea("home", "home")', 30000);
             // v0.1.4.11 (P1): `I saved "home": a <kind>, ...`
-            check(/I saved "home": an? \w+, /.test(saved), 'precondition: !rememberArea saved the house as "home" (the answer of P1)', JSON.stringify(saved.slice(0, 200)));
+            check(/I saved "home": a home, /.test(saved), 'precondition: !rememberArea saved the house as "home", a home (the answer of P1)', JSON.stringify(saved.slice(0, 200)));
 
             // ---------------------------------------------------------- 1. day
             const r1 = await command_(agent, '!goToBed', 30000);

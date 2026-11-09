@@ -10,8 +10,8 @@ export const DAY_TICKS = 24000;
 export const SHELTER_COOLDOWN_MS = 60000;
 /** Running actions that keep the bot busy with a player or with its safety. */
 export const SHELTER_BUSY_ACTIONS = Object.freeze(['action:followPlayer', 'action:goToPlayer', 'action:goToShelter', 'action:goToBed']);
-/** Mobs that isHostile of mcdata counts but that do not keep the bot out of its shelter. */
-export const NOT_HOSTILE_FOR_SHELTER = Object.freeze(['iron_golem', 'snow_golem', 'allay', 'enderman', 'piglin', 'zombified_piglin']);
+/** Mobs that isHostile of mcdata counts but that do not keep the bot out of its shelter. v0.1.4.14: the copper golem too. */
+export const NOT_HOSTILE_FOR_SHELTER = Object.freeze(['iron_golem', 'snow_golem', 'copper_golem', 'allay', 'enderman', 'piglin', 'zombified_piglin']);
 
 // An order older than one full day (20 minutes of real time) never belongs to this night.
 const MAX_ORDER_AGE_MS = 20 * 60 * 1000;

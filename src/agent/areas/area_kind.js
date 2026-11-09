@@ -28,7 +28,8 @@ export const KIND_SENTENCES = Object.freeze({
 export const CONTENT_KEYS = Object.freeze(['beds', 'chests', 'furnaces', 'tables', 'ladders', 'water']);
 
 // The word of a border in front of a noun ("a fenced pen") and after a kind ("a pen, fenced").
-const BORDER_WORDS = Object.freeze({ fence: 'fenced', wall: 'walled', glass: 'glass-walled', hedge: 'hedged', water: 'water-bound', mixed: 'enclosed' });
+const BORDER_WORDS = Object.freeze({ fence: 'fenced', wall: 'walled', glass: 'glass-walled', hedge: 'hedged', water: 'water-bound', mixed: 'enclosed',
+    open: 'open' });
 
 // One and more of the counted things that are not animals.
 const COUNT_WORDS = Object.freeze({
@@ -117,14 +118,44 @@ function hasOpening(enclosure, kinds) {
     return openingsOf(enclosure).some(o => kinds.includes(o.kind));
 }
 
+/** v0.1.4.14 (P-18): pets, never the animals of a pen (two cats made the owner's house a pen). */
+export const PETS = Object.freeze(['cat', 'wolf', 'parrot']);
+
+function isPet(name) {
+    return PETS.includes(String(name).replace(/^minecraft:/, ''));
+}
+
+/**
+ * The animals of the contents that are not pets (PETS), the sum.
+ * @param {{animals?: Object<string, number>}|null} contents
+ * @returns {number}
+ */
+export function penAnimalCount(contents) {
+    return countsOf(contents?.animals).filter(([name]) => !isPet(name)).reduce((sum, [, n]) => sum + n, 0);
+}
+
+// v0.1.4.14 (P-18, the owner: "a livestock pen can be with roof or without it, but it needs to be surrounded by a
+// fence"): the border makes a pen. A ring of fence, or a mixed ring whose openings are gates (no door), may be a pen; a
+// wall with doors never is.
+function fencedRing(enclosure) {
+    if (enclosure?.border === 'fence') {
+        return true;
+    }
+    return enclosure?.border === 'mixed' && hasOpening(enclosure, ['gate']) && !hasOpening(enclosure, ['door']);
+}
+
 /**
  * The kind of a place (I5), the first rule that fits. v0.1.4.12 (F1): a border of rock (scanEnclosure under rock) is
- * `tunnel` when the scan measured a tunnel at the origin (`enclosure.tunnel`), else `cave`. Then: animals of 1 kind or more and an opening of kind gate or door:
- * `pen`; crops on a tilled floor: `farm`; a roof, a door and a bed: `home`; a roof and chests or furnaces: `storage`;
- * a roof and a door, or a roof and a trapdoor (a cellar entered from above, v0.1.4.11, F25): `building`; else `yard`.
+ * `tunnel` when the scan measured a tunnel at the origin (`enclosure.tunnel`), else `cave`. v0.1.4.14 (P-18): pets
+ * (cats, wolves, parrots) are no animals of a pen, and a pen is surrounded by a fence (a border `fence`, or `mixed`
+ * with gates and no door), roof or not; a walled place is never a pen, whatever stands inside it. Then: a fenced ring
+ * with animals (not pets) of 1 kind or more and an opening of kind gate or door: `pen`; crops on a tilled floor:
+ * `farm`; a roof, a door and a bed: `home`; a roof and chests or furnaces: `storage`; a roof and a door, or a roof and
+ * a trapdoor (a cellar entered from above, v0.1.4.11, F25): `building`; else `yard`.
  * scanEnclosure gives the opening kinds door, gate, trapdoor and gap (OPENING_KINDS of area_scan.js); a ladder is no
  * opening of its own, the trapdoor over its column is.
- * @param {{roof?: boolean, floor?: string, openings?: {kind: string}[]}|null} enclosure the result of scanEnclosure
+ * @param {{roof?: boolean, floor?: string, border?: string, openings?: {kind: string}[]}|null} enclosure the result of
+ *   scanEnclosure
  * @param {object|null} contents the result of countContents
  * @returns {'pen'|'farm'|'home'|'storage'|'building'|'yard'|'tunnel'|'cave'}
  */
@@ -134,7 +165,7 @@ export function kindOf(enclosure, contents) {
     }
     const roof = enclosure?.roof === true;
     const door = hasOpening(enclosure, ['door']);
-    if (animalCount(contents) > 0 && hasOpening(enclosure, ['gate', 'door'])) {
+    if (penAnimalCount(contents) > 0 && fencedRing(enclosure) && hasOpening(enclosure, ['gate', 'door'])) {
         return 'pen';
     }
     if (cropCount(contents) > 0 && enclosure?.floor === 'tilled') {
@@ -259,6 +290,23 @@ export function savedText(name, kind, enclosure, contents, box) {
     const parts = [head, ...openingsParts(enclosure), ...contentsParts(contents)];
     const took = typeof enclosure?.took === 'string' && enclosure.took !== '' ? ` ${enclosure.took}` : ''; // v0.1.4.12 (F4)
     return `I saved "${name}": ${parts.join(', ')}. ${KIND_SENTENCES[kind] ?? KIND_SENTENCES.building}${took}`;
+}
+
+/** The answer of `!rememberArea(name, "farm")` with no fence and no farmland (v0.1.4.14, P-18, SPEC 8.11). */
+export const NO_FARMLAND_TEXT = 'I see no farmland within 24 blocks of me and no fence. Stand on the field and say it again.';
+
+/**
+ * The answer of `!rememberArea(name, "farm")` for an open farm (v0.1.4.14, P-18, SPEC 8.11):
+ * `I saved "carrots": an open farm 9 x 5 with 28 carrots and 12 potatoes.`; without crops `... an open farm 9 x 5.`
+ * The size is that of the field itself (the lead's decision of 2026-11-09), not of the saved box with its margin.
+ * @param {string} name
+ * @param {{min: object, max: object}} box the field (findOpenFarm's `field`)
+ * @param {object|null} contents
+ * @returns {string}
+ */
+export function openFarmText(name, box, contents) {
+    const crops = countsOf(contents?.crops).sort(byCount).map(([crop, n]) => cropText(crop, n));
+    return `I saved "${name}": an open farm ${sizeWords(box)}${crops.length > 0 ? ` with ${listWords(crops)}` : ''}.`;
 }
 
 /**

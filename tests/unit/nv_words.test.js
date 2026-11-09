@@ -9,7 +9,7 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { register } from 'node:module';
 import minecraftData from 'minecraft-data';
-import { loadSrc } from '../helpers/load.js';
+import { loadSrc, TEST_MC_VERSION } from '../helpers/load.js';
 import { repoPath, REPO_ROOT } from '../helpers/paths.js';
 import { makeTmpDir, removeTmpDir } from '../helpers/tmp.js';
 import { captureConsole } from '../helpers/console_capture.js';
@@ -40,7 +40,7 @@ const ST = await loadSrc('src/agent/library/skill_texts.js');
 const D = await loadSrc('src/agent/dig_request_logic.js');
 const SC = await loadSrc('scripts/scorecard_logic.js');
 
-before(() => M.mcdata.__setMcdataForTests(minecraftData('1.21.8')));
+before(() => M.mcdata.__setMcdataForTests(minecraftData(TEST_MC_VERSION)));
 after(() => M.mcdata.__setMcdataForTests(null));
 
 // ------------------------------------------------------------------------------------------------ W1
@@ -146,7 +146,7 @@ describe('W4: the surface, word for word', () => {
 
 describe('W5: give and the arguments, word for word', () => {
     test('the give texts', () => {
-        assert.equal(ST.GIVE_TEXTS.given(44, 'wheat', 'MartyByrde2'), 'Gave 44 wheat to MartyByrde2.');
+        assert.equal(ST.GIVE_TEXTS.given(44, 'wheat', 'MartyByrde2'), 'I gave you 44 wheat.'); // v0.1.4.14
         assert.equal(ST.GIVE_TEXTS.partly('MartyByrde2', 40, 44, 'wheat', { x: 8, y: 63, z: 28 }),
             'MartyByrde2 took 40 of 44 wheat; 4 lie on the ground at (8, 63, 28).');
     });
@@ -211,8 +211,13 @@ describe('W6: the two lines of the prompt in both profiles', () => {
         const base = baseProfile('profiles/claude.json');
         if (!base) return t.skip('origin/main is not reachable');
         const now = JSON.parse(fs.readFileSync(repoPath('profiles/claude.json'), 'utf8'));
-        const strip = (p) => ({ ...p, conversing: p.conversing.replace(`\n${W6[0]}\n${W6[1]}`, '') });
+        // v0.1.4.14 part H changes the model (SPEC 4.9): the model is compared apart, the rest of the profile as before
+        const strip = (p) => {
+            const { model, ...rest } = p;
+            return { ...rest, conversing: p.conversing.replace(`\n${W6[0]}\n${W6[1]}`, '') };
+        };
         assert.deepEqual(strip(now), strip(base));
+        assert.deepEqual(now.model, { model: 'claude-haiku-5-5', params: { max_tokens: 4096, output_config: { effort: 'low' } } });
     });
 
     test('the two lines are about 150 characters (plan 1.6), not more than 250', () => {

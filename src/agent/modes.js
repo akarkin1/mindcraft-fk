@@ -152,6 +152,12 @@ const modes_list = [
                 this.state = newStuckState();
                 return; // don't get stuck when idle
             }
+            if (bot.vehicle) {
+                // v0.1.4.14 (P-27, the play of 2026-11-09): a bot that rides a boat or a minecart is carried, not stuck;
+                // "I'm stuck!" never fires while bot.vehicle is set, and the stuck time starts over when it gets out
+                this.state = newStuckState();
+                return;
+            }
             // v0.1.4.8, X3: the stuck time starts from zero when a new action starts, so a new command always
             // has its full 20 s (also after the reflex gave up)
             const serial = actionSerial(agent);

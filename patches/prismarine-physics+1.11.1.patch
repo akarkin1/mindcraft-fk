@@ -1,0 +1,83 @@
+diff --git a/node_modules/prismarine-physics/index.js b/node_modules/prismarine-physics/index.js
+index d95ce7f..788d14a 100644
+--- a/node_modules/prismarine-physics/index.js
++++ b/node_modules/prismarine-physics/index.js
+@@ -49,6 +49,16 @@ function Physics (mcData, world) {
+   if (blocksByName.warped_trapdoor) { trapdoorIds.add(blocksByName.warped_trapdoor.id) } // 1.16+
+   if (blocksByName.mangrove_trapdoor) { trapdoorIds.add(blocksByName.mangrove_trapdoor.id) } // 1.19+
+   if (blocksByName.cherry_trapdoor) { trapdoorIds.add(blocksByName.cherry_trapdoor.id) } // 1.20+
++  if (blocksByName.bamboo_trapdoor) { trapdoorIds.add(blocksByName.bamboo_trapdoor.id) } // 1.20+
++  if (blocksByName.pale_oak_trapdoor) { trapdoorIds.add(blocksByName.pale_oak_trapdoor.id) } // 1.21.4+
++  if (blocksByName.copper_trapdoor) { trapdoorIds.add(blocksByName.copper_trapdoor.id) } // 1.21+
++  if (blocksByName.waxed_copper_trapdoor) { trapdoorIds.add(blocksByName.waxed_copper_trapdoor.id) } // 1.21+
++  if (blocksByName.exposed_copper_trapdoor) { trapdoorIds.add(blocksByName.exposed_copper_trapdoor.id) } // 1.21+
++  if (blocksByName.waxed_exposed_copper_trapdoor) { trapdoorIds.add(blocksByName.waxed_exposed_copper_trapdoor.id) } // 1.21+
++  if (blocksByName.weathered_copper_trapdoor) { trapdoorIds.add(blocksByName.weathered_copper_trapdoor.id) } // 1.21+
++  if (blocksByName.waxed_weathered_copper_trapdoor) { trapdoorIds.add(blocksByName.waxed_weathered_copper_trapdoor.id) } // 1.21+
++  if (blocksByName.oxidized_copper_trapdoor) { trapdoorIds.add(blocksByName.oxidized_copper_trapdoor.id) } // 1.21+
++  if (blocksByName.waxed_oxidized_copper_trapdoor) { trapdoorIds.add(blocksByName.waxed_oxidized_copper_trapdoor.id) } // 1.21+
+ 
+   const waterLike = new Set()
+   if (blocksByName.seagrass) waterLike.add(blocksByName.seagrass.id) // 1.13+
+diff --git a/node_modules/prismarine-physics/lib/aabb.js b/node_modules/prismarine-physics/lib/aabb.js
+index 6b78f46..278b773 100644
+--- a/node_modules/prismarine-physics/lib/aabb.js
++++ b/node_modules/prismarine-physics/lib/aabb.js
+@@ -1,3 +1,9 @@
++// A box this far inside another along the axis of a move still stops the move at its face, as the vanilla collision
++// does (Shapes.collide, 1.0E-7): a player pressed against a block at a coordinate like z -2.3 has maxZ -1.9999999999999998
++// after the float sums, slipped into the block on the next tick, and the server teleported it back (the climb out of
++// the trapdoor shaft of the base, v0.1.4.14 W88)
++const EPSILON = 1e-7
++
+ class AABB {
+   constructor (x0, y0, z0, x1, y1, z1) {
+     this.minX = x0
+@@ -66,9 +72,9 @@ class AABB {
+ 
+   computeOffsetX (other, offsetX) {
+     if (other.maxY > this.minY && other.minY < this.maxY && other.maxZ > this.minZ && other.minZ < this.maxZ) {
+-      if (offsetX > 0.0 && other.maxX <= this.minX) {
++      if (offsetX > 0.0 && other.maxX <= this.minX + EPSILON) {
+         offsetX = Math.min(this.minX - other.maxX, offsetX)
+-      } else if (offsetX < 0.0 && other.minX >= this.maxX) {
++      } else if (offsetX < 0.0 && other.minX >= this.maxX - EPSILON) {
+         offsetX = Math.max(this.maxX - other.minX, offsetX)
+       }
+     }
+@@ -77,9 +83,9 @@ class AABB {
+ 
+   computeOffsetY (other, offsetY) {
+     if (other.maxX > this.minX && other.minX < this.maxX && other.maxZ > this.minZ && other.minZ < this.maxZ) {
+-      if (offsetY > 0.0 && other.maxY <= this.minY) {
++      if (offsetY > 0.0 && other.maxY <= this.minY + EPSILON) {
+         offsetY = Math.min(this.minY - other.maxY, offsetY)
+-      } else if (offsetY < 0.0 && other.minY >= this.maxY) {
++      } else if (offsetY < 0.0 && other.minY >= this.maxY - EPSILON) {
+         offsetY = Math.max(this.maxY - other.minY, offsetY)
+       }
+     }
+@@ -88,9 +94,9 @@ class AABB {
+ 
+   computeOffsetZ (other, offsetZ) {
+     if (other.maxX > this.minX && other.minX < this.maxX && other.maxY > this.minY && other.minY < this.maxY) {
+-      if (offsetZ > 0.0 && other.maxZ <= this.minZ) {
++      if (offsetZ > 0.0 && other.maxZ <= this.minZ + EPSILON) {
+         offsetZ = Math.min(this.minZ - other.maxZ, offsetZ)
+-      } else if (offsetZ < 0.0 && other.minZ >= this.maxZ) {
++      } else if (offsetZ < 0.0 && other.minZ >= this.maxZ - EPSILON) {
+         offsetZ = Math.max(this.maxZ - other.minZ, offsetZ)
+       }
+     }
+diff --git a/node_modules/prismarine-physics/lib/features.json b/node_modules/prismarine-physics/lib/features.json
+index 647ea48..2696098 100644
+--- a/node_modules/prismarine-physics/lib/features.json
++++ b/node_modules/prismarine-physics/lib/features.json
+@@ -27,6 +27,6 @@
+   {
+     "name": "climbableTrapdoor",
+     "description": "Trapdoors placed directly above ladders become climbable",
+-    "versions": ["1.9", "1.10", "1.11", "1.12", "1.13", "1.14", "1.15", "1.16", "1.17", "1.18", "1.19", "1.20"]
++    "versions": ["1.9", "1.10", "1.11", "1.12", "1.13", "1.14", "1.15", "1.16", "1.17", "1.18", "1.19", "1.20", "1.21", "26.1"]
+   }
+ ]

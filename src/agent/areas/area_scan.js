@@ -789,12 +789,9 @@ function groundStats(read, cells) {
         if (CROP_NAMES.has(read(x, surface + 1, z))) {
             crops++;
         }
-        for (let y = surface + 1; y <= surface + ROOF_HEIGHT; y++) {
-            const name = read(x, y, z);
-            if (name !== null && !isPassable(name)) {
-                roofed++;
-                break;
-            }
+        // v0.1.4.14: the crown of a tree is no roof; a field under it is still a field (a ceiling of rock still is one)
+        if (hasCoverBesideTrees(read, x, surface, z, ROOF_HEIGHT)) {
+            roofed++;
         }
     }
     return { farmland, crops, roofed };
@@ -966,6 +963,85 @@ function isLeaves(name) {
     return name.endsWith('_leaves');
 }
 
+// v0.1.4.14 (the owner's first play on 26.1: "a walled yard 7 x 7 with a roof" among oak trees on a hillside): natural
+// terrain is never a wall or a roof. Wood counts only when a player worked it or built with it: stripped logs, wood and
+// hyphae blocks, and a log or stem that touches a built block with a face (the post of a house); the logs of a tree do
+// not. Leaves count as a hedge only where they stand on the ground at the feet with no log within 2 blocks (a crown
+// always grows round its logs); the leaves of a canopy are neither a wall nor a roof.
+function isWoodName(name) {
+    return isLogBlock(name) || name.endsWith('_stem') || name.endsWith('_hyphae');
+}
+
+function touchesBuilt(read, x, y, z) {
+    return FACES.some(([dx, dy, dz]) => {
+        const n = read(x + dx, y + dy, z + dz);
+        return n !== null && isBuiltBlock(n);
+    });
+}
+
+// A block a player builds with, at x, y, z: a built block (isBuiltBlock), worked wood, or wood that touches a built block.
+function isMadeAt(read, x, y, z, name) {
+    if (name === null) {
+        return false;
+    }
+    if (isBuiltBlock(name)) {
+        return true;
+    }
+    if (isWoodName(name)) {
+        return name.startsWith('stripped_') || name.endsWith('_wood') || name.endsWith('_hyphae') || touchesBuilt(read, x, y, z);
+    }
+    return false;
+}
+
+// Leaves of a hedge at x, y, z: no log or stem within 2 blocks (y -1 to +2).
+function hedgeLeaves(read, x, y, z) {
+    for (let dx = -2; dx <= 2; dx++) {
+        for (let dz = -2; dz <= 2; dz++) {
+            for (let dy = -1; dy <= 2; dy++) {
+                const n = read(x + dx, y + dy, z + dz);
+                if (n !== null && isWoodName(n) && !n.startsWith('stripped_')) {
+                    return false;
+                }
+            }
+        }
+    }
+    return true;
+}
+
+// v0.1.4.14: a block that is not passable 1 to `height` blocks above the ground of a cell, the leaves and the logs of a tree
+// left out (a crown over a field); worked wood and wood built with count.
+function hasCoverBesideTrees(read, x, ground, z, height) {
+    for (let y = ground + 1; y <= ground + height; y++) {
+        const name = read(x, y, z);
+        if (name === null || isPassable(name)) {
+            continue;
+        }
+        if (isLeaves(name) || (isWoodName(name) && !isMadeAt(read, x, y, z, name))) {
+            continue;
+        }
+        return true;
+    }
+    return false;
+}
+
+// v0.1.4.14: a cell has a made roof when a block a player builds with (isMadeAt) is the first block that is not passable
+// 1 to `height` blocks above its ground. Leaves, logs of a tree, rock and dirt overhead are no roof of a yard or a farm.
+function hasMadeRoof(read, x, ground, z, height) {
+    for (let y = ground + 1; y <= ground + height; y++) {
+        const name = read(x, y, z);
+        if (name === null || isPassable(name)) {
+            continue;
+        }
+        if (isMadeAt(read, x, y, z, name)) {
+            return true;
+        }
+        if (!isLeaves(name) && !isWoodName(name)) {
+            return false; // rock or dirt overhead: no roof of made blocks over this cell
+        }
+    }
+    return false;
+}
+
 function isGlass(name) {
     return name.includes('glass');
 }
@@ -1002,7 +1078,8 @@ function boundOf(read, x, z, feet) {
     // the block at the feet decides; the block at the head when the feet are open (a window over a wall counts as wall)
     const main = at !== null && !isPassable(at) ? at : head;
     if (main !== null && isLeaves(main)) {
-        return { kind: 'hedge', opening: null };
+        // v0.1.4.14: a hedge only of leaves at the feet away from any log; a crown or a canopy is natural
+        return { kind: main === at && hedgeLeaves(read, x, feet, z) ? 'hedge' : 'natural', opening: null };
     }
     if (main !== null && isGlass(main)) {
         return { kind: 'glass', opening: null };
@@ -1010,9 +1087,11 @@ function boundOf(read, x, z, feet) {
     if (at === 'water' || below === 'water') {
         return { kind: 'water', opening: null };
     }
-    const solid = [at, head].find(name => name === null || !isPassable(name));
-    if (solid !== undefined) {
-        return { kind: solid !== null && (isBuiltBlock(solid) || isLogBlock(solid)) ? 'wall' : 'natural', opening: null };
+    const i = [at, head].findIndex(name => name === null || !isPassable(name));
+    if (i >= 0) {
+        const solid = [at, head][i];
+        // v0.1.4.14: a log is a wall only when a player worked it or built with it (isMadeAt), never the trunk of a tree
+        return { kind: solid !== null && isMadeAt(read, x, feet + i, z, solid) ? 'wall' : 'natural', opening: null };
     }
     return { kind: 'drop', opening: null };
 }
@@ -1102,7 +1181,7 @@ function groundFacts(read, flood) {
         const kind = floorClass(read(x, surface, z));
         if (kind === 'tilled') tilled++;
         else if (kind === 'built') built++;
-        if (hasRoof(read, x, surface, z)) roofed++;
+        if (hasMadeRoof(read, x, surface, z, ENCLOSURE_ROOF)) roofed++; // v0.1.4.14: a roof of made blocks only
     }
     const cells = flood.cells.length;
     return { border: borderOf(counts), openings: sortedOpenings(openings), roof: cells > 0 && roofed * 2 >= cells,
@@ -1204,6 +1283,71 @@ function buildingFacts(read, scan, origin) {
     };
 }
 
+// v0.1.4.14 (P-23): a pit is a hollow whose floor lies below the ground around it, its walls the ground itself, dug from
+// above: a cell of its floor sees the sky (nothing that is not passable above it up to PIT_SKY blocks), and the columns
+// just outside its box are solid ground at the height of the feet for 2 of 3 of them or more.
+const PIT_SKY = 32;
+
+function hasOpening(enclosure, kinds) {
+    return Array.isArray(enclosure?.openings) && enclosure.openings.some(o => kinds.includes(o?.kind));
+}
+
+function isPit(read, box, origin) {
+    const feet = Math.floor(origin.y);
+    let sky = false;
+    for (let x = box.min.x + 1; x <= box.max.x - 1 && !sky; x++) {
+        for (let z = box.min.z + 1; z <= box.max.z - 1 && !sky; z++) {
+            const at = read(x, feet, z);
+            if (at === null || !isPassable(at)) {
+                continue;
+            }
+            let open = true;
+            for (let y = feet + 1; y <= feet + PIT_SKY; y++) {
+                const name = read(x, y, z);
+                if (name === null) {
+                    break;
+                }
+                if (!isPassable(name)) {
+                    open = false;
+                    break;
+                }
+            }
+            sky = open;
+        }
+    }
+    if (!sky) {
+        return false;
+    }
+    const outside = ringOf({ min: { x: box.min.x - 1, z: box.min.z - 1 }, max: { x: box.max.x + 1, z: box.max.z + 1 } }, 0);
+    const ground = outside.filter(([x, z]) => isNaturalSolid(read(x, feet, z))).length;
+    return outside.length > 0 && ground * 3 >= outside.length * 2;
+}
+
+// v0.1.4.14: how many of the wall columns of a building (the ring of buildingFacts) are made by a player, of those that
+// bound it: { made, counted }. A wall of dirt or stone counts as counted but not made.
+function ringMade(read, box, origin) {
+    const feet = Math.floor(origin.y);
+    const solidAt = ([x, z]) => {
+        const name = read(x, feet, z);
+        return name === null || !isPassable(name);
+    };
+    const rings = [ringOf(box, 0), ringOf(box, 1)];
+    const ring = rings[1].filter(solidAt).length > rings[0].filter(solidAt).length ? rings[1] : rings[0];
+    let made = 0;
+    let counted = 0;
+    for (const [x, z] of ring) {
+        const kind = boundOf(read, x, z, feet).kind;
+        if (kind === 'drop') {
+            continue;
+        }
+        counted++;
+        if (kind !== 'natural') {
+            made++;
+        }
+    }
+    return { made, counted };
+}
+
 function enclosureFound(min, max, facts, source, scan) {
     const openings = facts.openings;
     return {
@@ -1235,7 +1379,50 @@ function groundEnclosure(read, flood) {
         return null;
     }
     const scan = fencedFound(flood, groundStats(read, flood.cells));
+    // v0.1.4.14 (P-23): the ice of a frozen ocean was "a water-bound yard 37 x 29"; water bounds a yard only when the
+    // place is at most 20 x 20 and its water is no open water
+    if (facts.border === 'water' && (scan.max.x - scan.min.x + 1 > WATER_YARD_MAX || scan.max.z - scan.min.z + 1 > WATER_YARD_MAX
+        || openWater(read, flood))) {
+        return null;
+    }
     return enclosureFound(scan.min, scan.max, facts, 'ground', scan);
+}
+
+/** v0.1.4.14 (P-23): the largest place in x and z that water bounds as a yard. */
+export const WATER_YARD_MAX = 20;
+/** v0.1.4.14 (P-23): water at the surface for this many blocks outward from a place is open water (a lake, the sea). */
+export const OPEN_WATER_REACH = 8;
+
+// v0.1.4.14 (P-23): the water that bounds the ground of a flood is open water when, for half of its water columns or
+// more, the water goes on at the surface for OPEN_WATER_REACH blocks straight outward (away from the middle of the
+// ground). A moat or a pond around a yard has land beyond it.
+function openWater(read, flood) {
+    const cells = flood.cells;
+    if (cells.length === 0) {
+        return false;
+    }
+    const cx = cells.reduce((sum, [x]) => sum + x, 0) / cells.length;
+    const cz = cells.reduce((sum, [, z]) => sum + z, 0) / cells.length;
+    let water = 0;
+    let open = 0;
+    for (const [x, z, surface] of flood.bounds) {
+        const isWater = (wx, wz) => read(wx, surface, wz) === 'water' || read(wx, surface + 1, wz) === 'water';
+        if (!isWater(x, z)) {
+            continue;
+        }
+        water++;
+        const ex = x - cx;
+        const ez = z - cz;
+        const [dx, dz] = Math.abs(ex) >= Math.abs(ez) ? [Math.sign(ex) || 1, 0] : [0, Math.sign(ez) || 1];
+        let k = 1;
+        while (k <= OPEN_WATER_REACH && isWater(x + dx * k, z + dz * k)) {
+            k++;
+        }
+        if (k > OPEN_WATER_REACH) {
+            open++;
+        }
+    }
+    return water > 0 && open * 2 >= water;
 }
 
 function buildingEnclosure(getBlockName, read, origin, opts) {
@@ -1543,7 +1730,11 @@ const OPEN = Object.freeze({ open: true });
 
 // v0.1.4.12 (F7): the blocks that show that a place in rock is used: a door or a trapdoor in its border or roof, a
 // bed, a chest or a barrel, a furnace (blast furnace, smoker), a crafting table, a ladder. Torches do not count.
-const USE_NAMES = new Set(['chest', 'trapped_chest', 'barrel', 'furnace', 'blast_furnace', 'smoker', 'crafting_table', 'ladder']);
+// v0.1.4.14 (part D): the copper chests, a copy of COPPER_CHESTS of packs/storage/storage_logic.js (this module imports
+// nothing); tests/unit/xd_copper_food.test.js checks that the copies hold the same names.
+export const COPPER_CHESTS = Object.freeze(['copper_chest', 'exposed_copper_chest', 'weathered_copper_chest', 'oxidized_copper_chest',
+    'waxed_copper_chest', 'waxed_exposed_copper_chest', 'waxed_weathered_copper_chest', 'waxed_oxidized_copper_chest']);
+const USE_NAMES = new Set(['chest', 'trapped_chest', 'barrel', 'furnace', 'blast_furnace', 'smoker', 'crafting_table', 'ladder', ...COPPER_CHESTS]);
 
 function isUseName(name) {
     return name !== null && (USE_NAMES.has(name) || name.endsWith('_bed') || isDoorName(name) || isTrapdoorName(name));
@@ -1694,10 +1885,23 @@ function enclosureOf(getBlockName, origin, opts) {
             return rock;
         }
     }
+    // v0.1.4.14 (P-18, the owner: a livestock pen may have a roof): fenced ground under a roof is the fenced ground,
+    // with its gates, never the scan of a building
+    if (roofed && roofed.border === 'fence') {
+        return roofed;
+    }
     if (roofed || hasRoof(read, ox, feet - 1, oz)) {
         const building = buildingEnclosure(getBlockName, read, origin, opts);
-        if (building.found) {
-            return building;
+        // v0.1.4.14: above ground a building needs walls that are made for the most part: a crafting table and a torch
+        // of the bot among the trunks of a wood were "10 x 7 walled, with a roof, 2 gaps". A room dug in rock (under rock,
+        // F7) keeps its walls of rock, and so does a room under a made roof (a basement under the floor of a house).
+        // v0.1.4.14 (P-23): a pit (the bot's own dig after !collectBlocks("stone"), a snow hollow) is no building: a
+        // hollow below the ground around it that sees the sky needs a door or a trapdoor to be one
+        if (building.found && (hasOpening(building, ['door', 'trapdoor']) || !isPit(read, building.box, origin))) {
+            const ring = ringMade(read, building.box, origin);
+            if (ring.made * 2 >= ring.counted || underRock(read, ox, feet, oz) || hasMadeRoof(read, ox, feet - 1, oz, ENCLOSURE_ROOF)) {
+                return building;
+            }
         }
     }
     if (roofed) {

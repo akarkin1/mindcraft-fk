@@ -235,12 +235,14 @@ describe('item kinds', () => {
         assert.equal(L.toolKindOf(null), null);
         assert.equal(L.materialOf('golden_axe'), 'golden');
         assert.equal(L.materialOf('iron_pickaxe'), 'iron');
-        assert.equal(L.materialOf('copper_pickaxe'), null);
+        assert.equal(L.materialOf('copper_pickaxe'), 'copper', 'v0.1.4.14 (part D): copper is a tool material');
         assert.equal(L.materialOf(3), null);
     });
 
     test('isContainerKind, isArmour, isSeed, isBed', () => {
-        assert.deepEqual(L.CONTAINER_KINDS, ['chest', 'trapped_chest', 'barrel']);
+        // v0.1.4.14 (part D, SPEC 4.3): the eight copper chests are containers too
+        assert.deepEqual(L.CONTAINER_KINDS, ['chest', 'trapped_chest', 'barrel', 'copper_chest', 'exposed_copper_chest', 'weathered_copper_chest',
+            'oxidized_copper_chest', 'waxed_copper_chest', 'waxed_exposed_copper_chest', 'waxed_weathered_copper_chest', 'waxed_oxidized_copper_chest']);
         assert.equal(L.isContainerKind('chest'), true);
         assert.equal(L.isContainerKind('trapped_chest'), true);
         assert.equal(L.isContainerKind('barrel'), true);

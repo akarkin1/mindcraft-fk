@@ -94,11 +94,14 @@ export const failedChecks = () => results.filter((r) => !r.pass);
 
 // ---------------------------------------------------------------- fake server
 
+// v0.1.4.14 fix round, part 8 (SPEC 8.1.5): `time` and `rate` are the clock of the dimension at login (totalTicks and
+// rate of the update_time of 26.1); the server sends no later packet unless `time(ticks, rate)` is called.
 export async function startServer({ seedHigh = 0, seedLow = 0, motd = 'e2e fake server', age = 1000,
-    hardcore = false, dimension = 'overworld', pos = '0.5,64,0.5', commands = false, floor = '' } = {}) {
+    hardcore = false, dimension = 'overworld', pos = '0.5,64,0.5', commands = false, floor = '', time = 6000, rate = 1 } = {}) {
     const args = [path.join(E2E_DIR, 'fake_server.js'),
         `--seed-high=${seedHigh}`, `--seed-low=${seedLow}`, `--motd=${motd}`, `--age=${age}`,
-        `--hardcore=${hardcore}`, `--dimension=${dimension}`, `--pos=${pos}`, `--commands=${commands}`, `--floor=${floor}`];
+        `--hardcore=${hardcore}`, `--dimension=${dimension}`, `--pos=${pos}`, `--commands=${commands}`, `--floor=${floor}`,
+        `--time=${time}`, `--rate=${rate}`];
     const child = spawn(process.execPath, args, {
         cwd: process.cwd(), stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true,
     });
@@ -128,6 +131,13 @@ export async function startServer({ seedHigh = 0, seedLow = 0, motd = 'e2e fake 
         // Sends every connected client a kick_disconnect packet with this reason (see fake_server.js).
         kick(reason) {
             child.stdin.write('kick ' + JSON.stringify(reason) + '\n');
+        },
+        // Sends every connected client one more update_time with this clock (a time change); resolves when the
+        // server says it sent it.
+        async time(ticks, rate = 1) {
+            const p = waitLine(/^\[srv\] time: update_time/, 5000, 'fake server time');
+            child.stdin.write(`time ${ticks} ${rate}\n`);
+            return p;
         },
         async stop() {
             try { child.stdin.write('quit\n'); child.stdin.end(); } catch { /* gone */ }
@@ -173,7 +183,7 @@ export async function setupSettings(name, port, overrides = {}) {
         host: '127.0.0.1',
         port,
         auth: 'offline',
-        minecraft_version: '1.21.8',
+        minecraft_version: '26.1',
         ...overrides,
     });
     return mod.default;

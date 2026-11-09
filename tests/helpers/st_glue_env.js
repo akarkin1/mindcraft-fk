@@ -22,7 +22,7 @@ import { makeFakeBot, REGISTRY } from './st_modes_env.js';
 export { makeFakeBot, REGISTRY };
 
 /**
- * Imports the glue: settings, mcdata (with the data of 1.21.8), commands, agent, action manager.
+ * Imports the glue: settings, mcdata (with the data of 26.1), commands, agent, action manager.
  * @returns {Promise<object>}
  */
 export async function loadGlue() {

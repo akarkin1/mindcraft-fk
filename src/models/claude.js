@@ -4,6 +4,20 @@ import { getKey } from '../utils/keys.js';
 import { reportUsage } from '../agent/cost/usage_context.js';
 import { systemBlocks } from './prompt_parts.js';
 
+// v0.1.4.14 (P-21, spec 8.7): the filler of strictFormat (`_`, a user turn), which closes the list when its last turn is
+// the assistant's. The models from Claude 4.6 on take no assistant prefill: a list that ends with the assistant's turn
+// is a 400 ("The conversation must end with a user message") and the bot said "My brain disconnected, try again." The
+// turns are copied when a filler is needed; a list that ends with a user turn is returned as it is.
+export const CLOSING_TURN = Object.freeze({ role: 'user', content: '_' });
+export function closedByUser(messages) {
+    if (!Array.isArray(messages) || messages.length === 0)
+        return [{ ...CLOSING_TURN }];
+    const last = messages[messages.length - 1];
+    if (last && last.role === 'assistant')
+        return [...messages, { ...CLOSING_TURN }];
+    return messages;
+}
+
 export class Claude {
     static prefix = 'anthropic';
 
@@ -27,7 +41,7 @@ export class Claude {
     }
 
     async sendRequest(turns, systemMessage) {
-        const messages = strictFormat(turns);
+        const messages = closedByUser(strictFormat(turns));
         let res = null;
         try {
             console.log(`Awaiting anthropic response from ${this.model_name}...`)

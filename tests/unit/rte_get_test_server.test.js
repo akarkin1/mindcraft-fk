@@ -5,6 +5,7 @@
 // serves a manifest, a version file and a small file as the jar. The SHA-1 of the real jar cannot be
 // served by a fake, so the tests of the download give main() the SHA-1 of the small file
 // (deps.expectedSha1); the check of the real SHA-1 is tested with the refusal (exit code 3).
+// v0.1.4.14: moved to 26.1 (the jar, its SHA-1 and size, the manifest; parseArgs has jdk). --jdk: xe_test_setup.
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
@@ -19,18 +20,18 @@ const SCRIPT = 'scripts/get_test_server.js';
 const L = await loadSrc(LOGIC);
 const M = await loadSrc(SCRIPT);
 
-const REAL_SHA1 = '6bce4ef400e4efaa63a13d5e6f6b500be969ef81';
-const VERSION_URL = 'https://piston-meta.mojang.com/v1/packages/0123/1.21.8.json';
+const REAL_SHA1 = '3872a7f07a1a595e651aef8b058dfc2bb3772f46';
+const VERSION_URL = 'https://piston-meta.mojang.com/v1/packages/0123/26.1.json';
 const JAR_URL = `https://piston-data.mojang.com/v1/objects/${REAL_SHA1}/server.jar`;
 
-const manifestOf = (versions) => ({ latest: { release: '1.21.9', snapshot: '25w40a' }, versions });
+const manifestOf = (versions) => ({ latest: { release: '26.1.1', snapshot: '26w14a' }, versions });
 const MANIFEST = manifestOf([
-    { id: '1.21.9', type: 'release', url: 'https://piston-meta.mojang.com/v1/packages/9999/1.21.9.json', sha1: 'ffff' },
-    { id: '1.21.8', type: 'release', url: VERSION_URL, sha1: '0123' },
-    { id: '1.21.7', type: 'release', url: 'https://piston-meta.mojang.com/v1/packages/7777/1.21.7.json', sha1: '7777' },
+    { id: '26.1.1', type: 'release', url: 'https://piston-meta.mojang.com/v1/packages/9999/26.1.1.json', sha1: 'ffff' },
+    { id: '26.1', type: 'release', url: VERSION_URL, sha1: '0123' },
+    { id: '1.21.11', type: 'release', url: 'https://piston-meta.mojang.com/v1/packages/7777/1.21.11.json', sha1: '7777' },
 ]);
-const versionOf = (server) => ({ id: '1.21.8', downloads: { client: { url: 'https://x/client.jar', sha1: 'a'.repeat(40), size: 1 }, server } });
-const REAL_VERSION = versionOf({ url: JAR_URL, sha1: REAL_SHA1, size: 57555044 });
+const versionOf = (server) => ({ id: '26.1', downloads: { client: { url: 'https://x/client.jar', sha1: 'a'.repeat(40), size: 1 }, server } });
+const REAL_VERSION = versionOf({ url: JAR_URL, sha1: REAL_SHA1, size: 60417588 });
 
 describe('the logic module', () => {
     test('imports only node:os and node:path, and imports without output or files', () => {
@@ -45,8 +46,8 @@ describe('the logic module', () => {
 
     test('the constants of the spec', () => {
         assert.equal(L.MANIFEST_URL, 'https://piston-meta.mojang.com/mc/game/version_manifest_v2.json');
-        assert.equal(L.VERSION, '1.21.8');
-        assert.equal(L.JAR_NAME, 'server-1.21.8.jar');
+        assert.equal(L.VERSION, '26.1');
+        assert.equal(L.JAR_NAME, 'server-26.1.jar');
         assert.equal(L.JAR_SHA1, REAL_SHA1);
         assert.deepEqual({ ...L.EXIT }, { DONE: 0, ERROR: 1, ARGUMENTS: 2, CHECKSUM: 3 });
     });
@@ -54,11 +55,11 @@ describe('the logic module', () => {
 
 describe('parseArgs', () => {
     test('no arguments', () => {
-        assert.deepEqual(L.parseArgs([]), { acceptEula: false, dir: null, help: false, errors: [] });
+        assert.deepEqual(L.parseArgs([]), { acceptEula: false, jdk: false, dir: null, help: false, errors: [] });
     });
 
     test('--accept-eula and --dir in both forms', () => {
-        assert.deepEqual(L.parseArgs(['--accept-eula', '--dir', '/srv/mc']), { acceptEula: true, dir: '/srv/mc', help: false, errors: [] });
+        assert.deepEqual(L.parseArgs(['--accept-eula', '--dir', '/srv/mc']), { acceptEula: true, jdk: false, dir: '/srv/mc', help: false, errors: [] });
         assert.equal(L.parseArgs(['--dir=C:\\mc server']).dir, 'C:\\mc server');
         assert.equal(L.parseArgs(['-h']).help, true);
         assert.equal(L.parseArgs(['--help']).help, true);
@@ -76,17 +77,17 @@ describe('parseArgs', () => {
 
 describe('pickVersion and serverDownload', () => {
     test('pickVersion finds the version and gives its url', () => {
-        assert.deepEqual(L.pickVersion(MANIFEST, '1.21.8'), { id: '1.21.8', url: VERSION_URL, sha1: '0123' });
+        assert.deepEqual(L.pickVersion(MANIFEST, '26.1'), { id: '26.1', url: VERSION_URL, sha1: '0123' });
     });
 
     test('pickVersion: null without the version, without a url, for a manifest that is no manifest', () => {
         assert.equal(L.pickVersion(MANIFEST, '1.20.1'), null);
-        assert.equal(L.pickVersion(manifestOf([{ id: '1.21.8' }]), '1.21.8'), null);
-        for (const bad of [null, undefined, 'x', {}, { versions: 'x' }, { versions: [null, 3] }]) assert.equal(L.pickVersion(bad, '1.21.8'), null, JSON.stringify(bad));
+        assert.equal(L.pickVersion(manifestOf([{ id: '26.1' }]), '26.1'), null);
+        for (const bad of [null, undefined, 'x', {}, { versions: 'x' }, { versions: [null, 3] }]) assert.equal(L.pickVersion(bad, '26.1'), null, JSON.stringify(bad));
     });
 
     test('serverDownload takes downloads.server: url, sha1 in lower case, size', () => {
-        assert.deepEqual(L.serverDownload(REAL_VERSION), { url: JAR_URL, sha1: REAL_SHA1, size: 57555044 });
+        assert.deepEqual(L.serverDownload(REAL_VERSION), { url: JAR_URL, sha1: REAL_SHA1, size: 60417588 });
         assert.equal(L.serverDownload(versionOf({ url: JAR_URL, sha1: REAL_SHA1.toUpperCase(), size: 5 })).sha1, REAL_SHA1);
     });
 
@@ -94,7 +95,7 @@ describe('pickVersion and serverDownload', () => {
         const bad = [
             null, {}, { downloads: {} }, versionOf(null), versionOf({ sha1: REAL_SHA1, size: 1 }), versionOf({ url: JAR_URL, size: 1 }),
             versionOf({ url: JAR_URL, sha1: 'xyz', size: 1 }), versionOf({ url: JAR_URL, sha1: REAL_SHA1, size: 0 }),
-            versionOf({ url: JAR_URL, sha1: REAL_SHA1, size: 1.5 }), versionOf({ url: JAR_URL, sha1: REAL_SHA1, size: '57555044' }),
+            versionOf({ url: JAR_URL, sha1: REAL_SHA1, size: 1.5 }), versionOf({ url: JAR_URL, sha1: REAL_SHA1, size: '60417588' }),
         ];
         for (const v of bad) assert.equal(L.serverDownload(v), null, JSON.stringify(v));
     });
@@ -200,16 +201,16 @@ describe('main: the download', () => {
         const r = await runMain(['--dir', folder]);
         assert.equal(r.code, 0, r.text);
         assert.deepEqual(r.asked, [L.MANIFEST_URL, VERSION_URL, JAR_URL]);
-        assert.deepEqual(listDir(folder), ['server-1.21.8.jar']);
-        assert.ok(fs.readFileSync(path.join(folder, 'server-1.21.8.jar')).equals(JAR_BYTES));
+        assert.deepEqual(listDir(folder), ['server-26.1.jar']);
+        assert.ok(fs.readFileSync(path.join(folder, 'server-26.1.jar')).equals(JAR_BYTES));
         assert.equal(r.lines[0], `Folder of the test server: ${folder}`);
-        assert.match(r.text, /Read the version manifest: 1\.21\.8 is in it\./);
+        assert.match(r.text, /Read the version manifest: 26\.1 is in it\./);
         assert.match(r.text, new RegExp(`Downloaded ${JAR_BYTES.length} bytes, checked the SHA-1 and the size`));
         assert.match(r.lines.at(-1), /EULA of Minecraft .* must be accepted .* --accept-eula, or write eula=true into .*eula\.txt by hand\./);
     }));
 
     test('a jar with the right SHA-1 is kept and not downloaded again', withTmp(async (dir) => {
-        fs.writeFileSync(path.join(dir, 'server-1.21.8.jar'), JAR_BYTES);
+        fs.writeFileSync(path.join(dir, 'server-26.1.jar'), JAR_BYTES);
         const r = await runMain(['--dir', dir]);
         assert.equal(r.code, 0, r.text);
         assert.ok(r.lines.includes('The server jar is already there.'));
@@ -217,18 +218,18 @@ describe('main: the download', () => {
     }));
 
     test('a jar with another SHA-1 is replaced', withTmp(async (dir) => {
-        fs.writeFileSync(path.join(dir, 'server-1.21.8.jar'), 'old');
+        fs.writeFileSync(path.join(dir, 'server-26.1.jar'), 'old');
         const r = await runMain(['--dir', dir]);
         assert.equal(r.code, 0, r.text);
         assert.match(r.text, new RegExp(`has the SHA-1 ${sha1Of('old')}\\. It is replaced\\.`));
-        assert.ok(fs.readFileSync(path.join(dir, 'server-1.21.8.jar')).equals(JAR_BYTES));
+        assert.ok(fs.readFileSync(path.join(dir, 'server-26.1.jar')).equals(JAR_BYTES));
     }));
 
     test('the folder comes from MC_TEST_SERVER_DIR without --dir', withTmp(async (dir) => {
         const r = await runMain([], { env: { MC_TEST_SERVER_DIR: dir, HOME: '/nowhere' } });
         assert.equal(r.code, 0, r.text);
         assert.equal(r.lines[0], `Folder of the test server: ${dir}`);
-        assert.deepEqual(listDir(dir), ['server-1.21.8.jar']);
+        assert.deepEqual(listDir(dir), ['server-26.1.jar']);
     }));
 });
 
@@ -257,7 +258,7 @@ describe('main: the exit codes', () => {
         const folder = path.join(dir, 'server');
         const r = await runMain(['--dir', folder], { expectedSha1: REAL_SHA1 });
         assert.equal(r.code, 3, r.text);
-        assert.match(r.lines.at(-1), /^The SHA-1 is not 6bce4ef400e4efaa63a13d5e6f6b500be969ef81: it is not the file the tests were made with\. Nothing was downloaded\.$/);
+        assert.match(r.lines.at(-1), /^The SHA-1 is not 3872a7f07a1a595e651aef8b058dfc2bb3772f46: it is not the file the tests were made with\. Nothing was downloaded\.$/);
         assert.ok(!r.asked.includes(JAR_URL));
         assert.equal(fs.existsSync(folder), false);
     }));
@@ -276,7 +277,7 @@ describe('main: the exit codes', () => {
         assert.deepEqual(listDir(dir), []);
     }));
 
-    test('1: the network fails, an HTTP error, no version 1.21.8, no server download', withTmp(async (dir) => {
+    test('1: the network fails, an HTTP error, no version 26.1, no server download', withTmp(async (dir) => {
         const down = await runMain(['--dir', dir], { routes: { [L.MANIFEST_URL]: () => { throw new TypeError('fetch failed'); } } });
         assert.equal(down.code, 1);
         assert.match(down.lines.at(-1), /^Could not read https:\/\/piston-meta\.mojang\.com\/mc\/game\/version_manifest_v2\.json: fetch failed\.$/);
@@ -285,10 +286,10 @@ describe('main: the exit codes', () => {
         assert.match(http.lines.at(-1), /HTTP 404\.$/);
         const noVersion = await runMain(['--dir', dir], { routes: { [L.MANIFEST_URL]: () => Response.json(manifestOf([])) } });
         assert.equal(noVersion.code, 1);
-        assert.equal(noVersion.lines.at(-1), 'The version manifest has no version 1.21.8.');
-        const noServer = await runMain(['--dir', dir], { routes: routesFor({ version: { id: '1.21.8', downloads: {} } }) });
+        assert.equal(noVersion.lines.at(-1), 'The version manifest has no version 26.1.');
+        const noServer = await runMain(['--dir', dir], { routes: routesFor({ version: { id: '26.1', downloads: {} } }) });
         assert.equal(noServer.code, 1);
-        assert.equal(noServer.lines.at(-1), 'The version file of 1.21.8 names no server download.');
+        assert.equal(noServer.lines.at(-1), 'The version file of 26.1 names no server download.');
         const notJson = await runMain(['--dir', dir], { routes: { [L.MANIFEST_URL]: () => new Response('<html>') } });
         assert.equal(notJson.code, 1);
         assert.match(notJson.lines.at(-1), /the answer is no JSON/);
@@ -320,11 +321,11 @@ describe('main: the exit codes', () => {
         const bad = await runMain(['--dir'], { routes: {} });
         assert.equal(bad.code, 2);
         assert.equal(bad.lines[0], 'The option --dir needs a folder.');
-        assert.match(bad.text, /Usage: node scripts\/get_test_server\.js \[--accept-eula\] \[--dir <folder>\]/);
+        assert.match(bad.text, /Usage: node scripts\/get_test_server\.js \[--accept-eula\] \[--jdk\] \[--dir <folder>\]/);
         assert.deepEqual(bad.asked, []);
         const help = await runMain(['--help'], { routes: {} });
         assert.equal(help.code, 0);
-        assert.match(help.text, /Exit codes: 0 done, 1 network or file error, 2 bad arguments,\n3 wrong checksum\./);
+        assert.match(help.text, /Exit codes: 0 done, 1 network or file error, 2 bad arguments, 3 wrong checksum\./);
         assert.deepEqual(help.asked, []);
     });
 });

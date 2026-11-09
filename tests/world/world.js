@@ -692,3 +692,53 @@ export const fmt = (p) => (p ? `(${p.x.toFixed(1)}, ${p.y.toFixed(1)}, ${p.z.toF
 export async function tp(target, p, yaw = 0, pitch = 0) {
     return command(`tp ${target} ${p.x + 0.5} ${p.y} ${p.z + 0.5} ${yaw} ${pitch}`);
 }
+
+// ------------------------------------------------------------------ the natural world (v0.1.4.14, fix round)
+
+// A generated world (world type `natural`, mc_server.js) has one spawn and no regions: the runner gives the
+// scenario the world spawn as its origin (MCW_SPAWN, also MCW_REGION_X and _Z) and the floor under it as
+// MCW_GROUND_Y. `env.spawn` is { x, y, z } (the feet of a player at the spawn) in that world, else null.
+env.spawn = parseSpawn(process.env.MCW_SPAWN);
+
+// "x,y,z" (whole numbers) as { x, y, z }; null for anything else.
+export function parseSpawn(text) {
+    const m = /^\s*(-?\d+),(-?\d+),(-?\d+)\s*$/.exec(String(text ?? ''));
+    return m ? { x: Number(m[1]), y: Number(m[2]), z: Number(m[3]) } : null;
+}
+
+// The logs of one kind grouped by tree, pure: `logs` is a list of { x, y, z, axis, ground } (the block state
+// `axis` of a log: 'y' standing, 'x' or 'z' lying; `ground`: the block under it is solid and is no log and no
+// leaves). Standing logs on one column with no gap make a trunk. Lying logs in a row along their axis with no gap
+// make a fallen trunk when the row is 2 logs or longer and every log of it lies on the ground (the fallen trees of
+// 1.21.5 and later: a row on the ground beside a stump of one standing log, which counts as a trunk of height 1);
+// any other lying row is a branch (the big oaks grow branches of lying logs up in their crowns).
+// Returns { trunks: [{ base, height, top }], fallen: [{ from, to, length, axis }], branches: [same] }, each sorted
+// by position.
+export function groupLogs(logs) {
+    const list = Array.isArray(logs) ? logs.filter((l) => l && Number.isFinite(l.x) && Number.isFinite(l.y) && Number.isFinite(l.z)) : [];
+    const key = (p) => `${p.x},${p.y},${p.z}`;
+    const runs = (items, along) => {
+        const at = new Map(items.map((p) => [key(p), p]));
+        const step = (p, n) => ({ ...p, [along]: p[along] + n });
+        const starts = items.filter((p) => !at.has(key(step(p, -1))));
+        return starts.map((s) => {
+            const cells = [s];
+            while (at.has(key(step(s, cells.length)))) cells.push(at.get(key(step(s, cells.length))));
+            return { start: { x: s.x, y: s.y, z: s.z }, n: cells.length, onGround: cells.every((c) => c.ground === true) };
+        });
+    };
+    const order = (a, b) => a.x - b.x || a.z - b.z || a.y - b.y;
+    const standing = list.filter((l) => (l.axis ?? 'y') === 'y');
+    const trunks = runs(standing, 'y').map(({ start, n }) => ({ base: start, height: n, top: { ...start, y: start.y + n - 1 } }))
+        .sort((a, b) => order(a.base, b.base));
+    const fallen = [];
+    const branches = [];
+    for (const axis of ['x', 'z']) {
+        for (const { start, n, onGround } of runs(list.filter((l) => l.axis === axis), axis)) {
+            (n >= 2 && onGround ? fallen : branches).push({ from: start, to: { ...start, [axis]: start[axis] + n - 1 }, length: n, axis });
+        }
+    }
+    fallen.sort((a, b) => order(a.from, b.from));
+    branches.sort((a, b) => order(a.from, b.from));
+    return { trunks, fallen, branches };
+}

@@ -1,7 +1,7 @@
 // Test helper of part B (spec v0.1.4.8, section 6): a fake mineflayer bot for src/agent/library/skills.js
 // and world.js, with an inventory of 46 slots like the one of mineflayer (9 to 44 the main inventory,
 // 36 to 44 the hotbar, 45 the off-hand), dropped items on the ground and a path finder whose walk the
-// test decides. Blocks come from tests/helpers/block_world.js as real prismarine blocks of 1.21.8, so
+// test decides. Blocks come from tests/helpers/block_world.js as real prismarine blocks of 26.1, so
 // the Movements of mineflayer-pathfinder can judge them.
 // The file name ends in .test.js only because part B may create no other files; run on its own it
 // checks the fake itself (the tests below run only when this file is the main module).
@@ -12,9 +12,10 @@ import minecraftData from 'minecraft-data';
 import prismarineBlock from 'prismarine-block';
 import { Vec3 } from 'vec3';
 import { createBlockWorld } from '../helpers/block_world.js';
+import { TEST_MC_VERSION } from '../helpers/load.js';
 
-/** The real data of 1.21.8. */
-export const registry = minecraftData('1.21.8');
+/** The real data of the version the bot plays (TEST_MC_VERSION). */
+export const registry = minecraftData(TEST_MC_VERSION);
 const Block = prismarineBlock(registry);
 
 export const OFFHAND = 45;

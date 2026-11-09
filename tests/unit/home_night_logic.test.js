@@ -2,11 +2,11 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
-import { loadSrc } from '../helpers/load.js';
+import { loadSrc, TEST_MC_VERSION } from '../helpers/load.js';
 
 const N = await loadSrc('src/agent/packs/home/night_logic.js');
 const require = createRequire(import.meta.url);
-const ENTITIES = require('minecraft-data/minecraft-data/data/pc/1.21.8/entities.json');
+const ENTITIES = require('minecraft-data')(TEST_MC_VERSION).entitiesArray;
 
 describe('isNight', () => {
     test('true from 12000 up to 23000', () => {
@@ -62,10 +62,11 @@ describe('isHostileForShelter', () => {
         assert.equal(N.isHostileForShelter(null), false);
     });
 
-    test('matches isHostile of mcdata for every entity of 1.21.8, except the listed ones', () => {
+    test('matches isHostile of mcdata for every entity of the version the bot plays, except the listed ones', () => {
         const excluded = new Set(['allay', 'enderman', 'piglin', 'zombified_piglin']);
         for (const e of ENTITIES) {
-            const oldRule = (e.type === 'mob' || e.type === 'hostile') && e.name !== 'iron_golem' && e.name !== 'snow_golem';
+            const oldRule = (e.type === 'mob' || e.type === 'hostile') && e.name !== 'iron_golem' && e.name !== 'snow_golem'
+                && e.name !== 'copper_golem'; // 26.1: the copper golem is a golem too (DECISIONS R1-9)
             const expected = oldRule && !excluded.has(e.name);
             assert.equal(N.isHostileForShelter({ name: e.name, type: e.type }), expected, e.name);
         }

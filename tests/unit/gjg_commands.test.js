@@ -16,7 +16,7 @@ import assert from 'node:assert/strict';
 import path from 'node:path';
 import { register } from 'node:module';
 import minecraftData from 'minecraft-data';
-import { loadSrc } from '../helpers/load.js';
+import { loadSrc, TEST_MC_VERSION } from '../helpers/load.js';
 import { makeTmpDir, removeTmpDir } from '../helpers/tmp.js';
 import { captureConsole } from '../helpers/console_capture.js';
 import { createBlockWorld, vec } from '../helpers/block_world.js';
@@ -53,7 +53,7 @@ const NOW = () => new Date('2026-10-01T10:00:00Z');
 
 let cap;
 let dir;
-before(() => M.mcdata.__setMcdataForTests(minecraftData('1.21.8')));
+before(() => M.mcdata.__setMcdataForTests(minecraftData(TEST_MC_VERSION)));
 after(() => M.mcdata.__setMcdataForTests(null));
 beforeEach(() => {
     cap = captureConsole();
@@ -212,7 +212,7 @@ describe('!rememberArea (R3)', () => {
         // v0.1.4.11 (P1): the answer names the kind, the border, the size in x and z, the openings and the contents
         assert.match(up, /^I saved "home": a home, walled, 9 x 9 with a roof, 1 door, 1 trapdoor, 1 bed\. I shelter there at night\.$/);
         agent.bot.entity.position = vec(5.5, 56, 5.5);
-        const down = await command('!rememberArea').perform(agent, 'basement', 'building');
+        const down = await command('!rememberArea').perform(agent, 'basement', 'auto'); // v0.1.4.14 (P-18): the default
         assert.match(down, /^I saved "basement": a /, 'v0.1.4.11 (P1): without a type the kind of the scan');
         assert.deepEqual(boxOf(agent.area_store.get('home')), box(0, 60, 0, 8, 65, 8));
         assert.deepEqual(boxOf(agent.area_store.get('basement')), box(0, 55, 0, 8, 60, 8));
@@ -226,7 +226,7 @@ describe('!rememberArea (R3)', () => {
         const home = agent.area_store.get('home');
         assert.ok(home.min.y < 60, `the old scan takes the basement too: ${JSON.stringify(boxOf(home))}`);
         agent.bot.entity.position = vec(5.5, 56, 5.5);
-        assert.equal(await command('!rememberArea').perform(agent, 'basement', 'building'), 'That is the area "home" already.');
+        assert.equal(await command('!rememberArea').perform(agent, 'basement', 'auto'), 'That is the area "home" already.');
         assert.equal(agent.area_store.get('basement') ?? null, null, 'nothing saved');
         assert.equal(agent.area_store.list().length, 1);
     });
@@ -234,7 +234,7 @@ describe('!rememberArea (R3)', () => {
     test('the same name again: saved again as before (a new type too)', async () => {
         const world = twoFloors();
         const agent = areaAgent(world, { x: 4.5, y: 61, z: 4.5 });
-        await command('!rememberArea').perform(agent, 'home', 'building');
+        await command('!rememberArea').perform(agent, 'home', 'auto');
         assert.match(await command('!rememberArea').perform(agent, 'Home', 'home'), /^I saved "home": a home, /); // v0.1.4.11 (P1)
         assert.equal(agent.area_store.list().length, 1);
         assert.equal(agent.area_store.get('home').type, 'home');
@@ -244,12 +244,13 @@ describe('!rememberArea (R3)', () => {
         const world = createBlockWorld().flatGround(63);
         const agent = areaAgent(world, { x: 100.5, y: 64, z: 100.5 });
         // v0.1.4.11 (P1): without a type and without a border nothing is saved; a box around the bot only for a type
-        assert.equal(await command('!rememberArea').perform(agent, 'spot', 'building'),
+        assert.equal(await command('!rememberArea').perform(agent, 'spot', 'auto'),
             'I find no border around me: no fence, wall, hedge or water within 24 blocks. Stand inside the place and say it again.');
         assert.equal(agent.area_store.list().length, 0);
-        assert.match(await command('!rememberArea').perform(agent, 'spot', 'home'), /^I found no building here\./);
-        assert.equal(await command('!rememberArea').perform(agent, 'other', 'home'), 'That is the area "spot" already.');
-        assert.equal(agent.area_store.list().length, 1);
+        // v0.1.4.14 (the lead's decision, W07): typed, nothing found saves nothing either
+        assert.equal(await command('!rememberArea').perform(agent, 'spot', 'home'),
+            'I find no border around me: no fence, wall, hedge or water within 24 blocks. Stand inside the place and say it again.');
+        assert.equal(agent.area_store.list().length, 0);
     });
 });
 

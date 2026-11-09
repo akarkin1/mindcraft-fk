@@ -2,13 +2,17 @@
 // which chest takes an item, the two halves of a double chest, and what the slots of a container hold.
 import { BANNED_FOOD } from '../home/food_logic.js';
 
+// v0.1.4.14 (part D): the copper chests of Minecraft 1.21.9 and later, in their four stages of oxidation and waxed;
+// their window is the chest window (27 slots). A shelf holds 3 items and opens no window: it is no container.
+export const COPPER_CHESTS = Object.freeze(['copper_chest', 'exposed_copper_chest', 'weathered_copper_chest', 'oxidized_copper_chest',
+    'waxed_copper_chest', 'waxed_exposed_copper_chest', 'waxed_weathered_copper_chest', 'waxed_oxidized_copper_chest']);
 /** Blocks the storage pack opens. */
-export const CONTAINER_KINDS = Object.freeze(['chest', 'trapped_chest', 'barrel']);
+export const CONTAINER_KINDS = Object.freeze(['chest', 'trapped_chest', 'barrel', ...COPPER_CHESTS]);
 
 /** Kinds of tools of the keep plan. */
 export const TOOL_KINDS = Object.freeze(['pickaxe', 'axe', 'shovel', 'hoe', 'sword']);
-/** Materials of tools, from the best to the weakest. */
-export const MATERIALS = Object.freeze(['netherite', 'diamond', 'iron', 'stone', 'golden', 'wooden']);
+/** Materials of tools, from the best to the weakest. v0.1.4.14 (part D): copper (1.21.9) mines like stone, lasts longer. */
+export const MATERIALS = Object.freeze(['netherite', 'diamond', 'iron', 'copper', 'stone', 'golden', 'wooden']);
 
 /** Items the bot keeps up to a count, by name. A bed is kept once, whatever its colour. */
 export const KEEP_LIMITS = Object.freeze({ torch: 64, ladder: 64, cobblestone: 32, crafting_table: 1, water_bucket: 1, bucket: 1 });

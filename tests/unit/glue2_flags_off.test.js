@@ -18,7 +18,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { register } from 'node:module';
 import minecraftData from 'minecraft-data';
-import { loadSrc } from '../helpers/load.js';
+import { loadSrc, TEST_MC_VERSION } from '../helpers/load.js';
 import { repoPath, REPO_ROOT } from '../helpers/paths.js';
 import { makeTmpDir, removeTmpDir } from '../helpers/tmp.js';
 import { captureConsole } from '../helpers/console_capture.js';
@@ -270,7 +270,7 @@ const PROFILE = JSON.parse(fs.readFileSync(repoPath('profiles/defaults/_default.
 const NEW_COMMANDS = SWITCHES.flatMap((part) => T.PART_COMMANDS[part]);
 const COMMANDS_0146 = ['cost_meter', 'protected_areas', 'player_rules', 'home_pack'].flatMap((part) => T.PART_COMMANDS[part]);
 
-before(() => M.mcdata.__setMcdataForTests(minecraftData('1.21.8')));
+before(() => M.mcdata.__setMcdataForTests(minecraftData(TEST_MC_VERSION)));
 after(() => M.mcdata.__setMcdataForTests(null));
 
 const command = (name) => M.actions.actionsList.find((c) => c.name === name) ?? M.queries.queryList.find((c) => c.name === name);
