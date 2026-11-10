@@ -211,6 +211,26 @@ round of 0.1.4.14 joins it at the end.
 
 Setting `routines` (off) belongs to 0.1.4.15 now.
 
+### The play of 2026-11-10 on v0.1.4.14 (Q-1 to Q-9; the owner decides the release)
+
+Reported by the owner's gameplay session on 2026-11-10 (the world "Speed Run 1 [26.1]", the base at (-2300, 63, 816),
+the house doors on the south side at z 819); recorded here untouched until the owner says where they go.
+
+| Id | Finding | Where to look |
+|---|---|---|
+| Q-1 | `!goToBed` and the night shelter stop at the house's east wall (-2297, 63, 814) with "locked out" / "I cannot get into the shelter home" / "I stopped in the doorway"; the reflex retried every minute without end. The doors are at (-2301, 63, 819) and (-2300, 63, 819). `!goToCoordinates(-2300, 63, 821, 1)`, then `(-2300, 63, 815, 0)`, then `!goToBed` works every time: the shelter walk seems to aim at the nearest wall, not a door. | `shelter.js`, `shelter_logic.js` (the entrance choice, the route of the walk), the door service |
+| Q-2 | A phantom creeper, a death: `creeper_safety` stopped every walk near the trading hall at about (-2262, 63, 838), "A creeper keeps following me" with no creeper there (`!entities` showed none); underground at level 16 the reflex fled down into a cave to (-2245, -4, 864), where the bot died with 22 raw iron. 71 monsters tracked around the tower, 26 creepers, mostly below y 40: the reflex counts creepers through blocks and in caves below. It must react only to a creeper it can see, within reach and at its level, and never flee into a cave. | `creeper_logic.js`, `modes.js` (`creeper_safety`), the flee target |
+| Q-3 | The clock in the prompt: the model said "Night's coming", went to the shelter, ran `!stay` and "Night's still on" in full daylight (Time 932 and 2166 on the watch); `!goToBed` once said "It is day, the night starts in about 1 minute" at dusk. Does every time the prompt and the texts read come from the patched clock (`bot.time.timeOfDay`)? | `full_state.js`, `queries.js` (`!stats`), `sleep.js`, `night_logic.js`, the `time` listener of `agent.js` |
+| Q-4 | Every `run` of the supervisor echoes `*MartyByrde2 used setArea*` and the result into the game chat, and for `!newAction` the whole generated code; the skill says `run` is quiet. | `watch/queue.js` (`runQuiet`), `agent.js` (`routeResponse`, `show_command_syntax`) |
+| Q-5 | `bot.dig` fails with `enchantments.concat is not a function` while holding an enchanted diamond pickaxe the owner gave; the 26.1 item components (enchantments are no array) in the dig-time code or the pathfinder's dig cost. The bot also said "no way without digging" inside a leaf canopy where breaking leaves was the way out. | `patches/mineflayer+4.39.0.patch` (`digging.js`, `digTime`), prismarine-item's `enchants` on 26.1, the fallback rule of `way_logic.js` for leaves |
+| Q-6 | `!mineOre("iron", 32, true)` after a restart or a `!stop` starts at "0 of 32" with 22 raw iron in the bag; the model shortened the owner's 32 to `!mineOre("iron", 8, true)`. | `job/index.js` (`progress`, the bag's count at the start), the profile's examples |
+| Q-7 | `!mineOre`: "I have no stone for a new one" with 65 cobblestone in the bag; it stored 133 cobblestone and its crafting table in the mine chest and planned to smelt the owner's iron for an iron pickaxe; the stone pickaxe craft beside a placed table failed twice ("windowOpen did not fire") because the unstuck reflex moved the bot away; standing next to the table it worked. | `mining/` (the pickaxe rule, the supplies), `skills.js` `craftRecipe` (the unstuck pause during a craft), the chest storing rule |
+| Q-8 | The watch's `run` returns "Ran 0 of 1. Still running" after about 60 s while the command goes on; a supervisor script takes it as finished. | `watch/queue.js` (`QUEUE_RULES.answerMs`), the supervise skill |
+| Q-9 | Small: an iron axe lasted about 150 logs (does `!chopTrees` swing at leaves or use the axe on other blocks?); the mine chest filled with 33 kinds (saplings, dirt, the bed, the crafting table); the area sense asked about "a walled yard with a roof, 1 bee" that was tree leaves. | `wood.js` (the tool use on leaves), the storing rule, `area_scan.js` (a hive or a bee nest as a built block?) |
+
+Lessons for the supervise skill (the gameplay session's, no code): watch scripts resume from the last cursor, not
+the newest; owner lines without the supervisor's name are not message events.
+
 ## The base survey (brief of 2026-11-09, not started)
 
 From the owner's gameplay session of 2026-11-09, relayed to the lead with the owner's decisions; the plan and the
