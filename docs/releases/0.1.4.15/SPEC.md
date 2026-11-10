@@ -184,7 +184,7 @@ bot knows (the areas by name and kind, the chests by position, from the stores, 
 The prompt goes through `promptPlan` (the chat model, purpose `plan`, with the rules section of the player as
 every prompt has it).
 
-`ROUTINE_COMMANDS`: `PLAN_COMMANDS` of `plan_logic.js` plus `!harvest(farm)`, `!plant(farm)`, `!farmCycle(farm)`,
+`ROUTINE_COMMANDS`: `PLAN_COMMANDS` of `plan_logic.js` plus `!harvest(farm)`, `!plant(seed, farm)`, `!farmCycle(farm)`,
 `!storeItems()`, `!putInChest(item, num)`, `!fetchItem(item, num)`, `!goToRememberedPlace(name)`,
 `!goToBase(name)` (when `base_survey` is on), `!collectBlocks(type, num)`, `!craftRecipe(name, num)`; never a
 routine command, never `!newAction`, never `!stop`.
@@ -197,8 +197,11 @@ plan pauses the routine).
 
 ### 3.3 A round as a job
 
-`job_logic.js` gets the kind `routine` in `JOB_COMMANDS`: `{ words: 'the routine "<name>"', count: false }`;
-`job_store.js` accepts `kind: 'routine'` with `routine: name` and `round: n` (the validator); `createJob` gets
+`job_logic.js` gets the kind `routine` beside `JOB_KINDS` (an exported `ROUTINE_KIND`, not an entry of `JOB_COMMANDS`,
+which the job tests pin to the nine command kinds; its words `the routine "<name>"`); `job_store.js` accepts
+`kind: 'routine'` with `routine: name` and `round: n` (the validator); the plan prompt of 3.2 carries the rules
+section itself (`buildRulesSection`), since `promptPlan` adds none; a plan that fails the check or is NONE pauses the
+routine (3.6), `!doRoutine` unpauses and replans; `createJob` gets
 `startRoutineRound(routine)`: a job of kind `routine`, `by: 'player'`, `steps` the routine's saved steps with
 their checks (`checkOf`), no plan call; `isDone` for the kind: every step done; `resumeCommand`: the next step;
 the job's `stepRuns` (2), `maxFails` (3) and the errands hold as for any job; `doneText` for the kind is the
