@@ -21,12 +21,13 @@ export function areaType(area) {
 }
 
 /**
- * True for an area with a valid box of type `home`: the only type that is a shelter (C4).
+ * True for an area with a valid box of type `home`: the only type that is a shelter (C4); v0.1.4.15 (S 2.3): and the
+ * basement of the base survey, a building under another one (isShelterType reads `under`).
  * @param {object} area
  * @returns {boolean}
  */
 export function isShelterArea(area) {
-    return isBox(area) && isShelterType(areaType(area));
+    return isBox(area) && isShelterType(areaType(area), area);
 }
 
 /**

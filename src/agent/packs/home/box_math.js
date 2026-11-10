@@ -131,8 +131,8 @@ export function expandBox(box, n) {
     return isBox(out) ? out : null;
 }
 
-function shrinkAxis(min, max) {
-    for (const n of [2, 1]) {
+function shrinkAxis(min, max, by = 2) {
+    for (let n = by; n >= 1; n--) {
         if (min + n <= max - n) {
             return [min + n, max - n];
         }
@@ -141,18 +141,107 @@ function shrinkAxis(min, max) {
 }
 
 /**
- * The room inside the walls: x and z shrink by 2 (the margin of a scanned box and the wall),
- * y stays. An axis that is too small for that shrinks by 1 or not at all.
+ * How the edge of a box lies (v0.1.4.15, Q-1 and W126 D): `wall` when the box's edge columns are the walls themselves
+ * (the box of the floor scan with area_floors, and of the base survey: the room grown by 1), `margin` when a margin of
+ * air lies between the walls and the edge (the box of scanBuilding without floors: the blocks grown by 1). The interior
+ * of a `wall` box is the box shrunk by 1, of a `margin` box by 2; a box without the mark counts as `margin` (as before).
+ */
+export const BOX_EDGES = Object.freeze(['wall', 'margin']);
+
+/** The margin the interior of a box shrinks by for each kind of edge. */
+export const EDGE_MARGINS = Object.freeze({ wall: 1, margin: 2 });
+
+// Names a player walks through: the ring of a `margin` box is made of them, the ring of a `wall` box is not.
+const OPEN_NAMES = new Set(['air', 'cave_air', 'void_air', 'water', 'lava', 'short_grass', 'grass', 'tall_grass', 'fern', 'large_fern', 'dead_bush', 'snow',
+    'torch', 'wall_torch', 'soul_torch', 'soul_wall_torch', 'redstone_wire', 'rail', 'powered_rail', 'detector_rail', 'activator_rail', 'cobweb', 'light']);
+const OPEN_ENDINGS = ['_carpet', '_pressure_plate', '_button', '_sign', '_banner', '_torch', '_sapling', '_tulip'];
+
+function isOpenName(name) {
+    return OPEN_NAMES.has(name) || OPEN_ENDINGS.some(e => name.endsWith(e));
+}
+
+/**
+ * The margin the interior of a box shrinks by: `margin` when given a whole number, else by the box's `edge` (BOX_EDGES),
+ * else 2 (a box without the mark: the boxes of before v0.1.4.15).
  * @param {object} box
+ * @param {number|null} [margin]
+ * @returns {number}
+ */
+export function interiorMargin(box, margin = null) {
+    if (Number.isInteger(margin) && margin >= 0) {
+        return margin;
+    }
+    return Object.hasOwn(EDGE_MARGINS, box?.edge) ? EDGE_MARGINS[box.edge] : EDGE_MARGINS.margin;
+}
+
+/**
+ * The room inside the walls: x and z shrink by the margin of the box (interiorMargin: 1 for a box whose edge is the
+ * wall, 2 for a box with a margin of air outside the walls or without the mark), y stays. An axis that is too small
+ * for that shrinks less, or not at all.
+ * @param {object} box an area or a box, with its optional `edge`
+ * @param {number|null} [margin] shrink by this instead
  * @returns {object|null}
  */
-export function interiorBox(box) {
+export function interiorBox(box, margin = null) {
     if (!isBox(box)) {
         return null;
     }
-    const [minX, maxX] = shrinkAxis(box.min.x, box.max.x);
-    const [minZ, maxZ] = shrinkAxis(box.min.z, box.max.z);
+    const by = interiorMargin(box, margin);
+    const [minX, maxX] = shrinkAxis(box.min.x, box.max.x, by);
+    const [minZ, maxZ] = shrinkAxis(box.min.z, box.max.z, by);
     return { min: { x: minX, y: box.min.y, z: minZ }, max: { x: maxX, y: box.max.y, z: maxZ } };
+}
+
+/**
+ * The kind of a box's edge read from the world (v0.1.4.15): the ring of the box at the height of the walls (2 over its
+ * bottom, the first level above the floor blocks; its top at most) is looked at: half or more of the cells read solid,
+ * the edge is the wall (`wall`); else air lies between the walls and the edge (`margin`). null when no cell of the ring
+ * is loaded. Never throws.
+ * @param {(x: number, y: number, z: number) => string|{name: string}|null} read a block name reader (blockReader of
+ *   motion.js gives { name }, the scans a name)
+ * @param {object} box
+ * @returns {'wall'|'margin'|null}
+ */
+export function edgeOf(read, box) {
+    if (typeof read !== 'function' || !isBox(box)) {
+        return null;
+    }
+    const y = Math.min(box.min.y + 2, box.max.y);
+    let solid = 0;
+    let open = 0;
+    const look = (x, z) => {
+        let value;
+        try {
+            value = read(x, y, z);
+        } catch {
+            value = null;
+        }
+        const name = typeof value === 'string' ? value : value?.name;
+        if (typeof name !== 'string' || name === '') {
+            return;
+        }
+        if (isOpenName(name.replace(/^minecraft:/, ''))) {
+            open++;
+        } else {
+            solid++;
+        }
+    };
+    for (let x = box.min.x; x <= box.max.x; x++) {
+        look(x, box.min.z);
+        if (box.max.z !== box.min.z) {
+            look(x, box.max.z);
+        }
+    }
+    for (let z = box.min.z + 1; z <= box.max.z - 1; z++) {
+        look(box.min.x, z);
+        if (box.max.x !== box.min.x) {
+            look(box.max.x, z);
+        }
+    }
+    if (solid + open === 0) {
+        return null;
+    }
+    return solid * 2 >= solid + open ? 'wall' : 'margin';
 }
 
 /**

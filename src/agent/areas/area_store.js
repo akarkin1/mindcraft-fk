@@ -31,8 +31,12 @@ export const AREA_RULES = Object.freeze({
     mine: Object.freeze({ break: 'natural', place: 'all', pathDig: 'natural', shelter: false, defended: false }),
 });
 
-/** Where an area came from: a scan, !setArea, a box around the bot, or autoHome. */
-export const AREA_SOURCES = Object.freeze(['scan', 'manual', 'radius', 'auto']);
+/**
+ * Where an area came from: a scan, !setArea, a box around the bot, autoHome, or (v0.1.4.15, S 2.4) the base survey.
+ * A survey never renames, re-boxes or forgets an area of another source (the owner's words); only its own are
+ * updated by a later survey.
+ */
+export const AREA_SOURCES = Object.freeze(['scan', 'manual', 'radius', 'auto', 'survey']);
 
 /** Smallest side of an area in x and z (v0.1.4.8, D1 and D7). */
 export const MIN_AREA_SIDE = 2;
@@ -54,6 +58,14 @@ export const AREA_BORDERS = Object.freeze(['fence', 'wall', 'glass', 'hedge', 'w
 
 /** Largest box of an area, in blocks. */
 export const MAX_AREA_SIZE = Object.freeze({ x: 64, y: 48, z: 64 });
+
+/**
+ * How the edge of an area's box lies (v0.1.4.15, Q-1): `wall` when the walls are the box's edge (the floor scan with
+ * area_floors, the base survey), `margin` when a margin of air lies outside the walls (scanBuilding without floors). The
+ * home pack shrinks the box by 1 or 2 for the room inside (interiorBox of box_math.js); an area without the field counts
+ * as `margin`, as before.
+ */
+export const AREA_EDGES = Object.freeze(['wall', 'margin']);
 
 /** Dimension of an area or a query that names none. */
 export const DEFAULT_DIMENSION = 'overworld';
@@ -89,12 +101,17 @@ function lookupName(name) {
 }
 
 /**
- * True for the type of an area in which the home pack may shelter (D2): only home.
+ * True for the type of an area in which the home pack may shelter (D2): a home; v0.1.4.15 (S 2.3): also a building
+ * that lies under another building (the basement of the survey, `under: <building name>`), when the area is given.
  * @param {string} type
+ * @param {{under?: string}|null} [area] the area, for the basement rule
  * @returns {boolean}
  */
-export function isShelterType(type) {
-    return AREA_RULES[type]?.shelter === true;
+export function isShelterType(type, area = null) {
+    if (AREA_RULES[type]?.shelter === true) {
+        return true;
+    }
+    return type === 'building' && typeof area?.under === 'string' && area.under.length > 0;
 }
 
 /**
@@ -324,6 +341,22 @@ function validateArea(area, nowIso) {
     }
     if (AREA_BORDERS.includes(area.border)) {
         clean.border = area.border;
+    }
+    // v0.1.4.15 (S 2.4): the base the area belongs to, and (S 2.3) the building a basement lies under; both names as
+    // area names are kept, both optional: an area without them has no field, as before
+    const base = normalizeAreaName(area.base);
+    if (base && base.length <= NAME_MAX) {
+        clean.base = base;
+    }
+    const under = normalizeAreaName(area.under);
+    if (under && under.length <= NAME_MAX) {
+        clean.under = under;
+    }
+    // v0.1.4.15 (Q-1): how the edge of the box lies, `wall` (the box of the floor scan and of the survey: the walls are
+    // its edge) or `margin` (scanBuilding without floors: a margin of air outside the walls); the home pack reads the
+    // interior of the area by it. Optional: an area without it has no field and counts as `margin`, as before.
+    if (AREA_EDGES.includes(area.edge)) {
+        clean.edge = area.edge;
     }
     return clean;
 }
@@ -570,11 +603,64 @@ export class AreaStore {
                     clean.border = previous.border;
                 }
             }
+            // v0.1.4.15 (S 2.4): a new box keeps its base and the building it lies under unless the call gives them
+            if (!clean.base && previous.base) {
+                clean.base = previous.base;
+            }
+            // v0.1.4.15 (Q-1): the same box keeps the kind of its edge; another box forgets it unless the call gives it
+            if (!clean.edge && previous.edge && boxesEqual(clean, previous)) {
+                clean.edge = previous.edge;
+            }
+            if (!clean.under && previous.under) {
+                clean.under = previous.under;
+            }
         }
         this._areas.set(clean.name, clean);
         this._revision++;
         this._save();
         return copyArea(clean);
+    }
+
+    /**
+     * Renames an area (v0.1.4.15, S 2.4): the key in the file and `name` change, nothing else (not even `updated`).
+     * Both names are normalised. Never throws.
+     * @param {string} oldName
+     * @param {string} newName
+     * @returns {object|null} a copy of the renamed area; null when there is no area of the old name, the new name is
+     *   not 1 to 64 characters, or an area of the new name exists already
+     */
+    rename(oldName, newName) {
+        try {
+            this._refresh(true);
+            const from = lookupName(oldName);
+            const to = lookupName(newName);
+            if (!from || !to || to.length < 1 || to.length > NAME_MAX || !this._areas.has(from) || this._areas.has(to)) {
+                return null;
+            }
+            const area = this._areas.get(from);
+            this._areas.delete(from);
+            area.name = to;
+            this._areas.set(to, area);
+            this._revision++;
+            this._save();
+            return copyArea(area);
+        } catch (err) {
+            console.warn(`Could not rename the area "${oldName}":`, err?.message ?? err);
+            return null;
+        }
+    }
+
+    /**
+     * The areas of a base (v0.1.4.15, S 2.4), by name; the name is normalised.
+     * @param {string} base
+     * @returns {object[]} copies
+     */
+    ofBase(base) {
+        const wanted = lookupName(base);
+        if (!wanted) {
+            return [];
+        }
+        return this.list().filter(area => area.base === wanted);
     }
 
     /**

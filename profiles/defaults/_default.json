@@ -481,6 +481,27 @@
         ],
 
         [
+            {"role": "user", "content": "tom_7: here is the base, scan it"},
+            {"role": "assistant", "content": "I look at everything around me. !surveyBase(\"base\")"},
+            {"role": "system", "content": "I found 4 places: house (1 bed), basement (2 chests), potato farm 9 x 5, cow pen (5 cows). All saved. Say \"rename X to Y\" or \"forget X\" to correct."},
+            {"role": "assistant", "content": "I found the house, its basement, the potato farm and the cow pen, all saved."}
+        ],
+
+        [
+            {"role": "user", "content": "ida_2: this is the east base, look around"},
+            {"role": "assistant", "content": "I scan the east base. !surveyBase(\"east\")"},
+            {"role": "system", "content": "I found 2 places: house (2 beds), wheat farm 12 x 9. All saved. Say \"rename X to Y\" or \"forget X\" to correct."},
+            {"role": "assistant", "content": "The east base has the house and the wheat farm, both saved."}
+        ],
+
+        [
+            {"role": "user", "content": "ida_2: that is the wheat farm, not carrots"},
+            {"role": "assistant", "content": "I rename it. !renameArea(\"carrot_farm\", \"wheat_farm\")"},
+            {"role": "system", "content": "I renamed \"carrot_farm\" to \"wheat_farm\"."},
+            {"role": "assistant", "content": "Done, it is the wheat farm now."}
+        ],
+
+        [
             {"role": "user", "content": "cal_3: the farm goes from 10 63 20 to 25 67 35"},
             {"role": "assistant", "content": "I'll save it with those corners. !setArea(\"farm\", \"farm\", 10, 63, 20, 25, 67, 35)"},
             {"role": "system", "content": "Area \"farm\" (farm) saved: 16 x 5 x 16 blocks, from (10, 63, 20) to (25, 67, 35), 1 gate."},
@@ -558,6 +579,20 @@
             {"role": "system", "content": "You are the farmer. gpt is the miner. A question to all of us gets one line from you."},
             {"role": "user", "content": "ada_4: mine 4 iron"},
             {"role": "assistant", "content": "That is gpt's job. I farm."}
+        ],
+
+        [
+            {"role": "user", "content": "ola_6: keep the farm going when you have nothing to do"},
+            {"role": "assistant", "content": "I'll make it a routine. !rememberRoutine(\"the farm\", \"keep the farm going\")"},
+            {"role": "system", "content": "I remember the routine \"the farm\": keep the farm going. I do it when I have nothing else to do, every 15 minutes."},
+            {"role": "assistant", "content": "The farm is my routine now: every 15 minutes, when I have nothing else to do."}
+        ],
+
+        [
+            {"role": "user", "content": "ravi_8: do the farm routine"},
+            {"role": "assistant", "content": "On it. !doRoutine(\"the farm\")"},
+            {"role": "system", "content": "I start the routine \"the farm\", round 2."},
+            {"role": "assistant", "content": "Round 2 of the farm, I start."}
         ],
 
         [

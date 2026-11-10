@@ -195,6 +195,10 @@ const SCENARIOS = [
     ['night_falls', 'w123_night_falls.js', 600, false, 'base'], // v0.1.4.14 fix round, part 8 (T3): the clock of 26.1 runs (SPEC 8.10); in no group
     ['open_farm', 'w124_open_farm.js', 900, false, 'base'], // part 8 (T3): the open farm and the cats (SPEC 8.10); in no group
     ['open_ground', 'w125_open_ground.js', 900, false, 'natural'], // part 8 (T3): the open ground (SPEC 8.10); in no group
+    // v0.1.4.15 "The base survey and Routines" (tester T3): the survey of a built base (SPEC 7.1) and the farm routine (SPEC 7.2);
+    // in no group (`survey_base`, not `base`: that word selects baseline, base_world and owner_base too by the substring rule)
+    ['survey_base', 'w126_base.js', 1200, false, 'base'],
+    ['farm_routine', 'w127_farm_routine.js', 1200, false, 'base'],
 ];
 
 // Words that select a group of scenarios (spec v0.1.4.8, W30: the work scenarios of v0.1.4.7, which run

@@ -7,7 +7,7 @@
 import { Vec3 } from 'vec3';
 import { isGatedArea } from './area_kinds.js';
 import { containsPos, expandBox, interiorBox, isBox } from './box_math.js';
-import { isInsideArea } from './shelter_logic.js';
+import { isInsideArea, withEdge } from './shelter_logic.js';
 import { botPos, clockOf, dimensionOf, entitiesWhere, listAreas, logTo, otherPlayerPositions } from './context.js';
 import { DOOR_SERVICE_RULES, DoorWatch, doorAxis, doorCenter, doorSides, isIronOpenable, openableKind, sideOf } from './door_logic.js';
 import { reflexOn } from './home_settings.js';
@@ -266,9 +266,21 @@ export function doorIsSafe(bot, door, ctx = {}) {
     }
 }
 
-// Which side of the door is the goal: the inner side of `inside`, the side of the point `toward`
-// (fix round X6: the place "home" when there is no area), or the side away from the bot.
-function chooseSides(state, sides, bot, inside, toward = null) {
+/**
+ * Which side of the door is the goal: the inner side of `inside`, the side of the point `toward` (fix round X6: the
+ * place "home" when there is no area), or the side away from the bot. v0.1.4.15 (Q-1, W126 D): when neither side of
+ * the door lies in the interior of `inside` (a door in a wall that is the box's edge: both sides lie in the wall's
+ * margin), the side that lies in the box itself is the inner side; only without that does "away from the bot" decide.
+ * On the owner's base the bot stood inside by its door, both sides read as outside, and it walked out through its
+ * own door and closed it behind itself. Exported for its test.
+ * @param {object} state the door as readOpenable gives it
+ * @param {object[]} sides the two cells of doorSides
+ * @param {object} bot
+ * @param {object|null} inside the area (a box) the bot wants to be in
+ * @param {{x,y,z}|null} [toward]
+ * @returns {{near: object, far: object, farSign: 1|-1}}
+ */
+export function chooseSides(state, sides, bot, inside, toward = null) {
     if (isPoint(toward) && !isBox(inside)) {
         const goal = sideOf(state, toward);
         if (goal !== 0) {
@@ -276,11 +288,17 @@ function chooseSides(state, sides, bot, inside, toward = null) {
         }
     }
     if (isBox(inside)) {
+        const centre = (s) => ({ x: s.x + 0.5, y: s.y, z: s.z + 0.5 });
         const room = interiorBox(inside);
-        const inA = containsPos(room, { x: sides[0].x + 0.5, y: sides[0].y, z: sides[0].z + 0.5 });
-        const inB = containsPos(room, { x: sides[1].x + 0.5, y: sides[1].y, z: sides[1].z + 0.5 });
+        const inA = containsPos(room, centre(sides[0]));
+        const inB = containsPos(room, centre(sides[1]));
         if (inA !== inB) {
             return inA ? { near: sides[1], far: sides[0], farSign: -1 } : { near: sides[0], far: sides[1], farSign: 1 };
+        }
+        const boxA = containsPos(inside, centre(sides[0]));
+        const boxB = containsPos(inside, centre(sides[1]));
+        if (boxA !== boxB) {
+            return boxA ? { near: sides[1], far: sides[0], farSign: -1 } : { near: sides[0], far: sides[1], farSign: 1 };
         }
     }
     const me = botPos(bot);
@@ -528,15 +546,17 @@ async function passInner(bot, door, ctx, options) {
     if (!sides) {
         return outcome(false, 'blocked', `I cannot walk through the ${state.kind} at ${where(state)}.`);
     }
-    const { near, far, farSign } = chooseSides(state, sides, bot, options.inside, options.toward);
+    // v0.1.4.15 (Q-1): the area with the kind of its edge read from the world when it has none, so its interior is right
+    const inside = isBox(options.inside) ? withEdge(options.inside, blockReader(bot)) : options.inside;
+    const { near, far, farSign } = chooseSides(state, sides, bot, inside, options.toward);
     const kind = kindName(state); // X13: the texts name what it is: door, gate or trapdoor
     const monster = (danger) => outcome(false, 'monster_near', `A monster is near the ${kind} at ${where(state)}. I do not open it.`, { mob: danger.entity });
 
     // Already through: inside the area when one is given, otherwise just behind the door. The side of
     // the door's plane alone is not enough: a bot behind the opposite wall is on that side too.
     const farCenter = { x: far.x + 0.5, y: far.y, z: far.z + 0.5 };
-    const alreadyThrough = isBox(options.inside)
-        ? isInsideArea(options.inside, botPos(bot))
+    const alreadyThrough = isBox(inside)
+        ? isInsideArea(inside, botPos(bot))
         : sideOf(state, botPos(bot)) === farSign && isNear(bot, farCenter, 2.5);
     if (alreadyThrough) {
         if (state.open && !(await closeDoor(bot, state, { ...doorOpts, respectInterrupt: false }))) {

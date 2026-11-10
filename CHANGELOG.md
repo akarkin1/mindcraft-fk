@@ -6,6 +6,43 @@ This fork is based on [Mindcraft](https://github.com/mindcraft-bots/mindcraft) `
 
 Each release lists new settings and feature flags with their default value.
 
+## [0.1.4.15] - unreleased
+
+"The base survey and Routines": the bot finds every place of a base by itself and saves them all at once, and a
+paragraph in your words becomes a standing routine it works when it has nothing else to do. Both behind switches,
+off by default (`base_survey`, `routines`); off, the prompt is byte for byte v0.1.4.14's.
+
+### Added
+
+- **`!surveyBase(name)`** ("here is the base, scan it"): the bot reads the loaded blocks around it (within
+  `survey_radius`, 128 by default; the one exception to the no-x-ray rule, with a reader that cannot see ore) and
+  finds the farms with or without a fence, the pens, the house and its rooms, a trading hall, cane by the water, a
+  tied animal, a nether portal, and underground the basement under a trapdoor and ladder, a mine entrance and a
+  cave mouth it keeps out of; saves every place at once with source `survey` and the base's name, the way from the
+  house to the mine as a route, and the base in `bases.json`; then one line: `I found 10 places: house (1 bed,
+  1 chest), basement (1 chest, 1 furnace), trading hall (3 villagers), potato farm 9 x 5, cow pen (5 cows), pig pen
+  (4 pigs), cane by the water (12), a tied happy ghast at (x, y, z), a portal at (x, y, z), a mine entrance at
+  (x, y, z). All saved. Say "rename X to Y" or "forget X" to correct.` Your own areas are never renamed, re-boxed
+  or forgotten by a survey; a find inside one of them is kept as yours and said so. A second survey of the same
+  base reports the differences only (`I surveyed "east" again: the pig pen is new. The rest as saved.`).
+- **`!renameArea(old, new)`**, **`!goToBase(name)`**, and `!forgetArea` also forgets a place or a whole base.
+- **Routines** (`!rememberRoutine(name, text)`, `!routines`, `!forgetRoutine(name)`, `!doRoutine(name)`): a
+  paragraph in your words ("harvest the wheat farm and plant it again, then put the wheat in the chest by the door,
+  every minute") is saved; at its first round the model turns it into steps once, code checks every step (a known
+  command with arguments of the right kind, within your rules), and the rounds run as jobs with no model call,
+  again every N minutes (or `when fewer than N <item>`) when the bot has nothing else to do; "stop" ends a round,
+  three failed rounds pause the routine. The supervisor lists them with the watch tool `routines`.
+
+### Changed
+
+- **The doorway stall** (your play of 2026-11-10: "locked out", "I stopped in the doorway", the night reflex
+  retrying every minute): the test "am I inside this area" shrank every box by two blocks, assuming a margin of
+  air around the walls, but the boxes of the floor scan (on since 0.1.4.10, your base's areas among them) and of
+  the survey end at the wall itself, so the floor row along every wall counted as outside, the door logic chose
+  the side away from the bot, and the bot walked out through its own door and could not get back in. The margin
+  is now one block for a wall-edge box and two for a margin box, read from the world and cached on the area, and
+  the door side is chosen by the box when the interior rule gives no answer. Your areas work without re-saving.
+
 ## [0.1.4.14] - 2026-11-09
 
 "Minecraft 26.1": the bot plays in Minecraft Java 26.1 ("Tiny Takeover", 2026-03-24) with the libraries of

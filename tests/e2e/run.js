@@ -44,6 +44,9 @@ const SCENARIOS = [
     // v0.1.4.14 fix round, part 8 (T3 with E1, SPEC 8.1.5): the clock of 26.1 runs between the packets; a third field is
     // the time limit of the scenario in ms (60 s without one)
     ['night_falls', 's18_night_falls.js', 90000],
+    // v0.1.4.15 (T3, SPEC 3.7): a routine's rounds on the fake server (two walks between remembered places; the second round
+    // after `every minute`, so the scenario needs about 2 minutes)
+    ['routine_round', 's20_routine_round.js', 240000],
 ];
 
 const args = process.argv.slice(2);

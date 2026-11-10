@@ -28,6 +28,20 @@ function lookupName(name) {
     return typeof name === 'string' ? name.trim() : null;
 }
 
+// v0.1.4.15 (S 2.4): the base a place belongs to, kept like the name of an area (trimmed, lower case, spaces to "_");
+// null for none.
+function normaliseBase(value) {
+    if (typeof value !== 'string') {
+        return null;
+    }
+    const clean = value.trim().toLowerCase().replace(/\s+/g, '_');
+    return clean.length >= 1 && clean.length <= NAME_MAX ? clean : null;
+}
+
+function copyEntry(entry) {
+    return { ...entry };
+}
+
 export class PlaceStore {
     /**
      * @param {string} filePath
@@ -74,13 +88,18 @@ export class PlaceStore {
                             || !isFiniteNumber(entry.x) || !isFiniteNumber(entry.y) || !isFiniteNumber(entry.z)) {
                             continue;
                         }
-                        this._places.set(name, {
+                        const clean = {
                             x: entry.x,
                             y: entry.y,
                             z: entry.z,
                             dimension: normaliseDimension(entry.dimension),
                             saved_at: typeof entry.saved_at === 'string' ? entry.saved_at : null,
-                        });
+                        };
+                        const base = normaliseBase(entry.base);
+                        if (base) {
+                            clean.base = base; // v0.1.4.15 (S 2.4): a place of a base; a place without one has no field
+                        }
+                        this._places.set(name, clean);
                     }
                 } else if (places !== undefined) {
                     console.warn(`Place file ${this.filePath} has no "places" object, starting empty.`);
@@ -101,10 +120,11 @@ export class PlaceStore {
     }
 
     /**
-     * Saves or overwrites a place and writes the file.
-     * @returns {{x: number, y: number, z: number, dimension: string|null, saved_at: string}}
+     * Saves or overwrites a place and writes the file. v0.1.4.15 (S 2.4): `base`, the base the place belongs to
+     * (kept like an area name), optional; a place saved without one keeps the base it had.
+     * @returns {{x: number, y: number, z: number, dimension: string|null, saved_at: string, base?: string}}
      */
-    remember(name, x, y, z, dimension = null) {
+    remember(name, x, y, z, dimension = null, base = null) {
         if (typeof name !== 'string') {
             throw new TypeError('Place name must be a string');
         }
@@ -123,16 +143,56 @@ export class PlaceStore {
             saved_at: this.now().toISOString(),
         };
         this._refresh(true);
+        const kept = normaliseBase(base) ?? this._places.get(clean)?.base ?? null;
+        if (kept) {
+            entry.base = kept;
+        }
         this._places.set(clean, entry);
         this._save();
-        return { ...entry };
+        return copyEntry(entry);
+    }
+
+    /**
+     * Renames a place (v0.1.4.15, S 2.4): the key in the file changes, nothing else. Never throws.
+     * @param {string} oldName
+     * @param {string} newName
+     * @returns {object|null} a copy of the entry; null when there is no place of the old name, the new name is not 1
+     *   to 64 characters, or a place of the new name exists already
+     */
+    rename(oldName, newName) {
+        try {
+            const from = lookupName(oldName);
+            const to = lookupName(newName);
+            this._refresh(true);
+            if (!from || !to || to.length < 1 || to.length > NAME_MAX || !this._places.has(from) || this._places.has(to)) {
+                return null;
+            }
+            const entry = this._places.get(from);
+            this._places.delete(from);
+            this._places.set(to, entry);
+            this._save();
+            return copyEntry(entry);
+        } catch (err) {
+            console.warn(`Could not rename the place "${oldName}":`, err?.message ?? err);
+            return null;
+        }
+    }
+
+    /**
+     * The places of a base (v0.1.4.15, S 2.4), in the order of list().
+     * @param {string} base
+     * @returns {{name: string, x: number, y: number, z: number, dimension: string|null, saved_at: string|null, base: string}[]}
+     */
+    ofBase(base) {
+        const wanted = normaliseBase(base);
+        return wanted ? this.list().filter(place => place.base === wanted) : [];
     }
 
     /** @returns {object|undefined} a copy of the entry */
     recall(name) {
         this._refresh();
         const entry = this._places.get(lookupName(name));
-        return entry === undefined ? undefined : { ...entry };
+        return entry === undefined ? undefined : copyEntry(entry);
     }
 
     /** Removes a place and writes the file. @returns {boolean} true if it existed */
@@ -147,10 +207,10 @@ export class PlaceStore {
         return true;
     }
 
-    /** @returns {{name: string, x: number, y: number, z: number, dimension: string|null, saved_at: string|null}[]} */
+    /** @returns {{name: string, x: number, y: number, z: number, dimension: string|null, saved_at: string|null, base?: string}[]} */
     list() {
         this._refresh();
-        return this._sortedNames().map(name => ({ name, ...this._places.get(name) }));
+        return this._sortedNames().map(name => ({ name, ...copyEntry(this._places.get(name)) }));
     }
 
     /** @returns {string[]} sorted names */

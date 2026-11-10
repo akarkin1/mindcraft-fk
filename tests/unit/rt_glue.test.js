@@ -32,8 +32,10 @@ const LIMIT = { timeout: 30000 };
 // switch on, new_things_in_prompt among them, a block of 600 and the three longest lines of the new things present, the
 // prompt may hold 17,400 characters; without the block of the new things the old 17,000 hold. Fix round, part 8 (P-28): the
 // three commands !boardBoat, !leaveBoat and !leaveGame add 173 characters of docs; the lead raised both limits by 200
-// (17,000 to 17,200 and 17,400 to 17,600), as R1-7 did once in this release.
-const LIMIT_NEW_THINGS = 17600;
+// (17,000 to 17,200 and 17,400 to 17,600), as R1-7 did once in this release. v0.1.4.15 (SPEC 4): the eight commands of the
+// base survey (552 characters) and the routines (533) add 1,085 characters of one-line docs (18,596 measured with every switch
+// on, 17,511 before); both limits rise by that growth rounded up to the next 100 (1,100): 18,300 and 18,700.
+const LIMIT_NEW_THINGS = 18700;
 const NEW_THINGS_HEADER = 'NEW SINCE 1.21.8 (true, even if you do not know it):';
 // a bot with the things of the three longest lines of the new things: a copper golem statue and a copper pickaxe in the
 // bag, a nautilus 3 blocks away; the block holds what fits in its 360 characters
@@ -358,7 +360,8 @@ describe('G7: the conversing prompt', () => {
     let originalCwd;
     let placeholderKey = false;
     let M;
-    const PARTS = ['cost_meter', 'protected_areas', 'player_rules', 'home_pack', 'storage_pack', 'farming_pack', 'wood_pack', 'mining_pack', 'routes_pack'];
+    const PARTS = ['cost_meter', 'protected_areas', 'player_rules', 'home_pack', 'storage_pack', 'farming_pack', 'wood_pack', 'mining_pack', 'routes_pack',
+        'watch_and_learn', 'base_survey', 'routines']; // v0.1.4.15: every switch that hides commands
     const SWITCHES_ON = { knowledge_in_prompt: true, knowledge_max_chars: 600, protect_built_blocks: true, repeat_guard: 3, restart_context: true,
         say_results: true, flee_below_health: 8, stuck_restart_after: 3, log_timestamps: true, mine_routes: true, skills_over_code: true, ore_sense_range: 3,
         trail_max_steps: 500, allow_insecure_coding: false, skill_learning: false, skill_capture: false, skill_reuse: false, skill_command: false,
@@ -463,7 +466,7 @@ describe('G7: the conversing prompt', () => {
         for (const name of [...ROUTE_COMMANDS, ...MINE_COMMANDS]) assert.ok(prompt.includes(`\n${name}: `), name);
         assert.ok(prompt.includes(`\n${NEW_THINGS_BLOCK}\n`), 'the block of the new things');
         assert.ok(prompt.length <= LIMIT_NEW_THINGS, `${prompt.length} characters`);
-        assert.ok(prompt.replace(`\n${NEW_THINGS_BLOCK}`, '').length <= 17200, 'without the block of the new things');
+        assert.ok(prompt.replace(`\n${NEW_THINGS_BLOCK}`, '').length <= 18300, 'without the block of the new things');
     });
 
     test('every switch off: none of the six commands', LIMIT, async (t) => {

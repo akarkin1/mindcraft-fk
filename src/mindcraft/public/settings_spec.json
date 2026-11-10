@@ -478,6 +478,21 @@
         "description": "Whether to put into the chat prompt one sentence for each thing of Minecraft 1.21.9 to 26.1 (copper tools, copper chests, spears, the parched, ...) that is in the bag of the bot, within view, or named in the last lines; at most 3 sentences, after what the bot knows",
         "default": false
     },
+    "base_survey": {
+        "type": "boolean",
+        "description": "Whether to offer the base survey: !surveyBase finds every place of a base (the house and its basement, the farms, the pens, a trading hall, the cane, a tied animal, a portal, a mine entrance, a cave mouth) from the blocks the server has loaded around the bot and saves them all at once with the base's name; !renameArea and !goToBase. Needs protected_areas and world_memory",
+        "default": false
+    },
+    "survey_radius": {
+        "type": "number",
+        "description": "With base_survey: how far sideways from the bot the survey reaches at most, in blocks (at most 128); it takes what the server has loaded within it",
+        "default": 128
+    },
+    "routines": {
+        "type": "boolean",
+        "description": "Whether the bot keeps routines: standing work in the player's words (!rememberRoutine, !routines, !forgetRoutine, !doRoutine) that it does when it has no job, one round at a time, planned once with the model and checked by code; and the watch tool routines. Needs job_memory",
+        "default": false
+    },
     "code_timeout_mins": {
         "type": "number",
         "description": "Number of minutes to allow code execution. -1 for no timeout",

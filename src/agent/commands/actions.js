@@ -18,6 +18,7 @@ import { oreInSight, sightRange } from '../library/ore_sight_logic.js';
 import { isPenWord, penAllowedText, noPenText } from '../areas/keep_out_logic.js';
 import { permitPenNear } from '../areas/pen_gate.js';
 import { leaveGameText, LEAVE_GAME_NOTE } from '../library/skill_texts.js'; // v0.1.4.14 (P-28): !leaveGame
+import { ROUTINES_OFF } from '../routines/routine_texts.js'; // v0.1.4.15 (part R): the routine commands answer with agent.routines
 
 
 // v0.1.4.8, I5 (S3, S4): a command that was stopped starts no turn of the model. What it did so far goes
@@ -368,6 +369,8 @@ const UNKNOWN_ORE = (ore) => `I do not know the ore "${ore}". I know coal, coppe
 // v0.1.4.9 (I10): the commands of the routes pack and of the mine of the player
 const ROUTES_OFF = 'The routes pack is off.';
 const MINE_ROUTES_OFF = 'The mine routes are off. They need mine_routes, mining_pack and routes_pack.';
+// v0.1.4.15 (part S, SPEC 2.5): the commands of the survey pack (hidden while base_survey is off)
+const SURVEY_OFF = 'The base survey is off.';
 
 /**
  * v0.1.4.9 (section 2): mine_routes as it takes effect. It needs mining_pack and routes_pack; without
@@ -1152,8 +1155,11 @@ export const actionsList = [
                             return sameBoxText(same.name);
                         const contents = countContents(bot, scan.box);
                         const kind = untyped ? kindOf(scan, contents) : type;
+                        // v0.1.4.15 (Q-1): how the edge of the box lies, for the interior the home pack reads: the floor scan's box has the
+                        // walls as its edge, scanBuilding's a margin of air; the ground scans say nothing
+                        const edge = scan.scan?.floor === true ? 'wall' : (scan.source === 'building' ? 'margin' : undefined);
                         const area = store.set({ name, kind, type: typeOfKind(kind), min: scan.min, max: scan.max, dimension, entrances: scan.entrances,
-                            source: 'scan', contents, border: scan.border });
+                            source: 'scan', contents, border: scan.border, edge });
                         return savedText(area.name, kind, scan, contents, area);
                     }
                     if (untyped)
@@ -1168,7 +1174,8 @@ export const actionsList = [
                     const same = sameAreaAs(store, name, scan, dimension);
                     if (same)
                         return sameBoxText(same.name);
-                    const area = store.set({ name, type, min: scan.min, max: scan.max, dimension, entrances: scan.entrances ?? [], source: 'scan' });
+                    const area = store.set({ name, type, min: scan.min, max: scan.max, dimension, entrances: scan.entrances ?? [], source: 'scan',
+                        edge: scan.floor === true ? 'wall' : 'margin' }); // v0.1.4.15 (Q-1)
                     return withMine(`${areaSavedText(area)} Tell me if that is wrong.`);
                 }
                 // a mine where no building is found: a box as v0.1.4.10
@@ -1243,7 +1250,49 @@ export const actionsList = [
             } catch (error) {
                 console.warn('Could not forget the area:', error);
             }
+            // v0.1.4.15 (part S, SPEC 2.5): with the base survey, a base of that name (with its places) or a place of that name too
+            if (settings.base_survey && agent.work_packs?.survey) {
+                const more = await runPlain(agent, agent.work_packs.survey, 'survey', (pack) => pack.forgetSurveyed(agent.packContext(), name));
+                if (typeof more === 'string' && more !== '')
+                    return more;
+            }
             return `No area named "${name}" is saved.`;
+        }
+    },
+    // v0.1.4.15 (part S, SPEC 2.5): the base survey, behind base_survey (the pack is loaded by _loadWorkPacks). The docs are one
+    // line each (rule 31). !surveyBase and !goToBase run as pack actions (they take time, they yield, !stop ends them);
+    // !renameArea is a plain command that moves nothing and stops no running action.
+    {
+        name: '!surveyBase',
+        description: 'Scan the base around you from the loaded blocks and save every place of it at once under this name. Use this when the player says "here is the base, scan it".',
+        params: {'name': { type: 'string', description: 'The name of the base, empty for "base".', default: '' }},
+        perform: async function (agent, name) {
+            if (!settings.base_survey)
+                return SURVEY_OFF;
+            return await runPack(agent, 'surveyBase', agent.work_packs?.survey, 'survey', (pack, bot, ctx) => pack.surveyBase(bot, ctx, name));
+        }
+    },
+    {
+        name: '!renameArea',
+        description: 'Rename a saved area or place. Use this when the player corrects a name ("that is the wheat farm, not carrots").',
+        params: {
+            'old_name': { type: 'string', description: 'The name as saved.' },
+            'new_name': { type: 'string', description: 'The new name.' }
+        },
+        perform: async function (agent, oldName, newName) {
+            if (!settings.base_survey)
+                return SURVEY_OFF;
+            return await runPlain(agent, agent.work_packs?.survey, 'survey', (pack) => pack.renameArea(agent.packContext(), oldName, newName));
+        }
+    },
+    {
+        name: '!goToBase',
+        description: 'Walk to the door of a saved base.',
+        params: {'name': { type: 'string', description: 'The name of the base.' }},
+        perform: async function (agent, name) {
+            if (!settings.base_survey)
+                return SURVEY_OFF;
+            return await runPack(agent, 'goToBase', agent.work_packs?.survey, 'survey', (pack, bot, ctx) => pack.goToBase(bot, ctx, name));
         }
     },
     {
@@ -2109,7 +2158,60 @@ export const actionsList = [
             return await leaveGame(agent, reason);
         }
     },
+    // v0.1.4.15 (part R, SPEC 3.5): the routines, hidden without the switch routines (agent.js); the work is in
+    // src/agent/routines/routines.js (agent.routines). The docs are one line each: the prompt budget of SPEC 4.
+    {
+        name: '!rememberRoutine',
+        description: 'Save standing work in the player\'s words as a routine for when you have nothing else to do.',
+        params: {
+            'name': { type: 'string', description: 'The name, for example "the farm".' },
+            'text': { type: 'string', description: 'The work in the player\'s words, "every N minutes" and "when fewer than N torches" included.' }
+        },
+        perform: async function (agent, name, text) {
+            return await routineReply(agent, (routines) => routines.remember(name, text));
+        }
+    },
+    {
+        name: '!routines',
+        description: 'List your routines.',
+        perform: async function (agent) {
+            return await routineReply(agent, (routines) => routines.list());
+        }
+    },
+    {
+        name: '!forgetRoutine',
+        description: 'Remove a routine; a running round of it ends.',
+        params: {'name': { type: 'string', description: 'The name of the routine.' }},
+        perform: async function (agent, name) {
+            return await routineReply(agent, (routines) => routines.forget(name));
+        }
+    },
+    {
+        name: '!doRoutine',
+        description: 'Do a round of a routine now; a paused routine runs again.',
+        params: {'name': { type: 'string', description: 'The name of the routine.' }},
+        perform: async function (agent, name) {
+            return await routineReply(agent, (routines) => routines.doNow(name));
+        }
+    },
 ];
+
+// v0.1.4.15 (part R): the answer of a routine command: the text of agent.routines (createRoutines of
+// src/agent/routines/routines.js), ROUTINES_OFF without it (the commands are hidden then; a guard). Never throws.
+async function routineReply(agent, fn) {
+    const routines = agent?.routines;
+    if (!routines)
+        return ROUTINES_OFF;
+    try {
+        const out = await fn(routines);
+        if (typeof out === 'string')
+            return out;
+        return typeof out?.text === 'string' ? out.text : '';
+    } catch (error) {
+        console.warn('The routine command failed:', error);
+        return 'The routines could not do that.';
+    }
+}
 
 // v0.1.4.14 (P-28): the bot says `I leave the game: <reason>.` in the chat, writes the exit note `left on request`
 // (restart_context.js, read by the next process as "The process ended because: left on request.") and exits with code 0,

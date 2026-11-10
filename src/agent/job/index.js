@@ -8,10 +8,17 @@
 // step, an entry of idle_jobs) never starts or ends a job. tick runs the next step, else the resumed
 // command, else the next entry of idle_jobs, through options.executeCommand(text, { by: 'system', typed:
 // false }); when the glue gives no onResult for that order, tick gives it with the returned value.
+//
+// v0.1.4.15 (part R, SPEC 3.3 and 3.4): a round of a routine is a job of the kind ROUTINE_KIND, started by
+// startRoutineRound with the saved steps of the routine (no plan call) and run as any job's steps; done when every
+// step is done (the round's done line), failed when a step failed after its runs (no plan: the routine counts the
+// failure). When no job runs, tick asks options.routines for a routine that is due and starts its round before the
+// standing list; the model is asked, once per routine, by the routines module, never here.
 import { isNight } from '../packs/home/night_logic.js';
 import { reflexOn } from '../packs/home/home_settings.js';
+import { commandText } from '../repeat_guard.js';
 import {
-    JOB_RULES, JOB_SKILL_ROLES, OVERRIDABLE_ACTIONS, cleanCommandName, endsJob, isDone, jobOf, nextIdleJob, progress, readJobSettings,
+    JOB_RULES, JOB_SKILL_ROLES, OVERRIDABLE_ACTIONS, ROUTINE_KIND, cleanCommandName, endsJob, isDone, jobOf, nextIdleJob, progress, readJobSettings,
     refusedWhileRunning, resultOf, resumeCommand, sameWork, shouldResume, blockerOf,
 } from './job_logic.js';
 import { PLAN_COMMANDS, PLAN_COMMAND_NAMES, WAY_OUT_COMMAND, needsSurface, planPrompt, parsePlan, stepDone } from './plan_logic.js';
@@ -19,6 +26,7 @@ import {
     busyText, doneText, idleStartText, leaveText, noJobText, noPlanText, planText, restartText, resumeText, statusText, stepStartText, stepText,
     stopText,
 } from './job_texts.js';
+import { roundDoneText } from '../routines/routine_texts.js'; // v0.1.4.15 (part R): the done line of a round (pure texts, no pack)
 
 // v0.1.4.13 fix 2: a failure of these words with nothing gained pauses the job at once
 const STUCK_FAILURE = /\b(got stuck|find no way|found no way|no way from|could not get to|could not reach)\b/i;
@@ -71,6 +79,22 @@ function defaultReaders(agent, settings) {
                 console.warn('The job could not say:', error?.message ?? error);
             }
         },
+        // v0.1.4.15 (part R, SPEC rule 30): the lines of a routine's round (its start, its steps, its done line) go to the chat
+        // only, never into the history: sayText notes every line, and a round every minute would fill the history and bring
+        // on a memory summary, a model call, every other round (W127). Quiet as sayText is when the owner said "shut up".
+        sayQuiet: (text) => {
+            try {
+                if (typeof agent?.openChat === 'function') {
+                    if (agent.shut_up !== true) {
+                        agent.openChat(text);
+                    }
+                } else if (typeof agent?.sayText === 'function') {
+                    agent.sayText(text);
+                }
+            } catch (error) {
+                console.warn('The job could not say:', error?.message ?? error);
+            }
+        },
         inventory: safe(() => {
             const out = {};
             for (const item of agent?.bot?.inventory?.items?.() ?? []) {
@@ -115,13 +139,16 @@ function defaultReaders(agent, settings) {
  *   self_prompter; each read only when the option of the same name is not given
  * @param {JobStore} store the store of bots/<name>/job.json; load() is called here
  * @param {{settings?: object, now?: () => number, executeCommand?: (text: string, options: object) => Promise<*>,
- *   askModel?: (prompt: string) => Promise<string>, say?: (text: string) => void, inventory?: () => object,
+ *   askModel?: (prompt: string) => Promise<string>, say?: (text: string) => void, sayQuiet?: (text: string) => void, inventory?: () => object,
  *   actionRunning?: () => boolean, sleeping?: () => boolean, night?: () => boolean, nightShelter?: () => boolean,
- *   underground?: () => boolean, where?: () => object|null, position?: () => object|null, chests?: () => object[]|null}} [options]
+ *   underground?: () => boolean, where?: () => object|null, position?: () => object|null, chests?: () => object[]|null,
+ *   routines?: object|(() => object|null)}} [options]
  *   settings: read again at every tick (job_resume_seconds, idle_jobs, idle_jobs_minutes, home_reflexes); now:
  *   milliseconds; executeCommand: runs a command text as a system order; askModel: the call of the model for a
  *   plan (purpose 'plan' of the cost meter); where, position, chests: for the plan prompt (whereAmI, the feet
- *   of the bot, the chests { x, y, z, items } of the chest index; null when not known)
+ *   of the bot, the chests { x, y, z, items } of the chest index; null when not known); routines (v0.1.4.15, part R):
+ *   the routines of the agent (createRoutines: due, startRound, onRoundEnd), or a function that gives them; none
+ *   without the switch routines
  * @returns {object}
  */
 export function createJob(agent, store, options = {}) {
@@ -141,6 +168,16 @@ export function createJob(agent, store, options = {}) {
     const chests = pick('chests');
     const executeCommand = typeof options?.executeCommand === 'function' ? options.executeCommand : null;
     const askModel = typeof options?.askModel === 'function' ? options.askModel : null;
+    // v0.1.4.15 (part R): the routines of the agent, read at every use (they are made after the job); null without
+    const routinesOf = () => {
+        try {
+            const r = options?.routines;
+            const value = typeof r === 'function' ? r() : r;
+            return value && typeof value === 'object' ? value : null;
+        } catch {
+            return null;
+        }
+    };
 
     const nowMs = () => {
         const t = Number(now());
@@ -176,10 +213,13 @@ export function createJob(agent, store, options = {}) {
         job.updated = iso();
         return call(() => store?.set?.(job) ?? null, null);
     };
+    const sayQuiet = pick('sayQuiet');
     const speak = (text) => {
         if (typeof text === 'string' && text.length > 0) {
             console.log('Job:', text);
-            call(() => say(text), undefined);
+            // v0.1.4.15 (part R): the lines of a routine's round stay out of the history (sayQuiet)
+            const quiet = getJob()?.kind === ROUTINE_KIND;
+            call(() => (quiet ? sayQuiet(text) : say(text)), undefined);
         }
         return text;
     };
@@ -207,12 +247,86 @@ export function createJob(agent, store, options = {}) {
         return speak(text);
     }
 
+    // v0.1.4.15 (part R, SPEC 3.3): the end of a round reaches the routines (onRoundEnd counts the round or the
+    // failure, pauses the routine at the third failure in a row); the pause text when it paused, else null.
+    function roundEnded(job, outcome) {
+        if (job?.kind !== ROUTINE_KIND) {
+            return null;
+        }
+        try {
+            const said = routinesOf()?.onRoundEnd?.(job, outcome);
+            return typeof said === 'string' && said.length > 0 ? said : null;
+        } catch (error) {
+            console.warn('The job could not tell the routines about the round:', error?.message ?? error);
+            return null;
+        }
+    }
+
+    // The round is done: every step is done. One line, the done line of 3.6.
+    function finishRound(job) {
+        job.state = 'done';
+        setJob(job);
+        const said = speak(roundDoneText(job.routine, job.round));
+        roundEnded(job, { reason: 'done' });
+        return result(true, 'done', said);
+    }
+
+    // The round failed: a step failed after its runs. No plan; the job pauses as a failed job does, with its stop
+    // line, or with the pause line of the routine when this was the third failure in a row.
+    function failRound(job, text, step) {
+        const clean = typeof text === 'string' ? text.replace(/\s+/g, ' ').trim() : '';
+        job.state = 'paused';
+        job.fails = JOB_RULES.maxFails;
+        job.failText = clean;
+        setJob(job);
+        const paused = roundEnded(job, { reason: 'failed', step: step?.command ?? null, text: clean });
+        return result(false, 'paused', speak(paused ?? stopText(job, clean)));
+    }
+
+    // A running round that is left (!stop, a new job): the routine notes the end.
+    function roundLeft(job) {
+        if (job?.kind === ROUTINE_KIND && job.state === 'running') {
+            roundEnded(job, { reason: 'left' });
+        }
+    }
+
+    // v0.1.4.15 (part R, SPEC 3.4): a routine that is due, when no job runs: its round through the routines module
+    // (the plan first when it has none: that one model call is theirs), then its first step at once, as a plan's.
+    async function runRound(routines, routine) {
+        let out;
+        try {
+            out = await routines.startRound(routine);
+        } catch (error) {
+            return errorResult('start the round', error);
+        }
+        if (typeof out?.text === 'string' && out.text.length > 0) {
+            speak(out.text);
+        }
+        if (out?.ok !== true) {
+            return result(false, out?.reason ?? 'no_round', out?.text ?? '');
+        }
+        const job = getJob();
+        if (job?.kind === ROUTINE_KIND && job.state === 'running' && (!out.job?.started || job.started === out.job.started)) {
+            const next = nextStep(job);
+            if (next >= 0) {
+                return await runStep(job, next);
+            }
+            if (isDone(job)) {
+                return finishRound(job);
+            }
+        }
+        return result(true, 'round', out.text ?? '');
+    }
+
     async function plan(blocker, failText = null) {
         let mine = false; // this call plans (and ends state.planning)
         try {
             let job = getJob();
             if (!job || job.state !== 'running') {
                 return result(false, 'no_job', noJobText());
+            }
+            if (job.kind === ROUTINE_KIND) {
+                return result(false, 'no_plan', ''); // v0.1.4.15 (part R): a round plans nothing; its plan is the routine's
             }
             if (state.planning) {
                 return result(false, 'busy', '');
@@ -383,7 +497,11 @@ export function createJob(agent, store, options = {}) {
             step.state = 'done';
             job.chainAt = iso();
             setJob(job);
-            return result(true, 'step_done', speak(stepText(index + 1, steps.length, step)));
+            const said = speak(stepText(index + 1, steps.length, step));
+            if (job.kind === ROUTINE_KIND && isDone(job)) {
+                return finishRound(job); // v0.1.4.15 (part R): the last step done ends the round
+            }
+            return result(true, 'step_done', said);
         }
         step.fails = (Number.isInteger(step.fails) ? step.fails : 0) + 1;
         if (step.fails < JOB_RULES.stepRuns) {
@@ -393,6 +511,9 @@ export function createJob(agent, store, options = {}) {
         }
         step.state = 'failed';
         setJob(job);
+        if (job.kind === ROUTINE_KIND) {
+            return failRound(job, r.text, step); // v0.1.4.15 (part R): no plan for a round; the round failed
+        }
         return await startPlan(job.blocker ?? blockerOf(r) ?? { kind: 'no_item', item: step.check?.item ?? null }, r.text, detached);
     }
 
@@ -460,7 +581,9 @@ export function createJob(agent, store, options = {}) {
         const mine = state.system;
         let value;
         try {
-            value = await executeCommand(text, { by: 'system', typed: false });
+            // v0.1.4.15 (part R, SPEC rule 30): the result of a step of a round stays out of the history, so that the
+            // rounds never fill it and never bring on a memory summary (a model call); the round's own lines are in the chat
+            value = await executeCommand(text, { by: 'system', typed: false, ...(job?.kind === ROUTINE_KIND ? { history: false } : {}) });
         } catch (error) {
             value = { ok: false, reason: 'error', text: `${error?.message ?? error}` };
         }
@@ -514,6 +637,7 @@ export function createJob(agent, store, options = {}) {
                     // P5 (W109): a skill that counts itself is still running and reports once more when the stop reaches
                     // it; the leave text waits for its result, so that both numbers agree
                     const running = wasRunning ? runningEntry(job, ['job', 'resume']) : null;
+                    roundLeft(job);
                     job.state = 'left';
                     setJob(job);
                     if (running && reportedOf(running)) {
@@ -534,6 +658,7 @@ export function createJob(agent, store, options = {}) {
                 let said = '';
                 if (job?.state === 'running' && !sameWork(job, next)) {
                     said = speak(leaveText(job));
+                    roundLeft(job);
                 }
                 const saved = setJob(next);
                 pushRole({ name: command, role: 'job', started: saved?.started ?? next.started, step: null, base: 0, reported: false });
@@ -617,6 +742,14 @@ export function createJob(agent, store, options = {}) {
                     if (next >= 0) {
                         return await runStep(job, next);
                     }
+                    if (job.kind === ROUTINE_KIND) {
+                        // v0.1.4.15 (part R): a round has no command of its own: done when every step is done, else a step
+                        // failed and the round with it
+                        if (isDone(job)) {
+                            return finishRound(job);
+                        }
+                        return failRound(job, job.failText ?? '', job.steps.find(step => step.state === 'failed') ?? null);
+                    }
                     const text = resumeCommand(job);
                     if (!text) {
                         return result(false, 'no_command', '');
@@ -624,7 +757,16 @@ export function createJob(agent, store, options = {}) {
                     speak(resumeText(job));
                     return await runSystem(text, 'resume', job);
                 }
-                if (s.idleJobs.length === 0 || !shouldResume({ ...view, job: { state: 'running', kind: 'idle' }, resumeSeconds: s.resumeSeconds })) {
+                const idle = { ...view, job: { state: 'running', kind: 'idle' }, resumeSeconds: s.resumeSeconds };
+                // v0.1.4.15 (part R, SPEC 3.4): a routine that is due runs first; the standing list only when none is due
+                const routines = routinesOf();
+                if (routines !== null && shouldResume(idle)) {
+                    const due = call(() => routines.due?.(t) ?? null, null);
+                    if (due) {
+                        return await runRound(routines, due);
+                    }
+                }
+                if (s.idleJobs.length === 0 || !shouldResume(idle)) {
                     return result(true, 'wait', '');
                 }
                 const text = nextIdleJob({ idleJobs: s.idleJobs, lastRun: state.lastRun, now: t, minutes: s.idleMinutes });
@@ -638,6 +780,64 @@ export function createJob(agent, store, options = {}) {
                 return errorResult('go on with its job', error);
             } finally {
                 state.ticking = false;
+            }
+        },
+
+        /**
+         * v0.1.4.15 (part R, SPEC 3.3): a round of a routine as the job: kind ROUTINE_KIND, by 'player', the saved
+         * steps of the routine with their checks, state todo, no plan call; `routine` the name, `round` its number,
+         * `words` 'the routine "<name>"'; chainAt now, so its first step runs at the next tick without the wait. A
+         * running job refuses with its busyText. The caller says the start line.
+         * @param {{name: string, steps: {command: string, check: object}[], rounds?: number}} routine
+         * @param {number} [round] the number of the round; rounds + 1 without
+         * @returns {{ok: boolean, reason: string|null, text: string, job?: object}}
+         */
+        startRoutineRound(routine, round) {
+            try {
+                const name = typeof routine?.name === 'string' && routine.name.length > 0 ? routine.name : null;
+                const steps = (Array.isArray(routine?.steps) ? routine.steps : []).filter(step => typeof step?.command === 'string' && step.command.length > 0);
+                if (name === null || steps.length === 0) {
+                    return result(false, 'no_steps', '');
+                }
+                const current = getJob();
+                if (current?.state === 'running') {
+                    return result(false, 'busy', busyText(current));
+                }
+                const n = Number.isInteger(round) && round >= 1 ? round : (Number.isInteger(routine.rounds) ? routine.rounds : 0) + 1;
+                const t = iso();
+                const job = {
+                    version: 1, kind: ROUTINE_KIND, command: commandText('!doRoutine', [name]), args: [name], wanted: null, got: null,
+                    words: `the routine "${name}"`, state: 'running', by: 'player', started: t, updated: t,
+                    steps: steps.map(step => ({ command: step.command, check: { item: step.check?.item ?? null, count: step.check?.count ?? null }, state: 'todo' })),
+                    plans: 0, routine: name, round: n, chainAt: t,
+                };
+                const saved = setJob(job);
+                if (!saved) {
+                    return result(false, 'invalid', '');
+                }
+                return { ...result(true, 'round', ''), job: saved };
+            } catch (error) {
+                return errorResult('start the round', error);
+            }
+        },
+
+        /**
+         * v0.1.4.15 (part R, SPEC 3.5): the running round of a routine that is forgotten ends (state left), without a
+         * line (the forget line follows). Nothing for another job or another routine.
+         * @param {string} [name] the routine; any round without
+         * @returns {{ok: boolean, reason: string|null, text: string}}
+         */
+        leaveRound(name) {
+            try {
+                const job = getJob();
+                if (job?.kind !== ROUTINE_KIND || job.state !== 'running' || (typeof name === 'string' && job.routine !== name)) {
+                    return result(true, 'no_round', '');
+                }
+                job.state = 'left';
+                setJob(job);
+                return result(true, 'ended', '');
+            } catch (error) {
+                return errorResult('end the round', error);
             }
         },
 

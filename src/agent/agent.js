@@ -49,6 +49,7 @@ import { LEAVE_GAME_NOTE } from './library/skill_texts.js'; // v0.1.4.14 (P-28):
 import { RepeatGuard } from './repeat_guard.js';
 import { withTimeLimit } from '../utils/kill_timer.js';
 import { createJob, JobStore, JOB_FILE } from './job/index.js'; // v0.1.4.10: no pack; createJob runs only with job_memory
+import { createRoutines, RoutineStore, ROUTINES_FILE, ROUTINES_WARNING, ROUTINE_COMMAND_NAMES } from './routines/routines.js'; // v0.1.4.15 (part R): with routines and job_memory
 import { shouldAnswer } from './bots_logic.js'; // v0.1.4.12, D2: which chat line the bot answers
 import { crossedMarks } from './clock_logic.js'; // v0.1.4.14 (P-17): the marks of the day the clock crossed
 
@@ -223,6 +224,7 @@ export class Agent {
                     settings,
                     executeCommand: (text, options) => this._runJobOrder(text, options),
                     askModel: (prompt) => this.prompter.promptPlan(prompt),
+                    routines: () => this.routines, // v0.1.4.15 (part R): a routine that is due runs when no job runs
                 });
             } catch (error) {
                 this.job = null;
@@ -230,6 +232,25 @@ export class Agent {
             }
         } else if (Array.isArray(settings.idle_jobs) && settings.idle_jobs.length > 0) {
             console.warn(IDLE_JOBS_WARNING);
+        }
+
+        // v0.1.4.15 (part R, SPEC 3): with routines and job_memory, the routines of the bot (the rounds are jobs); null
+        // without them (no object, the commands hidden, no tool). The model is asked once per routine, for its plan,
+        // through promptPlan. With world_memory the routines live in the world's folder, bound at spawn beside the job.
+        this.routines = null;
+        if (settings.routines === true && this.job) {
+            try {
+                this.routines = createRoutines(this, new RoutineStore(settings.world_memory ? null : `./bots/${this.name}/${ROUTINES_FILE}`), {
+                    settings,
+                    askModel: (prompt) => this.prompter.promptPlan(prompt),
+                    job: () => this.job,
+                });
+            } catch (error) {
+                this.routines = null;
+                console.warn('Could not start the routines:', error);
+            }
+        } else if (settings.routines === true) {
+            console.warn(ROUTINES_WARNING);
         }
 
         if (settings.world_memory)
@@ -317,7 +338,8 @@ export class Agent {
             this.blocked_actions.push('!goToShelter', '!eat', '!closeDoor');
         // the parts of v0.1.4.7: a pack is imported only while a switch needs it; the commands of a part
         // that is off, or whose pack could not be loaded, are hidden (v0.1.4.9: also the routes pack)
-        if (settings.storage_pack || settings.farming_pack || settings.wood_pack || settings.mining_pack || settings.routes_pack || settings.watch_and_learn) {
+        if (settings.storage_pack || settings.farming_pack || settings.wood_pack || settings.mining_pack || settings.routes_pack || settings.watch_and_learn
+            || settings.base_survey) { // v0.1.4.15 (part S): the survey pack too
             this.work_packs = await this._loadWorkPacks();
             if (!settings.world_memory && (this.work_packs.storage || this.work_packs.mining))
                 console.warn('Without world_memory the chest index and the mine store live in memory only and are lost when the bot stops.');
@@ -340,6 +362,12 @@ export class Agent {
             this.blocked_actions.push('!rememberRoute', '!routes', '!forgetRoute');
         if (!this._mineRoutesOn())
             this.blocked_actions.push('!rememberMine', '!rememberTunnel', '!collectPassedOre');
+        // v0.1.4.15 (part S, SPEC 1 and 2.5): the base survey, with base_survey and its pack loaded (!forgetArea stays with the areas)
+        if (!settings.base_survey || !this.work_packs?.survey)
+            this.blocked_actions.push('!surveyBase', '!renameArea', '!goToBase');
+        // v0.1.4.15 (part R, SPEC 1): the routine commands only with the switch routines and the routines made
+        if (!settings.routines || !this.routines)
+            this.blocked_actions.push(...ROUTINE_COMMAND_NAMES);
         blacklistCommands(this.blocked_actions);
 
         console.log(this.name, 'logging into minecraft...');
@@ -429,6 +457,7 @@ export class Agent {
                 if (settings.routes_pack && this.work_packs)
                     this._trail(); // v0.1.4.9 (I1): the trail of this world starts
                 this._bindJobToWorld(); // v0.1.4.14: the job of this world, none of another
+                this._bindRoutinesToWorld(); // v0.1.4.15 (part R): the routines of this world, beside the job
                 const restart_note = await this._atSpawn(); // v0.1.4.8: off-hand, house, doors, restart note
                 this._jobAtSpawn(); // v0.1.4.10 (I4): a running job says that it goes on
               
@@ -838,7 +867,9 @@ export class Agent {
             return { ok: false, reason: 'error', text: `${error?.message ?? error}` };
         }
         console.log(...(result === undefined ? ['Job order:', text, 'was stopped.'] : ['Job order:', text, 'got:', result]));
-        if (typeof result === 'string' && result !== '') {
+        // v0.1.4.15 (part R): a step of a routine's round asks for no history line (options.history false), so that the rounds
+        // never fill the history and bring on a memory summary (SPEC rule 30: no model call in a round)
+        if (typeof result === 'string' && result !== '' && options?.history !== false) {
             try {
                 Promise.resolve(this.history?.add('system', shortenCommandResult(result, numberSetting(settings.max_command_result_chars, 0))))
                     .catch((error) => console.warn('Could not note the result of the job order:', error));
@@ -878,6 +909,24 @@ export class Agent {
                 console.log(`The job of this world: ${job.command ?? job.kind ?? 'a job'} (${job.state}).`);
         } catch (error) {
             console.warn('Could not read the job of this world:', error);
+        }
+    }
+
+    _bindRoutinesToWorld() {
+        // v0.1.4.15 (part R, SPEC 3): at spawn, once the world is known: the routine file of this world,
+        // bots/<name>/worlds/<seed>/routines.json, beside the job's (the pattern of _bindJobToWorld). Without world
+        // memory the store already has its file. Never throws.
+        if (!this.routines || !settings.world_memory)
+            return;
+        try {
+            const dir = this._worldStateDir();
+            const key = this.world_memory?.world?.key;
+            const file = typeof key === 'string' && key.length > 0 && key !== 'unknown' ? ownFileOf(this.name, key, ROUTINES_FILE) : `${dir}/${ROUTINES_FILE}`;
+            const n = this.routines.bind?.(file);
+            if (n > 0)
+                console.log(`The routines of this world: ${n}.`);
+        } catch (error) {
+            console.warn('Could not read the routines of this world:', error);
         }
     }
 
@@ -967,6 +1016,14 @@ export class Agent {
                 failed('watch', error);
             }
         }
+        // v0.1.4.15 (part S, SPEC 2): the survey pack (the base survey), with base_survey
+        if (settings.base_survey) {
+            try {
+                packs.survey = await (loaders.survey ? loaders.survey() : import('./packs/survey/index.js'));
+            } catch (error) {
+                failed('survey', error);
+            }
+        }
         return packs;
     }
 
@@ -1000,10 +1057,14 @@ export class Agent {
         const packs = this.work_packs;
         if (!packs)
             return { chests: null, mines: null };
-        return {
+        const stores = {
             chests: this._workStore('chests', packs.storage?.ChestIndex, 'chests.json'),
             mines: this._workStore('mines', packs.mining?.MineStore, 'mines.json'),
         };
+        // v0.1.4.15 (part S, SPEC 2.4): the bases of the world (bases.json, ctx.bases), with the survey pack loaded
+        if (packs.survey)
+            stores.bases = this._workStore('bases', packs.survey.BaseStore, 'bases.json');
+        return stores;
     }
 
     _trail() {

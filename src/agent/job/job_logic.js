@@ -182,6 +182,14 @@ export const JOB_COMMANDS = Object.freeze({
 /** The kinds of jobs (the names of JOB_COMMANDS). */
 export const JOB_KINDS = Object.freeze(Object.keys(JOB_COMMANDS));
 
+/**
+ * v0.1.4.15 (part R, SPEC 3.3): the tenth kind of job, a round of a routine. It is no command of the player: the
+ * routines module starts it with startRoutineRound of createJob, with the saved steps of the routine and no plan
+ * call; the record carries `routine` (the name) and `round` (its number) and `words` 'the routine "<name>"'. The
+ * store accepts it beside JOB_KINDS; isDone and resumeCommand know it; JOB_COMMANDS keeps the nine command kinds.
+ */
+export const ROUTINE_KIND = 'routine';
+
 /** The commands that are errands: they neither start nor end a job (spec I2). */
 export const ERRAND_COMMANDS = Object.freeze(['!followPlayer', '!goToPlayer', '!goToCoordinates', '!goToRememberedPlace', '!goToShelter', '!goToBed',
     '!viewChest', '!chests', '!inventory', '!stats', '!stay', '!eat', '!closeDoor', '!pickUpItems', '!rememberHere', '!rememberArea',
@@ -397,6 +405,11 @@ export function resumeCommand(job) {
     if (!isPlainObject(job)) {
         return null;
     }
+    if (job.kind === ROUTINE_KIND) {
+        // v0.1.4.15 (part R): a round goes on with its next step; nothing when every step is done or one failed
+        const next = (Array.isArray(job.steps) ? job.steps : []).find(step => step?.state === 'todo');
+        return typeof next?.command === 'string' && next.command.length > 0 ? next.command : null;
+    }
     const def = jobCommand(job.kind);
     if (!def) {
         return typeof job.command === 'string' && job.command.length > 0 ? job.command : null;
@@ -494,6 +507,11 @@ export function progress(job, inventoryGain) {
 export function isDone(job) {
     if (!isPlainObject(job)) {
         return false;
+    }
+    if (job.kind === ROUTINE_KIND) {
+        // v0.1.4.15 (part R, SPEC 3.3): a round is done when every step is done
+        const steps = Array.isArray(job.steps) ? job.steps : [];
+        return steps.length > 0 && steps.every(step => step?.state === 'done');
     }
     if (job.skillDone === true) {
         return true;

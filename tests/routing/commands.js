@@ -38,6 +38,11 @@ export const SPEC_SETTINGS = {
     skills_over_code: 'boolean',
     // v0.1.4.12, section 2 of its spec
     watch_and_learn: 'boolean',
+    // v0.1.4.15, section 1 of its spec (part R)
+    routines: 'boolean',
+    // v0.1.4.15, section 1 of its spec (part S)
+    base_survey: 'boolean',
+    survey_radius: 'number',
 };
 
 // The switches of the parts whose commands are hidden while the switch is off.
@@ -60,6 +65,10 @@ export const PART_COMMANDS = {
     mine_routes: ['!rememberMine', '!rememberTunnel', '!collectPassedOre'],
     // v0.1.4.12 (part B): learning by watching
     watch_and_learn: ['!watchMe', '!continueLike', '!buildWatched'],
+    // v0.1.4.15 (part R, SPEC 3.5): the routines
+    routines: ['!rememberRoutine', '!routines', '!forgetRoutine', '!doRoutine'],
+    // v0.1.4.15 (part S, SPEC 2.5): the base survey; !forgetArea stays with protected_areas
+    base_survey: ['!surveyBase', '!renameArea', '!goToBase'],
 };
 
 // Commands of this release, from the spec. `params` in order; `default` where the spec gives one.
@@ -133,6 +142,18 @@ export const SPEC_COMMANDS = [
     { name: '!rememberTunnel', section: 'I10', part: 'mine_routes', assumed: 'type of the parameter (string)', params: [{ name: 'name', type: 'string', default: '' }] },
     { name: '!collectPassedOre', section: 'I10', part: 'mine_routes', assumed: 'types of the parameters (string, int)',
         params: [{ name: 'ore', type: 'string' }, { name: 'num', type: 'int', default: 8 }] },
+    // v0.1.4.15 (part R, SPEC 3.5): the routines; the descriptions are the one-line docs of actions.js
+    { name: '!rememberRoutine', section: '3.5', part: 'routines', params: [{ name: 'name', type: 'string' }, { name: 'text', type: 'string' }],
+        description: 'Save standing work in the player\'s words as a routine for when you have nothing else to do.' },
+    { name: '!routines', section: '3.5', part: 'routines', params: [], description: 'List your routines.' },
+    { name: '!forgetRoutine', section: '3.5', part: 'routines', params: [{ name: 'name', type: 'string' }], description: 'Remove a routine; a running round of it ends.' },
+    { name: '!doRoutine', section: '3.5', part: 'routines', params: [{ name: 'name', type: 'string' }], description: 'Do a round of a routine now; a paused routine runs again.' },
+    // v0.1.4.15 (part S, SPEC 2.5): the base survey; the descriptions are the one-line docs of actions.js
+    { name: '!surveyBase', section: '2.5', part: 'base_survey', params: [{ name: 'name', type: 'string', default: '' }],
+        description: 'Scan the base around you from the loaded blocks and save every place of it at once under this name. Use this when the player says "here is the base, scan it".' },
+    { name: '!renameArea', section: '2.5', part: 'base_survey', params: [{ name: 'old_name', type: 'string' }, { name: 'new_name', type: 'string' }],
+        description: 'Rename a saved area or place. Use this when the player corrects a name ("that is the wheat farm, not carrots").' },
+    { name: '!goToBase', section: '2.5', part: 'base_survey', params: [{ name: 'name', type: 'string' }], description: 'Walk to the door of a saved base.' },
 ];
 
 // The commands that exist in the code before this release (actions.js and queries.js of v0.1.4.5).

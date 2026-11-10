@@ -4,7 +4,7 @@
 // the bot itself went on: a plan was made or a step was done). Never throws.
 import fs from 'node:fs';
 import { readJsonSafe, writeJsonAtomic } from '../../utils/safe_json.js';
-import { JOB_KINDS, JOB_STATES } from './job_logic.js';
+import { JOB_KINDS, JOB_STATES, ROUTINE_KIND } from './job_logic.js';
 
 /** The name of the file in the folder of the bot. */
 export const JOB_FILE = 'job.json';
@@ -48,7 +48,11 @@ function cleanStep(step) {
  * @returns {object|null}
  */
 function validateJob(job, now) {
-    if (!isPlainObject(job) || !JOB_KINDS.includes(job.kind) || typeof job.command !== 'string' || job.command.length === 0) {
+    if (!isPlainObject(job) || !(JOB_KINDS.includes(job.kind) || job.kind === ROUTINE_KIND) || typeof job.command !== 'string' || job.command.length === 0) {
+        return null;
+    }
+    // v0.1.4.15 (part R, SPEC 3.3): a round of a routine names its routine (and its round, 1 without)
+    if (job.kind === ROUTINE_KIND && (typeof job.routine !== 'string' || job.routine.length === 0)) {
         return null;
     }
     const wanted = isFiniteNumber(job.wanted) ? job.wanted : null;
@@ -79,6 +83,10 @@ function validateJob(job, now) {
     }
     if (typeof job.chainAt === 'string') {
         out.chainAt = job.chainAt;
+    }
+    if (job.kind === ROUTINE_KIND) {
+        out.routine = job.routine;
+        out.round = Number.isInteger(job.round) && job.round >= 1 ? job.round : 1;
     }
     return out;
 }

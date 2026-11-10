@@ -1,6 +1,6 @@
 // Texts of the job that the player reads (spec v0.1.4.10, I3), word for word where the spec gives them.
 // Pure.
-import { jobCommand } from './job_logic.js';
+import { ROUTINE_KIND, jobCommand } from './job_logic.js';
 
 function isPlainObject(value) {
     return value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -65,6 +65,9 @@ export function leaveText(job) {
  * @returns {string}
  */
 export function restartText(job) {
+    if (job?.kind === ROUTINE_KIND) {
+        return `I was doing the routine "${job.routine ?? ''}", round ${Number.isInteger(job.round) ? job.round : 1}. I go on.`; // v0.1.4.15 (part R)
+    }
     const verb = jobCommand(job?.kind)?.verb(job?.args) ?? 'working';
     if (!isFiniteNumber(job?.wanted)) {
         return `I was ${verb}. I go on.`;

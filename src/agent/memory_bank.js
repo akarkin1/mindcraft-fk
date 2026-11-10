@@ -32,7 +32,9 @@ export class MemoryBank {
 		this.getDimension = typeof getDimension === 'function' ? getDimension : null;
 	}
 
-	rememberPlace(name, x, y, z, dimension) {
+	// v0.1.4.15 (S 2.4): `base`, the base the place belongs to, optional; it reaches the store only (the RAM places
+	// of a bot without a world keep their shape).
+	rememberPlace(name, x, y, z, dimension, base = null) {
 		if (this.store === null) {
 			this.memory[name] = [x, y, z];
 			return;
@@ -46,11 +48,49 @@ export class MemoryBank {
 		}
 		// an invalid name must not end the process: log it and report false
 		try {
-			this.store.remember(name, x, y, z, dimension ?? null);
+			this.store.remember(name, x, y, z, dimension ?? null, base ?? null);
 			return true;
 		} catch (err) {
 			console.warn(`Could not save the place "${name}": ${err?.message ?? err}`);
 			return false;
+		}
+	}
+
+	/**
+	 * Renames a place (v0.1.4.15, S 2.4): the name changes, nothing else. Never throws.
+	 * @param {string} oldName
+	 * @param {string} newName
+	 * @returns {boolean} false when there is no place of the old name or one of the new name exists already
+	 */
+	rename(oldName, newName) {
+		if (this.store !== null) {
+			try {
+				return this.store.rename(oldName, newName) !== null;
+			} catch (err) {
+				console.warn(`Could not rename the place "${oldName}": ${err?.message ?? err}`);
+				return false;
+			}
+		}
+		if (typeof oldName !== 'string' || typeof newName !== 'string' || newName.trim() === ''
+			|| !Object.hasOwn(this.memory, oldName) || Object.hasOwn(this.memory, newName))
+			return false;
+		this.memory[newName] = this.memory[oldName];
+		delete this.memory[oldName];
+		return true;
+	}
+
+	/**
+	 * The places of a base (v0.1.4.15, S 2.4) as the store lists them; none without a store.
+	 * @param {string} base
+	 * @returns {{name: string, x: number, y: number, z: number, dimension: string|null, base: string}[]}
+	 */
+	placesOfBase(base) {
+		if (this.store === null || typeof this.store.ofBase !== 'function')
+			return [];
+		try {
+			return this.store.ofBase(base);
+		} catch {
+			return [];
 		}
 	}
 
@@ -71,7 +111,10 @@ export class MemoryBank {
 		const place = this.store.recall(name);
 		if (place === undefined)
 			return undefined;
-		return { x: place.x, y: place.y, z: place.z, dimension: place.dimension ?? null };
+		const info = { x: place.x, y: place.y, z: place.z, dimension: place.dimension ?? null };
+		if (typeof place.base === 'string')
+			info.base = place.base; // v0.1.4.15 (S 2.4)
+		return info;
 	}
 
 	forgetPlace(name) {
