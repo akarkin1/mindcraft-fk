@@ -281,11 +281,12 @@ file. With both switches off the prompt is byte for byte v0.1.4.14's (`LIMIT_ALL
 
 In a fresh clone with Node 22 and the 26.1 server: `npm test` with 0 failures; `npm run test:e2e` with 0 failures;
 `node tests/world/run.js journeys journeys13 copper_age creeper_in_sight natural_smoke fresh_world night_falls
-open_farm open_ground base farm_routine` with every scenario passing.
+open_farm open_ground survey_base farm_routine` with every scenario passing (the entry is `survey_base`, not
+`base`: the runner's substring rule would drag `baseline`, `base_world` and `owner_base` in).
 
 ## 7. The scenarios (T3)
 
-### 7.1 W126 "the base" (`base`, base world, 1200 s)
+### 7.1 W126 "the base" (`survey_base`, base world, 1200 s)
 
 The control builds, in free space of the region: a house (walls, a roof, a door, a bed, a chest, a crafting table,
 2 cats), under it a basement reached by a trapdoor in the floor and a ladder of 6 (a dug room with a chest and a
