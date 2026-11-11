@@ -43,6 +43,16 @@ off by default (`base_survey`, `routines`); off, the prompt is byte for byte v0.
   is now one block for a wall-edge box and two for a margin box, read from the world and cached on the area, and
   the door side is chosen by the box when the interior rule gives no answer. Your areas work without re-saving.
 
+### Fixed
+
+- **A full bag in the mine** (found by the gate of this release in W118 `full_bag`; a race as old as the mining
+  pack): when a flint from a dug gravel filled the bag a moment after the room check of a vein, the raw iron of the
+  first ore block landed on the second, where the full bag could not take it, and the pickup walk dug the tunnel's
+  ceiling to stand on it; the next view read the hole as a gap the bot had no stone to close, the tunnel went three
+  blocks to the side and the kept cobblestone filled the bag: `My bag is full of things I keep for the mining. I
+  stop the mining at 1 of 6 iron.` The bot digs no way to a drop its bag cannot take; the drop stays and is picked
+  up when there is room again.
+
 ## [0.1.4.14] - 2026-11-09
 
 "Minecraft 26.1": the bot plays in Minecraft Java 26.1 ("Tiny Takeover", 2026-03-24) with the libraries of

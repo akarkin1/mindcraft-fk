@@ -42,6 +42,16 @@ interior. The executing sites: `sleep.js` (the bed's area), `shelter.js` (`goToS
 `walkToRoom`, `bedInShelter`, `isInShelter`), `doors.js` (`passThrough` with `options.inside`). An area without
 the flag and no reader keeps the margin of 2. `areas/auto_home.js` saves no `edge` yet.
 
+### The fix of the full bag in the mine (G-2 of the gate; E4's analysis and patch, applied by the lead)
+
+`roomForDrop(bot, entity)` of `src/agent/packs/mining/dig.js` (exported): true with a free slot, or with a stack of
+the drop's kind that has room; a drop of unknown kind fits only a free slot; no bot, no room. `droppedName` reads
+the real entity's `getDroppedItem()` or a fake's `item`. `collectDrops` with `dig: true` walks with digging
+movements to a drop only when `roomForDrop` says yes; otherwise the drop stays and is picked up when room is back.
+The race itself (a flint picked up after `mineVeins` checked `roomFor` for the first ore of a vein) remains: the
+second ore is noted `inventory` and the raw iron of the first lies on it until the next pass with room. Test:
+`tests/unit/xs_drop_room.test.js` (7). The mining pack is otherwise unchanged since a87639e.
+
 ### Routines, `src/agent/routines/` (E2)
 
 | Module | Exports |
