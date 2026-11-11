@@ -8,7 +8,9 @@ Built in one day of working time across six sittings between usage limits. The s
 unit 9,097 tests (9,095 pass, 2 skipped), end-to-end 19 of 19 (`routine_round` among them); on the 26.1 server
 W126 `survey_base` 53 of 53 twice, W127 `farm_routine` passing, and the area, route and shelter scenarios
 (`owner_base`, `pen_gate_safe`, `route_to_bed`, `remember_mine`, `shelter_is_home`, `ten_minutes`,
-`spawn_and_bed`, `job_comes_back`, `first_mine`) passing.
+`spawn_and_bed`, `job_comes_back`, `first_mine`) passing. The gate (DECISIONS G-4) from a fresh clone of bda9b3f,
+with the fix of the full bag in the mine (G-2): unit 9,104 tests (9,102 pass, 2 skipped), end-to-end 19 of 19, the
+world set 51 of 51 in 5,212 s.
 
 ### The survey pack, `src/agent/packs/survey/`
 
