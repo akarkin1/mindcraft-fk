@@ -19,17 +19,17 @@ your word ("proceed to the next release"). The findings are in `docs/ROADMAP.md`
 
 ## 2. The scope and the cut rule
 
-Two rounds on one branch. Round one is the fixes of your two plays (section 4), gated on the server before round
-two starts; round two is the three packs (section 5) with a budget of four days: a pack over its day moves to
-0.1.4.17, so a new pack never holds the fixes hostage. One PR, one fresh-clone gate, one play test.
+Your decision of 2026-11-12: everything goes together in this release. The "Stability" list of October
+(`docs/ROADMAP.md`, "0.1.4.16 Stability") is in, whole; your words of 2026-11-09 that the bug fixes can wait were
+about 0.1.4.15, not about this release.
 
-The "Stability" list of October (`docs/ROADMAP.md`, "0.1.4.16 Stability") is about seven more days of work.
-Three of its rows are in this release because your plays keep hitting them (caves, orders stay orders, the
-history race). I recommend that the rest (tunnels as beams, routes and places, the shelter smalls, the smaller
-ones of 2026-10-06, supplies by need, a full bag far from the chest, chests by position, `!craftRecipe` with a
-count, a ladder through a trapdoor, code that cannot be stopped, the load of the laptop) goes to 0.1.4.17
-"Stability 2": you said on 2026-11-09 that the bug fixes can wait, and the packs are what you asked for next.
-The alternative is everything in one release, about nineteen days instead of twelve. Your call (section 10).
+Three rounds on one branch, each gated on the server before the next starts. Round one is the fixes of your two
+plays (section 4). Round two is the Stability list of October (section 4b): tunnels as beams, routes and places,
+the shelter, the smaller ones of 2026-10-06, supplies by need, the mine and its route, a full bag far from the
+chest, chests by position, `!craftRecipe` with a count, a ladder through a trapdoor, code that cannot be stopped,
+the load of the laptop; it needs no decision of yours, so it starts as soon as round one is handed off. Round
+three is the three packs (section 5), as soon as you have answered section 10; a pack over its day is reported to
+you with what remains, and you say cut or go on. One PR, one fresh-clone gate, one play test.
 
 ## 3. What changes for you
 
@@ -63,7 +63,28 @@ P-21 the fix round of 0.1.4.14. "After" is the behaviour the tests prove.
 
 Each fix is a unit test and, where the server can show it, a scenario (section 7). Zero new model calls.
 
-## 5. Round two: the three packs
+## 4b. Round two: the Stability list of October
+
+The rows of `docs/ROADMAP.md` "0.1.4.16 Stability" as the plays of 2026-10-05 and 2026-10-06 found them; the
+caves, "orders stay orders" and the history race are in round one already. "After" is the behaviour the tests
+prove; the spec of round two gives the files and the texts.
+
+| Id | Finding | After |
+|---|---|---|
+| S1 | Tunnels as beams: "mine" kept 3 pieces of a 116-block tunnel, "deep" 34 of more than 110; every later run said "no way" or walked home with 0 iron, ended 2 blocks below its level, planned the way back through the room, ignored the route saved by hand | A tunnel is saved as a start, a direction and a level, never an end or a length; its end is where the open cells along it stop, found when the bot stands in it; every run digs on from there; pieces on the same row, level and direction are one beam (the saved mines merge on load); the way in is to the start and along the beam; a branch starts on a beam with its own direction |
+| S2 | Routes and places: the route "mine" breaks at the foot of the ladder; "mine_to_deep" ends in the room, not at the deep mine; the place "house_to_mine" took the route "farm_to_home"; "I find no way to the top of the ladder" at the basement's bed | A route's waypoints include both ends of every ladder it climbs; a route to a mine ends at the mine's start; a place and a route never share a name (the second gets `_2` and the bot says so); the walk to a ladder's top uses the ladder code of the packs |
+| S3 | Shelter: "this is the shelter" answered `That is the area "home" already.` while the model claimed it saved it; a stray place "shelter" by the pens; the home point drifting | "This is the shelter" on a saved home marks that home as the shelter and says so (`"home" is the shelter.`), saves no new place; the home point is the saved home's door, never the bot's position |
+| S4 | The smaller ones of 2026-10-06: a bed in a 2-wide tunnel; the farm round 40 blocks off the farm without the bone meal it took; `!goToCoordinates` over the surface to a mine; `!putInChest` into a full chest reports wrong; the chest index stale; the model asks about the area "home" after every restart, answers "where are you?" wrongly, took "it's all good now" as `!stop` | A bed is placed only on level ground outside a tunnel (the rule of 0.1.4.14 extended to tunnels); the farm round uses the bone meal it took or puts it back; `!goToCoordinates` to a point inside a known mine takes the mine's way in; `!putInChest` into a full chest says `The chest at (x, y, z) is full; I put nothing in.`; the chest index is refreshed when a chest is opened; the restart asks nothing about a saved area; "where are you?" is answered with the nearest saved place and the coordinates; "it's all good now" is no `!stop` (the profile's examples) |
+| S5 | Supplies by need: a walk of 150 blocks for 2 torches; a loop of eating the food and fetching more; the cobblestone unnamed | Supplies are fetched when a trip needs them and the chest is within 48 blocks, else the bot says what it lacks and goes without; food is fetched once per trip; every stored or fetched thing is named |
+| S6 | The mine and its route: `!mineOre("diamond")` took the shallow mine; the same route failure came 4 times | The mine for an ore is the one whose level reaches the ore (diamond below y 16); a route that fails is said once and marked, the next walk takes the plain way |
+| S7 | A full bag far from the chest: carry it back or place a chest; `!discard` picked up again | A full bag more than 48 blocks from the chest: the bot places a chest from the bag where it stands and stores into it (a saved place `cache_N`), or carries the bag back when it has no chest; `!discard` keeps the dropped items out of the pickup for 60 s |
+| S8 | Chests by position: the upper of two stacked chests; every stack in one `!putInChest` | A chest is named by its position in the texts; two stacked chests are two chests; `!putInChest(item, num)` moves every stack of the item up to num in one command |
+| S9 | `!craftRecipe` with a count above 1 says "missing ingredient" | The count is honoured: one unit at a time with the check of 0.1.4.14, the missing-ingredient line only when the bag lacks the ingredients for the next unit |
+| S10 | A ladder through a trapdoor: the path search opens it | The path finder opens a trapdoor above a ladder as it opens doors (a patch of the pinned path search, so your play test covers it) |
+| S11 | Code that cannot be stopped: generated code running `collectBlock` in a loop ended the process (`refused stop after 10 seconds`) | Generated code runs with the interrupt flag checked between skill calls, and a code that ignores the stop for 10 s is killed without ending the process (`I stopped the code.`) |
+| S12 | The load of the laptop | Only if it remains in your play after the quiet supervisor of 0.1.4.13; measured in the play, no code before |
+
+## 5. Round three: the three packs
 
 Each pack is a work pack like the farming or the mining pack: its own folder, its switch, its commands blocked
 when off, one line of docs per command in the prompt, its texts word for word from the spec.
@@ -111,11 +132,17 @@ when off, one line of docs per command in the prompt, its texts word for word fr
 | F7 the dig with enchanted tools (the probe, the patch), F11 the smalls | 1 |
 | F8 the clock and the orders, F9 the supervisor's run, F12 the history race | 1.5 |
 | Round one: the scenarios on the server and the fix round | 1 |
+| S1 tunnels as beams | 2 |
+| S2 routes and places, S6 the mine and its route | 1.5 |
+| S3 the shelter, S4 the smaller ones | 1.5 |
+| S5 supplies by need, S7 a full bag far from the chest, S8 chests by position | 1.5 |
+| S9 `!craftRecipe`, S10 a ladder through a trapdoor, S11 code that cannot be stopped | 1 |
+| Round two: the scenarios on the server and the fix round | 0.5 |
 | Breeding | 1 |
 | Enchanting (with the probe of the 26.1 window) | 1.25 |
 | The AFK creeper kill (with its world scenario) | 1.25 |
 | The gate: unit, end-to-end and the full world set in a fresh clone, the fix round | 1 |
-| **Total** | **12.5**, the packs capped at 4 |
+| **Total** | **20.5**; a pack over its day is reported to you |
 
 ## 7. Testing
 
@@ -138,7 +165,6 @@ written from this plan, before the build, and fail on v0.1.4.15:
 
 ## 8. Left out
 
-- The rest of the "Stability" list of October (section 2): 0.1.4.17, unless you say otherwise.
 - The anvil of the enchanting pack, if its day is spent.
 - A kill room the bot builds itself, and any farm but a drop shaft with hoppers under a slab.
 - Breeding of horses, bees or villagers; feeding through a gate; a feed the bot grows itself.
@@ -158,10 +184,10 @@ written from this plan, before the build, and fail on v0.1.4.15:
 
 ## 10. Your decisions
 
-1. The cut: the fixes of the plays and the three packs in 0.1.4.16, the rest of the October list in 0.1.4.17 (my recommendation), or everything in one release.
+1. The cut: decided on 2026-11-12, everything in one release (section 2).
 2. The AFK kill: the default stop (level 30), the health threshold (10 of 20), whether the bot may eat from the hopper chests when its bag has no food.
 3. Enchanting: the default preference (the highest offer the levels allow) and whether the bot may take lapis from your valuables chest by itself or only from a chest you name.
 4. Breeding: the cap per pen (12), the pace (5 minutes per pair), and whether the bot may take the feed from the farm chests by itself.
 5. The caves: `!collectBlocks` underground refused for the bot alone (your words after the two deaths), or allowed with the wall-off rule only.
 
-The spec starts with the fixes while you decide; the three packs' spec follows your answers to 2 to 5.
+Rounds one and two run while you decide; the three packs' spec follows your answers to 2 to 5.

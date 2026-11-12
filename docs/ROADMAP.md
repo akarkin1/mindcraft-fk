@@ -21,7 +21,7 @@ Rules that hold for every release:
 | 0.1.4.13 | Supervision | Released: `CHANGELOG.md` |
 | 0.1.4.14 | Minecraft 26.1 | Released: `CHANGELOG.md`, merged 2026-11-09 (#24) |
 | 0.1.4.15 | The base survey and Routines | Released: `CHANGELOG.md`, merged 2026-11-12 (#26). The plan `docs/releases/0.1.4.15/PLAN.md`. Decided by the owner on 2026-11-09 (option A): two rounds on one branch, the survey first, Routines with a budget of four days and a cut rule (over the budget, the release ships the survey alone); one gate, one play of both |
-| 0.1.4.16 | Stability | In work from 2026-11-12 (`docs/releases/0.1.4.16/PLAN.md`): the fixes and small items planned for 0.1.4.15 below (tunnels as beams, caves, routes and places, supplies by need, the rest), moved by the owner on 2026-11-09; the findings of the play of 2026-11-11 on v0.1.4.15 (R-1 to R-13) and three packs behind switches (AFK creeper kill, enchanting, breeding), put here by the owner on 2026-11-11; not started until the owner says so |
+| 0.1.4.16 | Stability | In work from 2026-11-12 (`docs/releases/0.1.4.16/PLAN.md`; the owner's word of 2026-11-12: everything together, three rounds): the fixes and small items planned for 0.1.4.15 below (tunnels as beams, caves, routes and places, supplies by need, the rest), moved by the owner on 2026-11-09; the findings of the play of 2026-11-11 on v0.1.4.15 (R-1 to R-13) and three packs behind switches (AFK creeper kill, enchanting, breeding), put here by the owner on 2026-11-11; not started until the owner says so |
 | Later | See the backlog | Not decided |
 
 ## 0.1.4.9 The mine, the routes of the player, and the model comparison
