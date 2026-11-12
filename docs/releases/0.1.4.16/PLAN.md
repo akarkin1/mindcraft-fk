@@ -19,17 +19,15 @@ your word ("proceed to the next release"). The findings are in `docs/ROADMAP.md`
 
 ## 2. The scope and the cut rule
 
-Your decision of 2026-11-12: everything goes together in this release. The "Stability" list of October
-(`docs/ROADMAP.md`, "0.1.4.16 Stability") is in, whole; your words of 2026-11-09 that the bug fixes can wait were
-about 0.1.4.15, not about this release.
+Your decisions of 2026-11-12: first everything in one release, then, on seeing its size, the split as
+recommended. This release is the fixes of your two plays and the three packs. The Stability list of October
+(`docs/ROADMAP.md`) goes to 0.1.4.17 "Stability 2", but for three of its rows that your plays keep hitting and
+that are in round one here: the caves, "orders stay orders" and the history race. Section 4b keeps the list with
+the behaviour each row should have, as the first draft of the plan of 0.1.4.17.
 
-Three rounds on one branch, each gated on the server before the next starts. Round one is the fixes of your two
-plays (section 4). Round two is the Stability list of October (section 4b): tunnels as beams, routes and places,
-the shelter, the smaller ones of 2026-10-06, supplies by need, the mine and its route, a full bag far from the
-chest, chests by position, `!craftRecipe` with a count, a ladder through a trapdoor, code that cannot be stopped,
-the load of the laptop; it needs no decision of yours, so it starts as soon as round one is handed off. Round
-three is the three packs (section 5), as soon as you have answered section 10; a pack over its day is reported to
-you with what remains, and you say cut or go on. One PR, one fresh-clone gate, one play test.
+Two rounds on one branch. Round one is the fixes of your two plays (section 4), gated on the server before round
+two starts; round two is the three packs (section 5) with a budget of four days: a pack over its day moves to
+0.1.4.17, so a new pack never holds the fixes hostage. One PR, one fresh-clone gate, one play test.
 
 ## 3. What changes for you
 
@@ -63,11 +61,11 @@ P-21 the fix round of 0.1.4.14. "After" is the behaviour the tests prove.
 
 Each fix is a unit test and, where the server can show it, a scenario (section 7). Zero new model calls.
 
-## 4b. Round two: the Stability list of October
+## 4b. Left for 0.1.4.17 "Stability 2": the Stability list of October
 
-The rows of `docs/ROADMAP.md` "0.1.4.16 Stability" as the plays of 2026-10-05 and 2026-10-06 found them; the
-caves, "orders stay orders" and the history race are in round one already. "After" is the behaviour the tests
-prove; the spec of round two gives the files and the texts.
+Not in this release (your decision of 2026-11-12, section 2). The rows of `docs/ROADMAP.md` "0.1.4.17 Stability 2"
+as the plays of 2026-10-05 and 2026-10-06 found them, with the behaviour each should have, kept here as the first
+draft of the next plan; the caves, "orders stay orders" and the history race are in round one of this release.
 
 | Id | Finding | After |
 |---|---|---|
@@ -84,7 +82,7 @@ prove; the spec of round two gives the files and the texts.
 | S11 | Code that cannot be stopped: generated code running `collectBlock` in a loop ended the process (`refused stop after 10 seconds`) | Generated code runs with the interrupt flag checked between skill calls, and a code that ignores the stop for 10 s is killed without ending the process (`I stopped the code.`) |
 | S12 | The load of the laptop | Only if it remains in your play after the quiet supervisor of 0.1.4.13; measured in the play, no code before |
 
-## 5. Round three: the three packs
+## 5. Round two: the three packs
 
 Each pack is a work pack like the farming or the mining pack: its own folder, its switch, its commands blocked
 when off, one line of docs per command in the prompt, its texts word for word from the spec.
@@ -132,17 +130,11 @@ when off, one line of docs per command in the prompt, its texts word for word fr
 | F7 the dig with enchanted tools (the probe, the patch), F11 the smalls | 1 |
 | F8 the clock and the orders, F9 the supervisor's run, F12 the history race | 1.5 |
 | Round one: the scenarios on the server and the fix round | 1 |
-| S1 tunnels as beams | 2 |
-| S2 routes and places, S6 the mine and its route | 1.5 |
-| S3 the shelter, S4 the smaller ones | 1.5 |
-| S5 supplies by need, S7 a full bag far from the chest, S8 chests by position | 1.5 |
-| S9 `!craftRecipe`, S10 a ladder through a trapdoor, S11 code that cannot be stopped | 1 |
-| Round two: the scenarios on the server and the fix round | 0.5 |
 | Breeding | 1 |
 | Enchanting (with the probe of the 26.1 window) | 1.25 |
 | The AFK creeper kill (with its world scenario) | 1.25 |
 | The gate: unit, end-to-end and the full world set in a fresh clone, the fix round | 1 |
-| **Total** | **20.5**; a pack over its day is reported to you |
+| **Total** | **12.5**, the packs capped at 4. The Stability list of October (section 4b) is about 8 more days, in 0.1.4.17 |
 
 ## 7. Testing
 
@@ -165,6 +157,7 @@ written from this plan, before the build, and fail on v0.1.4.15:
 
 ## 8. Left out
 
+- The Stability list of October (section 4b): 0.1.4.17 "Stability 2", your decision of 2026-11-12.
 - The anvil of the enchanting pack, if its day is spent.
 - A kill room the bot builds itself, and any farm but a drop shaft with hoppers under a slab.
 - Breeding of horses, bees or villagers; feeding through a gate; a feed the bot grows itself.
@@ -184,10 +177,10 @@ written from this plan, before the build, and fail on v0.1.4.15:
 
 ## 10. Your decisions
 
-1. The cut: decided on 2026-11-12, everything in one release (section 2).
+1. The cut: decided on 2026-11-12, the split (section 2): the plays' fixes and the three packs here, the October list in 0.1.4.17.
 2. The AFK kill: the default stop (level 30), the health threshold (10 of 20), whether the bot may eat from the hopper chests when its bag has no food.
 3. Enchanting: the default preference (the highest offer the levels allow) and whether the bot may take lapis from your valuables chest by itself or only from a chest you name.
 4. Breeding: the cap per pen (12), the pace (5 minutes per pair), and whether the bot may take the feed from the farm chests by itself.
 5. The caves: `!collectBlocks` underground refused for the bot alone (your words after the two deaths), or allowed with the wall-off rule only.
 
-Rounds one and two run while you decide; the three packs' spec follows your answers to 2 to 5.
+Round one runs while you decide; the three packs' spec follows your answers to 2 to 5.

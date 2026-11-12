@@ -21,7 +21,8 @@ Rules that hold for every release:
 | 0.1.4.13 | Supervision | Released: `CHANGELOG.md` |
 | 0.1.4.14 | Minecraft 26.1 | Released: `CHANGELOG.md`, merged 2026-11-09 (#24) |
 | 0.1.4.15 | The base survey and Routines | Released: `CHANGELOG.md`, merged 2026-11-12 (#26). The plan `docs/releases/0.1.4.15/PLAN.md`. Decided by the owner on 2026-11-09 (option A): two rounds on one branch, the survey first, Routines with a budget of four days and a cut rule (over the budget, the release ships the survey alone); one gate, one play of both |
-| 0.1.4.16 | Stability | In work from 2026-11-12 (`docs/releases/0.1.4.16/PLAN.md`; the owner's word of 2026-11-12: everything together, three rounds): the fixes and small items planned for 0.1.4.15 below (tunnels as beams, caves, routes and places, supplies by need, the rest), moved by the owner on 2026-11-09; the findings of the play of 2026-11-11 on v0.1.4.15 (R-1 to R-13) and three packs behind switches (AFK creeper kill, enchanting, breeding), put here by the owner on 2026-11-11; not started until the owner says so |
+| 0.1.4.16 | Stability, and three packs | In work from 2026-11-12 (`docs/releases/0.1.4.16/PLAN.md`): the fixes of the plays of 2026-11-10 (Q-2 to Q-9) and 2026-11-11 (R-1 to R-13) with the caves, "orders stay orders" and the history race of the October list, then three packs behind switches (AFK creeper kill, enchanting, breeding). The owner's decisions of 2026-11-12: the split of the October list off this release |
+| 0.1.4.17 | Stability 2 | The rest of the Stability list of October below (tunnels as beams, routes and places, the shelter, the smaller ones of 2026-10-06, supplies by need, the mine and its route, a full bag far from the chest, chests by position, `!craftRecipe` with a count, a ladder through a trapdoor, code that cannot be stopped, the load of the laptop), moved by the owner on 2026-11-12; the first draft of its plan is `docs/releases/0.1.4.16/PLAN.md` section 4b |
 | Later | See the backlog | Not decided |
 
 ## 0.1.4.9 The mine, the routes of the player, and the model comparison
@@ -183,11 +184,12 @@ servers on 2026-11-03). Node 22, Java 25 for the test server, the 8 patches rege
 bot's tables (copper pickaxes, copper chests, the corrected foods). The plan is `docs/releases/0.1.4.14/PLAN.md`,
 the spec `SPEC.md`. About 4 days.
 
-## 0.1.4.16 Stability (the list planned for 0.1.4.15 until 2026-11-09)
+## 0.1.4.17 Stability 2 (the list planned for 0.1.4.15 until 2026-11-09, for 0.1.4.16 until 2026-11-12)
 
 Split off 0.1.4.13 by the owner on 2026-10-04, moved behind the upgrade to 26.1 on 2026-11-03. On 2026-11-09 the owner
 moved Routines into 0.1.4.15 with the base survey (option A, above) and this list to 0.1.4.16; one row from the fix
-round of 0.1.4.14 joins it at the end.
+round of 0.1.4.14 joins it at the end. On 2026-11-12 the owner moved the list to 0.1.4.17, but for three rows that
+the plays keep hitting and that 0.1.4.16 fixes in its first round: Caves, Orders stay orders, The history race.
 
 | Part | Content |
 |---|---|
