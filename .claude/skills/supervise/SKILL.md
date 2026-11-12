@@ -84,9 +84,19 @@ The owner's sentence is the goal; the rules below are what a good player would w
    minutes of mining); then how much it moves the goal. Prefer the cheapest option that is safe and gets the work
    done; spend rare things only when the goal needs them or there is plenty.
 4. **Act once, and check the result at the next wake.** If it did not work, try a different option, not the same one
-   again.
+   again. When two different ways to the same step failed, stop improvising: tell the owner what you saw and offer
+   two options in one `reply` (another mine, another job, his help), and keep the bot safe meanwhile. A third
+   improvised way costs more time and risk than the question; in the play of 2026-10-05 an hour of workarounds for
+   iron brought 2 of 32 and a death.
 5. **When the choice is the owner's** (what to build, what to give away, names, a risk he did not allow), or when no
    option is good, ask him in one short `reply` and keep the bot safe meanwhile.
+6. **Every question goes into the game chat, and the loop goes on.** The owner plays full screen; a question in
+   Claude Code makes him switch windows, and a turn that ends to wait for him stops the loop, so nobody watches the
+   bot. Ask with one `reply` that names two options, then `wait event` until his answer comes as a `message` event,
+   and answer within a minute. Your turn ends only when the game is over, when the owner says to stop, or when the
+   bot is out of the game: then the chat cannot reach you, so say in the last chat line before it leaves that he must
+   write in Claude Code. (The play of 2026-11-09: three questions asked in Claude Code, each a window switch and an
+   idle bot.)
 
 Examples of reasoning, not rules: hungry deep in the mine with steak in the chest beside the tunnel and bread in the
 basement: take the steak there, it fills more and costs no trip. A worn pickaxe while mining iron, with cobblestone in
@@ -108,6 +118,8 @@ The signals that usually need a look, and what usually makes sense. Weigh them a
 | An event `help`: the bot asks the owner something | Answer with `say` when the owner's sentence settles it. Else leave it to the owner. |
 | An event `message`: the owner asked you | `reply` at once, kind `answer`, one or two short sentences. Answer from the facts the tools gave you. |
 | An event `job_stalled` or `failure_repeated` | `look`, read the chat lines, find the cause, change one thing: another tunnel, another command, the missing material. If you cannot find the cause, tell the owner what you see. |
+| The bag holds what the goal is for (diamonds, ingots, rare ore) | A death loses the whole bag. Store it in a chest of the mine or the house every 8 or so, before every trip through caves or open ground, and before a fight or a long walk: `!putInChest("diamond", 8)` at a chest with room. Keep the bot's tools, food, torches and the bed. |
+| `Running:` names a command nobody ordered, or your command ended `stopped by the command ...` | The bot's own model acts too: it answers its own events and help lines, and may stop your command or start its own (`!leaveMine`, `!goToShelter`, a new mine, `!setMode`). If it serves the goal and the owner's last order, let it; if not, `run ['!stop']` and give your command again. Turn a mode it switched off back on (`!setMode("unstuck", true)`): the profile of the owner decides the modes. |
 | The sentence is fulfilled | `run ['!stop']` if needed, then the report. |
 
 ## Updates
@@ -128,8 +140,29 @@ answer and the bot's log, never to the chat. Say in the chat only what the owner
   server holds your line while a bot speaks and drops an update that waited over 20 s:
   `Dropped: the bot was speaking.` Do not send a dropped update again.
 
+## What the commands do not do yet
+
+Found in the play of 2026-10-05 and not fixed in v0.1.4.13 fix 1. Work around them; do not fight them.
+
+| Command or tool | What it does | So |
+|---|---|---|
+| `!stop` | Stops the running command at once only as the first command of a `run`. | `run ['!stop']` alone, then the next `run`. |
+| `!craftRecipe(item, N)` | N above 1 often fails with `missing ingredient`; several crafts in one `run` race each other and fail. | One craft per `run` call: `!craftRecipe("torch", 1)` makes 4 torches; call it again for more. |
+| `!takeFromChest`, `!putInChest`, `!viewChest` | Open the nearest chest only; `!putInChest` stores one stack per call. The upper of two stacked chests is never the nearest. | Stand next to the chest you mean; repeat `!putInChest` per stack. A chest you cannot make the nearest: ask the owner, or one `!newAction` with `bot.openContainer(bot.blockAt(new Vec3(x, y, z)))`. |
+| `inventory`, the digest's bag | Lags a few seconds behind a craft, a take or a restart. | Read `inventory` again before you tell the owner that something is in the bag or lost. The bed "lost" on 2026-10-05 was in the bag. |
+| `!chests` | The chest index is as old as the last time the bot opened each chest. | `!viewChest` at the chest before you rely on what the index says. |
+| `!mineOre` | Before a trip it wants 16 torches, 32 cobblestone, 8 food items and a chest, and walks to whatever chest holds the shortfall, even 150 blocks home for 2 torches. It fetches exactly the shortfall, then eats one and is short again. | Before `!mineOre`, fill the bag above those numbers from a chest nearby, or craft torches from coal and sticks on the spot. |
+| `!mineOre` | Mines only the ore its tunnel uncovers; ore one block off the walls stays. It stops when the bag is full and no chest within 32 blocks has room. | Store the rubble (cobbled deepslate, tuff, gravel) in a chest of the mine before the tunnel outgrows 32 blocks. If the tunnel finds nothing for 60 blocks while `look` shows the ore near, tell the owner rather than chase it. |
+| `!discard` | Drops at the bot's feet; the bot picks it up again at once. | Store rubble in a chest instead. |
+| The pathfinder | Cannot climb a ladder through a trapdoor, open or closed; the bot hangs on the ladder. | Tell the owner where the trapdoor is; never break his blocks. |
+| `run` | `Path not found, but attempting to navigate anyway` counts as a failure and stops the queue, even when the bot reached the goal. | Check the position, then send the rest of the queue in a new `run`. |
+| The process | Restarts by itself after a kick or a hang; the tools answer `ECONNRESET`, then `ECONNREFUSED` for about 10 s. | Wait, then `digest` without a cursor and read where the bot is and what it carries. |
+| `!newAction` | About 4 cents a call; the generated code may differ from what you asked. | Only when no command can do it, read-only first; say "never call bot.chat, console.log only" in the prompt. |
+
 ## What never to do
 
+- Never end your turn to ask the owner something while the bot is in the game: ask in the chat and keep waiting
+  (rule 6 above).
 - Never a bare shaft down: a hole the bot or the owner cannot climb out of and can fall into. Going down is fine
   when the way is safe, chosen by what is there:
   - a known way: `!goToMine`, `!goToRememberedPlace`, a route, natural or built stairs or a slope
