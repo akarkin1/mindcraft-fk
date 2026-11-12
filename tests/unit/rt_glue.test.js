@@ -34,8 +34,9 @@ const LIMIT = { timeout: 30000 };
 // three commands !boardBoat, !leaveBoat and !leaveGame add 173 characters of docs; the lead raised both limits by 200
 // (17,000 to 17,200 and 17,400 to 17,600), as R1-7 did once in this release. v0.1.4.15 (SPEC 4): the eight commands of the
 // base survey (552 characters) and the routines (533) add 1,085 characters of one-line docs (18,596 measured with every switch
-// on, 17,511 before); both limits rise by that growth rounded up to the next 100 (1,100): 18,300 and 18,700.
-const LIMIT_NEW_THINGS = 18700;
+// on, 17,511 before); both limits rise by that growth rounded up to the next 100 (1,100): 18,300 and 18,700. v0.1.4.16 (SPEC 5,
+// E1): the one line of docs of !sealOpening adds 195 characters; both limits rise by that growth only: 18,495 and 18,895.
+const LIMIT_NEW_THINGS = 18895;
 const NEW_THINGS_HEADER = 'NEW SINCE 1.21.8 (true, even if you do not know it):';
 // a bot with the things of the three longest lines of the new things: a copper golem statue and a copper pickaxe in the
 // bag, a nautilus 3 blocks away; the block holds what fits in its 360 characters
@@ -466,7 +467,7 @@ describe('G7: the conversing prompt', () => {
         for (const name of [...ROUTE_COMMANDS, ...MINE_COMMANDS]) assert.ok(prompt.includes(`\n${name}: `), name);
         assert.ok(prompt.includes(`\n${NEW_THINGS_BLOCK}\n`), 'the block of the new things');
         assert.ok(prompt.length <= LIMIT_NEW_THINGS, `${prompt.length} characters`);
-        assert.ok(prompt.replace(`\n${NEW_THINGS_BLOCK}`, '').length <= 18300, 'without the block of the new things');
+        assert.ok(prompt.replace(`\n${NEW_THINGS_BLOCK}`, '').length <= 18495, 'without the block of the new things'); // v0.1.4.16: 18,300 + 195
     });
 
     test('every switch off: none of the six commands', LIMIT, async (t) => {

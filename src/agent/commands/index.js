@@ -11,6 +11,20 @@ for (let command of commandList) {
     commandMap[command.name] = command;
 }
 
+/**
+ * v0.1.4.16 (F8, "orders stay orders", the play of 2026-11-11: the model started !collectBlocks by itself): the commands
+ * that are work. The model starts none of them without an order of the player or the supervisor behind it.
+ */
+export const WORK_COMMANDS = Object.freeze(['!collectBlocks', '!mineOre', '!chopTrees', '!farmCycle', '!harvest', '!plant', '!newAction',
+    '!digDown', '!digTunnel', '!smeltItem', '!craftSupplies']);
+/** F8: the commands the model may not use against a command the player or the supervisor typed. */
+export const STOP_COMMANDS = Object.freeze(['!stop', '!setMode']);
+/** F8: the answers to the model, returned to it and never said. */
+export const ORDER_TEXTS = Object.freeze({
+    noOrder: 'I do not start work without an order from the player or the supervisor.',
+    playersOrder: "That is the player's order; I do not stop it.",
+});
+
 export function getCommand(name) {
     return commandMap[name];
 }
@@ -343,6 +357,10 @@ function orderBy(agent, options, typed) {
         return 'system';
     if (typed)
         return typedBy(agent, options) ?? 'player';
+    // v0.1.4.16 (F8): the supervisor's orders are the player's: a command of the watch's quiet message (F9, E2: handleMessage
+    // hands `quiet` on to executeCommand's options) or of a call with by 'supervisor'
+    if (options?.quiet === true || options?.by === 'supervisor')
+        return typedBy(agent, options) ?? 'player';
     return options?.typed === false ? 'model' : 'system';
 }
 
@@ -379,6 +397,60 @@ function jobRefusal(job, name, by) {
         return typeof text === 'string' && text.length > 0 ? text : null;
     } catch (error) {
         console.warn('The job could not judge the command:', error);
+        return null;
+    }
+}
+
+// F8 (v0.1.4.16): the turn the model answered: the last turn of the history, or the one before it when the last is the
+// model's own line (handleMessage adds the response before the command runs; with the serialised add of F12 it may not be
+// there yet). null without a history.
+function promptingTurn(agent, message) {
+    const turns = agent?.history?.turns;
+    if (!Array.isArray(turns) || turns.length === 0)
+        return null;
+    let i = turns.length - 1;
+    if (turns[i]?.role === 'assistant' && typeof message === 'string' && turns[i].content === message)
+        i--;
+    return i >= 0 ? turns[i] ?? null : null;
+}
+
+// F8: true when the model acts on its own: the message it answered was the bot's own line or an AUTO MESSAGE of a mode
+// (which comes as a system line, or as the last sender's line in a conversation). A player's message, an "Action output"
+// line and the other system lines are an order's chain.
+function modelOnItsOwn(agent, message) {
+    const turn = promptingTurn(agent, message);
+    if (!turn)
+        return false;
+    if (turn.role === 'assistant')
+        return true;
+    return typeof turn.content === 'string' && turn.content.includes('(AUTO MESSAGE)');
+}
+
+/**
+ * v0.1.4.16 (F8): the answer to the model for a command it may not give, or null. A work command (WORK_COMMANDS) that the
+ * model picked on its own (the last message is the bot's own or an AUTO MESSAGE of a mode): ORDER_TEXTS.noOrder. !stop or
+ * !setMode by the model while a command the player or the supervisor typed runs (agent.running_commands with typed):
+ * ORDER_TEXTS.playersOrder. The player's typed commands, the system orders (a job's resume, a routine's round) and the
+ * model's commands in answer to a player pass. Never throws.
+ * @param {object} agent
+ * @param {string} name the command
+ * @param {string} by orderBy: 'model', 'system' or the player
+ * @param {string} [message] the model's whole line, as handleMessage added it to the history
+ * @returns {string|null}
+ */
+export function orderRefusal(agent, name, by, message = '') {
+    try {
+        if (by !== 'model')
+            return null;
+        if (STOP_COMMANDS.includes(name)) {
+            const list = Array.isArray(agent?.running_commands) ? agent.running_commands : [];
+            return list.some(r => r && r.typed === true && r.name !== name) ? ORDER_TEXTS.playersOrder : null;
+        }
+        if (WORK_COMMANDS.includes(name) && modelOnItsOwn(agent, message))
+            return ORDER_TEXTS.noOrder;
+        return null;
+    } catch (error) {
+        console.warn('The order of the command could not be judged:', error);
         return null;
     }
 }
@@ -454,6 +526,13 @@ export async function executeCommand(agent, message, options = {}) {
             if (refusal !== null) {
                 console.log('Job:', refusal);
                 return refusal;
+            }
+            // v0.1.4.16 (F8, "orders stay orders"): the model starts no work on its own and stops no command of the player
+            // or the supervisor; the answer goes to the model as a system line (the caller adds it to the history)
+            const order = orderRefusal(agent, command.name, orderBy(agent, options, typed), message);
+            if (order !== null) {
+                console.log('Order:', order);
+                return order;
             }
             const list = agent && typeof agent === 'object' ? (Array.isArray(agent.running_commands) ? agent.running_commands : (agent.running_commands = [])) : [];
             list.push(running);

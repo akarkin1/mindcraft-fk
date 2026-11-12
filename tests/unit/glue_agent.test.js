@@ -138,10 +138,12 @@ describe('handleMessage: last_order (G3) and the shortened result (G2)', () => {
         assert.equal(seen[0].command, '!modes');
         assert.equal(seen[0].atTimeOfDay, 13000);
         assert.ok(seen[0].at >= before && seen[0].at <= Date.now());
-        // v0.1.4.8 (part G): text is the whole command, typed marks an order typed in the chat
-        assert.deepEqual(Object.keys(seen[0]).sort(), ['at', 'atTimeOfDay', 'by', 'command', 'text', 'typed']);
+        // v0.1.4.8 (part G): text is the whole command, typed marks an order typed in the chat; v0.1.4.16 (F9): quiet marks a
+        // command of the watch queue (false for a typed one)
+        assert.deepEqual(Object.keys(seen[0]).sort(), ['at', 'atTimeOfDay', 'by', 'command', 'quiet', 'text', 'typed']);
         assert.equal(seen[0].text, '!modes');
         assert.equal(seen[0].typed, true);
+        assert.equal(seen[0].quiet, false);
         assert.equal(agent.last_order, null);
     });
 

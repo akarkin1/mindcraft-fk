@@ -20,6 +20,8 @@ export const TEXTS = Object.freeze({
     starving: 'I am starving. I have no food and know no chest with food.',
     noFoodNoChest: 'I carry no food and know no chest with food.',
     doorsClosed: 'All doors near me are closed.',
+    // v0.1.4.16 (F6): every bed within 32 blocks is a villager's (a trading hall, a job site or a villager within 8 blocks)
+    villagersBeds: "The beds nearby are the villagers'; I found no bed of mine.",
 });
 
 function blockCoord(value) {

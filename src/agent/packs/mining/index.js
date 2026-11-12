@@ -44,3 +44,5 @@ export { MIN_TUNNEL_AHEAD, MIN_TUNNEL_CELLS, ROOM_RANGE, SAME_TUNNEL, collectPas
 // v0.1.4.13 (part Q): the mine made where the bot stands (Q1), the full bag (Q4), the other ores (Q9)
 export { HERE_ROOM_RANGE, madeMineText, nextMineName, noWayOutText, wayInUnknown } from './here_logic.js';
 export { WIDENED_TUNNEL_WIDTH } from './mine_logic.js';
+// v0.1.4.16 (F10, E1): an opening into a cave closed with stone (!sealOpening)
+export { SEAL_RULES, openingCells, sealOpening } from './mining.js';

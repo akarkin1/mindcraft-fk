@@ -53,6 +53,8 @@ describe('tests/routing/commands.js', () => {
             // v0.1.4.15 (part R, then part S: the order of SPEC_SETTINGS)
             'routines',
             'base_survey', 'survey_radius',
+            // v0.1.4.16 (F2)
+            'survey_cluster_gap',
         ]);
     });
 

@@ -509,9 +509,10 @@ export function isDone(job) {
         return false;
     }
     if (job.kind === ROUTINE_KIND) {
-        // v0.1.4.15 (part R, SPEC 3.3): a round is done when every step is done
+        // v0.1.4.15 (part R, SPEC 3.3): a round is done when every step is done; v0.1.4.16 (F3): a step that failed after
+        // its runs is skipped, so a round is done when every step is done or skipped and at least one is done
         const steps = Array.isArray(job.steps) ? job.steps : [];
-        return steps.length > 0 && steps.every(step => step?.state === 'done');
+        return steps.length > 0 && steps.every(step => step?.state === 'done' || step?.state === 'skipped') && steps.some(step => step?.state === 'done');
     }
     if (job.skillDone === true) {
         return true;

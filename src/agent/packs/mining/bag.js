@@ -5,7 +5,7 @@
 import { botPos, logTo } from '../home/context.js';
 import { blockAt, freeSlots, inventoryList } from './dig.js';
 import { cellOf, roomPlan } from './mine_logic.js';
-import { BAG_RULES, CONTAINER_NAMES, PICKAXE_STONE, STONE_KEPT, bagAction, bagFullText, bagKeptText, storeKinds, storedText } from './bag_logic.js';
+import { BAG_RULES, CONTAINER_NAMES, PICKAXE_STONE, STONE_KEPT, bagAction, bagFullText, bagKeptText, isMineChestKind, storeKinds, storedText } from './bag_logic.js';
 
 const CONTAINERS = CONTAINER_NAMES; // chest, trapped_chest, barrel and, since v0.1.4.14, the eight copper chests
 
@@ -93,33 +93,44 @@ export async function storeFullBag(bot, ctx = {}, mine = null, row = {}, count =
         if (typeof ctx?.storage?.storeItems !== 'function') {
             return stop(bagFullText(count?.mined, count?.wanted, row?.ore ?? 'ore'));
         }
-        let names = kinds.map(k => k.name);
         // v0.1.4.13 fix 2: of each stone kind 3 stay in the bag, for a new stone pickaxe; they are not "left over"
         const keep = Object.fromEntries(PICKAXE_STONE.map(n => [n, STONE_KEPT]));
         const leftOf = (r, n) => Math.max(0, (r?.left?.[n] ?? (r?.stored?.[n] ? 0 : 1)) - (keep[n] ?? 0));
         let first = null;
-        for (const chest of mineChests(bot, mine)) {
-            if (names.length === 0 || bot.interrupt_code) {
-                break;
+        // v0.1.4.16 (F11): the kinds of the mining first (isMineChestKind: ore, raw metal, stone, the fillers, the drops of
+        // digging); the rest (saplings, seeds, wood, ...) only when the bag is still full after them
+        const passes = [kinds.filter(k => isMineChestKind(k.name)).map(k => k.name), kinds.filter(k => !isMineChestKind(k.name)).map(k => k.name)];
+        for (let pass = 0; pass < passes.length && !bot.interrupt_code; pass++) {
+            let names = passes[pass];
+            if (names.length === 0) {
+                continue;
             }
-            const r = await ctx.storage.storeItems(bot, ctx, { chest, only: names, keep });
-            addCounts(stored, r?.stored);
-            if (r && Object.keys(r.stored ?? {}).length > 0) {
-                first ??= chest;
+            if (pass > 0 && freeSlots(bot) > 0) {
+                break; // the bag has room again: the other kinds stay in it
             }
-            names = names.filter(n => leftOf(r, n) > 0);
-            if (r?.reason === 'interrupted') {
-                break;
+            for (const chest of mineChests(bot, mine)) {
+                if (names.length === 0 || bot.interrupt_code) {
+                    break;
+                }
+                const r = await ctx.storage.storeItems(bot, ctx, { chest, only: names, keep });
+                addCounts(stored, r?.stored);
+                if (r && Object.keys(r.stored ?? {}).length > 0) {
+                    first ??= chest;
+                }
+                names = names.filter(n => leftOf(r, n) > 0);
+                if (r?.reason === 'interrupted') {
+                    break;
+                }
             }
-        }
-        if (names.length > 0 && !bot.interrupt_code) {
-            const r = await ctx.storage.storeItems(bot, ctx, { only: names, keep, range: BAG_RULES.chestRange });
-            addCounts(stored, r?.stored);
-            if (!first && Array.isArray(r?.chests) && r.chests.length > 0) {
-                first = cellOf(r.chests[0]);
-            }
-            if (anyLeft(r?.left)) {
-                names = names.filter(n => Math.max(0, (r.left[n] ?? 0) - (keep[n] ?? 0)) > 0);
+            if (names.length > 0 && !bot.interrupt_code) {
+                const r = await ctx.storage.storeItems(bot, ctx, { only: names, keep, range: BAG_RULES.chestRange });
+                addCounts(stored, r?.stored);
+                if (!first && Array.isArray(r?.chests) && r.chests.length > 0) {
+                    first = cellOf(r.chests[0]);
+                }
+                if (anyLeft(r?.left)) {
+                    names = names.filter(n => Math.max(0, (r.left[n] ?? 0) - (keep[n] ?? 0)) > 0);
+                }
             }
         }
         if (bot.interrupt_code) {

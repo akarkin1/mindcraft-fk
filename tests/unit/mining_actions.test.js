@@ -269,7 +269,8 @@ describe('digTunnel', () => {
         s.ctx.areas = [{ name: 'farm', type: 'farm', min: { x: -3, y: 50, z: -20 }, max: { x: 3, y: 60, z: -8 } }];
         const area = await M.digTunnel(s.bot, s.ctx, 10, { ...s.opts, mine: s.mine });
         assert.equal(area.reason, 'area');
-        assert.match(area.text, /I stopped because my way would lead into a protected area\.$/);
+        // v0.1.4.16 (F5): the stop sentence carries what failed and where
+        assert.match(area.text, /I stopped because my way would lead into a protected area: The tunnel would come too near a protected area at \(0, 56, -3\)\.$/);
         s.bot.inventory.list = s.bot.inventory.list.filter(i => !i.name.endsWith('_pickaxe'));
         s.bot.heldItem = null;
         const nopick = await M.digTunnel(s.bot, { ...s.ctx, areas: [] }, 2, { ...s.opts, mine: s.mine });

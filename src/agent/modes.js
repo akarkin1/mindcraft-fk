@@ -906,7 +906,8 @@ const home_modes = [
                     return;
                 execute(this, agent, async () => {
                     const result = await runCreeperProcedure(agent.bot, agent.homeContext());
-                    if (result?.text)
+                    // v0.1.4.16 (F1): the help line is said at most once in 120 s; a run whose line is not due says nothing
+                    if (result?.text && result.say !== false)
                         say(agent, result.text);
                 });
             } catch (error) {

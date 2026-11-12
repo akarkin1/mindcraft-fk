@@ -189,9 +189,49 @@ export const ROUTINES_OFF = 'Routines are off.';
 
 /** The answers to a name or a text that cannot be saved (3.1: a name like an area name, a text of at most 400 characters). */
 export const NAME_TEXT = 'The name of a routine is 1 to 64 characters.';
-export const TEXT_TEXT = 'The text of a routine is 1 to 400 characters.';
 
-/** The reasons of a refused plan (3.6): `the command !x is not one I may use`, `!x takes a number`, `too many steps`. */
+/**
+ * v0.1.4.16 (F3): the cap of the text with the count: `The text of a routine is 1 to 400 characters; yours has 412.`
+ * @param {number} n the length of the text given
+ * @returns {string}
+ */
+export function textText(n) {
+    return `The text of a routine is 1 to 400 characters; yours has ${Number.isInteger(n) && n >= 0 ? n : 0}.`;
+}
+
+/** The same text under the name of v0.1.4.15 (a function since F3: the count is in the line). */
+export { textText as TEXT_TEXT };
+
+/**
+ * v0.1.4.16 (F3): the quiet line of a step of a round that failed after its runs and is skipped: `Step 2 of "the farm"
+ * failed: I found no chest; I go on.` The text of the failure loses its final full stop before the semicolon.
+ * @param {number} n the number of the step, from 1
+ * @param {string} name the routine
+ * @param {string} text the text of the failure
+ * @returns {string}
+ */
+export function stepSkippedText(n, name, text) {
+    const why = (typeof text === 'string' ? text : '').replace(/\s+/g, ' ').trim().replace(/[.\s]+$/, '');
+    return `Step ${Number.isInteger(n) && n >= 1 ? n : 1} of ${quoted(name)} failed: ${why}; I go on.`;
+}
+
+/**
+ * v0.1.4.16 (F3): the words of a place the plan lost, for planReasons.places: `the place (x, y, z)` for a coordinate,
+ * `the place "name"` for a saved place.
+ * @param {{x: number, y: number, z: number}|string} place
+ * @returns {string}
+ */
+export function lostPlaceWords(place) {
+    if (isPlainObject(place)) {
+        return `the place (${place.x}, ${place.y}, ${place.z})`;
+    }
+    return `the place ${quoted(place)}`;
+}
+
+/**
+ * The reasons of a refused plan (3.6): `the command !x is not one I may use`, `!x takes a number`, `too many steps`;
+ * v0.1.4.16 (F3): `the plan lost the place (x, y, z) you named` (places).
+ */
 export const planReasons = Object.freeze({
     notAllowed: (name) => `the command ${name} is not one I may use`,
     number: (name) => `${name} takes a number`,
@@ -199,4 +239,5 @@ export const planReasons = Object.freeze({
     tooManyArgs: (name, n) => `${name} takes at most ${n} ${n === 1 ? 'argument' : 'arguments'}`,
     tooMany: 'too many steps',
     noSteps: 'no steps',
+    places: (what) => `the plan lost ${what} you named`,
 });

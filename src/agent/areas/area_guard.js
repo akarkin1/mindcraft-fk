@@ -180,9 +180,9 @@ export function installAreaGuard(bot, options = {}) {
     const guard = createGuard(bot, options ?? {});
     guards.set(bot, guard.api);
     const { canBreak, canPlace, canUse, explain, protectMovements, inBuilding, areaAt, refusal, isBuilt,
-        placedByBot } = guard.api;
+        placedByBot, listAreas } = guard.api;
     bot.areaGuard = Object.freeze({ canBreak, canPlace, canUse, explain, protectMovements, inBuilding, areaAt,
-        refusal, isBuilt, placedByBot });
+        refusal, isBuilt, placedByBot, listAreas }); // v0.1.4.16 (F10): listAreas for the keep-out of the walks of skills.js
     guard.install();
     return guard.api;
 }
@@ -321,6 +321,31 @@ function createGuard(bot, options) {
             }
         }
         return null;
+    }
+
+    /**
+     * The saved areas of the dimension of the bot as the store lists them, with their flags (v0.1.4.16, F10): the walks
+     * of the skills apply the keep-out of the no_enter areas with them (applyKeepOut of the home pack). An area without a
+     * dimension counts for every dimension. Empty without a store. Never throws.
+     * @returns {object[]}
+     */
+    function listAreas() {
+        try {
+            const store = resolveStore();
+            if (!store || typeof store.list !== 'function') {
+                return [];
+            }
+            const list = store.list();
+            if (!Array.isArray(list)) {
+                return [];
+            }
+            const dimension = currentDimension();
+            return list.filter(area => area && typeof area === 'object'
+                && (typeof area.dimension !== 'string' || area.dimension === '' || normalizeDimension(area.dimension) === dimension));
+        } catch (err) {
+            checkFailed(err);
+            return [];
+        }
     }
 
     function floored(pos) {
@@ -1147,6 +1172,6 @@ function createGuard(bot, options) {
     }
 
     const api = { canBreak, canPlace, canUse, permit, revoke, permits, explain, protectMovements, inBuilding,
-        areaAt, refusal, isBuilt, placedByBot, setPlayerOrder, flushPlaced };
+        areaAt, refusal, isBuilt, placedByBot, setPlayerOrder, flushPlaced, listAreas };
     return { api, install };
 }

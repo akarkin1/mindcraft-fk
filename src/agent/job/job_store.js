@@ -8,8 +8,8 @@ import { JOB_KINDS, JOB_STATES, ROUTINE_KIND } from './job_logic.js';
 
 /** The name of the file in the folder of the bot. */
 export const JOB_FILE = 'job.json';
-/** The states of a step. */
-export const STEP_STATES = Object.freeze(['todo', 'done', 'failed']);
+/** The states of a step; v0.1.4.16 (F3): `skipped`, a step of a routine's round that failed after its runs and was passed. */
+export const STEP_STATES = Object.freeze(['todo', 'done', 'failed', 'skipped']);
 
 const FILE_VERSION = 1;
 

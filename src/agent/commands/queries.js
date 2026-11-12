@@ -7,6 +7,7 @@ import { load } from 'cheerio';
 import settings from '../settings.js';
 import { isNight } from '../packs/home/index.js';
 import { rulesReply } from '../rules/rule_commands.js';
+import { dayPhaseLabel } from '../clock_logic.js'; // v0.1.4.16 (F8): the one clock of the prompt's time line
 
 const pad = (str) => {
     return '\n' + str + '\n';
@@ -53,13 +54,8 @@ export const queryList = [
             // light properties are bugged, they are not accurate
 
 
-            if (bot.time.timeOfDay < 6000) {
-                res += '\n- Time: Morning';
-            } else if (bot.time.timeOfDay < 12000) {
-                res += '\n- Time: Afternoon';
-            } else {
-                res += '\n- Time: Night';
-            }
+            // v0.1.4.16 (F8): Morning, Afternoon, Evening, Night or Dawn, the one clock (dayPhase of clock_logic.js)
+            res += `\n- Time: ${dayPhaseLabel(bot.time.timeOfDay)}`;
             if (settings.home_pack && isNight(bot.time.timeOfDay)) // v0.1.4.6, G5
                 res += '\n- It is night. Stay in the shelter until the morning unless a player tells you otherwise.';
 

@@ -128,17 +128,19 @@ describe('Q1: mineHere over a fake bot', () => {
         const s = scene();
         const r = P.mineHere(s.bot, s.ctx, 'iron');
         assert.equal(r.made, true, JSON.stringify(r));
-        assert.deepEqual(s.said, ['I made the mine "mine 1" here and measured the tunnel: it starts at (30, -59, -97), goes north, 4 blocks. I dig on at its end.']);
+        // v0.1.4.16 (F5): a tunnel 1 or 2 wide is a forgotten mine and gets the line of F5 (the Q1 text stays for a widened one)
+        assert.deepEqual(s.said, ['This tunnel is a mine now: "mine_1" at (30, -59, -99).']);
         const mine = s.store.byName('mine 1', 'overworld');
         assert.deepEqual([mine.source, mine.level, mine.route, mine.room.table], ['player', -59, [], { x: 29, y: -59, z: -94 }]);
         assert.deepEqual(mine.tunnels.map(t => [t.start, t.dir, t.end]), [[{ x: 30, y: -59, z: -97 }, 'north', { x: 30, y: -59, z: -100 }]]);
         assert.equal(H.wayInUnknown(mine), true);
     });
 
-    test('nothing made: on the surface, without mine_routes, in open rock, in a known mine', () => {
+    test('nothing made: on the surface, in open rock, in a known mine; v0.1.4.16 (F5): without mine_routes the narrow tunnel is a mine too', () => {
         assert.equal(P.mineHere(scene({ underground: false }).bot, scene({ underground: false }).ctx, 'iron').made, false);
         const off = scene({ routes: false });
-        assert.equal(P.mineHere(off.bot, off.ctx, 'iron').made, false);
+        assert.equal(P.mineHere(off.bot, off.ctx, 'iron').made, true, 'F5: a forgotten mine, with or without mine_routes');
+        assert.deepEqual(off.said, ['This tunnel is a mine now: "mine_1" at (30, -59, -99).']);
         const rock = scene({ tunnel: false });
         rock.bot.entity.position = { x: 40.5, y: -59, z: -89.5 };
         assert.equal(P.mineHere(rock.bot, rock.ctx, 'iron').made, false);

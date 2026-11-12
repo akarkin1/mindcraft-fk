@@ -72,7 +72,7 @@ describe('SPEC 4.1 run: the answer lines', () => {
         const answer = runAnswer({
             items: [
                 { text: TAKE, status: 'done', result: TOOK },
-                { text: CRAFT, status: 'running', result: '' },
+                { id: 2, text: CRAFT, status: 'running', result: '' },
                 { text: MINE, status: 'waiting', result: '' },
                 { text: '!goToSurface', status: 'waiting', result: '' },
                 { text: '!stop', status: 'waiting', result: '' },
@@ -81,7 +81,8 @@ describe('SPEC 4.1 run: the answer lines', () => {
         });
         const lines = answer.split('\n');
         assert.ok(lines.includes(`1. ${TAKE}: ${TOOK}`), answer);
-        assert.ok(lines.includes('Still running: 2 of 5.'), answer);
+        // v0.1.4.16 (F9): the command that still runs and the id of its queue item
+        assert.ok(lines.includes(`Still running: ${CRAFT} (run 2).`), answer);
         assert.ok(!lines.some((l) => l.startsWith('3. ')), 'the rest comes through digest');
     });
 
@@ -260,7 +261,7 @@ describe('SPEC 4.1 run: the queue with a fixture agent', () => {
             const answer = textOf(await queue.run([TAKE, CRAFT, '!stats', '!inventory', '!goToSurface'], { by: 'MartyByrde2', stopOnFailure: true }));
             const lines = answer.split('\n');
             assert.ok(lines.includes(`1. ${TAKE}: ${TOOK}`), answer);
-            assert.ok(lines.includes('Still running: 2 of 5.'), answer);
+            assert.ok(lines.includes(`Still running: ${CRAFT} (run 2).`), answer); // v0.1.4.16 (F9)
             await new Promise((r) => setTimeout(r, PLAY_MS));
             assert.ok(agent.played.length >= 3, `the rest runs on after the answer: ${agent.played.length}`);
         } finally {

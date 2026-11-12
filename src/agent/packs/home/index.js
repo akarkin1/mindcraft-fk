@@ -30,7 +30,7 @@ export { boxCenter, containsPos, distanceToBox, expandBox, horizontalDistanceToB
 
 export { DOOR_SAFETY, canOpen, closeDoor, closeDoorsBehind, closeNear, createDoorService, doorDanger, doorIsSafe, doorState, findOpenables,
     isPassingThrough, openDoor, passThrough, releaseDoor, reserveDoor, somebodyInDoor } from './doors.js';
-export { bedInShelter, emergencyShelter, enterBuilding, findShelter, goToShelter, isInShelter, standingTest } from './shelter.js';
+export { bedInShelter, emergencyShelter, enterBuilding, findShelter, goToShelter, isInShelter, leaveBuilding, standingTest } from './shelter.js'; // v0.1.4.16 (F4): leaveBuilding
 export { MAX_SLEEP_MS, findBeds, sleepInBed } from './sleep.js';
 export { OFFHAND_SLOT, eatBestFood, foodItems, hungerStep, knownFood, moveOffhandBack } from './food.js';
 // v0.1.4.8, fix round: one lock for eating (X10) and getting out of bed (X5, the glue calls wakeUp before a

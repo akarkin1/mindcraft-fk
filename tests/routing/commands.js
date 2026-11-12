@@ -43,6 +43,8 @@ export const SPEC_SETTINGS = {
     // v0.1.4.15, section 1 of its spec (part S)
     base_survey: 'boolean',
     survey_radius: 'number',
+    // v0.1.4.16, section 1 of its spec (F2)
+    survey_cluster_gap: 'number',
 };
 
 // The switches of the parts whose commands are hidden while the switch is off.
@@ -59,7 +61,7 @@ export const PART_COMMANDS = {
     storage_pack: ['!storeItems', '!fetchItem', '!chests'],
     farming_pack: ['!farmCycle', '!harvest', '!plant', '!makeBoneMeal', '!fertilize'],
     wood_pack: ['!chopTrees', '!getTool', '!craftSupplies'],
-    mining_pack: ['!mineOre', '!goToMine', '!leaveMine', '!mines', '!forgetMine'], // v0.1.4.10 (R4): !mines, !forgetMine
+    mining_pack: ['!mineOre', '!goToMine', '!leaveMine', '!mines', '!forgetMine', '!sealOpening'], // v0.1.4.10 (R4): !mines, !forgetMine; v0.1.4.16 (F10): !sealOpening
     // v0.1.4.9: the commands of the routes pack and of the mine routes (I10 of its spec)
     routes_pack: ['!rememberRoute', '!routes', '!forgetRoute'],
     mine_routes: ['!rememberMine', '!rememberTunnel', '!collectPassedOre'],
@@ -134,6 +136,10 @@ export const SPEC_COMMANDS = [
     { name: '!mines', section: 'R4', part: 'mining_pack', params: [], description: 'List your mines.' },
     { name: '!forgetMine', section: 'R4', part: 'mining_pack', assumed: 'type of the parameter (string)', params: [{ name: 'name', type: 'string' }],
         description: 'Forget a mine.' },
+    // v0.1.4.16 (F10 of its spec, E1): an opening into a cave closed with stone; the description is the one line of docs
+    { name: '!sealOpening', section: 'F10', part: 'mining_pack', assumed: 'types of the parameters (int)',
+        params: [{ name: 'x', type: 'int' }, { name: 'y', type: 'int' }, { name: 'z', type: 'int' }],
+        description: 'Close an opening into a cave at a block position with stone from the bag, up to 9 blocks.' },
     // v0.1.4.9 (I10 of its spec): names, parameters and defaults; the descriptions are the glue's
     { name: '!rememberRoute', section: 'I10', part: 'routes_pack', assumed: 'type of the parameter (string)', params: [{ name: 'name', type: 'string' }] },
     { name: '!routes', section: 'I10', part: 'routes_pack', params: [] },

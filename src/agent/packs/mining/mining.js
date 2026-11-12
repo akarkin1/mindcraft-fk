@@ -26,12 +26,12 @@ import {
 } from './dig.js';
 import { SUPPLY_NEAR_RANGE, applySpareRule, pickaxeToCraft, supplyPlan } from './supply_logic.js';
 import { storeFullBag } from './bag.js';
-import { CONTAINER_NAMES as BAG_CONTAINERS, otherOresWords, storeKinds, withOtherOres } from './bag_logic.js';
+import { CONTAINER_NAMES as BAG_CONTAINERS, mineChestKinds, otherOresWords, storeKinds, withOtherOres } from './bag_logic.js';
 import { followDown, followUp, placeLadder, waitStanding } from './ladder.js';
 import {
     BRANCH_LENGTH, addPassedEntry, addTunnel, backOf, branchCells, branchPlan, cellOf, chooseEntrance, classify, faceNeighbours, insideShaft, isDirection, leftOf,
     mineAt, offset, posKey, removePassedAt, returnTimeMs, rightOf, roomBox, roomPlan, senseCut, shaftAllowed, shaftStep, shaftView, shouldReturn, staircaseStep,
-    staircaseView, torchDue, tripNeeds, tripStart, tunnelAllowed, tunnelAt, tunnelCells, tunnelFor, tunnelSlots, tunnelStep, tunnelView, tunnelsOf,
+    staircaseSlots, staircaseView, torchDue, tripNeeds, tripStart, tunnelAllowed, tunnelAt, tunnelCells, tunnelFor, tunnelSlots, tunnelStep, tunnelView, tunnelsOf,
     usablePickaxes, veinParts,
 } from './mine_logic.js';
 import { MineStore, NEAREST_RANGE, mineId } from './mine_store.js';
@@ -40,6 +40,8 @@ import { ORES, isOreBlock, oreOf, pickaxeMaterial, targetLevel, tripPickaxe } fr
 import {
     NO_TORCHES_TEXT, STOP_REASONS, TEXTS, askMineText, cannotMineText, descendText, mineLabel, mineOreText, noTunnelText, passedText, posText,
     rememberTunnelText, suppliesStoppedText, suppliesText, tunnelText, unknownOreText, wornLoopText, wornMadeText, wornSpareText, wornStopText,
+    // v0.1.4.16 (F5): the reason of every stop in the text and the log
+    digFailedText, stopReasonText, wayDownBlockedText, wornCraftFailedText,
 } from './texts.js';
 // v0.1.4.11: the texts of W2 and W3 that part W adds to texts.js, reached at run time with the words of the
 // spec as the fallback (a named import of a name that does not exist yet would break the loading of the pack)
@@ -281,6 +283,33 @@ function newEntrance(bot, ctx, row, clock) {
         }
     }
     return chooseEntrance(input);
+}
+
+// F5 (v0.1.4.16, the play of 2026-11-11: new_mine true walked to the old mine): the place of the new mine the player said
+// yes to: the bot's own cell (tripStart gives `new` on the surface only), when chooseEntrance allows a mine there (the
+// ground, the areas, the other mines); null otherwise (newEntrance then chooses as before, within 48 blocks).
+function hereEntrance(bot, ctx, row) {
+    const feet = feetOf(bot);
+    if (!feet) {
+        return null;
+    }
+    try {
+        const input = entranceInput(bot, ctx, targetLevel(row, feet.y, bot.game?.minY ?? -64));
+        return chooseEntrance({ ...input, bot: feet, range: 0 });
+    } catch (err) {
+        console.warn('Mining pack: no mine where the bot stands:', errText(err));
+        return null;
+    }
+}
+
+// F5: the job's count before this run (ctx.job.progress() without a count answers { ok, got }); 0 without a job.
+function jobGotOf(ctx) {
+    try {
+        const r = ctx?.job?.progress?.();
+        return r?.ok === true && isFiniteNumber(r.got) && r.got > 0 ? Math.floor(r.got) : 0;
+    } catch {
+        return 0;
+    }
 }
 
 // The cells the mine has opened: the route (ladder columns, walks, staircases), the room and the
@@ -782,8 +811,63 @@ async function handlePatch(job, step, onFail) {
     return r.ok ? true : onFail(r.reason);
 }
 
+/** F5 (v0.1.4.16): bedrock within this many blocks of the world's bottom is the bottom of the world; higher up it is a block the bot could not dig. */
+const BOTTOM_LAYERS = 4;
+
+// F5 (v0.1.4.16): the result of a dig of the way down that failed: interrupted and worn as they are; lava or water `blocked`,
+// a protected block `area`, an unloaded one `unknown`, everything else (failed, timed out, unbreakable, falling) `dig_failed`;
+// each with the block's name and position for the texts.
+function digFailure(bot, r, p) {
+    if (r.reason === 'interrupted' || r.reason === 'worn') {
+        return { ok: false, reason: r.reason, worn: r.worn };
+    }
+    const block = r.name ?? logicName(blockAt(bot, p)) ?? null;
+    const reason = r.reason === 'liquid' ? 'blocked' : r.reason === 'protected' ? 'area' : r.reason === 'unknown' ? 'unknown' : 'dig_failed';
+    return { ok: false, reason, block, at: { x: p.x, y: p.y, z: p.z } };
+}
+
+// F5: an unbreakable block of the way down: the bottom of the world within BOTTOM_LAYERS of minY, else `dig_failed` with the block
+// (bedrock placed by someone is no bottom).
+function bottomOrDigFailed(bot, name, p) {
+    if (p.y <= (bot.game?.minY ?? -64) + BOTTOM_LAYERS) {
+        return { ok: false, reason: 'bottom' };
+    }
+    return { ok: false, reason: 'dig_failed', block: typeof name === 'string' && name.length > 0 ? name : 'bedrock', at: { x: p.x, y: p.y, z: p.z } };
+}
+
+// F5: the cell and the block that blocked a shaft step (lava, cave, patch): the first cell to patch, else the dig cell or the
+// one below it with the lava.
+function blockedCell(read, view, step, feet) {
+    const first = Array.isArray(step?.patch) && step.patch.length > 0 ? step.patch[0] : null;
+    if (first) {
+        const at = { x: first.x, y: first.y, z: first.z };
+        return { block: read(at.x, at.y, at.z) ?? null, at };
+    }
+    const lavaBelow = classify(view?.dig) !== 'lava' && classify(view?.below) === 'lava';
+    const at = { x: feet.x, y: feet.y - (lavaBelow ? 2 : 1), z: feet.z };
+    return { block: (lavaBelow ? view?.below : view?.dig) ?? read(at.x, at.y, at.z) ?? null, at };
+}
+
+// F5: the same for a step of the staircase: the first cell to patch, else the first cell of the column with lava or an
+// unbreakable block (the names of staircaseView, by slot), else the new floor.
+function blockedStairCell(read, view, step, slots, column, feet) {
+    const first = Array.isArray(step?.patch) && step.patch.length > 0 ? step.patch[0] : null;
+    if (first) {
+        const at = { x: first.x, y: first.y, z: first.z };
+        return { block: read(at.x, at.y, at.z) ?? null, at };
+    }
+    for (const [key, name] of Object.entries(view?.names ?? {})) {
+        const kind = classify(name);
+        if ((kind === 'lava' || kind === 'unbreakable') && slots?.[key]) {
+            return { block: name, at: { x: slots[key].x, y: slots[key].y, z: slots[key].z } };
+        }
+    }
+    const at = { x: column.x, y: feet.y - 1, z: column.z };
+    return { block: read(at.x, at.y, at.z) ?? null, at };
+}
+
 // Digs the shaft down from where the bot stands to the level: ladders while it has them, then a
-// staircase. Returns { ok, reason }.
+// staircase. Returns { ok, reason } (F5: a failure also carries `block` and `at`, the block that stopped it).
 async function digDown(job, mine, level, ours) {
     const { bot, clock } = job;
     let unknown = 0;
@@ -811,7 +895,8 @@ async function digDown(job, mine, level, ours) {
         const read = readerWith(bot, ours);
         if (mode === 'ladder') {
             const leg = mine.route[mine.route.length - 1];
-            const step = shaftStep(shaftView(read, feet));
+            const view = shaftView(read, feet);
+            const step = shaftStep(view);
             if (step.action === 'unknown') {
                 if (++unknown > UNKNOWN_TRIES) {
                     return { ok: false, reason: 'unknown' };
@@ -820,19 +905,20 @@ async function digDown(job, mine, level, ours) {
                 continue;
             }
             unknown = 0;
+            const digCell = { x: feet.x, y: feet.y - 1, z: feet.z };
             if (step.action === 'bottom') {
-                return { ok: false, reason: 'bottom' };
+                return bottomOrDigFailed(bot, view.dig, digCell); // F5: placed bedrock is a block the bot could not dig
             }
             if (step.action === 'lava') {
                 if (!(await moveShaft(job, mine, leg, ours))) {
-                    return { ok: false, reason: bot.interrupt_code ? 'interrupted' : 'blocked' };
+                    return bot.interrupt_code ? { ok: false, reason: 'interrupted' } : { ok: false, reason: 'blocked', ...blockedCell(read, view, step, feet) };
                 }
                 continue;
             }
             if (step.action === 'cave' || step.action === 'patch') {
                 const ok = await handlePatch(job, step, () => false);
                 if (!ok && !(await moveShaft(job, mine, leg, ours))) {
-                    return { ok: false, reason: bot.interrupt_code ? 'interrupted' : 'blocked' };
+                    return bot.interrupt_code ? { ok: false, reason: 'interrupted' } : { ok: false, reason: 'blocked', ...blockedCell(read, view, step, feet) };
                 }
                 continue;
             }
@@ -843,18 +929,18 @@ async function digDown(job, mine, level, ours) {
                 sdir = mine.direction;
                 continue;
             }
-            const target = { x: feet.x, y: feet.y - 1, z: feet.z };
+            const target = digCell;
             const dug = await digClear(bot, target, { clock });
             job.stats.dug += dug.dug;
             if (!dug.ok) {
-                return { ok: false, reason: dug.reason === 'interrupted' ? 'interrupted' : dug.reason === 'worn' ? 'worn' : 'blocked', worn: dug.worn };
+                return digFailure(bot, dug, target); // F5: dig_failed with the block, blocked only for lava and water
             }
             ours.add(posKey(target));
             await waitFeet(job, target.y);
             await waitStanding(bot, clock, 2000);
             const now = feetOf(bot);
             if (!now || now.y !== target.y) {
-                return { ok: false, reason: 'stuck' };
+                return { ok: false, reason: 'stuck', at: now ?? target };
             }
             let placed = await placeLadder(bot, now, leg.face, { clock });
             if (!placed.ok && placed.reason === 'no_item') {
@@ -880,7 +966,9 @@ async function digDown(job, mine, level, ours) {
         }
         // a staircase: one forward, one down
         const column = offset(feet, sdir);
-        const step = staircaseStep(staircaseView(read, feet, sdir));
+        const stairView = staircaseView(read, feet, sdir);
+        const step = staircaseStep(stairView);
+        const stairSlots = staircaseSlots(feet, sdir); // F5: the cells by slot, for the block that blocked
         const turn = () => {
             if (++turns > 3) {
                 return false;
@@ -903,18 +991,19 @@ async function digDown(job, mine, level, ours) {
         }
         unknown = 0;
         if (step.action === 'bottom') {
-            return { ok: false, reason: 'bottom' };
+            const hit = blockedStairCell(read, stairView, step, stairSlots, column, feet);
+            return bottomOrDigFailed(bot, hit.block, hit.at); // F5
         }
         if (step.action === 'lava') {
             if (!turn()) {
-                return { ok: false, reason: 'blocked' };
+                return { ok: false, reason: 'blocked', ...blockedStairCell(read, stairView, step, stairSlots, column, feet) };
             }
             continue;
         }
         if (step.action === 'cave' || step.action === 'patch') {
             const ok = await handlePatch(job, step, () => false);
             if (!ok && !turn()) {
-                return { ok: false, reason: 'blocked' };
+                return { ok: false, reason: 'blocked', ...blockedStairCell(read, stairView, step, stairSlots, column, feet) };
             }
             continue;
         }
@@ -924,7 +1013,7 @@ async function digDown(job, mine, level, ours) {
             const r = await digClear(bot, p, { clock });
             job.stats.dug += r.dug;
             if (!r.ok) {
-                return { ok: false, reason: r.reason === 'interrupted' ? 'interrupted' : r.reason === 'worn' ? 'worn' : 'blocked', worn: r.worn };
+                return digFailure(bot, r, p); // F5
             }
             ours.add(posKey(p));
         }
@@ -932,7 +1021,7 @@ async function digDown(job, mine, level, ours) {
         if (!(await stepInto(bot, next, clock))) {
             const w = await walkTo(bot, next, { clock, timeoutMs: 8000 });
             if (!w.ok) {
-                return { ok: false, reason: w.reason === 'interrupted' ? 'interrupted' : 'stuck' };
+                return { ok: false, reason: w.reason === 'interrupted' ? 'interrupted' : 'stuck', at: next };
             }
         }
         const last = mine.route[mine.route.length - 1];
@@ -1012,8 +1101,10 @@ export async function descendToLevel(bot, ctx = {}, y = 16, options = {}) {
         const store = storeOf(ctx);
         const row = oreOf(options.ore);
         // v0.1.4.11 (I4): a shaft from inside is a new mine, never one found here
+        // F5 (v0.1.4.16): with the entrance of a new mine the player asked for (options.entrance), no mine of the store is taken
         let mine = options.inside ? null
-            : options.mine ?? (row ? store?.get(row.ore, dimensionOf(bot) ?? undefined) : null) ?? store?.atLevel?.(level, dimensionOf(bot) ?? undefined) ?? null;
+            : options.mine ?? (options.entrance ? null
+                : (row ? store?.get(row.ore, dimensionOf(bot) ?? undefined) : null) ?? store?.atLevel?.(level, dimensionOf(bot) ?? undefined) ?? null);
         if (mine && mine.level !== level) {
             mine = null;
         }
@@ -1105,13 +1196,16 @@ export async function descendToLevel(bot, ctx = {}, y = 16, options = {}) {
         const r = await digDown(job, mine, level, ours);
         mine = { ...mine, ...saveMine(ctx, job, mine) };
         if (!r.ok) {
+            // F5 (v0.1.4.16): the blocked line names the block and its position; a dig that failed is dig_failed with them
             const why = {
                 interrupted: 'I stopped going down.', time: 'The time for going down is over.', bottom: 'I reached the bottom of the world.',
-                blocked: 'Lava, water or caves block the way down, and I found no way around them.', unknown: 'I cannot see the blocks under me.',
+                blocked: wayDownBlockedText(r.at ?? feetOf(bot), r.block), unknown: 'I cannot see the blocks under me.',
+                dig_failed: digFailedText(r.block, r.at ?? feetOf(bot)),
                 ladder: 'I could not place a ladder.', area: 'The way down would come too near a protected area.', stuck: 'I got stuck in the shaft.',
                 worn: 'My pickaxe is nearly worn.',
             }[r.reason] ?? 'I could not go on down.';
-            const out = done(false, r.reason, mine, `${why} I am at ${posText(feetOf(bot))}, ${descendText({ level, mine, ...job.stats }).replace(/^I went down to level -?\d+/, 'on the way to level ' + level)}`);
+            const rest = `I am at ${posText(feetOf(bot))}, ${descendText({ level, mine, ...job.stats }).replace(/^I went down to level -?\d+/, 'on the way to level ' + level)}`;
+            const out = { ...done(false, r.reason, mine, `${why} ${rest}`), detail: why, rest, block: r.block ?? null, at: r.at ?? null };
             return r.worn ? { ...out, worn: r.worn } : out;
         }
         return done(true, null, mine, descendText({ level, mine, ...job.stats }));
@@ -1503,6 +1597,7 @@ export async function replaceWornPickaxe(bot, ctx, row, worn, count = {}) {
     const name = worn?.name ?? 'pickaxe';
     const uses = isFiniteNumber(worn?.uses) ? worn.uses : 0;
     let make = null;
+    let made = null; // F5: ensureTool's answer, for the line when the craft failed with material in the bag
     try {
         // v0.1.4.13 fix 2: the spare counts only when a pickaxe that is not nearly worn is in hand afterwards
         if (fresh() && (await equipPickaxe(bot, material)) && wornTool(bot.heldItem) === null) {
@@ -1513,7 +1608,7 @@ export async function replaceWornPickaxe(bot, ctx, row, worn, count = {}) {
         // from carried material only: no chest, no tree, no stone of the surface; the cheapest material that mines the ore
         make = pickaxeToCraft(material, inventoryList(bot));
         if (make) {
-            await callTool({ ...ctx, storage: null, chests: null }, 'tools', 'ensureTool', bot, 'pickaxe', make,
+            made = await callTool({ ...ctx, storage: null, chests: null }, 'tools', 'ensureTool', bot, 'pickaxe', make,
                 { count: 1, minUses: WEAR_LIMIT + 1, collect: false, exact: true });
         }
         if (make && fresh() && (await equipPickaxe(bot, material)) && wornTool(bot.heldItem) === null) {
@@ -1523,10 +1618,27 @@ export async function replaceWornPickaxe(bot, ctx, row, worn, count = {}) {
         }
     } catch (err) {
         console.warn('Mining pack: replacing the worn pickaxe failed:', errText(err));
+        made = made ?? { ok: false, reason: 'error', text: errText(err) };
     }
-    const text = wornStopText(name, uses, count.mined ?? 0, count.wanted ?? 0, row, make ? null : material);
+    // F5 (v0.1.4.16, the play of 2026-11-11: "no stone for a new one" with 65 cobblestone): "I have no <material>" only when
+    // nothing to craft from was found; with material in the bag the line says why the craft failed (ensureTool's text, else
+    // its reason, else the missing tool skills)
+    const text = make
+        ? wornCraftFailedText(name, uses, craftFailWords(made), count.mined ?? 0, count.wanted ?? 0, row)
+        : wornStopText(name, uses, count.mined ?? 0, count.wanted ?? 0, row, material);
     sayTo(ctx, text);
     return { ok: false, text };
+}
+
+// F5: the words of a failed craft of ensureTool: its text, else its reason, else (no ctx.tools) the missing tool skills.
+function craftFailWords(made) {
+    if (typeof made?.text === 'string' && made.text.trim().length > 0) {
+        return made.text.trim();
+    }
+    if (typeof made?.reason === 'string' && made.reason.length > 0) {
+        return made.reason;
+    }
+    return made === null ? 'I have no tool skills' : 'the craft made no pickaxe';
 }
 
 // Goes 3 blocks to the side of a tunnel that cannot go on, right first.
@@ -1789,12 +1901,14 @@ export async function digTunnel(bot, ctx = {}, length = 8, options = {}) {
         mine = { ...mine, ...saveMine(ctx, job, mine) };
         rebind(mine, target);
     };
-    const done = (ok, reason) => {
+    // F5 (v0.1.4.16): `detail` is what failed, with its position, for the stop line of the trip and the log; null when the
+    // reason says it all (time, interrupted, worn, no_pickaxe)
+    const done = (ok, reason, detail = null) => {
         if (target?.kind === 'branch' && (target.length >= BRANCH_LENGTH || BRANCH_BLOCKED.includes(reason))) {
             target.record.done = true;
             save();
         }
-        const r = { ok, reason, mine, steps, length: target ? target.length : mine?.length ?? 0, collected, ...job.stats, left };
+        const r = { ok, reason, detail: ok ? null : detail, mine, steps, length: target ? target.length : mine?.length ?? 0, collected, ...job.stats, left };
         if (target?.kind === 'branch' || target?.kind === 'line') {
             r.line = { ...target.record };
         }
@@ -1817,7 +1931,8 @@ export async function digTunnel(bot, ctx = {}, length = 8, options = {}) {
         const ours = mineCells(mine);
         const w = await walkTo(bot, target.end, { clock: job.clock, timeoutMs: 90000 });
         if (!w.ok) {
-            return { ...done(false, w.reason === 'interrupted' ? 'interrupted' : 'stuck'), text: `I could not get to the end of the tunnel at ${posText(target.end)}.` };
+            const text = `I could not get to the end of the tunnel at ${posText(target.end)}.`;
+            return { ...done(false, w.reason === 'interrupted' ? 'interrupted' : 'stuck', text), text };
         }
         const material = options.material ?? 'stone';
         const d = target.dir;
@@ -1862,14 +1977,14 @@ export async function digTunnel(bot, ctx = {}, length = 8, options = {}) {
             const slots = tunnelSlots(feet, d);
             if (step.action === 'unknown') {
                 if (++unknown > UNKNOWN_TRIES) {
-                    return done(false, 'unknown');
+                    return done(false, 'unknown', `I cannot see the blocks ahead at ${posText(slots['ahead.lower'])}.`);
                 }
                 await job.clock.wait(1000);
                 continue;
             }
             unknown = 0;
             if (!tunnelAllowed(slots['ahead.lower'], job.areas) || !tunnelAllowed(slots['ahead.upper'], job.areas)) {
-                return done(false, 'area');
+                return done(false, 'area', `The tunnel would come too near a protected area at ${posText(slots['ahead.lower'])}.`);
             }
             if (step.action === 'patch' && looks < 4) {
                 looks++;
@@ -1883,17 +1998,24 @@ export async function digTunnel(bot, ctx = {}, length = 8, options = {}) {
                 if (step.patch.length > 0) {
                     const r = await patchAll(bot, step.patch, { clock: job.clock });
                     job.stats.patches += r.placed;
+                    // v0.1.4.16 (F10, E1): the cells beyond the end (a cave one block behind the wall) are patched as the cells
+                    // ahead are; without filler the wall stays as it is and the log says so
+                    if (!r.ok && r.reason === 'no_block') {
+                        logTo(ctx, `I have no stone to close the opening at ${posText(r.open[0] ?? slots['ahead.lower'])}; the wall stays as it is.`);
+                    }
                 }
+                const what = step.action === 'turn' ? 'lava, water or a cave' : 'something I cannot close';
                 if (target.kind === 'branch' || target.kind === 'line') {
-                    logTo(ctx, `The side branch meets ${step.action === 'turn' ? 'lava, water or a cave' : 'something I cannot close'} at ${posText(slots['ahead.lower'])}. It ends here.`);
-                    return done(false, 'blocked');
+                    const text = `The side branch meets ${what} at ${posText(slots['ahead.lower'])}. It ends here.`;
+                    logTo(ctx, text);
+                    return done(false, 'blocked', text);
                 }
-                logTo(ctx, `The tunnel meets ${step.action === 'turn' ? 'lava, water or a cave' : 'something I cannot close'} at ${posText(slots['ahead.lower'])}. I go 3 blocks to the side.`);
+                logTo(ctx, `The tunnel meets ${what} at ${posText(slots['ahead.lower'])}. I go 3 blocks to the side.`);
                 const before = oreCounts(bot);
                 const end = await sideStep(job, feet, d, ours);
                 addCounts(collected, diffCounts(before, oreCounts(bot)));
                 if (!end) {
-                    return done(false, bot.interrupt_code ? 'interrupted' : 'blocked');
+                    return done(false, bot.interrupt_code ? 'interrupted' : 'blocked', `I found no way around ${what} at ${posText(slots['ahead.lower'])}.`);
                 }
                 advance(mine, target, end, n, feet);
                 feet = end;
@@ -1907,12 +2029,14 @@ export async function digTunnel(bot, ctx = {}, length = 8, options = {}) {
             const veins = veinsOf(job, step.ores, seen, ahead, report);
             const before = oreCounts(bot);
             let blocked = null;
+            let blockedAt = null; // F5: the block that would not go, for the stop line
             for (const key of ['ahead.upper', 'ahead.lower']) {
                 const recheck = () => ['dig'].includes(tunnelStep(tunnelView(readerWith(bot, ours), feet, d, n)).action);
                 const r = await digClear(bot, slots[key], { clock: job.clock, recheck });
                 job.stats.dug += r.dug;
                 if (!r.ok) {
                     blocked = r.reason;
+                    blockedAt = { name: r.name ?? logicName(blockAt(bot, slots[key])), at: slots[key] };
                     if (r.worn) {
                         job.worn = r.worn;
                     }
@@ -1928,20 +2052,21 @@ export async function digTunnel(bot, ctx = {}, length = 8, options = {}) {
             }
             if (blocked) {
                 if (++looks > 6) {
-                    return done(false, 'blocked');
+                    return done(false, 'blocked', digFailedText(blockedAt?.name, blockedAt?.at));
                 }
                 continue;
             }
             if (!isFree(blockAt(bot, slots['ahead.upper'])) || !isFree(blockAt(bot, slots['ahead.lower']))) {
                 // gravel or sand fell in after all: the same step again
                 if (++looks > 6) {
-                    return done(false, 'blocked');
+                    const cell = isFree(blockAt(bot, slots['ahead.upper'])) ? slots['ahead.lower'] : slots['ahead.upper'];
+                    return done(false, 'blocked', digFailedText(logicName(blockAt(bot, cell)), cell));
                 }
                 continue;
             }
             const moved = await walkTo(bot, slots['ahead.lower'], { clock: job.clock, timeoutMs: 8000 });
             if (!moved.ok) {
-                return done(false, moved.reason === 'interrupted' ? 'interrupted' : 'stuck');
+                return done(false, moved.reason === 'interrupted' ? 'interrupted' : 'stuck', `I could not step ahead to ${posText(slots['ahead.lower'])}.`);
             }
             feet = slots['ahead.lower'];
             advance(mine, target, feet, n);
@@ -1970,7 +2095,8 @@ export async function digTunnel(bot, ctx = {}, length = 8, options = {}) {
         return done(true, null);
     } catch (err) {
         console.warn('Mining pack: digging the tunnel failed:', err?.stack ?? err);
-        return { ...done(false, 'error'), text: `I could not dig the tunnel: ${errText(err)}` };
+        const text = `I could not dig the tunnel: ${errText(err)}`;
+        return { ...done(false, 'error', text), text };
     }
 }
 
@@ -2064,7 +2190,8 @@ export async function depositAtBase(bot, ctx = {}, options = {}) {
             if (!w.ok) {
                 return done(false, w.reason === 'interrupted' ? 'interrupted' : 'stuck', `I could not get back to the chest of the mine at ${posText(chest)}.`);
             }
-            const last = await ctx.storage.storeItems(bot, ctx, { chest, keep: tripKeep(bot, options.keep) });
+            // v0.1.4.16 (F11): only the kinds of the mining go into the chest of the mine (mineChestKinds); the kept kinds as before
+            const last = await ctx.storage.storeItems(bot, ctx, { chest, keep: tripKeep(bot, options.keep), only: mineChestKinds(inventoryList(bot)) });
             addCounts(stored, last?.stored);
             const ok = Boolean(last) && (last.ok === true || last.reason === null);
             return done(ok, ok ? null : last?.reason ?? 'error', `At the base of the mine: ${last?.text ?? 'I stored nothing.'}`, last?.left ?? {});
@@ -2094,7 +2221,8 @@ export async function depositAtBase(bot, ctx = {}, options = {}) {
             // after a new chest was placed it comes first
             const order = i === 0 ? chests : [chests[chests.length - 1], ...chests.slice(0, -1)];
             for (const chest of order) {
-                last = await ctx.storage.storeItems(bot, ctx, { chest, keep });
+                // F11: only the kinds of the mining
+                last = await ctx.storage.storeItems(bot, ctx, { chest, keep, only: mineChestKinds(inventoryList(bot)) });
                 addCounts(stored, last?.stored);
                 if (!last || last.reason !== 'full') {
                     break;
@@ -2373,7 +2501,12 @@ export async function mineOre(bot, ctx = {}, ore = '', count = 8, options = {}) 
     const memoryStore = storeOf(ctx) ? null : new MineStore(null);
     const tripCtx = memoryStore ? { ...ctx, mines: memoryStore } : ctx;
     const routes = makeJob(bot, ctx, options).mineRoutes;
-    const startCount = countOf(bot, row.item);
+    // F5 (v0.1.4.16, the play of 2026-11-11: "0 of 32" with 22 raw iron in the bag): a trip that goes on with a job counts the
+    // ore of the earlier trips that is in the bag once: what the job had (ctx.job.progress() without a count) and the bag
+    // holds is in the count from the start, and the report to the job leaves it out
+    const bagCount = countOf(bot, row.item);
+    const inBag = Math.min(jobGotOf(ctx), bagCount);
+    const startCount = bagCount - inBag;
     const stored = {};
     const left = [];
     const ores = {}; // Q9 (v0.1.4.13): the ore items the digging collected, every kind
@@ -2387,17 +2520,42 @@ export async function mineOre(bot, ctx = {}, ore = '', count = 8, options = {}) 
     // P5 (v0.1.4.13): the job counts what the skill counts; ctx.job is the job of the glue, optional
     const report = () => {
         try {
-            ctx?.job?.progress?.(mined());
+            ctx?.job?.progress?.(Math.max(0, mined() - inBag));
         } catch {
             // the job is optional
         }
     };
+    // F5 (v0.1.4.16, the play of 2026-11-11: three runs "I got stuck" with no reason in the log): the last step of the trip,
+    // what it said failed (its `detail`, else its text; the block it names), and whether it said so itself already
+    let lastStep = null;
+    let lastText = null;
+    let lastBlock = null;
+    let lastAt = null;
+    let lastSaid = false;
+    let stopAt = null; // where the bot stood when the trip stopped (before the way back up)
+    const note = (step, r, said = false) => {
+        lastStep = step;
+        stopAt = feetOf(bot) ?? stopAt;
+        const detail = typeof r?.detail === 'string' && r.detail.length > 0 ? r.detail : null;
+        lastText = detail ?? (r && 'detail' in r ? null : (typeof r?.text === 'string' && r.text.length > 0 ? r.text : null));
+        if (r?.reason === 'time' || r?.reason === 'interrupted') {
+            lastText = null; // the trip's own time and the player's stop: the reason says it all
+        }
+        lastBlock = typeof r?.block === 'string' && r.block.length > 0 ? r.block : null;
+        lastAt = cellOf(r?.at) ?? null;
+        lastSaid = said === true;
+    };
     const finish = (ok, why, extra = '') => {
         report();
+        if (!ok) {
+            // the log answers "why" (R-7): the reason, where the bot is, the step and its text
+            logTo(ctx, `Mining stop: ${why} at ${posText(stopAt ?? feetOf(bot))}, step ${lastStep ?? 'trip'}: ${lastText ?? stopReasonText(why, { block: lastBlock, at: lastAt })}`);
+        }
         const text = mineOreText({
             item: row.item, mined: mined(), wanted, reason: why, mine: shownMine(mine, tunnel),
             stored: Object.fromEntries(Object.entries(stored).filter(([k]) => k !== row.item)),
             extra: [passedText(leftOnTrip(mine, left)), dark ? NO_TORCHES_TEXT : '', extra].filter(t => t.length > 0).join(' '),
+            detail: lastSaid ? null : lastText, block: lastBlock, at: lastAt,
         });
         // Q9 (v0.1.4.13, mine_other_ores): the other ores of the trip at the end of its first sentence
         const others = ctx?.settings?.mine_other_ores === true ? otherOresWords(ores, row.item) : '';
@@ -2451,6 +2609,11 @@ export async function mineOre(bot, ctx = {}, ore = '', count = 8, options = {}) 
         const start = tripStart({
             mine: known, newMine: options.newMine === true, underground: underground(ctx), inMine: Boolean(here), fromInside: fromInsideOn(ctx),
         });
+        if (start === 'new') {
+            // F5 (v0.1.4.16): the player's new mine: the known mine is not used, not for the way down and not for the tunnel
+            known = null;
+            tunnel = null;
+        }
         const early = (why, text) => ({ ok: false, reason: why, text, mined: 0, stored, mine: null });
         if (start === 'underground') {
             return early('underground', undergroundText()); // v0.1.4.11, W3
@@ -2483,7 +2646,12 @@ export async function mineOre(bot, ctx = {}, ore = '', count = 8, options = {}) 
         const toParent = Boolean(insideStart) || (Boolean(known?.parent) && Boolean(here) && mineId(here.mine) === known.parent);
         let entrance = null;
         if (start === 'ask' || start === 'new') {
-            entrance = newEntrance(bot, tripCtx, row, clock);
+            if (start === 'new') {
+                // F5 (v0.1.4.16): the player said yes to a new mine: it starts where the bot stands (tripStart gives `new` on
+                // the surface only); within 48 blocks as before only when no mine may be there
+                sayTo(ctx, TEXTS.newMineHere);
+            }
+            entrance = (start === 'new' ? hereEntrance(bot, tripCtx, row) : null) ?? newEntrance(bot, tripCtx, row, clock);
             if (start === 'ask') {
                 if (entrance) {
                     proposals.set(bot, { ore: row.ore, entrance, at: clock.now() });
@@ -2500,6 +2668,16 @@ export async function mineOre(bot, ctx = {}, ore = '', count = 8, options = {}) 
         const viaRoute = routes && Boolean(known) && walksRoute(known);
         const way = viaRoute ? tunnelsOf(known)[tunnel] : null;
         let prepOptions = entrance ? { ...options, surfaceY: entrance.y } : options;
+        if (start === 'new' && entrance) {
+            // F5: the new mine never takes the store key (bot:<level>) of a known mine of the bot: the first free level from
+            // the ore's best one, as the shaft from inside does
+            const dimension = dimensionOf(bot) ?? undefined;
+            let level = targetLevel(row, entrance.y, bot.game?.minY ?? -64);
+            for (let k = 0; k < 8 && storeOf(tripCtx)?.atLevel?.(level, dimension); k++) {
+                level += 1;
+            }
+            prepOptions = { ...prepOptions, level };
+        }
         if (insideStart) {
             prepOptions = { ...options, surfaceY: insideStart.top.y, level: insideStart.level };
         }
@@ -2532,10 +2710,11 @@ export async function mineOre(bot, ctx = {}, ore = '', count = 8, options = {}) 
             mine = down.mine;
             if (!down.ok) {
                 reason = down.reason === 'worn' ? 'pickaxe' : down.reason;
+                note('descend', down, down.reason === 'worn'); // F5: the worn text was said by replaceWorn
                 if (reason !== 'interrupted' && mine) {
                     await climbToSurface(bot, tripCtx, { ...pass, mine, toParent });
                 }
-                return finish(false, reason, down.text);
+                return finish(false, reason, down.rest ?? down.text);
             }
             if (!mine.base) {
                 let base = await setupMineBase(bot, tripCtx, { ...pass, mine, deadline: deadline - 60000 });
@@ -2544,10 +2723,11 @@ export async function mineOre(bot, ctx = {}, ore = '', count = 8, options = {}) 
                 }
                 if (!base.ok) {
                     reason = base.reason === 'interrupted' || base.reason === 'time' ? base.reason : base.reason === 'worn' ? 'pickaxe' : 'blocked';
+                    note('base', base, base.reason === 'worn'); // F5: the text of the base goes into the stop line
                     if (reason !== 'interrupted') {
                         await climbToSurface(bot, tripCtx, { ...pass, mine: base.mine ?? mine, toParent });
                     }
-                    return finish(false, reason, base.text);
+                    return finish(false, reason, '');
                 }
                 mine = base.mine;
             }
@@ -2596,6 +2776,7 @@ export async function mineOre(bot, ctx = {}, ore = '', count = 8, options = {}) 
                 // only when no chest has room
                 const bag = await storeFullBag(bot, tripCtx, mine, row, { mined: mined(), wanted });
                 addCounts(stored, bag.stored);
+                note('store', bag, true); // F5: storeFullBag says its text itself
                 if (!bag.ok) {
                     reason = bag.reason === 'interrupted' ? 'interrupted' : 'inventory_full';
                     break;
@@ -2611,6 +2792,7 @@ export async function mineOre(bot, ctx = {}, ore = '', count = 8, options = {}) 
             };
             const t = routes && tunnel !== null ? await digOnce(bot, tripCtx, mine, tunnel, digOptions) : await digTunnel(bot, tripCtx, TUNNEL_CHUNK, digOptions);
             mine = t.mine ?? mine;
+            note('dig', t); // F5: the step and what failed, for the stop line and the log
             left.push(...(t.left ?? []));
             addCounts(ores, t.collected); // Q9: the ore items of every kind the dig collected
             report();
@@ -2633,6 +2815,7 @@ export async function mineOre(bot, ctx = {}, ore = '', count = 8, options = {}) 
                 break;
             }
         }
+        stopAt = feetOf(bot) ?? stopAt; // F5: the trip stopped here; the way back up comes after
         if (reason === 'interrupted') {
             return finish(false, 'interrupted', 'I am still in the mine.');
         }
@@ -2731,4 +2914,125 @@ export async function goToMine(bot, ctx = {}, ore = '', options = {}) {
  */
 export function leaveMine(bot, ctx = {}, options = {}) {
     return climbToSurface(bot, ctx, options);
+}
+
+// ------------------------------------------------------------------ sealing an opening (v0.1.4.16, F10, E1)
+
+/** The numbers of !sealOpening: the opening is at most this wide and high (9 cells), the bot walks within this many blocks of the cell. */
+export const SEAL_RULES = Object.freeze({ side: 3, walkRange: 3 });
+
+// The texts of !sealOpening, word for word (SPEC 3 F10).
+const SEAL_TEXTS = Object.freeze({
+    sealed: (p, n, filler) => `I sealed the opening at ${posText(p)} with ${n} ${filler}.`,
+    noStone: 'I have no stone to seal it.',
+    cannotReach: (p) => `I cannot reach ${posText(p)}.`,
+});
+
+// The first filler the bag holds (the order of FILLERS: cobblestone first), or null.
+function fillerName(bot) {
+    const names = new Set(inventoryList(bot).map(i => i.name));
+    return FILLERS.find(n => names.has(n)) ?? null;
+}
+
+/**
+ * The open cells of the face of an opening around a cell (F10): the plane of the face is the one the bot looks at it
+ * through (the axis of the longest side of the way from the feet to the cell: a hole in a wall stands in a vertical
+ * plane, a hole in the floor or the ceiling lies flat), the cells those of the 3 x 3 of that plane around the cell that
+ * are not solid and are connected to the cell through such cells. Empty when the cell itself is solid or not loaded.
+ * @param {object} bot
+ * @param {{x: number, y: number, z: number}} cell
+ * @returns {{x: number, y: number, z: number}[]} the cell first
+ */
+export function openingCells(bot, cell) {
+    const open = p => {
+        const b = blockAt(bot, p);
+        return Boolean(b) && !isSolid(b);
+    };
+    if (!open(cell)) {
+        return [];
+    }
+    const feet = feetOf(bot) ?? { x: cell.x, y: cell.y, z: cell.z + 1 };
+    const d = { x: cell.x - feet.x, y: cell.y - feet.y, z: cell.z - feet.z };
+    let axes;
+    if (d.y !== 0 && Math.abs(d.y) >= Math.max(Math.abs(d.x), Math.abs(d.z))) {
+        axes = ['x', 'z']; // a hole in the floor or the ceiling (a cell one step away and one below is one in the floor)
+    } else if (Math.abs(d.x) >= Math.abs(d.z)) {
+        axes = ['y', 'z']; // a wall across x
+    } else {
+        axes = ['x', 'y']; // a wall across z
+    }
+    const half = Math.floor(SEAL_RULES.side / 2);
+    const inFace = p => axes.every(a => Math.abs(p[a] - cell[a]) <= half);
+    const found = [cell];
+    const seen = new Set([posKey(cell)]);
+    for (let i = 0; i < found.length && found.length < SEAL_RULES.side * SEAL_RULES.side; i++) {
+        const p = found[i];
+        for (const a of axes) {
+            for (const k of [-1, 1]) {
+                const q = { ...p, [a]: p[a] + k };
+                if (!inFace(q) || seen.has(posKey(q))) {
+                    continue;
+                }
+                seen.add(posKey(q));
+                if (open(q)) {
+                    found.push(q);
+                }
+            }
+        }
+    }
+    return found;
+}
+
+/**
+ * `!sealOpening(x, y, z)` (v0.1.4.16, F10): closes an opening into a cave at a block position with stone from the bag,
+ * up to 9 blocks: the bot walks within reach of the cell, finds the open cells of the opening's face connected to it within
+ * a 3 x 3 (openingCells) and places filler into each (placeInto through patchAll, FILLERS, cobblestone first). Texts, word
+ * for word: `I sealed the opening at (x, y, z) with N cobblestone.` (the filler's name), `I have no stone to seal it.`
+ * (no filler in the bag), `I cannot reach (x, y, z).` (no way within 3 blocks of the cell, or nothing could be placed).
+ * Ends on bot.interrupt_code. Never throws.
+ * @param {object} bot
+ * @param {object} ctx
+ * @param {number} x
+ * @param {number} y
+ * @param {number} z
+ * @param {{timeoutMs?: number, now?: Function, wait?: Function}} [options]
+ * @returns {Promise<{ok: boolean, reason: string|null, text: string, placed: number, cells: object[]}>}
+ */
+export async function sealOpening(bot, ctx = {}, x, y, z, options = {}) {
+    const clock = clockOf(ctx, options);
+    const raw = { x, y, z };
+    try {
+        if (![x, y, z].every(isFiniteNumber)) {
+            return { ok: false, reason: 'bad_position', text: SEAL_TEXTS.cannotReach(raw), placed: 0, cells: [] };
+        }
+        const cell = { x: Math.floor(x), y: Math.floor(y), z: Math.floor(z) };
+        const filler = fillerName(bot);
+        if (!filler) {
+            return { ok: false, reason: 'no_block', text: SEAL_TEXTS.noStone, placed: 0, cells: [] };
+        }
+        const walk = await walkTo(bot, cell, { clock, timeoutMs: options.timeoutMs ?? 60000, range: SEAL_RULES.walkRange });
+        if (!walk.ok) {
+            return { ok: false, reason: walk.reason === 'interrupted' ? 'interrupted' : 'no_path', text: SEAL_TEXTS.cannotReach(cell), placed: 0, cells: [] };
+        }
+        const cells = openingCells(bot, cell);
+        logTo(ctx, `Seal: ${cells.length} open cells of the opening at ${posText(cell)}, ${fillerCount(bot)} ${filler} in the bag.`);
+        if (cells.length === 0) {
+            return { ok: true, reason: null, text: SEAL_TEXTS.sealed(cell, 0, filler), placed: 0, cells };
+        }
+        const r = await patchAll(bot, cells, { clock });
+        if (r.reason === 'interrupted') {
+            return { ok: false, reason: 'interrupted', text: 'I stopped sealing the opening.', placed: r.placed, cells };
+        }
+        if (r.placed === 0) {
+            const reason = r.reason === 'no_block' ? 'no_block' : 'no_reach';
+            return { ok: false, reason, text: reason === 'no_block' ? SEAL_TEXTS.noStone : SEAL_TEXTS.cannotReach(cell), placed: 0, cells };
+        }
+        if (!r.ok) {
+            logTo(ctx, `Seal: ${r.open.length} cells of the opening at ${posText(cell)} stay open (${r.reason}).`);
+        }
+        return { ok: true, reason: null, text: SEAL_TEXTS.sealed(cell, r.placed, filler), placed: r.placed, cells };
+    } catch (err) {
+        console.warn('Mining pack: sealing the opening failed:', errText(err));
+        return { ok: false, reason: 'error', text: SEAL_TEXTS.cannotReach(raw), placed: 0, cells: [] };
+    }
 }

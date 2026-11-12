@@ -26,7 +26,8 @@ import {
     busyText, doneText, idleStartText, leaveText, noJobText, noPlanText, planText, restartText, resumeText, statusText, stepStartText, stepText,
     stopText,
 } from './job_texts.js';
-import { roundDoneText } from '../routines/routine_texts.js'; // v0.1.4.15 (part R): the done line of a round (pure texts, no pack)
+// v0.1.4.15 (part R): the done line of a round; v0.1.4.16 (F3): the quiet line of a skipped step (pure texts, no pack)
+import { roundDoneText, stepSkippedText } from '../routines/routine_texts.js';
 
 // v0.1.4.13 fix 2: a failure of these words with nothing gained pauses the job at once
 const STUCK_FAILURE = /\b(got stuck|find no way|found no way|no way from|could not get to|could not reach)\b/i;
@@ -168,6 +169,8 @@ export function createJob(agent, store, options = {}) {
     const chests = pick('chests');
     const executeCommand = typeof options?.executeCommand === 'function' ? options.executeCommand : null;
     const askModel = typeof options?.askModel === 'function' ? options.askModel : null;
+    // v0.1.4.16 (F3): the supervisor's work (the watch queue runs or holds commands): no round of a routine starts meanwhile
+    const isBusy = typeof options?.isBusy === 'function' ? options.isBusy : () => false;
     // v0.1.4.15 (part R): the routines of the agent, read at every use (they are made after the job); null without
     const routinesOf = () => {
         try {
@@ -510,10 +513,22 @@ export function createJob(agent, store, options = {}) {
             return result(false, 'step_again', '');
         }
         step.state = 'failed';
-        setJob(job);
         if (job.kind === ROUTINE_KIND) {
-            return failRound(job, r.text, step); // v0.1.4.15 (part R): no plan for a round; the round failed
+            // v0.1.4.16 (F3): a step of a round that failed after its runs is marked skipped, said with the quiet line, and the
+            // round goes on with the next step; the round is done when every step is done or skipped and at least one is
+            // done, failed only when every step was skipped (the pause after three as today)
+            step.state = 'skipped';
+            const clean = typeof r.text === 'string' ? r.text.replace(/\s+/g, ' ').trim() : '';
+            job.failText = clean;
+            job.chainAt = iso(); // the next step runs at the next tick, without the wait
+            setJob(job);
+            const said = speak(stepSkippedText(index + 1, job.routine, clean));
+            if (steps.some(s => s.state === 'todo')) {
+                return result(false, 'step_skipped', said);
+            }
+            return isDone(job) ? finishRound(job) : failRound(job, clean, step);
         }
+        setJob(job);
         return await startPlan(job.blocker ?? blockerOf(r) ?? { kind: 'no_item', item: step.check?.item ?? null }, r.text, detached);
     }
 
@@ -748,7 +763,7 @@ export function createJob(agent, store, options = {}) {
                         if (isDone(job)) {
                             return finishRound(job);
                         }
-                        return failRound(job, job.failText ?? '', job.steps.find(step => step.state === 'failed') ?? null);
+                        return failRound(job, job.failText ?? '', job.steps.findLast(step => step.state === 'skipped' || step.state === 'failed') ?? null);
                     }
                     const text = resumeCommand(job);
                     if (!text) {
@@ -758,9 +773,10 @@ export function createJob(agent, store, options = {}) {
                     return await runSystem(text, 'resume', job);
                 }
                 const idle = { ...view, job: { state: 'running', kind: 'idle' }, resumeSeconds: s.resumeSeconds };
-                // v0.1.4.15 (part R, SPEC 3.4): a routine that is due runs first; the standing list only when none is due
+                // v0.1.4.15 (part R, SPEC 3.4): a routine that is due runs first; the standing list only when none is due;
+                // v0.1.4.16 (F3): no round while the supervisor's queue has work (isBusy); a running round is not interrupted
                 const routines = routinesOf();
-                if (routines !== null && shouldResume(idle)) {
+                if (routines !== null && shouldResume(idle) && call(() => isBusy() === true, false) !== true) {
                     const due = call(() => routines.due?.(t) ?? null, null);
                     if (due) {
                         return await runRound(routines, due);
@@ -862,11 +878,21 @@ export function createJob(agent, store, options = {}) {
          * reports progress, with what it got in this run. got of the job becomes what the job had before the run
          * plus that count, and the gain of the inventory is not added on top. Only for the command of the job or
          * its resumed command, never for a step. Never throws.
-         * @param {number} got the count of the skill in this run
-         * @returns {{ok: boolean, reason: string|null, text: string}}
+         * v0.1.4.16 (F5, the play of 2026-11-11: "0 of 32" with 22 raw iron in the bag): without a count the call asks:
+         * `{ ok: true, reason: 'job', got, wanted, created }` of the running or left job, so that a trip that goes on with
+         * a job counts the ore of the earlier trips in its bag once; nothing changes.
+         * @param {number} [got] the count of the skill in this run; left out, the question
+         * @returns {{ok: boolean, reason: string|null, text: string, got?: number, wanted?: number, created?: string}}
          */
         progress(got) {
             try {
+                if (got === undefined) {
+                    const asked = getJob();
+                    if (!asked || !isFiniteNumber(asked.wanted) || (asked.state !== 'running' && asked.state !== 'left')) {
+                        return result(false, 'no_job', '');
+                    }
+                    return { ...result(true, 'job', ''), got: isFiniteNumber(asked.got) ? asked.got : 0, wanted: asked.wanted, created: asked.created ?? null };
+                }
                 const n = Number(got);
                 if (!Number.isFinite(n) || n < 0) {
                     return result(false, 'bad_count', '');

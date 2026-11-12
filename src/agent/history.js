@@ -117,7 +117,17 @@ export class History {
         }
     }
 
-    async add(name, content) {
+    // v0.1.4.16 (F12, P-21 of 0.1.4.14): the adds are serialised on one promise chain, so that no add pushes a turn while an
+    // earlier add awaits the memory summary (the turns ended with the bot's own line; the closedByUser guard of the model
+    // class stays). An add that fails does not break the chain for the next one.
+    add(name, content) {
+        const run = () => this._add(name, content);
+        const next = (this._chain ?? Promise.resolve()).then(run, run);
+        this._chain = next.catch(() => {});
+        return next;
+    }
+
+    async _add(name, content) {
         let role = 'assistant';
         if (name === 'system') {
             role = 'system';

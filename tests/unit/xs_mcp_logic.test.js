@@ -65,7 +65,7 @@ describe('registerTool', () => {
         });
         assert.equal(ok, true);
         const list = toolList();
-        assert.equal(list.length, 12);
+        assert.equal(list.length, 13); // the eleven, the tool runs (v0.1.4.16, F9, registered when tools.js loads) and reply
         assert.deepEqual(list.at(-1), { name: 'reply', description: 'The answer of the supervisor, relayed into the chat.', inputSchema: { type: 'object', properties: { text: { type: 'string' } }, required: ['text'], additionalProperties: false } });
         assert.deepEqual(await runTool({ name: 'Luna' }, { tag: 'w' }, 'reply', { text: 'It is in the tunnel.' }), { text: '[Opus] It is in the tunnel.', isError: false });
         assert.deepEqual(seen, [['Luna', { text: 'It is in the tunnel.' }, 'w', 'object']]);
@@ -75,13 +75,13 @@ describe('registerTool', () => {
         assert.equal(rpc.body.result.content[0].text, '[Opus] hi');
         assert.equal(unregisterTool('reply'), true);
         assert.equal(await runTool({}, {}, 'reply', { text: 'x' }), null);
-        assert.equal(toolList().length, 11);
+        assert.equal(toolList().length, 12); // the eleven and runs
     });
 
     test('a name of the table, a bad name or no handler is refused', () => {
         assert.equal(registerTool('state', {}, async () => 'x'), false);
         assert.equal(registerTool('Bad Name', {}, async () => 'x'), false);
         assert.equal(registerTool('note', {}, null), false);
-        assert.equal(toolList().length, 11);
+        assert.equal(toolList().length, 12); // the eleven and runs (v0.1.4.16, F9)
     });
 });

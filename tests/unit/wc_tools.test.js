@@ -94,10 +94,13 @@ describe('state', () => {
     });
 
     test('phaseOf and agoText', () => {
-        assert.equal(phaseOf(1000), 'day');
-        assert.equal(phaseOf(12500), 'dusk');
-        assert.equal(phaseOf(13500), 'night');
-        assert.equal(phaseOf(23500), 'dawn');
+        // v0.1.4.16 (F8): the labels of the one clock (dayPhase of clock_logic.js); before: day, dusk, night, dawn
+        assert.equal(phaseOf(1000), 'Morning');
+        assert.equal(phaseOf(7000), 'Afternoon');
+        assert.equal(phaseOf(12500), 'Evening');
+        assert.equal(phaseOf(13500), 'Night');
+        assert.equal(phaseOf(23500), 'Dawn');
+        assert.equal(phaseOf(undefined), 'unknown');
         assert.equal(agoText(5000), '5 s ago');
         assert.equal(agoText(180000), '3 min ago');
         assert.equal(agoText(7200000), '2 h ago');

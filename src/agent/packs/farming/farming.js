@@ -13,7 +13,7 @@
 // inventory gained, and the items left near the places of the work are picked up at the end.
 import { Vec3 } from 'vec3';
 import { scanFarm } from '../../areas/area_scan.js';
-import { containsPos, distanceToBox } from '../home/box_math.js';
+import { containsPos, distanceToBox, isBox } from '../home/box_math.js';
 import { botPos, clockOf, dimensionOf, entitiesWhere, listAreas, logTo, otherPlayerPositions, pauseMode } from '../home/context.js';
 import { closeDoor, passThrough } from '../home/doors.js';
 import { goals, gotoGoal, isNear, makeMovements } from '../home/motion.js';
@@ -22,13 +22,13 @@ import {
     cropOf, isAirName, isCompostable, isCropBlock, isRipe, plantTargets, seedFor, seedsToKeep, visitOrder,
 } from './crop_logic.js';
 import {
-    PICK_RANGE, chooseComposter, chooseFarmArea, farmMiddle, fieldBox, fieldCells, findGates, goalAvoiding, insideBox, isInField, isNoStandBlock,
-    isNoStandCell, itemPlace, noStandBlocks, noStandPenalty, standSpots, stepPenalty,
+    CANE_BLOCK, PICK_RANGE, caneColumns, chooseComposter, chooseFarmArea, farmMiddle, fieldBox, fieldCells, findGates, goalAvoiding, insideBox, isCaneArea,
+    isCaneName, isInField, isNoStandBlock, isNoStandCell, itemPlace, noStandBlocks, noStandPenalty, standSpots, stepPenalty,
 } from './field_logic.js';
 import {
-    TEXTS, boneMealStepText, boneMealText, compostedText, cycleText, fertilizeText, gateOpenText, growingText, harvestText, noPlantsToFertilizeText,
-    noSeedsText, notRipeText, nothingGrowsText, nothingRipeText, nothingToPlantText, plantText, ripenedText, unknownFarmText, unknownSeedText,
-    unreachedText, whereText,
+    TEXTS, boneMealStepText, boneMealText, caneCutText, caneNotGrownText, cannotLeaveText, compostedText, cycleText, fertilizeText, gateOpenText,
+    growingText, harvestText, noPlantsToFertilizeText, noSeedsText, notRipeText, nothingGrowsText, nothingRipeText, nothingToPlantText, plantText,
+    ripenedText, unknownFarmText, unknownSeedText, unreachedText, whereText,
 } from './texts.js';
 
 /** Limits of the farming work: time, ranges and counts. */
@@ -145,13 +145,25 @@ export function findFarm(bot, ctx = {}, areaName = '') {
         const pos = botPos(bot);
         const dimension = dimensionOf(bot) ?? 'overworld';
         const name = typeof areaName === 'string' ? areaName.trim() : '';
-        const choice = chooseFarmArea(listAreas(ctx, dimension), { name, pos, dimension });
+        const areas = listAreas(ctx, dimension);
+        const read = (x, y, z) => readBlock(bot, x, y, z);
+        // v0.1.4.14 (P-18): an open farm (no fence) is worked on its farmland only, never on the ground around it;
+        // v0.1.4.16 (F3): a cane area (the survey's `cane`, or sugar cane standing in the box) is cut, not harvested
+        const farmOf = (a) => ({ name: a.name, box: { min: { ...a.min }, max: { ...a.max } }, gates: gatesOf(a.entrances), source: 'area',
+            open: a.border === 'open', cane: isCaneArea(read, a) });
+        if (name !== '' && isCaneName(name)) {
+            // "sugar_cane" or "cane" names the nearest cane area of the dimension, at any distance
+            const sameDimension = (a) => (typeof a?.dimension === 'string' && a.dimension.length > 0 ? a.dimension.replace(/^minecraft:/, '') : 'overworld') === dimension.replace(/^minecraft:/, '');
+            const canes = areas.filter(a => a?.type === 'farm' && isBox(a) && sameDimension(a) && isCaneArea(read, a));
+            if (canes.length > 0) {
+                const by = (a) => (pos ? distanceToBox(a, pos) : 0);
+                canes.sort((a, b) => by(a) - by(b) || String(a.name).localeCompare(String(b.name)));
+                return outcome(true, null, '', { farm: farmOf(canes[0]) });
+            }
+        }
+        const choice = chooseFarmArea(areas, { name, pos, dimension });
         if (choice.area) {
-            const a = choice.area;
-            // v0.1.4.14 (P-18): an open farm (no fence) is worked on its farmland only, never on the ground around it
-            const farm = { name: a.name, box: { min: { ...a.min }, max: { ...a.max } }, gates: gatesOf(a.entrances), source: 'area',
-                open: a.border === 'open' };
-            return outcome(true, null, '', { farm });
+            return outcome(true, null, '', { farm: farmOf(choice.area) });
         }
         if (choice.reason === 'unknown_name') {
             return outcome(false, 'no_farm', unknownFarmText(name, choice.known), { farm: null });
@@ -316,6 +328,11 @@ function readField(s) {
         s.cells = s.cells.filter(c => c.ground === 'farmland' || isCropBlock(c.above));
     }
     s.box = fieldBox(s.cells);
+    if (s.farm?.cane === true) {
+        // v0.1.4.16 (F3): a cane area has no field cells; its box is the area's, for the drops and the items left behind
+        s.cells = [];
+        s.box = { min: { ...s.farm.box.min }, max: { ...s.farm.box.max } };
+    }
     s.movements = null;
     s.avoid = s.farm ? noStandBlocks(get, farmReadBox(s.farm)) : [];
     for (const c of s.composters) {
@@ -1124,12 +1141,96 @@ async function callStorage(s, name, args) {
     }
 }
 
+// --- the cane (v0.1.4.16, F3) ---
+
+// Cuts every cane column of the area from its second block up (the block above the bottom one is dug; the rest falls),
+// then picks up the drops; nothing is planted. r.cut counts the cane blocks cut, r.grown the columns of 2 or more.
+async function caneWork(s) {
+    const bot = s.bot;
+    const columns = caneColumns(blockReader(s), s.farm.box);
+    const grown = columns.filter(c => c.height >= 2);
+    const r = { columns: columns.length, grown: grown.length, cut: 0, unreached: 0 };
+    if (grown.length === 0 || stopped(s)) {
+        return r;
+    }
+    pauseMode(bot, 'unstuck');
+    for (const column of visitOrder(grown, botPos(bot))) {
+        if (stopped(s)) {
+            break;
+        }
+        const near = await walkNearSafe(s, { x: column.x, y: column.y, z: column.z }, 2, { timeoutMs: FARM_LIMITS.cellWalkMs });
+        if (!near.ok) {
+            if (!stopped(s)) {
+                r.unreached++;
+            }
+            continue;
+        }
+        const second = readBlock(bot, column.x, column.y + 1, column.z);
+        if (!second || second.name !== CANE_BLOCK) {
+            continue;
+        }
+        try {
+            await bot.dig(second.block);
+        } catch (err) {
+            console.warn(`Farming pack: could not cut the cane at ${whereText(second.block.position)}:`, errorText(err));
+            continue;
+        }
+        r.cut += column.height - 1;
+        noteWorked(s, { x: column.x, y: column.y + 1, z: column.z });
+        await waitUntil(s, () => readBlock(bot, column.x, column.y + 1, column.z)?.name !== CANE_BLOCK, 600);
+    }
+    if (!stopped(s)) {
+        await pickUpDrops(s);
+    }
+    return r;
+}
+
+function caneSummary(s, r) {
+    if (r.grown === 0) {
+        return caneNotGrownText(s.farm.name);
+    }
+    const parts = [];
+    if (r.cut > 0 || r.unreached === 0) {
+        parts.push(caneCutText(r.cut, s.farm.name));
+    }
+    if (r.unreached > 0) {
+        parts.push(unreachedText(r.unreached));
+    }
+    return join(...parts);
+}
+
 function limitOf(options) {
     const n = Number(options.limit);
     return Number.isFinite(n) && n >= 1 ? Math.floor(n) : 0;
 }
 
-function prepare(bot, ctx, areaName, options, zero) {
+// v0.1.4.16 (F4): a farm command started inside a building leaves it through its door first (leaveBuilding of the home
+// pack, through ctx.home); the farm itself is no building. null when the bot stands in no saved building or the home pack
+// gives no leaveBuilding; else the result of the walk out, with the area.
+async function leaveBuildingFirst(bot, ctx, farm) {
+    const leave = ctx?.home?.leaveBuilding;
+    if (typeof leave !== 'function') {
+        return null;
+    }
+    const pos = botPos(bot);
+    const inside = listAreas(ctx, dimensionOf(bot) ?? 'overworld')
+        .find(a => (a?.type === 'home' || a?.type === 'building') && isBox(a) && pos && containsPos(a, pos) && a.name !== farm?.name);
+    if (!inside) {
+        return null;
+    }
+    try {
+        const out = await leave(bot, ctx);
+        if (!out || typeof out !== 'object') {
+            return null;
+        }
+        return { ...out, area: out.area ?? inside };
+    } catch (err) {
+        console.warn('Farming pack: could not leave the building:', errorText(err));
+        return { ok: false, reason: 'error', area: inside };
+    }
+}
+
+async function prepare(bot, ctx, areaName, options, zero) {
     if (!bot || typeof bot !== 'object') {
         return { fail: outcome(false, 'error', 'I have no body to farm with.', zero) };
     }
@@ -1139,6 +1240,13 @@ function prepare(bot, ctx, areaName, options, zero) {
     const found = findFarm(bot, ctx, areaName);
     if (!found.ok) {
         return { fail: outcome(false, found.reason, found.text, zero) };
+    }
+    const left = await leaveBuildingFirst(bot, ctx, found.farm);
+    if (left && left.ok !== true) {
+        if (left.reason === 'interrupted' || bot.interrupt_code) {
+            return { fail: outcome(false, 'interrupted', TEXTS.stopped, zero) };
+        }
+        return { fail: outcome(false, left.reason ?? 'no_way_out', cannotLeaveText(left.area?.name), zero) };
     }
     const s = openSession(bot, ctx, found.farm, options ?? {});
     readField(s);
@@ -1169,9 +1277,19 @@ function ending(s, fin) {
 export async function harvestCrops(bot, ctx = {}, areaName = '', options = {}) {
     const zero = { harvested: 0, replanted: 0, unripe: 0, byCrop: {} };
     try {
-        const { s, fail } = prepare(bot, ctx, areaName, options, zero);
+        const { s, fail } = await prepare(bot, ctx, areaName, options, zero);
         if (fail) {
             return fail;
+        }
+        if (s.farm.cane === true) {
+            // v0.1.4.16 (F3): a cane area is cut from the second block up, nothing is planted
+            setDeadline(s, caneColumns(blockReader(s), s.farm.box).length);
+            const c = await caneWork(s);
+            const fin = await finish(s);
+            const text = join(caneSummary(s, c), fin.text, stopText(s));
+            logTo(ctx, text);
+            const end = ending(s, fin);
+            return outcome(end.ok, end.reason, text, { harvested: c.cut, replanted: 0, unripe: 0, byCrop: c.cut > 0 ? { [CANE_BLOCK]: c.cut } : {} });
         }
         setDeadline(s, s.cells.length);
         const r = await harvestWork(s, limitOf(s.options));
@@ -1206,7 +1324,7 @@ export async function plantField(bot, ctx = {}, areaName = '', seed = 'wheat_see
         if (!seedName) {
             return outcome(false, 'unknown_seed', unknownSeedText(String(seed)), zero);
         }
-        const { s, fail } = prepare(bot, ctx, areaName, options, zero);
+        const { s, fail } = await prepare(bot, ctx, areaName, options, zero);
         if (fail) {
             return fail;
         }
@@ -1241,7 +1359,7 @@ export async function plantField(bot, ctx = {}, areaName = '', seed = 'wheat_see
 export async function fertilize(bot, ctx = {}, areaName = '', options = {}) {
     const zero = { used: 0, ripe: 0 };
     try {
-        const { s, fail } = prepare(bot, ctx, areaName, options, zero);
+        const { s, fail } = await prepare(bot, ctx, areaName, options, zero);
         if (fail) {
             return fail;
         }
@@ -1464,13 +1582,26 @@ export async function farmCycle(bot, ctx = {}, areaName = '', options = {}) {
     const zero = { harvested: 0, planted: 0, fertilized: 0, madeBoneMeal: 0 };
     let s = null;
     try {
-        const prep = prepare(bot, ctx, areaName, options, zero);
+        const prep = await prepare(bot, ctx, areaName, options, zero);
         if (prep.fail) {
             return prep.fail;
         }
         s = prep.s;
         const limit = FARM_LIMITS.cycleMs;
         s.deadline = s.started + (isFiniteNumber(s.options.timeoutMs) ? Math.min(s.options.timeoutMs, limit) : limit);
+        if (s.farm.cane === true) {
+            // v0.1.4.16 (F3): on a cane area the cycle cuts the cane and stores it; nothing to plant or to fertilize
+            const c = await caneWork(s);
+            let stored = null;
+            if (c.cut > 0 && !stopped(s) && typeof s.ctx.storage?.storeItems === 'function') {
+                stored = await callStorage(s, 'storeItems', [{ only: [CANE_BLOCK], keep: {} }]);
+            }
+            const fin = await finish(s);
+            const text = cycleText(s.farm.name, [caneSummary(s, c), stored?.text ?? null, fin.text, stopText(s)]);
+            logTo(ctx, text);
+            const end = ending(s, fin);
+            return outcome(end.ok, end.reason, text, { harvested: c.cut, planted: 0, fertilized: 0, madeBoneMeal: 0 });
+        }
         const fertilizeOn = s.options.fertilize !== false;
         const seed = mainSeed(s.cells);
         // 1. harvest and plant again

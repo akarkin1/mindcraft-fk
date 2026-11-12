@@ -159,7 +159,7 @@ describe('the server', () => {
         assert.equal(note.text, '');
         assert.deepEqual((await request(port, { body: { jsonrpc: '2.0', id: 2, method: 'ping' } })).json.result, {});
         const list = await request(port, { body: { jsonrpc: '2.0', id: 3, method: 'tools/list' } });
-        assert.equal(list.json.result.tools.length, 11); // v0.1.4.13 (S): six of v0.1.4.12 and digest, wait, run, look, server
+        assert.equal(list.json.result.tools.length, 12); // v0.1.4.13 (S): six of v0.1.4.12 and digest, wait, run, look, server; v0.1.4.16 (F9): runs
     });
 
     test('an unknown method: -32601', async () => {

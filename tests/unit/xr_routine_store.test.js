@@ -89,10 +89,13 @@ describe('SPEC 3.1: the shape of a routine', () => {
     test('set gives the record of 3.1 with every field, the defaults filled in, and a copy', () => {
         const store = new S.RoutineStore(null, { now: NOW });
         const saved = store.set({ name: 'The Farm', text: 'keep the farm going every 5 minutes' , every: 5 });
+        // v0.1.4.16 (F3): `runs`, the rounds started, default 0
         assert.deepEqual(saved, {
             name: 'the farm', text: 'keep the farm going every 5 minutes', steps: null, every: 5, condition: null, state: 'active',
-            rounds: 0, fails: 0, lastRound: null, created: new Date(T0).toISOString(), updated: new Date(T0).toISOString(),
+            rounds: 0, runs: 0, fails: 0, lastRound: null, created: new Date(T0).toISOString(), updated: new Date(T0).toISOString(),
         });
+        assert.equal(store.set({ name: 'runs', text: 'x', runs: 7 }).runs, 7);
+        assert.equal(store.set({ name: 'runs', text: 'x', runs: -1 }).runs, 0);
         saved.rounds = 9;
         assert.equal(store.get('the farm').rounds, 0, 'a copy');
     });

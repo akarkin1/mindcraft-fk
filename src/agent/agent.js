@@ -34,7 +34,7 @@ import { PlacedStore } from './areas/placed_store.js';
 import { autoHome } from './areas/auto_home.js';
 import { RuleStore } from './rules/rule_store.js';
 import { memoryPathsFor, ownFileOf, ownWorldDir, SHARED_TEXT } from './memory_paths.js';
-import { autoEatOptions, passThrough, enterBuilding, doorIsSafe, foodItems, moveOffhandBack, createDoorService } from './packs/home/index.js';
+import { autoEatOptions, passThrough, enterBuilding, leaveBuilding, doorIsSafe, foodItems, moveOffhandBack, createDoorService } from './packs/home/index.js';
 // v0.1.4.8 (X5): wakeUp of the home pack may not exist yet; always called with ?.
 import * as homePack from './packs/home/index.js';
 import { whereAmI as whereAmIOf } from './reflex/where_am_i.js';
@@ -225,6 +225,8 @@ export class Agent {
                     executeCommand: (text, options) => this._runJobOrder(text, options),
                     askModel: (prompt) => this.prompter.promptPlan(prompt),
                     routines: () => this.routines, // v0.1.4.15 (part R): a routine that is due runs when no job runs
+                    // v0.1.4.16 (F3): no round of a routine while the supervisor's queue (the watch server) runs or holds commands
+                    isBusy: () => this.watch?.watch?.queue?.isActive?.() === true || (this.watch?.watch?.queue?.size?.() ?? 0) > 0,
                 });
             } catch (error) {
                 this.job = null;
@@ -354,6 +356,8 @@ export class Agent {
             this.blocked_actions.push('!mineOre', '!goToMine', '!leaveMine');
         if (!settings.mining_pack || !this.work_packs?.mining)
             this.blocked_actions.push('!mines', '!forgetMine'); // v0.1.4.10 (R4): the mines the bot knows
+        if (!settings.mining_pack || !this.work_packs?.mining)
+            this.blocked_actions.push('!sealOpening'); // v0.1.4.16 (F10, E1): an opening into a cave closed with stone
         if (!settings.watch_and_learn || !this.work_packs?.watch)
             this.blocked_actions.push('!watchMe', '!continueLike', '!buildWatched'); // v0.1.4.12 (part B): learning by watching
         // the parts of v0.1.4.9: the ways of the player (routes_pack), the mine of the player (mine_routes as it
@@ -1139,7 +1143,8 @@ export class Agent {
             storage: null,
             tools: null,
             wood: null,
-            home: { passThrough, enterBuilding, doorIsSafe, foodItems }, // as they are, not bound (Amendment 1, part F; v0.1.4.8, I7)
+            // as they are, not bound (Amendment 1, part F; v0.1.4.8, I7); v0.1.4.16 (F4): leaveBuilding for the farm from inside a building
+            home: { passThrough, enterBuilding, leaveBuilding, doorIsSafe, foodItems },
             // v0.1.4.13 (P5): a skill of a job reports its own count; the job's counter follows it
             job: this.job ? { progress: (got) => this.job.progress?.(got) } : null,
         };
@@ -1480,7 +1485,14 @@ export class Agent {
         convoManager.endAllConversations();
     }
 
-    async handleMessage(source, message, max_responses=null) {
+    async handleMessage(source, message, options=null) {
+        // v0.1.4.16 (F9): the third argument is { quiet, max_responses }; a number is max_responses, as before (the init
+        // message, the self prompter). quiet: the message is a command of the watch queue (the supervisor's run): the echo
+        // `*<owner> used <command>*` and the model's command echo are skipped; the command's own lines are unchanged.
+        // The flag goes on to executeCommand as `quiet` in its options and into agent.last_order (F8 reads it there).
+        const opts = options !== null && typeof options === 'object' ? options : {};
+        let max_responses = typeof options === 'number' ? options : (typeof opts.max_responses === 'number' ? opts.max_responses : null);
+        const quiet = opts.quiet === true;
         await this.checkTaskDone();
         if (!source || !message) {
             console.warn('Received empty message from', source);
@@ -1508,7 +1520,8 @@ export class Agent {
                     this.routeResponse(source, `Command '${user_command_name}' does not exist.`);
                     return false;
                 }
-                this.routeResponse(source, `*${source} used ${user_command_name.substring(1)}*`);
+                if (!quiet) // F9: no echo for a command of the watch queue
+                    this.routeResponse(source, `*${source} used ${user_command_name.substring(1)}*`);
                 if (user_command_name === '!newAction') {
                     // all user-initiated commands are ignored by the bot except for this one
                     // add the preceding message to the history to give context for newAction
@@ -1516,9 +1529,9 @@ export class Agent {
                 }
                 // v0.1.4.8: text is the whole command (for the restart context and the guard), typed marks an
                 // order that the player typed in the chat (the guard, !setMode, the repeat guard)
-                const order = { by: source, ...order_time, command: user_command_name, text: commandCallText(message), typed: true };
+                const order = { by: source, ...order_time, command: user_command_name, text: commandCallText(message), typed: true, quiet };
                 this.last_order = order;
-                let execute_res = await executeCommand(this, message, { typed: true, by: source });
+                let execute_res = await executeCommand(this, message, { typed: true, by: source, quiet });
                 if (this.last_order === order)
                     this.last_order = null; // the ordered command ended
                 if (execute_res) 
@@ -1584,7 +1597,13 @@ export class Agent {
                 if (checkInterrupt()) break;
                 this.self_prompter.handleUserPromptedCmd(self_prompt, isAction(command_name));
 
-                if (settings.show_command_syntax === "full") {
+                if (quiet) {
+                    // v0.1.4.16 (F9): no echo of the model's command for a message of the watch queue; the words before it are said
+                    let pre_message = res.substring(0, res.indexOf(command_name)).trim();
+                    if (pre_message.length > 0)
+                        this.routeResponse(source, pre_message);
+                }
+                else if (settings.show_command_syntax === "full") {
                     this.routeResponse(source, res);
                 }
                 else if (settings.show_command_syntax === "shortened") {
@@ -1602,11 +1621,11 @@ export class Agent {
                         this.routeResponse(source, pre_message);
                 }
 
-                const order = from_player ? { by: source, ...order_time, command: command_name, text: commandCallText(res), typed: false } : null;
+                const order = from_player ? { by: source, ...order_time, command: command_name, text: commandCallText(res), typed: false, quiet } : null;
                 if (order)
                     this.last_order = order;
                 this.last_pack_text = null;
-                let execute_res = await executeCommand(this, res, { typed: false });
+                let execute_res = await executeCommand(this, res, { typed: false, quiet });
                 if (order && this.last_order === order)
                     this.last_order = null; // the ordered command ended
                 if (typeof execute_res === 'string' && execute_res !== '' && execute_res === this.last_pack_text)

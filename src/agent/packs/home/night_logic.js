@@ -34,11 +34,29 @@ export function normalizeTimeOfDay(timeOfDay) {
 }
 
 /**
- * True from 12000 (sunset) up to 23000.
+ * v0.1.4.16 (F8): the night of the one clock begins here (DAY_PHASES.night of src/agent/clock_logic.js, which this pure
+ * module does not import; xw_day_phase.test.js holds them equal). The game's sleep window begins at 12542.
+ */
+export const PHASE_NIGHT_START = 13000;
+
+/**
+ * True in the night of the one clock, 13000 up to 23000 (v0.1.4.16, F8: `dayPhase(t) === 'night'`; before, from 12000).
+ * The shelter rules keep their own start at sunset (isShelterNight).
  * @param {number} timeOfDay bot.time.timeOfDay
  * @returns {boolean}
  */
 export function isNight(timeOfDay) {
+    const t = normalizeTimeOfDay(timeOfDay);
+    return t !== null && t >= PHASE_NIGHT_START && t < NIGHT_END;
+}
+
+/**
+ * True from 12000 (sunset) up to 23000: the night of the shelter reflex, which keeps its start as before (monsters come
+ * from about 13000, so the bot has about 50 s).
+ * @param {number} timeOfDay bot.time.timeOfDay
+ * @returns {boolean}
+ */
+export function isShelterNight(timeOfDay) {
     const t = normalizeTimeOfDay(timeOfDay);
     return t !== null && t >= NIGHT_START && t < NIGHT_END;
 }
@@ -79,13 +97,13 @@ export function orderedThisNight(order, timeOfDay, now) {
         return false;
     }
     const t = normalizeTimeOfDay(timeOfDay);
-    if (t === null || !isNight(t)) {
+    if (t === null || !isShelterNight(t)) {
         return false;
     }
     const at = order.at;
     const orderTime = normalizeTimeOfDay(order.atTimeOfDay);
     if (orderTime !== null) {
-        if (!isNight(orderTime) || nightTicks(orderTime) > nightTicks(t)) {
+        if (!isShelterNight(orderTime) || nightTicks(orderTime) > nightTicks(t)) {
             return false;
         }
         return !(isFiniteNumber(at) && isFiniteNumber(now) && now - at > MAX_ORDER_AGE_MS);
@@ -112,7 +130,7 @@ function isBusyAction(action) {
  */
 export function shouldShelter(state) {
     const s = state && typeof state === 'object' ? state : {};
-    if (!isNight(s.timeOfDay)) {
+    if (!isShelterNight(s.timeOfDay)) { // F8: the shelter reflex keeps its start at sunset
         return { go: false, reason: 'day' };
     }
     if (s.inShelter === true) {

@@ -9,16 +9,17 @@
 // route), texts (E1: the texts, word for word).
 // Executing modules: survey (E4: the reads of the bot, the saves through ctx, the commands' work).
 // The store of the bases: src/agent/world/base_store.js (bases.json per world), re-exported for the glue (_workStore).
-import { surveyBase, renameArea, forgetSurveyed, goToBase } from './survey.js';
+import { surveyBase, renameArea, forgetSurveyed, goToBase, removeFromBases } from './survey.js';
 
-export { SEED_NAMES, SEED_CATEGORIES, ANIMAL_NAMES, CROP_FARMS, LEASH_RANGE, HALL_REACH, CANE_MIN, POINT_REACH, oreBlind, isOreName, seedsOf,
-    findPlaces, farmName, penName, uniqueName } from './survey_logic.js';
+export { SEED_NAMES, SEED_CATEGORIES, ANIMAL_NAMES, CROP_FARMS, LEASH_RANGE, HALL_REACH, CANE_MIN, POINT_REACH, CLUSTER_GAP, DIRECTIONS, oreBlind,
+    isOreName, seedsOf, findPlaces, farmName, penName, uniqueName, clustersOf, startClusterOf, leftOutOf, xzDistance, directionOf } from './survey_logic.js';
 export { UNDERGROUND_RULES, UNDERGROUND_NAMES, followLadder, basementOf, wallOpenings, undergroundOf, routeOfSurvey, caveMouthArea,
     mineEntrancePlace, basementPlace } from './underground_logic.js';
 export { REPORT_ORDER, roleOf, itemText, keptText, reportText, tiedRuleText, nothingText, nothingFoundText, againText, renamedText,
-    unknownPlaceText, placeExistsText, forgotBaseText, atBaseText, noBaseText } from './texts.js';
-export { SURVEY_RULES, surveyRadius, surveyBase, renameArea, forgetSurveyed, goToBase, forgotPlaceText, noWayToBaseText } from './survey.js';
+    unknownPlaceText, placeExistsText, forgotBaseText, atBaseText, noBaseText, leftOutItem, leftOutText } from './texts.js';
+export { SURVEY_RULES, SAID_TEXT, surveyRadius, clusterGap, surveyBase, renameArea, forgetSurveyed, goToBase, removeFromBases, forgotPlaceText,
+    noWayToBaseText } from './survey.js';
 export { BASE_FILE, BaseStore, normalizeBaseName } from '../../world/base_store.js';
 
-/** The work of the four commands, not bound (the glue gives bot and ctx). */
-export const SURVEY_API = Object.freeze({ surveyBase, renameArea, forgetSurveyed, goToBase });
+/** The work of the four commands, not bound (the glue gives bot and ctx); v0.1.4.16 (F2): removeFromBases for !forgetArea. */
+export const SURVEY_API = Object.freeze({ surveyBase, renameArea, forgetSurveyed, goToBase, removeFromBases });

@@ -84,6 +84,25 @@ describe('P-19: the decision of the fallback (way_logic.js)', () => {
         assert.equal(W.mayDigOnFallback(read, null, 64), false);
     });
 
+    test('F7 (v0.1.4.16): inside a canopy (leaves in 2 of the 6 neighbours of the start) every *_leaves block is allowed; nothing else changes', () => {
+        const blocks = new Map([['1,64,0', 'oak_leaves'], ['-1,64,0', 'oak_leaves'], ['0,65,0', 'birch_leaves'], ['3,60,0', 'oak_leaves'], ['3,61,0', 'stone'], ['4,62,0', 'azalea_leaves'], ['4,61,0', 'water']]);
+        const read = (x, y, z) => blocks.get(`${x},${y},${z}`) ?? 'air';
+        const start = { x: 0.5, y: 64, z: 0.5 };
+        assert.equal(W.inCanopy(read, start), true);
+        assert.equal(W.mayDigOnFallback(read, { x: 3, y: 60, z: 0 }, 64, start), true, 'leaves below the start level minus 1, in a canopy');
+        assert.equal(W.mayDigOnFallback(read, { x: 4, y: 62, z: 0 }, 64, start), true, 'leaves touching water, in a canopy');
+        assert.equal(W.mayDigOnFallback(read, { x: 3, y: 60, z: 0 }, 64), false, 'without the start cell the rule of P-19');
+        assert.equal(W.mayDigOnFallback(read, { x: 3, y: 61, z: 0 }, 64, start), false, 'stone below the level stays forbidden');
+        const one = (x, y, z) => (`${x},${y},${z}` === '1,64,0' ? 'oak_leaves' : 'air');
+        assert.equal(W.inCanopy(one, start), false, 'one leaves neighbour is no canopy');
+        assert.equal(W.mayDigOnFallback(one, { x: 3, y: 60, z: 0 }, 64, start), false);
+        assert.equal(W.inCanopy(() => { throw new Error('unloaded'); }, start), false);
+        assert.equal(W.isLeavesName('minecraft:azalea_leaves'), true);
+        assert.equal(W.isLeavesName('nether_wart_block'), false, 'only *_leaves');
+        assert.equal(W.isLeavesName(null), false);
+        assert.equal(W.CANOPY_RULES.leaves, 2);
+    });
+
     test('noWayText, word for word', () => {
         assert.equal(W.noWayText({ x: 10, y: 64, z: -20 }, { x: 3.5, y: 64, z: -2.2 }, 19.4),
             'I found no way to (10, 64, -20) without digging; I stopped at (3, 64, -3), 19 blocks away.');
@@ -166,5 +185,41 @@ describe('P-19: goToGoal on the fake bot', () => {
     test('the signatures stay', () => {
         assert.equal(skills.goToGoal.length, 2);
         assert.equal(skills.goToPosition.length, 4);
+    });
+
+    test('F7 (v0.1.4.16): the long way out of a leaf canopy may dig leaves only; the text is unchanged', async () => {
+        const world = createBlockWorld().flatGround(63, 'grass_block', 'dirt');
+        world.set(1, 64, 0, 'oak_leaves');
+        world.set(-1, 64, 0, 'oak_leaves');
+        world.set(0, 66, 0, 'oak_leaves');
+        const leaves = MC.blocksByName.oak_leaves.id;
+        const stone = MC.blocksByName.stone.id;
+        const seen = [];
+        const paths = (m, goal) => {
+            const cant = m.blocksCantBreak instanceof Set ? m.blocksCantBreak : null;
+            seen.push({ canDig: m.canDig, leaves: cant ? cant.has(leaves) : null, stone: cant ? cant.has(stone) : null });
+            if (goal?.constructor?.name === 'GoalNear' && goal.x === 20) return success(20, 64, 0); // the walk to the best node
+            if (m.canDig === true && cant && cant.has(stone) && !cant.has(leaves)) return { status: 'noPath', path: [move(5, 64, 0), move(10, 64, 0), move(20, 64, 0)] };
+            return noPath(); // the two searches of a second
+        };
+        const bot = makeFakeBot({ world, pos: { x: 0, y: 64, z: 0 }, paths });
+        assert.equal(await skills.goToGoal(bot, new pf.goals.GoalNear(40, 64, 0, 1)), false);
+        assert.equal(bot.output, 'I found no way to (40, 64, 0) without digging; I stopped at (20, 64, 0), 20 blocks away.\n', 'the text of P-19, unchanged');
+        assert.ok(seen.some(s => s.canDig === true && s.leaves === false && s.stone === true), `a search that may dig leaves only: ${JSON.stringify(seen)}`);
+        assert.ok(!seen.some(s => s.canDig === false), 'no search without digging inside the canopy');
+        const m = bot.pathfinder.movements;
+        assert.equal(m.canDig, true, 'the walk may dig');
+        assert.equal(m.blocksCantBreak.has(leaves), false, 'leaves');
+        assert.equal(m.blocksCantBreak.has(stone), true, 'and nothing else');
+        assert.deepEqual(bot.calls.walked, [[{ x: 20, y: 64, z: 0 }]], 'one walk, to the best node');
+    });
+
+    test('F7: outside a canopy (one leaves block beside the bot) the long way digs nothing, as before', async () => {
+        const world = createBlockWorld().flatGround(63, 'grass_block', 'dirt');
+        world.set(1, 64, 0, 'oak_leaves');
+        const bot = makeFakeBot({ world, pos: { x: 0, y: 64, z: 0 }, paths: longWayPaths });
+        assert.equal(await skills.goToGoal(bot, new pf.goals.GoalNear(40, 64, 0, 1)), false);
+        assert.equal(bot.pathfinder.movements.canDig, false);
+        assert.equal(bot.output, 'I found no way to (40, 64, 0) without digging; I stopped at (20, 64, 0), 20 blocks away.\n');
     });
 });

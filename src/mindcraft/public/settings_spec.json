@@ -488,6 +488,11 @@
         "description": "With base_survey: how far sideways from the bot the survey reaches at most, in blocks (at most 128); it takes what the server has loaded within it",
         "default": 128
     },
+    "survey_cluster_gap": {
+        "type": "number",
+        "description": "With base_survey: two finds farther apart than this (the x/z distance between their boxes or points, in blocks) belong to different bases; the survey saves the cluster the bot stands in and reports the others as another base or a village",
+        "default": 48
+    },
     "routines": {
         "type": "boolean",
         "description": "Whether the bot keeps routines: standing work in the player's words (!rememberRoutine, !routines, !forgetRoutine, !doRoutine) that it does when it has no job, one round at a time, planned once with the model and checked by code; and the watch tool routines. Needs job_memory",

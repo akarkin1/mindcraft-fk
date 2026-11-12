@@ -90,7 +90,7 @@ const NEW_EXAMPLES = [
     ['collect some logs for me', '!chopTrees'],
     ['make yourself a stone pickaxe', '!getTool'],
     ['we need torches for the cave', '!craftSupplies'],
-    ['find some iron', '!mineOre'],
+    ['mine 32 iron', '!mineOre'], // v0.1.4.16 (F5): the example keeps the player's number
     ['go down into the mine', '!goToMine'],
     ['come back up to the surface', '!leaveMine'],
     // v0.1.4.8, part G: the new commands and types, and the commands of the parts that had no example
@@ -125,6 +125,10 @@ const NEW_EXAMPLES = [
     ['here is the base, scan it', '!surveyBase'],
     ['this is the east base, look around', '!surveyBase'],
     ['that is the wheat farm, not carrots', '!renameArea'],
+    // v0.1.4.16, F2: the rename in words
+    ['rename pen to horse_house', '!renameArea'],
+    // v0.1.4.16, F10 (E1): an opening into a cave closed with stone
+    ['seal that hole at (12, 40, -7)', '!sealOpening'],
     // v0.1.4.15, part R (SPEC 3.5): the routines
     ['keep the farm going when you have nothing to do', '!rememberRoutine'],
     ['do the farm routine', '!doRoutine'],

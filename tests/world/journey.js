@@ -839,6 +839,36 @@ export function readSharedWorldFile(name) {
     return { file: null, json: null, worlds };
 }
 
+// v0.1.4.16 (T3, W131): every line a pack writes into the bot's action output (skills.log through ctx.log, the `logTo` of the
+// packs: `Mining stop: ...`), as { text, t }, whatever action it belongs to. The output is a plain property of the bot that the
+// skills append to and the action manager clears; a property with a setter sees every append (as recordAgent reads the
+// behaviour log). Nothing is changed. Returns { lines, stop() }.
+export function recordOutput(agent) {
+    const bot = agent.bot;
+    const lines = [];
+    let value = String(bot.output ?? '');
+    Object.defineProperty(bot, 'output', {
+        configurable: true, enumerable: true,
+        get() { return value; },
+        set(v) {
+            const s = String(v ?? '');
+            if (s.length > value.length && s.startsWith(value)) {
+                for (const line of s.slice(value.length).split('\n')) if (line.trim()) lines.push({ text: line, t: Date.now() });
+            }
+            value = s;
+        },
+    });
+    return {
+        lines,
+        stop() {
+            const last = value;
+            delete bot.output;
+            bot.output = last;
+            return lines;
+        },
+    };
+}
+
 // Samples the action of the agent every `every` ms: resolves stop() with the runs of the same label
 // [{ label, from, to }] (times in ms since the epoch).
 export function actionRuns(agent, every = 500) {

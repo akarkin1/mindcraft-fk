@@ -174,6 +174,7 @@
     { "say": "forget the mine called old_mine", "expect": ["!forgetMine"], "part": "mining_pack" },
     { "say": "the mine by the river caved in, forget it", "expect": ["!forgetMine", "!mines"], "part": "mining_pack" },
     { "say": "that mine is gone, delete it from your list", "expect": ["!forgetMine", "!mines"], "part": "mining_pack" },
+    { "say": "seal that hole at (12, 40, -7)", "expect": ["!sealOpening"], "part": "mining_pack" },
 
     { "say": "watch me", "expect": ["!watchMe"], "part": "watch_and_learn" },
     { "say": "continue like this, 7 by 10", "expect": ["!continueLike"], "part": "watch_and_learn" },
@@ -191,6 +192,10 @@
     { "say": "look around and remember every place of our base", "expect": ["!surveyBase"], "part": "base_survey" },
     { "say": "that is the wheat farm, not carrots", "expect": ["!renameArea"], "part": "base_survey" },
     { "say": "rename the cow pen to the barn", "expect": ["!renameArea"], "part": "base_survey" },
+    { "say": "rename pen to horse_house", "expect": ["!renameArea"], "part": "base_survey" },
+    { "say": "rename the pen to horse house", "expect": ["!renameArea"], "part": "base_survey" },
+    { "say": "call the cow pen cows from now on", "expect": ["!renameArea"], "part": "base_survey" },
+    { "say": "the pen is the horse house, rename it", "expect": ["!renameArea"], "part": "base_survey" },
     { "say": "go to the east base", "expect": ["!goToBase"], "part": "base_survey" },
     { "say": "walk back to the base", "expect": ["!goToBase", "!goToRememberedPlace"], "part": "base_survey" }
 ]

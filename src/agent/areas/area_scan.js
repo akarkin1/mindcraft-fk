@@ -1008,8 +1008,20 @@ function hedgeLeaves(read, x, y, z) {
     return true;
 }
 
+// v0.1.4.16 (F11, Q-9: "a walled yard with a roof, 1 bee" was a bee nest in the leaves): a bee nest or a beehive is no cover.
+const HIVE_NAMES = new Set(['bee_nest', 'beehive']);
+
+// F11: true when a face neighbour of x, y, z is leaves: a block that hangs in a crown (a bee nest, a block built against it).
+function touchesLeaves(read, x, y, z) {
+    return FACES.some(([dx, dy, dz]) => {
+        const n = read(x + dx, y + dy, z + dz);
+        return n !== null && isLeaves(n);
+    });
+}
+
 // v0.1.4.14: a block that is not passable 1 to `height` blocks above the ground of a cell, the leaves and the logs of a tree
-// left out (a crown over a field); worked wood and wood built with count.
+// left out (a crown over a field); worked wood and wood built with count. v0.1.4.16 (F11): a bee nest or a beehive is no
+// cover, nor is a block that touches leaves on any side (it hangs in the crown).
 function hasCoverBesideTrees(read, x, ground, z, height) {
     for (let y = ground + 1; y <= ground + height; y++) {
         const name = read(x, y, z);
@@ -1017,6 +1029,9 @@ function hasCoverBesideTrees(read, x, ground, z, height) {
             continue;
         }
         if (isLeaves(name) || (isWoodName(name) && !isMadeAt(read, x, y, z, name))) {
+            continue;
+        }
+        if (HIVE_NAMES.has(name) || touchesLeaves(read, x, y, z)) {
             continue;
         }
         return true;

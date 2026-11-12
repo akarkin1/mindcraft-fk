@@ -8,12 +8,12 @@ import { ROUTINE_KIND } from '../job/job_logic.js';
 import { busyText } from '../job/job_texts.js';
 import { countIn } from '../job/plan_logic.js';
 import {
-    ROUTINE_RULES, checkPlan, conditionHolds, nextRoutine, normalizeRoutineName, noteRound, readPlan, routineCommands, routineOf,
+    ROUTINE_RULES, checkPlan, conditionHolds, nextRoutine, normalizeRoutineName, noteRound, placeNamesOf, readPlan, routineCommands, routineOf,
     routinePlanPrompt, routinesJson,
 } from './routine_logic.js';
 import {
-    NAME_TEXT, ROUTINES_OFF, TEXT_TEXT, badPlanText, forgotText, fullText, knownText, listText, noPlanText, pausedText, planText, rememberedText,
-    roundStartText, unknownText, waitsText,
+    NAME_TEXT, ROUTINES_OFF, badPlanText, forgotText, fullText, knownText, listText, noPlanText, pausedText, planText, rememberedText,
+    roundStartText, textText, unknownText, waitsText,
 } from './routine_texts.js';
 
 export { RoutineStore, ROUTINES_FILE } from './routine_store.js';
@@ -106,17 +106,18 @@ function defaultReaders(agent, settings) {
             return out;
         }, {}),
         areas: safe(() => agent?.area_store?.list?.() ?? [], []),
-        // the remembered places (!rememberHere) by name: the place store of the world, else the memory of the bank
+        // the remembered places (!rememberHere) by name: the place store of the world, else the memory of the bank;
+        // v0.1.4.16 (F6): never the bot's own bed (`my_bed`, placeNamesOf)
         places: safe(() => {
             const bank = agent?.memory_bank;
             if (typeof bank?.store?.names === 'function') {
-                return bank.store.names();
+                return placeNamesOf(bank.store.names());
             }
             if (bank?.memory && typeof bank.memory === 'object') {
-                return Object.keys(bank.memory);
+                return placeNamesOf(Object.keys(bank.memory));
             }
             const keys = typeof bank?.getKeys === 'function' ? bank.getKeys() : '';
-            return typeof keys === 'string' && keys.trim() !== '' ? keys.split(',').map(k => k.trim()).filter(Boolean) : [];
+            return placeNamesOf(typeof keys === 'string' && keys.trim() !== '' ? keys.split(',').map(k => k.trim()).filter(Boolean) : []);
         }, []),
         chests: safe(() => {
             const index = agent?._workStores?.()?.chests ?? null;
@@ -243,7 +244,8 @@ export function createRoutines(agent, store, options = {}) {
             pauseRoutine(fresh);
             return result(false, 'no_plan', noPlanText(fresh.name));
         }
-        const check = checkPlan(read.commands, commands, call(() => blocked(), []));
+        // v0.1.4.16 (F3): the places and the coordinates the owner named must be steps of the plan
+        const check = checkPlan(read.commands, commands, call(() => blocked(), []), { text: fresh.text, places: call(() => places(), []) });
         if (!check.ok) {
             pauseRoutine(fresh);
             return result(false, 'bad_plan', badPlanText(fresh.name, check.reason));
@@ -272,7 +274,7 @@ export function createRoutines(agent, store, options = {}) {
                 }
                 const words = str(text);
                 if (words.length === 0 || words.length > ROUTINE_RULES.textMax) {
-                    return result(false, 'bad_text', TEXT_TEXT);
+                    return result(false, 'bad_text', textText(words.length)); // v0.1.4.16 (F3): the cap with the count
                 }
                 if (getRoutine(clean)) {
                     return result(false, 'known', knownText(clean));
@@ -283,7 +285,7 @@ export function createRoutines(agent, store, options = {}) {
                 const routine = routineOf(clean, words, { now: iso(), isItem: (n) => call(() => isItem(n), false) });
                 const saved = routine ? saveRoutine(routine) : null;
                 if (!saved) {
-                    return result(false, 'not_saved', TEXT_TEXT);
+                    return result(false, 'not_saved', textText(words.length));
                 }
                 return result(true, 'remembered', rememberedText(saved));
             } catch (error) {
@@ -402,11 +404,13 @@ export function createRoutines(agent, store, options = {}) {
                 if (typeof api?.startRoutineRound !== 'function') {
                     return result(false, 'no_job', '');
                 }
-                const round = (Number.isInteger(r.rounds) ? r.rounds : 0) + 1;
+                // v0.1.4.16 (F3): the round number is the persisted counter `runs` (the rounds started), not rounds + 1
+                const round = (Number.isInteger(r.runs) ? r.runs : 0) + 1;
                 const out = api.startRoutineRound(r, round);
                 if (!out?.ok) {
                     return result(false, out?.reason ?? 'no_round', out?.text ?? '');
                 }
+                r.runs = round;
                 r.lastRound = iso(); // the start counts, so that a round that the process loses is not started again at once
                 saveRoutine(r);
                 return { ...result(true, 'round', roundStartText(r.name, round)), job: out.job ?? null };
@@ -437,7 +441,7 @@ export function createRoutines(agent, store, options = {}) {
                     return null;
                 }
                 const failed = typeof outcome?.step === 'string' && outcome.step.length > 0 ? outcome.step
-                    : ((Array.isArray(job?.steps) ? job.steps : []).find(s => s?.state === 'failed')?.command ?? null);
+                    : ((Array.isArray(job?.steps) ? job.steps : []).findLast(s => s?.state === 'skipped' || s?.state === 'failed')?.command ?? null); // F3: skipped
                 return pausedText(noted.routine.name, failed);
             } catch (error) {
                 console.warn('The routines could not note the round:', error?.message ?? error);

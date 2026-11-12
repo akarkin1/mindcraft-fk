@@ -114,6 +114,7 @@ const settings = {
     "new_things_in_prompt": false, // v0.1.4.14: name the things of 1.21.9 to 26.1 that are in the bag, in view or in the last lines in the chat prompt
     "base_survey": false, // v0.1.4.15: the base survey: !surveyBase finds every place of a base from the loaded blocks around the bot and saves them with the base's name; !renameArea, !goToBase. needs protected_areas and world_memory
     "survey_radius": 128, // with base_survey: how far sideways from the bot the survey reaches at most, in blocks; it takes what the server has loaded within it
+    "survey_cluster_gap": 48, // v0.1.4.16: with base_survey: two finds farther apart than this (x/z distance between their boxes or points) belong to different bases; the survey saves the cluster the bot stands in and reports the others
     "routines": false, // v0.1.4.15: standing work in your words (!rememberRoutine, !routines, !forgetRoutine, !doRoutine): the bot does a round when it has no job, one at a time, planned once with the model; the watch tool routines. needs job_memory
     "allow_vision": false, // allows vision model to interpret screenshots as inputs
     "blocked_actions" : ["!checkBlueprint", "!checkBlueprintLevel", "!getBlueprint", "!getBlueprintLevel", "!restart"] , // commands to disable and remove from docs. Ex: ["!setMode"]

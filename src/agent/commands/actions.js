@@ -698,6 +698,28 @@ function surfaceContext(agent) {
     }
 }
 
+// v0.1.4.16 (F10, E1): what skills.collectBlock reads for the cave rule (bot.caveContext): the pack context (areas, the mine
+// store, say) with the mining pack as `mining` for its mineAt; the home context without the work packs. null when nothing
+// can be built. Never throws.
+function caveContext(agent) {
+    try {
+        let ctx = null;
+        let mining = null;
+        if (settings.mining_pack && agent?.work_packs?.mining) {
+            ctx = agent.packContext(); // the mine store and the pack's mineAt: a block in a known mine is in no cave
+            mining = agent.work_packs.mining;
+        } else if (typeof agent?.homeContext === 'function') {
+            ctx = agent.homeContext();
+        }
+        if (!ctx || typeof ctx !== 'object')
+            return null;
+        return { ...ctx, mining, say: (text) => agent.sayText?.(text) };
+    } catch (error) {
+        console.warn('Could not build the context of the cave rule:', error);
+        return null;
+    }
+}
+
 // v0.1.4.9 (I8): the digging commands that are on, for digRefusalText: !mineOre with mining_pack, !rememberTunnel
 // with the mine routes, !collectBlocks always; none that settings.blocked_actions or the agent hides.
 function diggingCommands(agent) {
@@ -1245,8 +1267,17 @@ export const actionsList = [
             if (!store)
                 return AREAS_OFF;
             try {
-                if (store.remove(name))
+                if (store.remove(name)) {
+                    // v0.1.4.16 (F2): the name leaves every base's `places` and `kept` (a survey place or an owner's area in a base)
+                    if (settings.base_survey && agent.work_packs?.survey) {
+                        try {
+                            agent.work_packs.survey.removeFromBases?.(agent.packContext(), name);
+                        } catch (error) {
+                            console.warn('Could not take the area out of the bases:', error);
+                        }
+                    }
                     return `Forgot the area "${name}".`;
+                }
             } catch (error) {
                 console.warn('Could not forget the area:', error);
             }
@@ -1333,7 +1364,8 @@ export const actionsList = [
         description: REMEMBER_RULE_DESCRIPTION,
         params: {'text': { type: 'string', description: 'The rule as one short sentence.' }},
         perform: async function (agent, text) {
-            const reply = rememberRuleReply(agent.rule_store, text); // never throws, also without a store
+            // never throws, also without a store; v0.1.4.16 (F3): the cap line is said by the bot too
+            const reply = rememberRuleReply(agent.rule_store, text, (line) => agent.sayText?.(line));
             const marked = markKeepOut(agent, text, reply); // v0.1.4.10 (R2): a rule about a saved area marks it
             return marked ? `${reply} ${marked}` : reply;
         }
@@ -1450,6 +1482,10 @@ export const actionsList = [
             const work = collectWork(agent, type);
             if (work)
                 return await runPack(agent, 'collectBlocks', work.pack, work.name, (pack, bot, ctx) => work.run(pack, bot, ctx, num));
+            // v0.1.4.16 (F10, E1): the context of the cave rule of skills.collectBlock (the blocks in a cave last, the line `The
+            // <type> is in a cave; I go carefully.` said once through agent.sayText): the pack context with the mining pack for mineAt
+            if (agent.bot && typeof agent.bot === 'object')
+                agent.bot.caveContext = caveContext(agent);
             return await runForText(agent, 'collectBlocks', async () => {
                 await skills.collectBlock(agent.bot, type, num);
             }, 10); // 10 minute timeout
@@ -1775,6 +1811,22 @@ export const actionsList = [
             if (!settings.mining_pack)
                 return MINING_OFF;
             return await runPlain(agent, agent.work_packs?.mining, 'mining', (pack) => pack.forgetMine(agent.packContext(), name));
+        }
+    },
+    // v0.1.4.16 (F10, E1): an opening into a cave closed with stone from the bag, behind mining_pack
+    {
+        name: '!sealOpening',
+        description: 'Close an opening into a cave at a block position with stone from the bag, up to 9 blocks.',
+        params: {
+            'x': { type: 'int', description: 'The x of a block of the opening.', domain: [-30000000, 30000000] },
+            'y': { type: 'int', description: 'Its y.', domain: [-64, 320] },
+            'z': { type: 'int', description: 'Its z.', domain: [-30000000, 30000000] }
+        },
+        perform: async function (agent, x, y, z) {
+            if (!settings.mining_pack)
+                return MINING_OFF;
+            return await runPack(agent, 'sealOpening', agent.work_packs?.mining, 'mining', (pack, bot, ctx) => (typeof pack.sealOpening === 'function'
+                ? pack.sealOpening(bot, ctx, x, y, z) : { ok: false, reason: 'unknown', text: 'The mining pack cannot seal an opening yet.' }));
         }
     },
     // v0.1.4.9 (I10): the ways of the player (routes_pack) and the mine of the player (mine_routes). All but
@@ -2168,7 +2220,12 @@ export const actionsList = [
             'text': { type: 'string', description: 'The work in the player\'s words, "every N minutes" and "when fewer than N torches" included.' }
         },
         perform: async function (agent, name, text) {
-            return await routineReply(agent, (routines) => routines.remember(name, text));
+            return await routineReply(agent, (routines) => {
+                const out = routines.remember(name, text);
+                if (out?.reason === 'bad_text')
+                    agent.sayText?.(out.text); // v0.1.4.16 (F3): the cap of the text, with the count, is said by the bot too
+                return out;
+            });
         }
     },
     {

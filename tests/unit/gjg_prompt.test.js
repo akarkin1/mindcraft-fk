@@ -27,12 +27,14 @@ const NEW_COMMANDS = ['!mines', '!forgetMine'];
 // v0.1.4.15 (SPEC 4): the eight commands of the base survey (552 characters) and the routines (533) add 1,085 characters of
 // one-line docs; measured with every switch on: 18,596 with the block of the new things (17,511 at the end of v0.1.4.14). Both
 // limits rise by that growth rounded up to the next 100 (1,100): 17,200 to 18,300 and 17,600 to 18,700.
-const LIMIT_ALL_ON = 18300;
+// v0.1.4.16 (SPEC 5, E1): the one line of docs of !sealOpening adds 195 characters (getCommandDocs with and without it); both
+// limits rise by that growth only: 18,300 to 18,495 and 18,700 to 18,895.
+const LIMIT_ALL_ON = 18495;
 // v0.1.4.14 (part K, SPEC 4.7): the lead's decision, since the budget of v0.1.4.13 had 13 characters left: with every
 // switch on, new_things_in_prompt among them, a block of 600 and the three longest lines of the new things present, the
 // prompt may hold 17,400 characters; without the block of the new things the old 17,000 hold (17,600 and 17,200 since part 8;
-// 18,700 and 18,300 since v0.1.4.15).
-const LIMIT_NEW_THINGS = 18700;
+// 18,700 and 18,300 since v0.1.4.15; 18,895 and 18,495 since v0.1.4.16).
+const LIMIT_NEW_THINGS = 18895;
 const NEW_THINGS_HEADER = 'NEW SINCE 1.21.8 (true, even if you do not know it):';
 // a bot with the things of the three longest lines of the new things: a copper golem statue and a copper pickaxe in the
 // bag, a nautilus 3 blocks away; the block holds what fits in its 360 characters
@@ -96,6 +98,12 @@ describe('the command docs of !mines and !forgetMine', () => {
             '!forgetMine: Forget a mine.',
             'Params:',
             'name: (string) The name of the mine.',
+            // v0.1.4.16 (F10, E1): the one line of docs of !sealOpening follows the mine commands (195 characters)
+            '!sealOpening: Close an opening into a cave at a block position with stone from the bag, up to 9 blocks.',
+            'Params:',
+            'x: (number) The x of a block of the opening.',
+            'y: (number) Its y.',
+            'z: (number) Its z.',
         ].join('\n') + '\n');
     });
 });
