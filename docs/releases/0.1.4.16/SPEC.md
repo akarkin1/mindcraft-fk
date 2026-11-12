@@ -103,11 +103,11 @@ Rules:
   known mine (`ctx.mines?.mineAt(pos)` or the mining pack's `mineAt`, through optional chaining), and the bot
   itself stands in no saved area or known mine. A basement, a saved cave room (an area the owner saved) and a
   mine are never a cave.
-- `!collectBlocks(type, num)` (`collectBlock`/`collectBlocks` of `skills.js`): candidates in a cave are skipped;
-  when every candidate within range is in a cave, the command ends with `That is in a cave; I do not go there
-  alone.`; when some are, the others are collected and nothing is said about the skipped ones. The line is
-  returned to the model and said (`agent.sayText`), so the owner sees it. Log line: `Caves: skipped N <type> in a
-  cave at (x, y, z) ...` (the first three positions).
+- `!collectBlocks(type, num)` (`collectBlock`/`collectBlocks` of `skills.js`): the owner's word of 2026-11-12,
+  no refusal and no skipping for a cave. `inCave` orders the candidates: the blocks outside caves first (by
+  distance), the ones in a cave last (by distance); when the next block to take is the first one in a cave, the
+  bot says once per command `The <type> is in a cave; I go carefully.` (`agent.sayText` and the log line `Caves:
+  <type> at (x, y, z) is in a cave; going.`) and collects it as any block.
 - Every walk built by `makeMovements` (`home/motion.js`) honours the `no_enter` areas it is given: `areas` with
   `no_enter` get `exclusionAreasStep` with `KEEP_OUT_COST` (the function of `keep_out_logic.js`), so no walk of
   the home, farming, wood or mining pack crosses a cave mouth the survey saved. The raw `new pf.Movements` of
@@ -386,7 +386,7 @@ All on the base world unless said; the runner's substring rule names the entries
 | `routine_places` | `w130_routine_places.js` | A routine "go to the chest at (x, y, z), take 4 wheat, then harvest the wheat farm and store the wheat" with a wrong second place: the plan has the `!goToCoordinates` step, the failed step is skipped with the quiet line, the round is done, `runs` is 2 after `!doRoutine`; while a watch `run` works, no round starts |
 | `mine_says_why` | `w131_mine_says_why.js` | The W118 mine: a blocked way back (a wall placed by the test): the stop line names the reason and the position and the log has the `Mining stop:` line; `!mineOre("iron", 2, true)` with the mine known starts a new one at the bot; after `!forgetMine` the bot in the old tunnel: `This tunnel is a mine now` and the trip runs; a shaft over solid rock digs down (no `block the way down`); an unbreakable block (bedrock placed) gives `I could not dig the bedrock at ...` |
 | `night_orders` | `w132_night_orders.js` | `!stats` at 1000, 7000, 12500, 18000, 23500 says Morning, Afternoon, Evening, Night, Dawn; the bot alone for 3 minutes with the modes on starts no work command (the log has no `used` line of a work command); a supervisor `run` of `!collectBlocks("stone", 2)` is quiet in the chat and the model's `!stop` of it is refused |
-| `cave_in_the_way` | `w133_cave_in_the_way.js` | The only stone within 16 blocks lies in a cave under rock: `!collectBlocks("stone", 4)` answers `That is in a cave; I do not go there alone.` and the bot stays on the surface; stone on the surface too: the surface ones are collected; the mine of W118 with a cave one block beyond the tunnel's end: the beyond cells are patched; `!sealOpening` closes a 3 x 3 opening |
+| `cave_in_the_way` | `w133_cave_in_the_way.js` | Stone on the surface and stone in a cave within range: `!collectBlocks("stone", 4)` takes the surface ones first; the only stone within 16 blocks in a cave under rock: the bot says once `The stone is in a cave; I go carefully.` and collects it (the block is air, the bot alive); the mine of W118 with a cave one block beyond the tunnel's end: the beyond cells are patched; `!sealOpening` closes a 3 x 3 opening (`I sealed the opening at (x, y, z) with 9 cobblestone.`) |
 | W126 A1 | `w126_base.js` | The report line is read from the said lines (`saidLines`), the command's reply is `Done; I said it in the chat.` |
 
 Each scenario fails on 9a28d07 for the fix it proves (the report says which check fails there).
