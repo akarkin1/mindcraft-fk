@@ -6,7 +6,7 @@ This fork is based on [Mindcraft](https://github.com/mindcraft-bots/mindcraft) `
 
 Each release lists new settings and feature flags with their default value.
 
-## [0.1.4.15] - unreleased
+## [0.1.4.15] - 2026-11-12
 
 "The base survey and Routines": the bot finds every place of a base by itself and saves them all at once, and a
 paragraph in your words becomes a standing routine it works when it has nothing else to do. Both behind switches,
