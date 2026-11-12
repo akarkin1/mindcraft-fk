@@ -112,6 +112,9 @@ const settings = {
     "shared_memory": true, // with world_memory: the areas, places, routes, mines, chests and rules of a world live in bots/shared/worlds/<seed>/ and every bot reads and writes them; the chat memory and the job stay per bot
     "prompt_cache": true, // the prompt is sent in two parts: the fixed part first (the introduction, the command list), then what changes (memory, stats, inventory, knowledge, examples); on the Anthropic API the fixed part carries a cache mark
     "new_things_in_prompt": false, // v0.1.4.14: name the things of 1.21.9 to 26.1 that are in the bag, in view or in the last lines in the chat prompt
+    "base_survey": false, // v0.1.4.15: the base survey: !surveyBase finds every place of a base from the loaded blocks around the bot and saves them with the base's name; !renameArea, !goToBase. needs protected_areas and world_memory
+    "survey_radius": 128, // with base_survey: how far sideways from the bot the survey reaches at most, in blocks; it takes what the server has loaded within it
+    "routines": false, // v0.1.4.15: standing work in your words (!rememberRoutine, !routines, !forgetRoutine, !doRoutine): the bot does a round when it has no job, one at a time, planned once with the model; the watch tool routines. needs job_memory
     "allow_vision": false, // allows vision model to interpret screenshots as inputs
     "blocked_actions" : ["!checkBlueprint", "!checkBlueprintLevel", "!getBlueprint", "!getBlueprintLevel", "!restart"] , // commands to disable and remove from docs. Ex: ["!setMode"]
     "code_timeout_mins": -1, // minutes code is allowed to run. -1 for no timeout

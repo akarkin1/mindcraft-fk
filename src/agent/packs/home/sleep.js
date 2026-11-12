@@ -2,9 +2,9 @@
 import { Vec3 } from 'vec3';
 import { containsPos } from './box_math.js';
 import { botPos, clockOf, dimensionOf, listAreas, logTo, noteProgress, pauseMode } from './context.js';
-import { walkNear } from './motion.js';
+import { blockReader, walkNear } from './motion.js';
 import { goToShelter } from './shelter.js';
-import { isBuildingArea, isInsideArea } from './shelter_logic.js';
+import { isBuildingArea, isInsideArea, withEdge } from './shelter_logic.js';
 import { isBedName, minutesUntilNight, orderBeds, sleepErrorKind, sleepTimeState } from './sleep_logic.js';
 import { TEXTS, couldNotSleepText, dayText } from './texts.js';
 import { wakeUp } from './wake.js';
@@ -109,7 +109,9 @@ export async function sleepInBed(bot, ctx = {}, options = {}) {
                 taken++;
                 continue;
             }
-            const area = areas.find(a => containsPos(a, { x: bed.x + 0.5, y: bed.y, z: bed.z + 0.5 }));
+            // v0.1.4.15 (Q-1): the area with the kind of its edge (withEdge): a bot in the floor row by the wall of its house is
+            // inside, and never sent out through its own door to "get into the shelter"
+            const area = withEdge(areas.find(a => containsPos(a, { x: bed.x + 0.5, y: bed.y, z: bed.z + 0.5 })), blockReader(bot));
             if (area && !isInsideArea(area, botPos(bot))) {
                 const entered = await goToShelter(bot, ctx, { ...options, area });
                 if (!entered.ok) {

@@ -19,9 +19,9 @@ Rules that hold for every release:
 | 0.1.4.11 | Navigation and words | Released |
 | 0.1.4.12 | Understanding and watching | Released |
 | 0.1.4.13 | Supervision | Released: `CHANGELOG.md` |
-| 0.1.4.14 | Minecraft 26.1 | In work: `docs/releases/0.1.4.14/PLAN.md` |
-| 0.1.4.15 | The base survey and Routines | Decided by the owner on 2026-11-09 (option A): two rounds on one branch, the survey first, Routines with a budget of four days and a cut rule (over the budget, the release ships the survey alone); one gate, one play of both. The plan is written after the fix round of 0.1.4.14 |
-| 0.1.4.16 | Stability | The fixes and small items planned for 0.1.4.15 below (tunnels as beams, caves, routes and places, supplies by need, the rest), moved by the owner on 2026-11-09 |
+| 0.1.4.14 | Minecraft 26.1 | Released: `CHANGELOG.md`, merged 2026-11-09 (#24) |
+| 0.1.4.15 | The base survey and Routines | Released: `CHANGELOG.md`, merged 2026-11-12 (#26). The plan `docs/releases/0.1.4.15/PLAN.md`. Decided by the owner on 2026-11-09 (option A): two rounds on one branch, the survey first, Routines with a budget of four days and a cut rule (over the budget, the release ships the survey alone); one gate, one play of both |
+| 0.1.4.16 | Stability | In work from 2026-11-12 (`docs/releases/0.1.4.16/PLAN.md`): the fixes and small items planned for 0.1.4.15 below (tunnels as beams, caves, routes and places, supplies by need, the rest), moved by the owner on 2026-11-09; the findings of the play of 2026-11-11 on v0.1.4.15 (R-1 to R-13) and three packs behind switches (AFK creeper kill, enchanting, breeding), put here by the owner on 2026-11-11; not started until the owner says so |
 | Later | See the backlog | Not decided |
 
 ## 0.1.4.9 The mine, the routes of the player, and the model comparison
@@ -211,7 +211,72 @@ round of 0.1.4.14 joins it at the end.
 
 Setting `routines` (off) belongs to 0.1.4.15 now.
 
-## The base survey (brief of 2026-11-09, not started)
+### The play of 2026-11-10 on v0.1.4.14 (Q-1 to Q-9; the owner decides the release)
+
+Reported by the owner's gameplay session on 2026-11-10 (the world "Speed Run 1 [26.1]", the base at (-2300, 63, 816),
+the house doors on the south side at z 819); recorded here untouched until the owner says where they go.
+
+| Id | Finding | Where to look |
+|---|---|---|
+| Q-1 | `!goToBed` and the night shelter stop at the house's east wall (-2297, 63, 814) with "locked out" / "I cannot get into the shelter home" / "I stopped in the doorway"; the reflex retried every minute without end. The doors are at (-2301, 63, 819) and (-2300, 63, 819). `!goToCoordinates(-2300, 63, 821, 1)`, then `(-2300, 63, 815, 0)`, then `!goToBed` works every time: the shelter walk seems to aim at the nearest wall, not a door. | `shelter.js`, `shelter_logic.js` (the entrance choice, the route of the walk), the door service |
+| Q-2 | A phantom creeper, a death: `creeper_safety` stopped every walk near the trading hall at about (-2262, 63, 838), "A creeper keeps following me" with no creeper there (`!entities` showed none); underground at level 16 the reflex fled down into a cave to (-2245, -4, 864), where the bot died with 22 raw iron. 71 monsters tracked around the tower, 26 creepers, mostly below y 40: the reflex counts creepers through blocks and in caves below. It must react only to a creeper it can see, within reach and at its level, and never flee into a cave. | `creeper_logic.js`, `modes.js` (`creeper_safety`), the flee target |
+| Q-3 | The clock in the prompt: the model said "Night's coming", went to the shelter, ran `!stay` and "Night's still on" in full daylight (Time 932 and 2166 on the watch); `!goToBed` once said "It is day, the night starts in about 1 minute" at dusk. Does every time the prompt and the texts read come from the patched clock (`bot.time.timeOfDay`)? | `full_state.js`, `queries.js` (`!stats`), `sleep.js`, `night_logic.js`, the `time` listener of `agent.js` |
+| Q-4 | Every `run` of the supervisor echoes `*MartyByrde2 used setArea*` and the result into the game chat, and for `!newAction` the whole generated code; the skill says `run` is quiet. | `watch/queue.js` (`runQuiet`), `agent.js` (`routeResponse`, `show_command_syntax`) |
+| Q-5 | `bot.dig` fails with `enchantments.concat is not a function` while holding an enchanted diamond pickaxe the owner gave; the 26.1 item components (enchantments are no array) in the dig-time code or the pathfinder's dig cost. The bot also said "no way without digging" inside a leaf canopy where breaking leaves was the way out. | `patches/mineflayer+4.39.0.patch` (`digging.js`, `digTime`), prismarine-item's `enchants` on 26.1, the fallback rule of `way_logic.js` for leaves |
+| Q-6 | `!mineOre("iron", 32, true)` after a restart or a `!stop` starts at "0 of 32" with 22 raw iron in the bag; the model shortened the owner's 32 to `!mineOre("iron", 8, true)`. | `job/index.js` (`progress`, the bag's count at the start), the profile's examples |
+| Q-7 | `!mineOre`: "I have no stone for a new one" with 65 cobblestone in the bag; it stored 133 cobblestone and its crafting table in the mine chest and planned to smelt the owner's iron for an iron pickaxe; the stone pickaxe craft beside a placed table failed twice ("windowOpen did not fire") because the unstuck reflex moved the bot away; standing next to the table it worked. | `mining/` (the pickaxe rule, the supplies), `skills.js` `craftRecipe` (the unstuck pause during a craft), the chest storing rule |
+| Q-8 | The watch's `run` returns "Ran 0 of 1. Still running" after about 60 s while the command goes on; a supervisor script takes it as finished. | `watch/queue.js` (`QUEUE_RULES.answerMs`), the supervise skill |
+| Q-9 | Small: an iron axe lasted about 150 logs (does `!chopTrees` swing at leaves or use the axe on other blocks?); the mine chest filled with 33 kinds (saplings, dirt, the bed, the crafting table); the area sense asked about "a walled yard with a roof, 1 bee" that was tree leaves. | `wood.js` (the tool use on leaves), the storing rule, `area_scan.js` (a hive or a bee nest as a built block?) |
+
+Lessons for the supervise skill (the gameplay session's, no code): watch scripts resume from the last cursor, not
+the newest; owner lines without the supervisor's name are not message events.
+
+Q-1 is fixed in 0.1.4.15 (the doorway stall) and confirmed by the play of 2026-11-11 (`!goToBed` from the east
+wall at night walked in and slept, twice). Q-2, Q-4 and Q-5 came back on 2026-11-11 as R-1, R-12 and R-10 below,
+which the owner put into 0.1.4.16; the other Q rows wait for the owner's word with them.
+
+### The play of 2026-11-11 on v0.1.4.15 (R-1 to R-13; the owner: into 0.1.4.16, not before his word)
+
+Reported by the owner's gameplay session on 2026-11-11: the branch `release/v0.1.4.15-rc` at 33cae12, `base_survey`
+and `routines` on, the base at (-2300, 63, 816), the owner's 14 areas saved by `!setArea` before the survey; the
+owner's log `%LOCALAPPDATA%\Mindcraft\logs\claude-20261111-014535.log` on his machine. The owner says the fixes
+belong in 0.1.4.16 and the work does not start until he says so.
+
+Passed in the play: Q-1 (above); "here is the base, scan it" became `!surveyBase("base")`, which found the horse
+house, the farm tower and the cave room at the bottom of the shaft (y -20 to 0) and left the 14 saved areas alone;
+`!renameArea` and `!forgetArea`; `!rememberRoutine`, `!routines`, `!forgetRoutine`, `!doRoutine`, and "stop" ends a
+round ("I leave the routine"); `!farmCycle` on all three farms harvested, replanted and stored to the farm chest when
+started outside the house.
+
+| Id | Finding | Where to look |
+|---|---|---|
+| R-1 | `creeper_safety` reacts to creepers in caves 12 blocks below, through rock: `bot.entities` showed creepers at y 50 while the bot stood at y 62, 4 to 8 blocks away sideways. It loops "A creeper keeps following me", blocks every walk near the trading hall, and once led the bot down into a cave. The owner had it off for the session. Q-2 again: line of sight, or the vertical difference. | `creeper_logic.js`, `modes.js` (`creeper_safety`), the flee target |
+| R-2 | `bases.json`, the base "base": its centre (-2290, 60, 894) and door (-2311, 71, 918) come from a village 100 blocks south, so `!goToBase` walked into a village house; `!forgetArea` of 4 village places left them in the base's `places` (`!renameArea` did update it); it lists a `trading_hall_2` that is no saved area; the 14 areas saved before the survey are not part of the base. | `survey.js` (the base's centre and door: the house with the bot's bed or the nearest to the bot, not the farthest find; `forgetSurveyed` removes the place from the base; a name is listed only when saved), `survey_logic.js` (the extent of a base: the finds within reach of the bot's start, a village 100 blocks off is another base), `base_store.js` (the owner's own areas around the start join the base) |
+| R-3 | The report: the line names no places and no count ("I found the houses, trading halls, farm, pen and a few more places, all saved"), so the model's paraphrase reached the owner instead of `reportText`'s line. The survey saved village houses as kind `home`, which makes them shelters; the owner wants only his house as a shelter. | `survey.js` (the report said by the bot itself, the command's output a short confirmation), `survey_logic.js` (`home` only for the house with the bot's bed or nearest the start; other houses `building`), `area_kinds.js` (`isShelterArea`) |
+| R-4 | "rename pen to horse_house", said as the owner, got "No response from Claude". | the routing sentences of `base_survey` (`tests/routing/sentences.json`), the profile's example for `!renameArea`, the response path of `agent.js` when the model answers with a command and no words |
+| R-5 | Routine planning: the plan drops places given in the text ("go to the west forest chest at (-2383, 65, 832), chop there") and plans `!chopTrees(128, "spruce")`, which searches 48 blocks around where the bot stands; one failed step ("no spruce tree within 48 blocks") ends the whole round instead of skipping the step; the round number is always 1; `!harvest("sugar_cane")` finished in 0 s and cut nothing; a round starts by itself in the middle of the supervisor's work; a routine is capped at 400 characters and a rule at 200, with a one-line refusal that is easy to miss. | `routine_logic.js` (the plan rules: every coordinate and named place of the text becomes a `!goToCoordinates` or `!goToPlace` step before the work there; a failed step is skipped and said, the round goes on), `routines.js` (the round counter, "idle" while the supervisor's queue has work), `routine_store.js` (the caps and their text), the farming pack (`!harvest` of cane) |
+| R-6 | `!farmCycle` started inside the house said "could not reach 48 ripe plants" on an open, flat field; from outside it worked. | the farming pack (leave the building through its door before the walk to the farm, as the shelter code does) |
+| R-7 | `!mineOre("iron", 16, true)`: after one good run (8 raw iron in 2 min), 3 runs in a row ended "I stopped because I got stuck" with 0 iron, each after storing items in the mine chest and climbing to the surface, and the log gives no reason (maybe the race of G-2 of 0.1.4.15, maybe another); with a mine known, `new_mine` true still walks to the old mine; underground in a forgotten mine it says "A new mine starts from the surface", although Q1 of 0.1.4.13 says the spot becomes a mine; a new shaft at (-2337, 65, 860) stopped after 4 blocks with "lava, water or caves block the way down" where a read-only scan saw solid rock from y 10 to 62 within 6 blocks. | `mining.js` (the stuck reason into the text and the log; the `new_mine` flag; the underground start; the way-down check), `mine_logic.js` |
+| R-8 | `!goToBed` near the trading hall chose villager beds ("All beds nearby are taken"); once "I stopped at the door", then it got in on its own retry. | `sleep.js` (the bot's own bed and the home's bed first; a bed in a trading hall or a villager's house never) |
+| R-9 | The pen guard refused feeding pigs over the fence with `bot.activateEntity` from `!newAction` at (-2293, 64, 835), 3 blocks from the pig pen's gate: "That is a pen with 5 pigs; I do not open its gate"; it worked from (-2295, 64, 835) holding a carrot; cows, sheep and chickens worked over the fence. The owner wants breeding: feed from outside only, never through a gate, item pickup off near the pens, skip animals out of reach. No breeding command exists; a candidate pack. | the gate rule of the pen guard (`doors.js`, `area_kinds.js`: a feed over the fence is no gate opening), a `breeding` pack |
+| R-10 | Still there: `bot.dig` fails with `enchantments.concat is not a function` while holding an enchanted diamond pickaxe (Q-5). | `patches/mineflayer+4.39.0.patch` (`digTime`), prismarine-item's `enchants` on 26.1 |
+| R-11 | The bot's own model said it was night by day once, and started `!collectBlocks("stone", 10)` by itself on the surface. | `full_state.js` (the clock line, Q-3), the idle behaviour of the model |
+| R-12 | The supervisor's `run` commands still echo into the game chat, including the code of `!newAction` (Q-4). | `watch/queue.js` (`runQuiet`), `agent.js` (`routeResponse`) |
+| R-13 | Two deaths in caves under the old mine, both from supervisor orders (`!collectBlocks` underground), not from the bot. The owner decided that mining is too dangerous for the bot alone; his routine "maintain base" excludes it. | `collectBlocks` underground (the caves row of the 0.1.4.16 list), the supervise skill |
+
+### Three packs for 0.1.4.16 (the owner's brief of 2026-11-11, relayed by his gameplay session; not started)
+
+Beside the fixes of the play above. Each pack gets its own switch, off by default. The work does not start until
+the owner says so. The sizes are the gameplay session's words to the owner: about a day each, the AFK kill pack
+with a world test, enchanting with a test world that needs a table and XP by commands.
+
+| Pack | The owner's brief |
+|---|---|
+| AFK creeper kill (switch `afk_kill`) | The farm: the owner's creeper farm tower at about (-2276, 870); the tier floor at y 197, the roof at y 200; the drop shaft has water at y 190, so the creepers land on the hoppers at y 170 to 171 with little health left, and a slab between them and the killer keeps them from exploding (intended, never to be "fixed"); the kill room at about (-2275, 170, 870) with the hoppers and 2 chests at y 170, z 870 to 872. The job: climb the tower ladder to the kill room and stand at the kill spot under the slab; hit only the hostile mobs in reach that stand on the hoppers, one hit each (sword); collect the XP orbs and the drops; put the gunpowder and the other drops into the hopper chests; eat when hungry; stop at a set time or level, or when the owner says stop. Safety: `creeper_safety` must be off at the kill spot (the creepers are 1 block away) or the bot flees; never leave the kill room except by the ladder; stop when health falls below a threshold. A rule for the owner and the docs: while the bot farms, the owner is more than 128 blocks from the tower or offline, since both players' bubbles share the monster cap (on 2026-11-11 the farm gave almost nothing while the bot stood near the tower). The XP: level 30 needs 1,395 XP, a creeper gives 5, so about 280 creepers. |
+| Enchanting (switch `enchanting`) | Mineflayer's `bot.openEnchantmentTable(block)`: put in the item and the lapis, read the 3 offers, choose by the owner's preference (default the highest offer the levels allow), `enchant(choice)`; optionally the anvil (`bot.openAnvil`) to combine books. The lapis comes from the owner's chest (the valuables chest at (-2299, 63, 816) holds 55). The owner may not have a table with 15 bookshelves yet: the pack says what is missing ("no enchanting table within 32 blocks", "level 12, need 30") and never crafts or places a table without the owner's order. The 26.1 item components: `bot.dig` already fails with `enchantments.concat is not a function` on an enchanted pickaxe (R-10); reading enchantments must work with the 26.1 format. |
+| Breeding (switch `breeding`) | Feed the animals only from outside a pen, never through or at a gate: wheat for cows and sheep, carrots for pigs, seeds for chickens; skip the animals out of reach, wait 5 minutes per animal, cap the number per pen. Item pickup off near the pens and on again after; never place a block in a pen or by a gate. Pigs come to the fence when the bot holds a carrot for a few seconds. The pen guard refused a feed 3 blocks from a gate (R-9): feeding must be allowed, opening must not. The owner's pens are saved areas: the sheep, cow, chicken and pig pens on z 836 to 841, the gates on z 836, the feed row z 835. |
+
+## The base survey (brief of 2026-11-09; built in 0.1.4.15)
 
 From the owner's gameplay session of 2026-11-09, relayed to the lead with the owner's decisions; the plan and the
 spec are written under `docs/releases/<version>/` when the owner says so. The problem in the owner's words: each

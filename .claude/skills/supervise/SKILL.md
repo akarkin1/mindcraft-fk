@@ -24,6 +24,7 @@ a shell of the repository with `MC_WATCH_URL` and `MC_WATCH_TOKEN` set: `node sc
 | `look` | What is around the bot and open to view (ores, lava and water with an open side, never behind a wall), chests with free slots, furnaces, ladders, doors, drops, players. | `look 16` |
 | `server` | Uptime, players, time and weather, the bot's model calls and cost, the switches on, whether you count as connected. | `server` |
 | `state`, `inventory`, `chat`, `places`, `events` | The facts of v0.1.4.12: where, what it carries, the last chat lines, the saved areas, mines, routes and rules, the events. | `places` |
+| `routines` | The routines the owner saved (standing work in his words; only with `routines` on): name, text, every, condition, state, rounds, fails, last round and the planned steps, as JSON. Start one with `run ['!doRoutine("the farm")']`. | `routines` |
 | `say` | One line as the owner types it. Use it to answer a question the bot asked the owner, when his sentence settles it. | `say 'yes'` |
 
 You count as connected while you call `wait` or `digest` at least once a minute. Without that the bot answers a line
@@ -52,7 +53,7 @@ or profiles, never commit anything under `bots/`.
 
 1. `server`: the bot is up, the switches it has on, the players online.
 2. `digest` without a cursor: every line. Keep the cursor.
-3. `places`: the mines, the chests, the rules of the owner.
+3. `places`: the mines, the chests, the rules of the owner; `routines` (with the switch on): the standing work he saved, which you start with `run ['!doRoutine("the farm")']` when his sentence asks for it.
 4. One `run` that starts the work the sentence asks for, for example `run ['!mineOre("diamond", 36)']`.
 5. Then the loop.
 

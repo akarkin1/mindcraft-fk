@@ -132,16 +132,18 @@ describe('P-28: boardBoat and leaveBoat (skills.js)', () => {
 });
 
 describe('P-28: the commands of actions.js', () => {
-    test('the three commands are the last of the list, with their docs', () => {
-        assert.deepEqual(M.actions.actionsList.slice(-3).map((c) => c.name), ['!boardBoat', '!leaveBoat', '!leaveGame']);
+    test('the three commands exist in the list, with their docs', () => {
+        // v0.1.4.15: the commands of the survey and the routines come after them in the list, so they are no longer the last three
+        const names = ['!boardBoat', '!leaveBoat', '!leaveGame'];
+        for (const name of names) assert.ok(M.actions.actionsList.some((c) => c.name === name), name);
         // the docs as short as they can be: the prompt budget of v0.1.4.12 holds them barely
         const docs = M.index.getCommandDocs({ blocked_actions: [] });
         assert.match(docs, /^!boardBoat: Board the nearest boat\.$/m);
         assert.match(docs, /^!leaveBoat: Get out of the boat\.$/m);
         assert.match(docs, /^!leaveGame: Leave the game for good when the player asks\.$/m);
         assert.match(docs, /^reason: \(string\) Why\.$/m);
-        const added = docs.slice(docs.indexOf('!boardBoat:')).replace(/\*\n$/, '');
-        assert.ok(added.length <= 180, `${added.length} characters of docs for the three commands (173 when written)`);
+        const added = docs.length - M.index.getCommandDocs({ blocked_actions: names }).length;
+        assert.ok(added <= 180, `${added} characters of docs for the three commands (173 when written)`);
     });
 
     test('!boardBoat and !leaveBoat run the skills', async () => {

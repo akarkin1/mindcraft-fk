@@ -61,8 +61,10 @@ const BLOCK = 'WHAT YOU KNOW (from memory, no need to check):\nYou are in the ar
 // switch on, new_things_in_prompt among them, a block of 600 and the three longest lines of the new things present, the
 // prompt may hold 17,400 characters; without the block of the new things the old 17,000 hold. Fix round, part 8 (P-28): the
 // three commands !boardBoat, !leaveBoat and !leaveGame add 173 characters of docs; the lead raised both limits by 200
-// (17,000 to 17,200 and 17,400 to 17,600), as R1-7 did once in this release.
-const LIMIT_NEW_THINGS = 17600;
+// (17,000 to 17,200 and 17,400 to 17,600), as R1-7 did once in this release. v0.1.4.15 (SPEC 4): the eight commands of the
+// base survey (552 characters) and the routines (533) add 1,085 characters of one-line docs (18,596 measured with every switch
+// on, 17,511 before); both limits rise by that growth rounded up to the next 100 (1,100): 18,300 and 18,700.
+const LIMIT_NEW_THINGS = 18700;
 const NEW_THINGS_HEADER = 'NEW SINCE 1.21.8 (true, even if you do not know it):';
 // a bot with the things of the three longest lines of the new things: a copper golem statue and a copper pickaxe in the
 // bag, a nautilus 3 blocks away; the block holds what fits in its 360 characters
@@ -148,7 +150,8 @@ describe('item 7: the size of the conversing prompt', () => {
     const ALL_ON = { cost_meter: true, protected_areas: true, world_memory: true, player_rules: true, home_pack: true, storage_pack: true,
         farming_pack: true, wood_pack: true, mining_pack: true, skill_learning: true, allow_insecure_coding: true, knowledge_in_prompt: true,
         knowledge_max_chars: 600, protect_built_blocks: true, repeat_guard: 3, restart_context: true, say_results: true, flee_below_health: 8,
-        stuck_restart_after: 3, log_timestamps: true };
+        stuck_restart_after: 3, log_timestamps: true,
+        routes_pack: true, mine_routes: true, watch_and_learn: true, base_survey: true, routines: true }; // v0.1.4.15: every switch that hides commands
     const RULES = ['Never attack the cows.', 'Keep the farm gate closed.', 'Store the wheat in the chest at the farm.'];
 
     const SKILL_COMMANDS = ['!skills', '!forgetSkill', '!disableSkill', '!enableSkill', '!useSkill'];
@@ -164,16 +167,18 @@ describe('item 7: the size of the conversing prompt', () => {
         assert.ok(prompt.includes(`${block}\n${NEW_THINGS_BLOCK}`));
         for (const name of ['!pickUpItems', '!closeDoor', '!chests', '!mineOre', '!chopTrees', '!rememberArea']) assert.ok(prompt.includes(`\n${name}: `), name);
         assert.ok(prompt.length <= LIMIT_NEW_THINGS, `${prompt.length} characters`);
-        assert.ok(prompt.replace(`\n${NEW_THINGS_BLOCK}`, '').length <= 17200, 'without the block of the new things');
+        assert.ok(prompt.replace(`\n${NEW_THINGS_BLOCK}`, '').length <= 18300, 'without the block of the new things');
     });
 
     // T1-Q5, decided by the tech lead: the limit of 17,000 holds for the packs and the switches of v0.1.4.8
     // (the test above). With the switches of skill learning on too (5 more commands, 548 characters of docs) and
     // three rules of the player saved, the prompt is about 17,470 characters; for that case the limit is 18,000.
-    test('every switch on, the skill commands and three saved rules included: 18,000 characters or less', async (t) => {
+    // v0.1.4.15 (SPEC 4): the eight commands of the survey and the routines add 1,085 characters (18,906 measured here); the
+    // limit rises by the same 1,100 as the others, to 19,100.
+    test('every switch on, the skill commands and three saved rules included: 19,100 characters or less', async (t) => {
         const prompt = await promptOf(CLAUDE.conversing, { settings: ALL_ON, blocked: SPEC.blocked_actions.default, knowledge: fullBlock(), rules: RULES });
         t.diagnostic(`every switch on, skill commands shown, 3 rules: ${prompt.length} characters`);
-        assert.ok(prompt.length <= 18000, `${prompt.length} characters`);
+        assert.ok(prompt.length <= 19100, `${prompt.length} characters`);
     });
 
     test('every switch off: the size, for the report', async (t) => {

@@ -76,21 +76,24 @@ describe('SPEC 4.7 the budget', () => {
     });
 
     // v0.1.4.14 fix round, part 8 (P-28): the three commands !boardBoat, !leaveBoat and !leaveGame add 173 characters of docs;
-    // the lead raised both limits by 200 (17,000 to 17,200 and 17,400 to 17,600), as R1-7 did once in this release
-    test('each allows 17,600 with the block of the new things and holds 17,200 without it (part 8)', () => {
+    // the lead raised both limits by 200 (17,000 to 17,200 and 17,400 to 17,600), as R1-7 did once in this release.
+    // v0.1.4.15 (SPEC 4): the eight commands of the base survey (552 characters) and the routines (533) add 1,085 characters of
+    // one-line docs (18,596 measured with every switch on, 17,511 before); both limits rise by that growth rounded up to the next
+    // 100 (1,100): 18,300 and 18,700.
+    test('each allows 18,700 with the block of the new things and holds 18,300 without it (v0.1.4.15)', () => {
         for (const f of files) {
             const src = fs.readFileSync(repoPath(`tests/unit/${f}`), 'utf8');
-            assert.match(src, /const LIMIT_NEW_THINGS = 17600;/, f);
+            assert.match(src, /const LIMIT_NEW_THINGS = 18700;/, f);
             const allOn = src.match(/const LIMIT_ALL_ON = (\d+);/);
-            if (allOn) assert.equal(allOn[1], '17200', f);
-            assert.match(src, /\.length <= (LIMIT_ALL_ON|17200), 'without the block of the new things'\)/, `${f}: the limit without the block`);
-            assert.doesNotMatch(src, /LIMIT_ALL_ON = (?!17200;)\d+/, f);
+            if (allOn) assert.equal(allOn[1], '18300', f);
+            assert.match(src, /\.length <= (LIMIT_ALL_ON|18300), 'without the block of the new things'\)/, `${f}: the limit without the block`);
+            assert.doesNotMatch(src, /LIMIT_ALL_ON = (?!18300;)\d+/, f);
         }
     });
 
-    test('stg_prompt: LIMIT_ALL_ON 17200 and LIMIT_NEW_THINGS 17600', () => {
+    test('stg_prompt: LIMIT_ALL_ON 18300 and LIMIT_NEW_THINGS 18700', () => {
         const src = fs.readFileSync(repoPath('tests/unit/stg_prompt.test.js'), 'utf8');
-        assert.match(src, /^const LIMIT_ALL_ON = 17200;$/m);
-        assert.match(src, /^const LIMIT_NEW_THINGS = 17600;$/m);
+        assert.match(src, /^const LIMIT_ALL_ON = 18300;$/m);
+        assert.match(src, /^const LIMIT_NEW_THINGS = 18700;$/m);
     });
 });

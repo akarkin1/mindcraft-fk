@@ -177,5 +177,20 @@
 
     { "say": "watch me", "expect": ["!watchMe"], "part": "watch_and_learn" },
     { "say": "continue like this, 7 by 10", "expect": ["!continueLike"], "part": "watch_and_learn" },
-    { "say": "yes, build it", "expect": ["!buildWatched"], "part": "watch_and_learn" }
+    { "say": "yes, build it", "expect": ["!buildWatched"], "part": "watch_and_learn" },
+
+    { "say": "keep the farm going when you have nothing to do", "expect": ["!rememberRoutine"], "part": "routines" },
+    { "say": "from now on, every 15 minutes, harvest the wheat and put it in the chest by the door", "expect": ["!rememberRoutine"], "part": "routines" },
+    { "say": "make torches when fewer than 32 torches, as a routine", "expect": ["!rememberRoutine"], "part": "routines" },
+    { "say": "what routines do you have?", "expect": ["!routines"], "part": "routines" },
+    { "say": "do the farm routine", "expect": ["!doRoutine"], "part": "routines" },
+    { "say": "forget the farm routine", "expect": ["!forgetRoutine"], "part": "routines" },
+
+    { "say": "here is the base, scan it", "expect": ["!surveyBase"], "part": "base_survey" },
+    { "say": "this is the east base, look around", "expect": ["!surveyBase"], "part": "base_survey" },
+    { "say": "look around and remember every place of our base", "expect": ["!surveyBase"], "part": "base_survey" },
+    { "say": "that is the wheat farm, not carrots", "expect": ["!renameArea"], "part": "base_survey" },
+    { "say": "rename the cow pen to the barn", "expect": ["!renameArea"], "part": "base_survey" },
+    { "say": "go to the east base", "expect": ["!goToBase"], "part": "base_survey" },
+    { "say": "walk back to the base", "expect": ["!goToBase", "!goToRememberedPlace"], "part": "base_survey" }
 ]

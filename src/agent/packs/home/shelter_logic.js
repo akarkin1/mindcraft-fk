@@ -1,9 +1,30 @@
 // The choices of the shelter part (spec v0.1.4.6 H3, v0.1.4.8 C4), pure: which shelter, which
 // entrance, where to stand inside, and which block closes the hole of an emergency shelter.
 import { hasWalls, isShelterArea } from './area_kinds.js';
-import { boxCenter, containsPos, distanceToBox, interiorBox, isBox } from './box_math.js';
+import { BOX_EDGES, boxCenter, containsPos, distanceToBox, edgeOf, interiorBox, isBox } from './box_math.js';
 
 export { isShelterArea };
+
+/**
+ * The area with the kind of its edge (v0.1.4.15, Q-1 and W126 D): an area that carries `edge` (`wall` or `margin`, saved
+ * by the survey, the floor scan and scanBuilding) is given back as it is; one without it gets the kind read from the
+ * world (edgeOf of box_math.js) when a reader is at hand and the ring is loaded; else the area as it is (its interior
+ * then shrinks by 2, as before). isInsideArea, chooseSides and the standing place read the interior by it. Never throws.
+ * @param {object} area
+ * @param {Function|null} [read] a block reader (blockReader of motion.js, or a getBlockName)
+ * @returns {object} the area, or a copy with `edge`
+ */
+export function withEdge(area, read = null) {
+    if (!isBox(area) || BOX_EDGES.includes(area.edge) || typeof read !== 'function') {
+        return area;
+    }
+    try {
+        const edge = edgeOf(read, area);
+        return edge ? { ...area, edge } : area;
+    } catch {
+        return area;
+    }
+}
 
 /** The nearest area of type home within this distance is the shelter (v0.1.4.8, C4). */
 export const SHELTER_RANGE = 96;

@@ -791,11 +791,50 @@ function droppedItems(bot, center, radius) {
     }
 }
 
+// The item of a dropped-item entity: getDroppedItem of prismarine-entity, or the `item` of a fake; null when unknown.
+function droppedName(entity) {
+    try {
+        if (typeof entity?.getDroppedItem === 'function') {
+            return entity.getDroppedItem()?.name ?? null;
+        }
+        const item = entity?.item;
+        return typeof item === 'string' ? item : item?.name ?? null;
+    } catch {
+        return null;
+    }
+}
+
+/**
+ * True when the bag can take a dropped item: a free slot, or a stack of its kind with room (v0.1.4.15, G-1: the
+ * raw_iron on the ore block that the full bag of W118 could not take). A drop of unknown kind fits only a free slot.
+ * @param {object} bot
+ * @param {object} entity the item entity
+ * @returns {boolean}
+ */
+export function roomForDrop(bot, entity) {
+    if (!bot) {
+        return false;
+    }
+    if (freeSlots(bot) > 0) {
+        return true;
+    }
+    const name = droppedName(entity);
+    if (name === null) {
+        return false;
+    }
+    try {
+        return bot.inventory.items().some(i => i.name === name && i.count < (i.stackSize ?? 64));
+    } catch {
+        return false;
+    }
+}
+
 /**
  * Picks up items that lie within `radius` of a point by walking to them without digging or
  * placing. With `options.dig` an item that cannot be reached so (in a hole of a vein) is fetched
  * with movements that may dig a block or two, outside the protected areas (`options.areas`), and
- * never next to a liquid (the pathfinder does not dig there).
+ * never next to a liquid (the pathfinder does not dig there); never for a drop the bag cannot
+ * take (roomForDrop): it stays and is picked up when room is back.
  * @param {object} bot
  * @param {{x,y,z}} center
  * @param {{radius?: number, clock?: object, timeoutMs?: number, dig?: boolean, areas?: object[]}} [options]
@@ -824,7 +863,8 @@ export async function collectDrops(bot, center, options = {}) {
         if (!droppedItems(bot, center, radius).includes(target)) {
             continue;
         }
-        if (options.dig === true) {
+        // v0.1.4.15 (G-1, W118): no way is dug to a drop the bag cannot take; it stays and is picked up when room is back
+        if (options.dig === true && roomForDrop(bot, target)) {
             try {
                 const movements = makeMovements(bot, { dig: true, doors: false, areas: options.areas ?? [] });
                 movements.allowParkour = false;

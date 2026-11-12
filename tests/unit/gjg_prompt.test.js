@@ -24,11 +24,15 @@ const SENTENCES = JSON.parse(fs.readFileSync(repoPath('tests/routing/sentences.j
 const NEW_COMMANDS = ['!mines', '!forgetMine'];
 // v0.1.4.14 fix round, part 8 (P-28): the three commands !boardBoat, !leaveBoat and !leaveGame add 173 characters of docs;
 // the lead raised both limits by 200 (17,000 to 17,200 and 17,400 to 17,600), as R1-7 did once in this release.
-const LIMIT_ALL_ON = 17200;
+// v0.1.4.15 (SPEC 4): the eight commands of the base survey (552 characters) and the routines (533) add 1,085 characters of
+// one-line docs; measured with every switch on: 18,596 with the block of the new things (17,511 at the end of v0.1.4.14). Both
+// limits rise by that growth rounded up to the next 100 (1,100): 17,200 to 18,300 and 17,600 to 18,700.
+const LIMIT_ALL_ON = 18300;
 // v0.1.4.14 (part K, SPEC 4.7): the lead's decision, since the budget of v0.1.4.13 had 13 characters left: with every
 // switch on, new_things_in_prompt among them, a block of 600 and the three longest lines of the new things present, the
-// prompt may hold 17,400 characters; without the block of the new things the old 17,000 hold (17,600 and 17,200 since part 8).
-const LIMIT_NEW_THINGS = 17600;
+// prompt may hold 17,400 characters; without the block of the new things the old 17,000 hold (17,600 and 17,200 since part 8;
+// 18,700 and 18,300 since v0.1.4.15).
+const LIMIT_NEW_THINGS = 18700;
 const NEW_THINGS_HEADER = 'NEW SINCE 1.21.8 (true, even if you do not know it):';
 // a bot with the things of the three longest lines of the new things: a copper golem statue and a copper pickaxe in the
 // bag, a nautilus 3 blocks away; the block holds what fits in its 360 characters
@@ -121,7 +125,8 @@ describe('the size of the conversing prompt (section 9, item 4)', () => {
         for (let i = 0; lines.join('\n').length < max; i++) lines.push(`Chest (${i}, 67, ${i}): leaf_litter 104, cobblestone 81, raw_copper 52, wheat_seeds 52.`);
         return lines.join('\n').slice(0, max);
     };
-    const PARTS = ['cost_meter', 'protected_areas', 'player_rules', 'home_pack', 'storage_pack', 'farming_pack', 'wood_pack', 'mining_pack', 'routes_pack', 'mine_routes', 'watch_and_learn']; // v0.1.4.12: the watching pack
+    const PARTS = ['cost_meter', 'protected_areas', 'player_rules', 'home_pack', 'storage_pack', 'farming_pack', 'wood_pack', 'mining_pack', 'routes_pack', 'mine_routes', 'watch_and_learn',
+        'base_survey', 'routines']; // v0.1.4.12: the watching pack; v0.1.4.15: the base survey and the routines
     const SWITCHES_ON = { knowledge_in_prompt: true, knowledge_max_chars: 600, protect_built_blocks: true, repeat_guard: 3, restart_context: true,
         say_results: true, flee_below_health: 8, stuck_restart_after: 3, log_timestamps: true, trail_max_steps: 500, ore_sense_range: 3, skills_over_code: true,
         // v0.1.4.10

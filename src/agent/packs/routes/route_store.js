@@ -9,8 +9,8 @@ import { ROUTE_RULES, cleanLeg, normalizeRouteName } from './route_logic.js';
 
 /** The name of the file in the world folder. */
 export const ROUTE_FILE = 'routes.json';
-/** Where a route comes from. */
-export const ROUTE_SOURCES = Object.freeze(['trail', 'mine']);
+/** Where a route comes from: the trail, the mining pack, or (v0.1.4.15, S 2.3.4) the base survey. */
+export const ROUTE_SOURCES = Object.freeze(['trail', 'mine', 'survey']);
 /** The kinds of the start of a route. */
 export const START_KINDS = Object.freeze(['place', 'area', 'mine']);
 

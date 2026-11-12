@@ -8,10 +8,10 @@ import { botPos, clockOf, dimensionOf, listAreas, logTo, recallHome } from './co
 import { creeperCheck, creeperMemory, readCreepers, runCreeperProcedure } from './creeper.js';
 import { doorCenter, sideOf } from './door_logic.js';
 import { closeDoor, doorState, findOpenables, passThrough } from './doors.js';
-import { goals, gotoGoal, isNear, makeMovements, walkNear } from './motion.js';
+import { blockReader, goals, gotoGoal, isNear, makeMovements, walkNear } from './motion.js';
 import { isNight } from './night_logic.js';
 import { chooseCoverBlock, chooseShelter, chooseStandingPlace, isBuildingArea, isFallingBlockName, isInsideArea, isRouteWithinArea, orderEntrances,
-    roomCenter, shelterHere } from './shelter_logic.js';
+    roomCenter, shelterHere, withEdge } from './shelter_logic.js';
 import { isBedName } from './sleep_logic.js';
 import { isNoStandBlock } from './stand_logic.js';
 import { TEXTS, creeperAtShelterText, dugInText, inShelterText, shelterText } from './texts.js';
@@ -58,7 +58,8 @@ function coords(p) {
  */
 export function isInShelter(bot, ctx) {
     try {
-        return shelterHere(listAreas(ctx, dimensionOf(bot)), botPos(bot)) !== null;
+        const read = blockReader(bot); // v0.1.4.15 (Q-1): the interior of each area by the kind of its edge
+        return shelterHere(listAreas(ctx, dimensionOf(bot)).map(a => withEdge(a, read)), botPos(bot)) !== null;
     } catch {
         return false;
     }
@@ -116,7 +117,8 @@ export function standingTest(bot) {
 export function bedInShelter(bot, ctx) {
     try {
         const pos = botPos(bot);
-        const area = listAreas(ctx, dimensionOf(bot)).find(a => isBuildingArea(a) && isInsideArea(a, pos));
+        const read = blockReader(bot); // v0.1.4.15 (Q-1): the interior by the kind of the edge of each box
+        const area = listAreas(ctx, dimensionOf(bot)).map(a => withEdge(a, read)).find(a => isBuildingArea(a) && isInsideArea(a, pos));
         if (!area) {
             return null;
         }
@@ -183,7 +185,8 @@ function insideText(name, doors) {
     return { ok: true, where: name, reason: null, text: shelterText(name) };
 }
 
-async function walkToRoom(bot, area, ctx, options, clock) {
+async function walkToRoom(bot, rawArea, ctx, options, clock) {
+    const area = withEdge(rawArea, blockReader(bot)); // v0.1.4.15 (Q-1): the interior by the kind of the edge of the box
     const name = area.name ?? 'shelter';
     const center = roomCenter(area);
     const spot = chooseStandingPlace({ area, entrance: null, isFree: standingTest(bot) }) ?? floorPos(center);
@@ -225,8 +228,11 @@ function routeWithinArea(ctx, area) {
  * @param {object} [options] as passThrough, plus attempts (3)
  * @returns {Promise<{ok: boolean, where: string, reason: string|null, text: string}>}
  */
-export async function enterBuilding(bot, area, ctx = {}, options = {}) {
+export async function enterBuilding(bot, rawArea, ctx = {}, options = {}) {
     const clock = clockOf(ctx, options);
+    // v0.1.4.15 (Q-1, W126 D): the area with the kind of its edge, so a bot in the floor row by the wall is inside already
+    // and passThrough knows the inner side of a door in that wall
+    const area = withEdge(rawArea, blockReader(bot));
     const name = area?.name ?? 'shelter';
     if (isInsideArea(area, botPos(bot))) {
         return { ok: true, where: name, reason: 'already_inside', text: TEXTS.inShelterAlready };
@@ -425,7 +431,9 @@ export async function throughHatch(bot, area, hatch, ctx, options, clock) {
 export async function goToShelter(bot, ctx = {}, options = {}) {
     try {
         const clock = clockOf(ctx, options);
-        const choice = options.area ? { kind: 'area', area: options.area, why: 'given' } : findShelter(bot, ctx);
+        const chosen = options.area ? { kind: 'area', area: options.area, why: 'given' } : findShelter(bot, ctx);
+        // v0.1.4.15 (Q-1): the shelter area with the kind of its edge, so "already inside" holds in the floor row by the wall
+        const choice = chosen.kind === 'area' ? { ...chosen, area: withEdge(chosen.area, blockReader(bot)) } : chosen;
         if (choice.kind === 'area' && isInsideArea(choice.area, botPos(bot))) {
             return { ok: true, where: choice.area.name ?? 'shelter', reason: 'already_inside', text: TEXTS.inShelterAlready };
         }

@@ -50,6 +50,9 @@ describe('tests/routing/commands.js', () => {
             'routes_pack', 'trail_max_steps', 'mine_routes', 'ore_sense_range', 'skills_over_code',
             // v0.1.4.12
             'watch_and_learn',
+            // v0.1.4.15 (part R, then part S: the order of SPEC_SETTINGS)
+            'routines',
+            'base_survey', 'survey_radius',
         ]);
     });
 
@@ -88,7 +91,8 @@ describe('tests/routing/commands.js', () => {
     });
 
     test('hiddenPartCommands: the commands of every part that is off', () => {
-        const packs = { storage_pack: true, farming_pack: true, wood_pack: true, mining_pack: true, routes_pack: true, mine_routes: true, watch_and_learn: true }; // v0.1.4.7, v0.1.4.9, v0.1.4.12
+        const packs = { storage_pack: true, farming_pack: true, wood_pack: true, mining_pack: true, routes_pack: true, mine_routes: true, watch_and_learn: true,
+            base_survey: true, routines: true }; // v0.1.4.7, v0.1.4.9, v0.1.4.12, v0.1.4.15 (parts S and R)
         assert.deepEqual(T.hiddenPartCommands({ player_rules: true, protected_areas: true, world_memory: true, home_pack: true, cost_meter: true, ...packs }), []);
         assert.deepEqual(T.hiddenPartCommands({ player_rules: true, cost_meter: true, ...packs }).sort(),
             [...T.PART_COMMANDS.protected_areas, ...T.PART_COMMANDS.home_pack].sort());
@@ -242,7 +246,8 @@ describe('scripts/routing_check.js: settings and sentences', () => {
 
     test('blockedFor: skill commands stay with their flags, no duplicates', () => {
         const blocked = S.blockedFor({ blocked_actions: ['!useSkill'], world_memory: true, player_rules: true, protected_areas: true, home_pack: true, cost_meter: true,
-            storage_pack: true, farming_pack: true, wood_pack: true, mining_pack: true, routes_pack: true, mine_routes: true, watch_and_learn: true }, { capture: true, reuse: false, command: true });
+            storage_pack: true, farming_pack: true, wood_pack: true, mining_pack: true, routes_pack: true, mine_routes: true, watch_and_learn: true,
+            base_survey: true, routines: true }, { capture: true, reuse: false, command: true }); // v0.1.4.15: base_survey (part S), routines (part R)
         assert.deepEqual(blocked, ['!useSkill']);
     });
 

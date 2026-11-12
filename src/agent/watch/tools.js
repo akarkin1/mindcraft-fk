@@ -27,6 +27,7 @@ import { createQueue, runRefusal } from './queue.js';
 import { runQuiet } from '../chat_gate.js'; // v0.1.4.13 fix1
 import { lookAround, lookRadius } from './look_logic.js';
 import { registerSupervisorTools } from './supervisor.js'; // v0.1.4.13 (part N2): reply and note
+import { registerRoutinesTool } from '../routines/routines.js'; // v0.1.4.15 (part R): the tool routines
 
 export { chatLine };
 
@@ -726,3 +727,6 @@ export async function runTool(agent, watch, name, args = {}, request = {}) {
 // v0.1.4.13 (part N2): the tools of the supervisor in the chat (spec 4.5), reply and note, registered when the
 // server is loaded (after the settings of the agent are set) and only with supervisor_name set
 registerSupervisorTools(registerTool, settingsOfAgent);
+// v0.1.4.15 (part R, SPEC 3.5): the tool routines (the routines the owner saved, as JSON), registered the same way and
+// only with the switch routines; never in the pinned table TOOL_NAMES
+registerRoutinesTool(registerTool, settingsOfAgent);

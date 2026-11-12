@@ -71,7 +71,8 @@ describe('constants', () => {
         assert.deepEqual({ ...S.MAX_AREA_SIZE }, { x: 64, y: 48, z: 64 });
         // v0.1.4.8, I4 and D6: five types, and the source "auto" of autoHome
         assert.deepEqual([...S.AREA_TYPES], ['home', 'building', 'farm', 'pen', 'mine']);
-        assert.deepEqual([...S.AREA_SOURCES], ['scan', 'manual', 'radius', 'auto']);
+        // v0.1.4.15 (S 2.4): and the source "survey" of the base survey
+        assert.deepEqual([...S.AREA_SOURCES], ['scan', 'manual', 'radius', 'auto', 'survey']);
     });
 });
 
