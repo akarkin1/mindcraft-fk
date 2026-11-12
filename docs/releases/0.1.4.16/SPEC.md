@@ -154,8 +154,9 @@ Rules:
   two finds are connected when the x/z distance between their boxes (edge to edge, 0 inside) or points is at
   most `gap`. `survey.js` takes the cluster that contains the bot's start (the find whose box holds `botAt`, else
   the cluster of the nearest find) and saves only it. Every other cluster is reported, not saved: for each,
-  `an N places about D blocks <dir> (another base or a village): not saved; survey it from there for its own name`
-  where N is its count, D the distance from the start to its nearest find rounded to 10, `<dir>` one of north,
+  `N places about D blocks <dir> (another base or a village): not saved; survey it from there for its own name`
+  where N is its count (the whole line reads `I left out 2 places about 100 blocks south (another base or a
+  village): not saved; survey it from there for its own name.`), D the distance from the start to its nearest find rounded to 10, `<dir>` one of north,
   south, east, west, north-east, north-west, south-east, south-west. The sentence joins the report after `All
   saved.` as `I left out ...` (one per cluster, joined with `; `). Setting `survey_cluster_gap` (section 1).
 - Centre and door (`baseOf`): the centre is the average of the saved boxes' centres (as today, cluster only);
