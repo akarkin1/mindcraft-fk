@@ -8,11 +8,13 @@
 // mineflayer runs no physics) sends one update_time at login and no later packet. The real agent (Agent.start, the fake
 // models) with the watch server on a free port (watch_port 0) and a random token.
 //   1. Right after the spawn: bot.time.timeOfDay is 12700 (within 40 ticks: the physics may have ticked), doDaylightCycle
-//      is true (rate 1), the watch `state` says `Time 127xx (dusk)`.
+//      is true (rate 1), the watch `state` says `Time 127xx (Evening)` (v0.1.4.16, F8: the labels of the one clock, dayPhase
+//      of clock_logic.js; before: dusk).
 //   2. 30 s later, no packet in between: the typed `!stats` says `Time: Night`; bot.time.timeOfDay is within 100 ticks of
 //      12700 + 20 x the seconds since the packet (about 13300) and 13000 or more (the night of the game: beds open at
 //      12541, monsters come at 13000); the `time` event fired 20 to 60 times (8.1.2: between packets at most once per 20
-//      ticks, only when the fields changed); the watch `state` says `(night)` with `Time N` within 100 of the expected.
+//      ticks, only when the fields changed); the watch `state` says `(Night)` with `Time N` within 100 of the expected (F8;
+//      before: night).
 //   3. The night event of the watch: from 12700 at rate 1 the time passes 23000 (night_awake) only after 515 s, beyond
 //      the budget of a scenario, so the server sends one more update_time with 22900 (a time change, as `time set` makes a
 //      server send one): within 20 s the watch `events` lists `night_awake: The night passed without sleep.` (the clock
@@ -93,7 +95,7 @@ await scenarioMain({
             check(agent.watch?.ok === true && Number.isInteger(port) && port > 0, '1: precondition: the watch server runs on a free port (watch_port 0)', String(port));
             const st1 = await stateOf();
             note(`1: the watch state ${JSON.stringify(st1.text.split('\n')[0] ?? st1.text)}`);
-            check(st1.ok && st1.time !== null && Math.abs(st1.time - LOGIN_TICKS) <= 60 && st1.phase === 'dusk', `1: the watch \`state\` says \`Time ${LOGIN_TICKS} (dusk)\` (within 60 ticks)`, `${st1.time} (${st1.phase})`);
+            check(st1.ok && st1.time !== null && Math.abs(st1.time - LOGIN_TICKS) <= 60 && st1.phase === 'Evening', `1: the watch \`state\` says \`Time ${LOGIN_TICKS} (Evening)\` (within 60 ticks)`, `${st1.time} (${st1.phase})`);
 
             // ---------------------------------------------------------- 2. 30 s later, no packet in between
             while (Date.now() - tPacket < WATCH_MS) {
@@ -111,7 +113,7 @@ await scenarioMain({
             check(Number.isFinite(t2) && Math.abs(t2 - want2) <= TOLERANCE, `2: bot.time.timeOfDay is within ${TOLERANCE} ticks of ${LOGIN_TICKS} + 20 x the seconds since the packet (the clock ran at rate 1 between packets)`, `${t2}, expected ${want2}`);
             check(Number.isFinite(t2) && t2 >= 13000, '2: the bot\'s clock reached 13000 (the night of the game, past the dusk of 12700)', String(t2));
             check(n2 >= EVENTS_MIN && n2 <= EVENTS_MAX, `2: the \`time\` event fired ${EVENTS_MIN} to ${EVENTS_MAX} times in 30 s without a packet (8.1.2: at most once per 20 ticks, only when the fields changed)`, `${n2} events`);
-            check(st2.ok && st2.time !== null && Math.abs(st2.time - want2) <= TOLERANCE + 20 && st2.phase === 'night', `2: the watch \`state\` says \`(night)\` with \`Time N\` within ${TOLERANCE} of the expected`, `${st2.time} (${st2.phase}), expected ${want2}`);
+            check(st2.ok && st2.time !== null && Math.abs(st2.time - want2) <= TOLERANCE + 20 && st2.phase === 'Night', `2: the watch \`state\` says \`(Night)\` with \`Time N\` within ${TOLERANCE} of the expected`, `${st2.time} (${st2.phase}), expected ${want2}`);
 
             // ---------------------------------------------------------- 3. the night event of the watch
             const before3 = await rpc(port, TOKEN, 'events');

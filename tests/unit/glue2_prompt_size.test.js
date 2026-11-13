@@ -191,8 +191,9 @@ describe('the size of the conversing prompt (spec v0.1.4.7, section 7)', () => {
         // v0.1.4.14 (part K): new_things_in_prompt on with the three longest lines present: 17,400; without its block 17,000;
         // part 8 (P-28): 17,600 and 17,200 for the three commands' docs
         // v0.1.4.15 (SPEC 4): the switches of the release too, base_survey and routines, with the packs they hide commands behind
+        // v0.1.4.16 (SPEC 8.0): the three packs of round two, breeding, enchanting and afk_kill
         const prompt = await conversingPrompt({ ...switchesOf(true, true), ...SWITCHES_0148, routes_pack: true, mine_routes: true, watch_and_learn: true,
-            base_survey: true, routines: true, new_things_in_prompt: true }, knowledge);
+            base_survey: true, routines: true, breeding: true, enchanting: true, afk_kill: true, new_things_in_prompt: true }, knowledge);
         t.diagnostic(`every switch on (v0.1.4.15): ${prompt.length} characters`);
         assert.ok(prompt.includes(`${knowledge}\n${NEW_THINGS_BLOCK}\nConversation Begin:`), 'the blocks are in the prompt');
         for (const name of ['!pickUpItems', '!closeDoor', ...NEW_COMMANDS]) assert.ok(prompt.includes(`\n${name}: `), name);

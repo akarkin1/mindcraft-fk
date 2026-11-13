@@ -54,7 +54,8 @@ const PLAYER = 'steve';
 // v0.1.4.9: routes_pack and mine_routes are parts too (they hide commands); trail_max_steps, ore_sense_range and
 // skills_over_code are switches without commands
 const PARTS = ['cost_meter', 'protected_areas', 'player_rules', 'home_pack', 'storage_pack', 'farming_pack', 'wood_pack', 'mining_pack',
-    'routes_pack', 'mine_routes', 'watch_and_learn', 'base_survey', 'routines']; // v0.1.4.15: the two switches of the release hide commands too
+    'routes_pack', 'mine_routes', 'watch_and_learn', 'base_survey', 'routines',
+    'breeding', 'enchanting', 'afk_kill']; // v0.1.4.15: the two switches of the release hide commands too; v0.1.4.16 (8.0): the three packs
 const NEW_SWITCHES = { knowledge_in_prompt: true, knowledge_max_chars: 600, protect_built_blocks: true, repeat_guard: 3, restart_context: true,
     say_results: true, flee_below_health: 8, stuck_restart_after: 3, log_timestamps: true, trail_max_steps: 500, ore_sense_range: 3, skills_over_code: true };
 const COMMANDS_0149 = ['!rememberRoute', '!routes', '!forgetRoute', '!rememberMine', '!rememberTunnel', '!collectPassedOre'];

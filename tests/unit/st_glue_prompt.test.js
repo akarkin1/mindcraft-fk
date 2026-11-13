@@ -152,7 +152,8 @@ describe('item 7: the size of the conversing prompt', () => {
         farming_pack: true, wood_pack: true, mining_pack: true, skill_learning: true, allow_insecure_coding: true, knowledge_in_prompt: true,
         knowledge_max_chars: 600, protect_built_blocks: true, repeat_guard: 3, restart_context: true, say_results: true, flee_below_health: 8,
         stuck_restart_after: 3, log_timestamps: true,
-        routes_pack: true, mine_routes: true, watch_and_learn: true, base_survey: true, routines: true }; // v0.1.4.15: every switch that hides commands
+        routes_pack: true, mine_routes: true, watch_and_learn: true, base_survey: true, routines: true,
+        breeding: true, enchanting: true, afk_kill: true }; // v0.1.4.15: every switch that hides commands; v0.1.4.16 (8.0): the three packs
     const RULES = ['Never attack the cows.', 'Keep the farm gate closed.', 'Store the wheat in the chest at the farm.'];
 
     const SKILL_COMMANDS = ['!skills', '!forgetSkill', '!disableSkill', '!enableSkill', '!useSkill'];

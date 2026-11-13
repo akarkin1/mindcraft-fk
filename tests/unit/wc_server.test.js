@@ -174,7 +174,8 @@ describe('the server', () => {
 
     test('state and inventory from the agent', async () => {
         const state = await call(port, 'state');
-        assert.match(state.json.result.content[0].text, /^Luna at \(12, 67, 52\) in overworld, on grass_block\. Time 1000 \(day\)\. Health 20 of 20, food 20 of 20\.\nRunning: nothing\./);
+        // v0.1.4.16 (F8): the label of the one clock (Morning, Afternoon, Evening, Night, Dawn); before: day
+        assert.match(state.json.result.content[0].text, /^Luna at \(12, 67, 52\) in overworld, on grass_block\. Time 1000 \(Morning\)\. Health 20 of 20, food 20 of 20\.\nRunning: nothing\./);
         const inventory = await call(port, 'inventory');
         assert.equal(inventory.json.result.content[0].text, 'Inventory: 3 bread.\nHand: empty. Off-hand: empty.');
     });

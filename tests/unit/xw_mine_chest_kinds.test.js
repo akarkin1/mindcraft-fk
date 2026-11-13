@@ -87,6 +87,37 @@ describe('F11: depositAtBase stores the mining\'s kinds only', () => {
         }
         assert.deepEqual(r.stored, { raw_iron: 3, cobblestone: 32 });
     });
+
+    test('a bag with no kind of the mining (saplings, a bed, food, tools): nothing is offered to the chest, nothing is stored', async () => {
+        // an empty `only` would let keepPlan of the storage pack store every kind that is not kept: depositAtBase stores nothing then
+        const world = makeWorld();
+        const chest = { x: 0, y: 64, z: 2 };
+        world.set(chest.x, chest.y, chest.z, 'chest');
+        const bot = makeMiningBot({ world, pos: [0.5, 64, 1.5] });
+        const clock = makeClock(bot);
+        const ctx = await makeCtx(clock);
+        give(bot, 'iron_pickaxe', 1);
+        give(bot, 'oak_sapling', 2);
+        give(bot, 'red_bed', 1);
+        give(bot, 'bread', 4);
+        const calls = [];
+        ctx.storage = {
+            async storeItems(b, c, options) {
+                calls.push(options);
+                return { ok: true, reason: null, stored: { oak_sapling: 2, red_bed: 1 }, left: {}, chests: [options.chest], text: 'I stored 2 oak_sapling and 1 red_bed.' };
+            },
+        };
+        const mine = {
+            name: 'mine', source: 'player', ore: 'coal', entrance: { x: 0, y: 66, z: 1 }, level: 64, base: null, chest: null, direction: null, length: 0,
+            shaft: 'ladder', dimension: 'overworld', end: null, tunnel: [], route: [], room: { center: { x: 0, y: 64, z: 1 }, chest, table: null, furnace: null },
+            tunnels: [], passed: [],
+        };
+        const r = await M.depositAtBase(bot, ctx, { now: clock.now, wait: clock.wait, mine, keep: { coal: -1 } });
+        assert.equal(r.ok, true, r.text);
+        assert.deepEqual(calls, [], 'the storage is not asked');
+        assert.deepEqual(r.stored, {});
+        assert.equal(r.text, 'At the base of the mine: I stored nothing.');
+    });
 });
 
 describe('F11: storeFullBag stores the mining\'s kinds first', () => {

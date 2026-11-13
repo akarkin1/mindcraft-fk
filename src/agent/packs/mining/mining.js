@@ -2190,8 +2190,13 @@ export async function depositAtBase(bot, ctx = {}, options = {}) {
             if (!w.ok) {
                 return done(false, w.reason === 'interrupted' ? 'interrupted' : 'stuck', `I could not get back to the chest of the mine at ${posText(chest)}.`);
             }
-            // v0.1.4.16 (F11): only the kinds of the mining go into the chest of the mine (mineChestKinds); the kept kinds as before
-            const last = await ctx.storage.storeItems(bot, ctx, { chest, keep: tripKeep(bot, options.keep), only: mineChestKinds(inventoryList(bot)) });
+            // v0.1.4.16 (F11): only the kinds of the mining go into the chest of the mine (mineChestKinds); the kept kinds as before.
+            // With none of them in the bag nothing is stored: an empty `only` would let keepPlan store every other kind.
+            const only = mineChestKinds(inventoryList(bot));
+            if (only.length === 0) {
+                return done(true, null, 'At the base of the mine: I stored nothing.');
+            }
+            const last = await ctx.storage.storeItems(bot, ctx, { chest, keep: tripKeep(bot, options.keep), only });
             addCounts(stored, last?.stored);
             const ok = Boolean(last) && (last.ok === true || last.reason === null);
             return done(ok, ok ? null : last?.reason ?? 'error', `At the base of the mine: ${last?.text ?? 'I stored nothing.'}`, last?.left ?? {});
@@ -2203,6 +2208,11 @@ export async function depositAtBase(bot, ctx = {}, options = {}) {
         }
         // one chest stays with the bot for the day the chest of the mine is full
         const keep = tripKeep(bot, options.keep);
+        // F11: with no kind of the mining in the bag nothing is stored and no chest is placed (an empty `only` would let
+        // keepPlan store every other kind)
+        if (mineChestKinds(inventoryList(bot)).length === 0) {
+            return done(true, null, 'At the base of the mine: I stored nothing.');
+        }
         const chests = [];
         for (const p of [mine.chest, plan.chest, plan.chest2]) {
             if (p && blockAt(bot, p)?.name === 'chest' && !chests.some(c => c.x === p.x && c.y === p.y && c.z === p.z)) {

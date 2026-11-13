@@ -5,7 +5,7 @@ import * as mc from '../utils/mcdata.js';
 import settings from './settings.js'
 import convoManager from './conversation.js';
 import { withKillTimer, withTimeLimit } from '../utils/kill_timer.js';
-import { DoorTracker, closeDoorsBehind, isInShelter, isNight, shouldShelter, nightShelterRoutine, creeperCheck, runCreeperProcedure, findShelter } from './packs/home/index.js';
+import { DoorTracker, closeDoorsBehind, isInShelter, isShelterNight, shouldShelter, nightShelterRoutine, creeperCheck, runCreeperProcedure, findShelter } from './packs/home/index.js';
 // v0.1.4.8: functions of the home pack that come with part C (createDoorService, hungerStep); always called with ?.
 import * as home from './packs/home/index.js';
 import { STUCK_RULES, STUCK_TEXT, FREE_TEXT, KILL_TEXT, newStuckState, stuckStep, inventoryKey, distance, escapeOutcome, restartAfter,
@@ -928,7 +928,10 @@ const home_modes = [
             try {
                 const bot = agent.bot;
                 const ctx = agent.homeContext();
-                if (!isNight(bot.time.timeOfDay)) {
+                // v0.1.4.16 (F8): the night of this reflex begins at sunset (isShelterNight, 12000), as shouldShelter's does; isNight
+                // of the one clock begins at 13000, and with it the flags of the night were reset on every tick of the evening,
+                // so 'I know no home.' came every 60 s instead of once per night
+                if (!isShelterNight(bot.time.timeOfDay)) {
                     this.sheltered_at = null;
                     this.no_home_said = false;
                 }

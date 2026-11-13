@@ -14,8 +14,8 @@ import { sleepInBed } from './sleep.js';
 
 export { DOOR_RULES, DOOR_SERVICE_RULES, DoorTracker, DoorWatch, doorAxis, doorCenter, doorKey, doorSides, isIronOpenable, openableKind,
     sideOf } from './door_logic.js';
-export { DAY_TICKS, NIGHT_END, NIGHT_START, NOT_HOSTILE_FOR_SHELTER, SHELTER_BUSY_ACTIONS, SHELTER_COOLDOWN_MS,
-    isHostileForShelter, isNight, normalizeTimeOfDay, orderedThisNight, shouldShelter } from './night_logic.js';
+export { DAY_TICKS, NIGHT_END, NIGHT_START, NOT_HOSTILE_FOR_SHELTER, PHASE_NIGHT_START, SHELTER_BUSY_ACTIONS, SHELTER_COOLDOWN_MS,
+    isHostileForShelter, isNight, isShelterNight, normalizeTimeOfDay, orderedThisNight, shouldShelter } from './night_logic.js'; // v0.1.4.16 (F8): isShelterNight
 export { CREEPER_RULES, countsForArea, countsForBot, decide, fuseIsBurning, lineOfSight } from './creeper_logic.js';
 export { SHELTER_RANGE, STANDING_RANGE, chooseCoverBlock, chooseShelter, chooseStandingPlace, isBuildingArea,
     isFallingBlockName, isInsideArea, isShelterArea, orderEntrances, roomCenter, sameDimension } from './shelter_logic.js';

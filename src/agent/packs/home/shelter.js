@@ -9,7 +9,7 @@ import { creeperCheck, creeperMemory, readCreepers, runCreeperProcedure } from '
 import { doorCenter, sideOf } from './door_logic.js';
 import { closeDoor, doorState, findOpenables, passThrough } from './doors.js';
 import { blockReader, goals, gotoGoal, isNear, makeMovements, walkNear } from './motion.js';
-import { isNight } from './night_logic.js';
+import { isShelterNight } from './night_logic.js'; // v0.1.4.16 (F8): the shelter reflex keeps its night from sunset (12000)
 import { chooseCoverBlock, chooseShelter, chooseStandingPlace, isBuildingArea, isFallingBlockName, isInsideArea, isRouteWithinArea, orderEntrances,
     roomCenter, shelterHere, withEdge } from './shelter_logic.js';
 import { isBedName } from './sleep_logic.js';
@@ -521,7 +521,7 @@ export async function goToShelter(bot, ctx = {}, options = {}) {
                 }
             }
             const entered = await enterBuilding(bot, choice.area, ctx, options);
-            if (entered.reason === 'creeper_standing' && isNight(bot.time?.timeOfDay) && !bot.interrupt_code) {
+            if (entered.reason === 'creeper_standing' && isShelterNight(bot.time?.timeOfDay) && !bot.interrupt_code) {
                 return await digInAwayFrom(bot, entered.creeper, ctx, options, clock); // F3
             }
             if (!entered.ok && entered.reason === 'no_path' && !bot.interrupt_code) {

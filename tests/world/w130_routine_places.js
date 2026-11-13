@@ -42,7 +42,9 @@ const NAME = 'w_places';
 const SUPERVISOR = 'Opus';
 const ROUTINE = 'chest run';
 const PLAN_PROMPT = /^You plan the steps of a Minecraft bot for a standing task the player described in his words\./;
-const PLACES_RULE = 'Every place the player names and every coordinate (x, y, z) in the task is a step of its own before the work there: !goToRememberedPlace("name") for a saved place, !goToCoordinates(x, y, z, 2) for a coordinate. Keep the player\'s numbers.';
+// the two lines of the plan prompt (SPEC F3 "gains two lines"; PLAN_PLACE_LINES of routine_logic.js, joined with a line break, as
+// xv_plan_places checks them). T4 2026-11-13: the first run checked them as one line with a space between and failed on that alone.
+const PLACES_RULE = 'Every place the player names and every coordinate (x, y, z) in the task is a step of its own before the work there: !goToRememberedPlace("name") for a saved place, !goToCoordinates(x, y, z, 2) for a coordinate.\nKeep the player\'s numbers.';
 const PLAN_LINE = /^My plan for "chest run": (.*)\. I start\.$/;
 const START = (n) => new RegExp(`^I start the routine "chest run", round ${n}\\.$`);
 const DONE = (n) => new RegExp(`^Round ${n} of "chest run" is done\\.$`);

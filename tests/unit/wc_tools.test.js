@@ -62,8 +62,9 @@ describe('state', () => {
     test('the five lines of the spec', async () => {
         const { agent } = fixtureAgent();
         const watch = fixtureWatch({ lastLine: { text: 'go to the farm', by: 'MartyByrde2', at: NOW - 180000 } });
+        // v0.1.4.16 (F8): the label of the one clock (Night); before: night
         assert.equal(await TOOL_HANDLERS.state(agent, {}, watch), [
-            'Luna at (12, 67, 52) in overworld, on oak_planks. Time 13500 (night). Health 20 of 20, food 18 of 20.',
+            'Luna at (12, 67, 52) in overworld, on oak_planks. Time 13500 (Night). Health 20 of 20, food 18 of 20.',
             'Running: !farmCycle("farm") for 42 s.',
             'Job: the farming.',
             'Last order: "go to the farm" by MartyByrde2, 3 min ago.',

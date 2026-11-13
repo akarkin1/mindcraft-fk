@@ -14,10 +14,11 @@
 // the parts it walks by itself (typed orders). Console names of 26.1.
 //   0. The player teaches the mine in the room with its tunnel (journey.js partTeachMineInRoom).
 //   A. The blocked way back: the bag is filled to 2 free slots (torches, a kind the trip keeps); typed `!mineOre("iron", 6)`; once the
-//      bot digs beyond the rock face the control closes the tunnel behind it where it leaves the room (2 bedrock, the whole cross
-//      section): the bag fills, the store trip finds no way to the chest. A1 the stop line names the reason with its detail: `I mined N
-//      raw_iron of 6. I stopped because <reason>: <text>`; A2 the log has `Mining stop: <reason> at (x, y, z), step <step>: <text>`
-//      (the bot's action output, through logTo, or the console). The plug is removed afterwards.
+//      bot digs beyond the rock face the control closes the tunnel behind it at its fifth cell (2 bedrock, the whole cross section;
+//      more than the storage pack's reach from the chest, T4 2026-11-13): the bag fills, the store trip finds no way to the chest. A1
+//      the stop line names the reason with its detail: `I mined N raw_iron of 6. I stopped because <reason>: <text>`; A2 the log has
+//      `Mining stop: <reason> at (x, y, z), step <step>: <text>` (the bot's action output, through logTo, or the console). The plug is
+//      removed afterwards, and the torches with it (a kept kind: with them C's bag had no slot; T4 2026-11-13).
 //   C. Typed `!forgetMine("mine")`; the bot stands in the tunnel; typed `!mineOre("iron", 2)`: C1 `This tunnel is a mine now: "<name>"
 //      at (x, y, z).`; C2 the trip runs: 2 raw_iron more in the bag within 180 s (server); C3 mines.json holds a mine again.
 //      Then the player stands outside the house and says "come here" (typed !goToPlayer): the bot climbs out by itself (W82).
@@ -25,9 +26,9 @@
 //      new mine here, as you said.` within 45 s; B2 mines.json gains a mine whose entrance lies within 3 blocks of where the bot stood;
 //      B3 (D of the spec row) the shaft under that spot is dug 4 blocks or deeper within 90 s and no `block the way down` or `blocked
 //      by lava, water or caves` line is said (the rock is solid). Typed `!stop`, then `!leaveMine`.
-//   E. At another spot (typed walk) the control lays a plate of bedrock 3 blocks under the grass; typed `!mineOre("iron", 2, true)`:
-//      E1 the answer names the block: `I could not dig the bedrock at (x, y, z)` with the bedrock's position; E2 the log has
-//      `Mining stop: dig_failed at ...`.
+//   E. At another spot (typed walk) the control lays a plate of bedrock 3 x 3, 3 blocks under the grass, centred under the cell the bot
+//      stands in (the walk may end a cell off the spot; T4 2026-11-13); typed `!mineOre("iron", 2, true)`: E1 the answer names the
+//      block: `I could not dig the bedrock at (x, y, z)` with a cell of the plate; E2 the log has `Mining stop: dig_failed at ...`.
 // Throughout: the process lives, no request reached a real model.
 import {
     scenarioMain, check, note, exitSoon, stopRealAgent, env, entityPos, fmt, sleep, commands, command, waitFor, giveItems, tp, readWorldFile, minesInFile,
@@ -69,7 +70,11 @@ await scenarioMain({
             for (const dy of [0, 1]) { const c = { ...t.beyond(k), y: t.level + dy }; seedCmds.push(`setblock ${P(c)} minecraft:${block}`); }
         }
         await commands(seedCmds);
-        const plug = [t.cells[0], { ...t.cells[0], y: t.cells[0].y + 1 }]; // the tunnel's first cell, in the west wall of the room
+        // the plug: the tunnel's fifth cell (x ox-5), 2 cells and more behind the bot at the face and more than the storage pack's
+        // REACH (3, plus 0.5) from the chest at (ox, 41, oz+2). T4 2026-11-13: at the first cell (ox-1) the bot stored into the chest
+        // through the bedrock from (ox-1.5, 41, 0.5), 2.8 blocks from it, without a walk (the server checks only the distance), and
+        // the blocked way back never came.
+        const plug = [t.cells[4], { ...t.cells[4], y: t.cells[4].y + 1 }];
         const spotB = { x: ox + 30, y: g + 1, z: oz - 20 };
         const spotE = { x: ox + 30, y: g + 1, z: oz + 24 };
         const bedrockAt = { x: spotE.x, y: g - 3, z: spotE.z };
@@ -122,6 +127,10 @@ await scenarioMain({
             if (!infoA.done && agent.actions.executing) note(`A: !stop answered ${JSON.stringify(await orders.order('!stop', 20000))}`);
             await commands(plug.map((c) => `setblock ${P(c)} minecraft:air`));
             await waitFor(() => !agent.actions.executing, { ms: 20000, every: 200 });
+            // T4 2026-11-13: the torches of A are a kept kind; with them C's trip stopped at once ("My bag is full of things I keep for
+            // the mining. I stop the mining at 0 of 2 iron.") and the job retried it every 25 s. C runs with the kit and A's yield.
+            await commands([`clear ${NAME} minecraft:torch`]);
+            await waitFor(() => !agent.bot.inventory.items().some((i) => i.name === 'torch'), { ms: 5000, every: 100 });
 
             // ---------------------------------------------------------- C. the forgotten tunnel
             const forgot = await orders.order('!forgetMine("mine")', 20000);
@@ -192,15 +201,20 @@ await scenarioMain({
             const thereE = Boolean(atE) && hdist(atE, { x: spotE.x + 0.5, z: spotE.z + 0.5 }) <= 2 && atE.y >= g;
             note(`E0: the walk to ${cellText(spotE)} answered ${JSON.stringify(String(walkE.reply).slice(0, 120))}; the bot at ${fmt(atE)} (${thereE ? 'there' : 'NOT there'})`);
             check(thereE, 'E0: precondition: the bot stands on the surface at the spot of E', fmt(atE));
-            await commands([`fill ${bedrockAt.x - 1} ${bedrockAt.y} ${bedrockAt.z - 1} ${bedrockAt.x + 1} ${bedrockAt.y} ${bedrockAt.z + 1} minecraft:bedrock`]);
+            // T4 2026-11-13: the plate of 3 x 3 is centred under the cell the bot stands in (a walk with closeness 1 may end a cell off the
+            // spot: the first run ended at z oz+23 of oz+24 and the shaft hit the plate at that z), and the check accepts every cell of
+            // the plate (the shaft starts where the bot stands, a cell at most from the centre)
+            const plateAt = thereE ? { x: Math.floor(atE.x), y: bedrockAt.y, z: Math.floor(atE.z) } : bedrockAt;
+            await commands([`fill ${plateAt.x - 1} ${plateAt.y} ${plateAt.z - 1} ${plateAt.x + 1} ${plateAt.y} ${plateAt.z + 1} minecraft:bedrock`]);
             const tE = Date.now();
             const infoE = await orders.orderInfo('!mineOre("iron", 2, true)', 150000);
             const replyE = String(infoE.reply);
             const saidE = saidLines(s, tE);
             const stopE = stopLines(tE);
-            const couldNot = new RegExp(String.raw`I could not dig the bedrock at \(${bedrockAt.x}, ${bedrockAt.y}, ${bedrockAt.z}\)`);
-            note(`E: !mineOre("iron", 2, true) over bedrock at ${cellText(bedrockAt)} ${infoE.done ? `answered after ${(infoE.ms / 1000).toFixed(0)} s` : 'did NOT end within 150 s'}: ${JSON.stringify(replyE.slice(0, 300))}; the bot at ${fmt(await entityPos(NAME))}; the bot said ${JSON.stringify(saidE.slice(0, 8))}; Mining stop lines ${JSON.stringify(stopE.slice(0, 3))}`);
-            check(infoE.done && (couldNot.test(replyE) || saidE.some((l) => couldNot.test(l))), `E1: the stop names the block and its position: \`I could not dig the bedrock at ${cellText(bedrockAt)}\` (F5: a failed dig is dig_failed, not "lava, water or caves")`, JSON.stringify(replyE.slice(0, 300)));
+            const oneOf = (v) => `(?:${v - 1}|${v}|${v + 1})`;
+            const couldNot = new RegExp(String.raw`I could not dig the bedrock at \(${oneOf(plateAt.x)}, ${plateAt.y}, ${oneOf(plateAt.z)}\)`);
+            note(`E: !mineOre("iron", 2, true) over the bedrock plate around ${cellText(plateAt)} ${infoE.done ? `answered after ${(infoE.ms / 1000).toFixed(0)} s` : 'did NOT end within 150 s'}: ${JSON.stringify(replyE.slice(0, 300))}; the bot at ${fmt(await entityPos(NAME))}; the bot said ${JSON.stringify(saidE.slice(0, 8))}; Mining stop lines ${JSON.stringify(stopE.slice(0, 3))}`);
+            check(infoE.done && (couldNot.test(replyE) || saidE.some((l) => couldNot.test(l))), `E1: the stop names the block and its position: \`I could not dig the bedrock at (x, ${plateAt.y}, z)\` with a cell of the plate around ${cellText(plateAt)} (F5: a failed dig is dig_failed, not "lava, water or caves")`, JSON.stringify(replyE.slice(0, 300)));
             check(stopE.some((l) => /Mining stop: dig_failed at /.test(l)), 'E2: the log has `Mining stop: dig_failed at (x, y, z), step <step>: <text>`', JSON.stringify(stopE.slice(0, 2)));
             if (!infoE.done && agent.actions.executing) note(`E: !stop answered ${JSON.stringify(await orders.order('!stop', 20000))}`);
 

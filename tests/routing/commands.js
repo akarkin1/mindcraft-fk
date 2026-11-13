@@ -45,6 +45,10 @@ export const SPEC_SETTINGS = {
     survey_radius: 'number',
     // v0.1.4.16, section 1 of its spec (F2)
     survey_cluster_gap: 'number',
+    // v0.1.4.16, section 8.0 of its spec: the three packs of round two
+    breeding: 'boolean',
+    enchanting: 'boolean',
+    afk_kill: 'boolean',
 };
 
 // The switches of the parts whose commands are hidden while the switch is off.
@@ -71,6 +75,11 @@ export const PART_COMMANDS = {
     routines: ['!rememberRoutine', '!routines', '!forgetRoutine', '!doRoutine'],
     // v0.1.4.15 (part S, SPEC 2.5): the base survey; !forgetArea stays with protected_areas
     base_survey: ['!surveyBase', '!renameArea', '!goToBase'],
+    // v0.1.4.16 (SPEC 8.0): the three packs of round two, the keys in this order (the routing check prints the parts in it);
+    // each pack's commands are listed when they exist in actions.js (8.2 breeding by E6, 8.3 enchanting by E7, 8.4 afk_kill by E8)
+    breeding: [],
+    enchanting: [],
+    afk_kill: [],
 };
 
 // Commands of this release, from the spec. `params` in order; `default` where the spec gives one.

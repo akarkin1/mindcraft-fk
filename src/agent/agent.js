@@ -341,7 +341,7 @@ export class Agent {
         // the parts of v0.1.4.7: a pack is imported only while a switch needs it; the commands of a part
         // that is off, or whose pack could not be loaded, are hidden (v0.1.4.9: also the routes pack)
         if (settings.storage_pack || settings.farming_pack || settings.wood_pack || settings.mining_pack || settings.routes_pack || settings.watch_and_learn
-            || settings.base_survey) { // v0.1.4.15 (part S): the survey pack too
+            || settings.base_survey || settings.breeding || settings.enchanting || settings.afk_kill) { // v0.1.4.15 (part S): the survey pack too; v0.1.4.16 (8.0): the three packs
             this.work_packs = await this._loadWorkPacks();
             if (!settings.world_memory && (this.work_packs.storage || this.work_packs.mining))
                 console.warn('Without world_memory the chest index and the mine store live in memory only and are lost when the bot stops.');

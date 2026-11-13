@@ -134,7 +134,7 @@ describe('the size of the conversing prompt (section 9, item 4)', () => {
         return lines.join('\n').slice(0, max);
     };
     const PARTS = ['cost_meter', 'protected_areas', 'player_rules', 'home_pack', 'storage_pack', 'farming_pack', 'wood_pack', 'mining_pack', 'routes_pack', 'mine_routes', 'watch_and_learn',
-        'base_survey', 'routines']; // v0.1.4.12: the watching pack; v0.1.4.15: the base survey and the routines
+        'base_survey', 'routines', 'breeding', 'enchanting', 'afk_kill']; // v0.1.4.12: the watching pack; v0.1.4.15: the base survey and the routines; v0.1.4.16 (8.0): the three packs
     const SWITCHES_ON = { knowledge_in_prompt: true, knowledge_max_chars: 600, protect_built_blocks: true, repeat_guard: 3, restart_context: true,
         say_results: true, flee_below_health: 8, stuck_restart_after: 3, log_timestamps: true, trail_max_steps: 500, ore_sense_range: 3, skills_over_code: true,
         // v0.1.4.10
