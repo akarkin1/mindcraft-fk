@@ -391,7 +391,242 @@ All on the base world unless said; the runner's substring rule names the entries
 
 Each scenario fails on 9a28d07 for the fix it proves (the report says which check fails there).
 
-## 8. Open for round two
+## 8. Round two: the three packs (2026-11-13)
 
-The packs' spec (breeding, enchanting, the AFK creeper kill) follows the owner's answers to PLAN section 10.
-The probe of the 26.1 enchantment window is E3's first task of round two, before the spec is final.
+From PLAN section 5 with the owner's answers (DECISIONS O-3), his play of 2026-11-13 (`docs/ROADMAP.md`, K-1 to
+K-7) and the facts of the creeper farm (`lead/creeper-farm-facts.md`, from the Minecraft Wiki). The code map of the
+packs' neighbours is the lead's `map16-packs.md`; every engineer reads it first. The budget of round two is four
+days (PLAN section 2): a pack over its day is reported to the owner, who says cut or go on.
+
+### 8.0 Common rules and the wiring (E6 for the shared lists; each engineer for its own pack)
+
+- Three work packs on the model of the farming pack: `src/agent/packs/breeding/`, `src/agent/packs/enchanting/`,
+  `src/agent/packs/afk_kill/`, each with `index.js` (re-exports, no side effects), a pure `*_logic.js`, `texts.js`
+  (the texts word for word, each an exported `xxxText`) and the executing module (`fn(bot, ctx, ...)` returning
+  `{ ok, reason, text }`). Settings `breeding`, `enchanting`, `afk_kill`, all `false`, in `settings.js` (one
+  commented line each after `routines`), the settings spec JSON, `SPEC_SETTINGS` of `tests/routing/commands.js`,
+  `routing_list`'s key order and `settings_spec.test.js`.
+- Loading (`agent.js` `_loadWorkPacks`): one `if (settings.X)` block per pack as the others; the combined condition
+  of agent.js 341-343 gains the three switches (its exact text is pinned by `rtg_agent` 135-136: E6 updates the
+  test with the line). `blocked_actions`: each pack's commands pushed when its switch is off or the pack failed to
+  load. `glue2_flags_off`'s `USE_GUARD` regex gains the three names.
+- Commands in `actionsList` through `runPack` (the moving ones) or `runPlain` (`!allowTaking`, `!enchantTake`),
+  with the pack-off texts `The breeding pack is off.`, `The enchanting pack is off.`, `The AFK kill pack is off.`
+  Registrations: `PART_COMMANDS` and `SPEC_COMMANDS` (`tests/routing/commands.js`), `NEW_EXAMPLES` with one profile
+  example per command in `profiles/defaults/_default.json`, two routing sentences per command in
+  `tests/routing/sentences.json` (part = the switch).
+- The switch lists pinned by `rt_glue` 364, `gjg_prompt` 129, `rtg_prompt` 141, `st_glue_prompt` 154,
+  `routing_list` 55/95/250, `rtd_routing_check` 204 and `glue2_prompt_size`'s "every switch on" list (186-198)
+  gain the three switches in ONE edit by E6, at the start, with the three names fixed here, so E7 and E8 never
+  touch those files. The budget: the pinned limits move by the measured docs growth only; E6 measures at the end
+  of round two with every pack's docs in and reports the numbers; off, the prompt is byte for byte v0.1.4.15's.
+- Zero model calls inside a pack. Every refusal, question and stop writes one `logTo` line.
+- The owner's rules of section 0 hold. The server probes of this round (the enchanting window, the attack reach)
+  use the test server through the world runner's helpers, as E3's F7 probe did, and kill only their own server.
+
+### 8.1 The stock permits and `!allowTaking` (E6)
+
+The owner's rule (O-3): the bot may take feed and lapis from the chests it knows; it asks the first time whether
+it may, remembers the yes, and asks again only when the stock runs low.
+
+- `src/agent/world/stock_permits.js` (`StockPermits`, on the model of `BaseStore`): the file `permits.json` of
+  the bot's world, `{ version: 1, items: { wheat: { allowed: true, at: <ms> } } }`; methods `may(item)` → boolean,
+  `allowedAt(item)` → ms or 0, `set(item, allowed)`, `list()`. Wired as `ctx.permits` in `agent._workStores()` when
+  `breeding` or `enchanting` or `afk_kill` is on.
+- `!allowTaking(item, allowed)` (`runPlain`, behind `breeding || enchanting || afk_kill`; docs: `Allow (true) or
+  forbid (false) the bot to take an item from the chests it knows for its work, for example wheat or lapis_lazuli.`):
+  sets the permit and says (through `agent.sayText`) `I may take wheat from the chests now.` or `I take no wheat
+  from the chests.` The model maps the owner's "yes, take it" after a question, and "you may take lapis", to it;
+  the profile has two examples.
+- The asking rule, one function used by the packs through `ctx.permits` and the texts of this section
+  (`takeOrAsk(bot, ctx, item, count, { low })` in `src/agent/packs/breeding/stock_logic.js`, exported from the pack's
+  index and read by the enchanting and kill packs through `ctx.stock?.takeOrAsk?.()`, which `packContext` exposes
+  when the breeding pack is loaded; a pack without it asks with its own copy of the texts): with the item in the
+  bag, nothing is taken; else the chests (`ctx.chests.find(item)`, nearest first) within 48 blocks: when
+  `may(item)` and the stock after taking stays above the low mark, take `count` with `ctx.storage.fetchItem` and
+  say `I took 8 wheat from the chest at (x, y, z).`; when not allowed yet, or the stock is low (`low` = the count
+  of one more use: 6 lapis, two rounds of the pen's feed), ask: `May I take 8 wheat from the chest at (x, y, z) for
+  the feeding? Say yes or no.` (low: `Only 6 wheat are left in the chests; may I take 8 for the feeding? Say yes or
+  no.`; the purpose slot: `the feeding`, `the enchanting`, `the kill room`) and wait up to 60 s for a permit newer
+  than the question (`allowedAt(item) > askedAt`); yes → take and say the took-line; no or silence → `I take no
+  wheat without your word; say "you may take wheat" when you want.` and the command ends with reason `no_permit`.
+  No chest with the item: `I have no wheat and the chests have none.`
+
+Tests: `xy_stock_permits.test.js` (the store), `xy_take_or_ask.test.js` (the fake bot with a chest: allowed takes;
+not allowed asks and a permit set during the wait takes; silence refuses; the low mark asks though allowed).
+
+### 8.2 Breeding (E6)
+
+- `!breed(pen, count)` (docs: `Breed the animals of a saved pen from outside its fence: feed pairs until count new
+  animals, never opening a gate.`; `count` int default 2). The pen is a saved area of type `pen` by name (the
+  owner's or the survey's; `I know no pen "X".`); the species is the key of `area.contents.animals` with the most
+  animals, checked live with the entities inside the box (`countContents`); `FEED` (`breeding_logic.js`): cow, sheep,
+  mooshroom → `wheat`; pig → `carrot` (also `potato`, `beetroot`); chicken → `wheat_seeds` (also `beetroot_seeds`,
+  `melon_seeds`, `pumpkin_seeds`); rabbit → `carrot` (also `dandelion`); any other species: `I do not know what the
+  horses eat; I breed cows, sheep, pigs, chickens and rabbits.`
+- The cap: `PEN_CAP` 12 (a setting is not needed; the spec's constant). Adults plus babies in the box at or above
+  the cap: `The cow pen is full: 12 animals; I breed no more there.`
+- The feed: two per pair; the need for the order is `2 * ceil(count / 1)`... precisely: pairs needed = `count`
+  (one baby per pair), feed needed = `2 * count`; from the bag, else `takeOrAsk` (8.1) with `low` = `4 * count`
+  (two rounds). Without: `I have no wheat for the cows.`
+- The walk: the stand cells are the ring one block outside the fence ring (the area box grown by 2, minus the box
+  grown by 1), never a gate cell or the cell before a gate (`findGates`), reached with `makeMovements(bot, {dig:
+  false, doors: false, areas})` so the walk never crosses the pen; the bot never enters the box; nothing is placed.
+  At a stand cell it equips the feed (`skills.equip`) and waits up to 10 s for animals to come within reach
+  (`FEED_REACH` 3 blocks from the bot's eyes to the entity); it feeds the two nearest adults that are not `InLove`
+  and not babies (`bot.activateEntity(entity)`; the baby flag from `entity.metadata[16]` as `mcdata.isHuntable` reads
+  it, the love state from the hearts... the pack counts a feed as done when the entity's metadata shows it or the
+  feed left the bag), skips the ones out of reach, moves along the ring to the next stand cell when no adult comes
+  within 10 s; one line per pair: `I fed 2 cows in the cow pen.`; a baby counts when a new baby entity of the
+  species appears in the box.
+- The pace: after every pair fed, the next pair at once; when every adult in reach is fed and `count` is not
+  reached, wait for the cooldown (`BREED_COOLDOWN_MS` 300,000, checked every 15 s with `clock.wait` so "stop" ends
+  it) up to two more rounds; the end line `I fed 4 cows in the cow pen; 2 calves.` (the species' young: calves,
+  lambs, piglets, chicks, kits; a mooshroom's calves) or on a stop `I stopped the feeding at the cow pen: 2 cows fed,
+  1 calf.`
+- The pen guard: feeding over the fence is allowed by construction (`bot.activateEntity` is not wrapped); the pack
+  never clicks a gate. Item pickup: the pack runs as an action, so `item_collecting` is off meanwhile; the bot
+  stands a block from the fence, and nothing inside the pen is within reach.
+- Tests: `xy_breeding_logic.test.js` (FEED, the stand ring, the cap, the counts and texts), `xy_breed.test.js` (the
+  fake bot with a pen of 4 cows: the walk to the ring, two feeds with `activateEntity` on the nearest adults, no
+  cell inside the box, the texts; the full pen; the unknown species).
+
+### 8.3 Enchanting (E7), and F13 the login guard's lines (E7)
+
+- `!enchant(item, choice)` (docs: `Enchant an item at the enchanting table with the bot's lapis: choice "" asks
+  you which offer, else a number 1 to 3 or an enchantment name takes that offer.`; `choice` string default `''`)
+  and `!enchantTake(n)` (`runPlain`; docs: `Answer the bot's enchanting question: 1, 2 or 3 take that offer, 0
+  takes the item back.`; int).
+- The table: a block `enchanting_table` within 32 blocks (`bot.findBlock`), else `No enchanting table within 32
+  blocks.`; the bot never crafts or places a table or a bookshelf. The item: from the bag by name (the exact item
+  name, or the kind: "pickaxe" takes the best pickaxe in the bag); none: `I have no diamond_pickaxe.`; an item that
+  cannot be enchanted or is enchanted already: the window gives no offer (every level -1 after 2 s): `The table
+  offers nothing for this diamond_pickaxe.`
+- The lapis: 3 from the bag, else `takeOrAsk(..., 'lapis_lazuli', 3, { low: 6 })` (8.1).
+- The offers: `bot.openEnchantmentTable(block)`, `putTargetItem`, `putLapis`, wait for `'ready'` (up to 5 s), read
+  `window.enchantments` (three `{ level, expected: { enchant, level } }`): the name through
+  `bot.registry.enchantments[id].displayName` and the level as a roman numeral, the cost `level` and the lapis
+  `index + 1`: `The table offers for your diamond_pickaxe: 1) Efficiency IV (30 levels, 3 lapis), 2) Unbreaking II
+  (20 levels, 2 lapis), 3) Fortune I (12 levels, 1 lapis). Say "take 1", "take 2", "take 3" or "none".`
+- The choice: `choice` `''`: the line is said and the window stays open while the bot waits up to 60 s for
+  `!enchantTake(n)` (the model maps "take 2" and "none"); `n` 1..3 → the offer; 0 or 60 s → `takeTargetItem` and
+  `I took the diamond_pickaxe back; say "enchant my pickaxe" again when you have chosen.` A `choice` of a number or a
+  name (matched against the display name, case-insensitive, `efficiency` matches `Efficiency IV`) takes that offer
+  without asking; a name the table does not offer: the offers line with `; none of them is <name>.` instead of the
+  "Say ..." tail, the item taken back.
+- The levels: `bot.experience.level` below the offer's `level`: `Level 12, offer 1 needs 30.`, nothing spent, the
+  item taken back. Enough: `window.enchant(index)`, wait for the item, `I enchanted your diamond_pickaxe: Efficiency
+  IV (30 levels, 3 lapis).` The result's enchantments are read through the F7 reader `enchantsOf` (exported from
+  the digging plugin as `bot.digging?.enchantsOf` or imported from the patched module) for the line.
+- The anvil is left out (PLAN section 8).
+- The probe first (E7's first task): on the test server, a table with 15 bookshelves placed by command, `/xp set
+  <bot> 30 levels`, lapis and a diamond pickaxe given: open the window, read the offers, enchant offer 1; the report
+  quotes the offers and the resulting item's component. A window that does not deliver offers on 26.1 is a
+  finding for the lead before any more code.
+- F13 (K-1): the login guard's lines `[LoginGuard] ...` and every connection error go to the log (`console.error`)
+  only, never to the game chat, the web chat or the voice. Find the sink (`grep -rn LoginGuard src/`), route it to
+  the logger, unit test with a fake chat: nothing said.
+- Tests: `xy_enchant_logic.test.js` (the offers line from three fake offers, the roman numerals, the choice
+  matching, the level rule, the texts), `xy_enchant.test.js` (a fake window: the flow with `''` and `!enchantTake`,
+  the take-back on 0, the code-driven choice), `xy_login_quiet.test.js`.
+
+### 8.4 The AFK creeper kill (E8)
+
+The facts (`creeper-farm-facts.md`): creepers spawn in the dark tower, trapdoors keep other mobs out, water drops
+them down a shaft so they land on the hoppers at low health; a creeper explodes only after 1.5 s of unbroken line
+of sight within 3 blocks, so the slab at the creeper's eye level between the hoppers and the kill spot keeps the
+bot safe while it hits the body; a kill by the player gives 5 XP and 0 to 2 gunpowder; the owner's method (K-3):
+sneak and step forward under the slab so the creeper is within reach.
+
+- `!killFarm(until)` (docs: `Farm creepers at the saved kill spot: climb there, kill what lands on the hoppers,
+  store the drops, eat and sleep, until you say stop, or until "level 30" or "20 minutes".`; `until` string default
+  `''`). "stop" ends it (the action is interrupted). No `!stopKillFarm`.
+- The places: `kill_spot` (the owner saves it standing at his spot: `!rememberHere("kill_spot")`; without it: `I
+  know no place "kill_spot". Stand at your spot and say "remember here as kill_spot".`); the kill chest is the
+  place `kill_chest` or the nearest chest within 6 blocks of the spot; the bed is the place `kill_bed` or the
+  nearest bed within 16 blocks of the spot.
+- The room check at the spot (`afk_logic.js`, pure, on the blocks within 4 blocks of the spot read by `nameReader`):
+  the hoppers (`hopper`) within 3 blocks; a slab (`*_slab`) in the row between the spot and the hoppers at the
+  hoppers' y + 1 or + 2; the water of the shaft is not checked (it is 20 blocks up; K-3 says the creepers never die
+  from the fall, so the fall is not the kill). No hopper within 3 blocks: `I see no hopper within 3 blocks of the
+  kill spot; is this the right spot?`; no slab: `The kill room has no slab over the hoppers; I do not farm there.`
+- The way there: `walkNear(spot, 1)` of the home pack's motion with doors on (the tower's ladder is climbed by the
+  path search as any ladder; a saved route to `kill_spot` is used when the routes pack has one, through
+  `ctx.routes?.walkTo`). At the spot: `bot.setControlState('sneak', true)`, then the step forward (K-3): the bot
+  walks to the cell centre, then holds the forward control for 250 ms towards the hoppers while sneaking, so it
+  stands partly under the slab (the x/z of the spot plus 0.3 blocks towards the hoppers, read back from
+  `bot.entity.position`); the look at the hopper row.
+- The modes (K-2; `map16-packs.md` 4.4): `bot.modes.setOn('creeper_safety', false)` and `pause` for `cowardice`,
+  `self_defense`, `self_preservation`, `night_shelter`, `hunger` and `item_collecting` while the farm runs; all
+  restored (`setOn(true)` where it was on, `unpause`) on every exit, in a `finally`. Said once at the start: `I farm
+  creepers at the kill spot. Stay more than 128 blocks away or log out, so the farm's monsters get the cap.`
+- The kill loop (every 250 ms, `clock.wait`): the targets are the entities within `KILL_REACH` 3.0 blocks of the
+  bot's eyes whose name is `creeper` or another hostile (`isHostile`, never a villager, a player, a pet or an
+  animal) and whose feet stand within 1 block above a hopper cell; the nearest is hit once with `bot.attack(entity)`
+  holding the best weapon (a sword, else an axe; `equipHighestAttack`), at most one hit per 600 ms; the hits and the
+  kills are counted (a target gone within 1 s of a hit is a kill), `bot.experience.points` is read.
+- The kill check (K-3): after 2 minutes with 20 or more hits and no kill and no XP gained: `My hits do not kill
+  from here: 24 hits, no XP. I step closer.` and the step forward again (plus 0.2 blocks); after 2 more minutes
+  the same: `I cannot kill from this spot; check the slab and the hoppers.` and the farm ends (reason `no_kill`).
+- The drops: the gunpowder lands on the hoppers and the chests take it; what lands by the bot is picked up by the
+  game. When the bag has 4 free slots or fewer: `ctx.storage.storeItems({ only: KILL_DROPS, chest })` into the kill
+  chest (`KILL_DROPS` = gunpowder, bone, arrow, rotten_flesh, string, spider_eye, gunpowder's company), then back
+  to the spot and the sneak; one quiet line `I stored 64 gunpowder.`
+- Eating: `eatBestFood` of the home pack when `bot.food <= 14`, from the bag; no food: once `I have no food left; I
+  farm on until my health is low.`
+- Sleeping (K-5): when `isNight` and a bed is known (above): sneak off, modes as they are, `sleepInBed`-like through
+  the home pack's `sleepInBed(bot, ctx)` with the bed's position as the only candidate, the night through, then back
+  to the spot and the sneak, the loop resumes with the same `until`; no bed: the farm goes on (phantoms are the
+  owner's risk, said once: `No bed within 16 blocks of the kill spot; I farm through the night.`).
+- The weapons (K-6): when the held weapon has 10 uses or fewer (`usesLeftOf` of the mining pack's dig.js, exported):
+  the next best from the bag; else `ctx.storage.fetchItem` of a sword or an axe from the kill chest or a chest
+  within 16 blocks; else `ctx.tools.ensureTool('sword', 'stone')` when the bag has the stone and sticks; else `I have
+  no sword left and cannot make one; I stop the farming at level 14.` (reason `no_weapon`). A line when a weapon is
+  replaced: `My stone_sword is worn; I take the iron_sword.`
+- Progress: one line every 50 kills: `I killed 50 creepers; level 14; 62 gunpowder stored.` (the stored count from
+  the kill chest's gunpowder when it is known, else the bag's).
+- The stop: `until` `''` → until "stop", health or no weapon; `"level N"` → when `bot.experience.level >= N`: `I
+  stop the farming: level 30 reached; 280 creepers, 1 hour 10 minutes; 268 gunpowder stored.`; `"N minutes"` → `I
+  stop the farming: 20 minutes are over; 70 creepers; 61 gunpowder stored.`; the owner's stop (interrupted): `I
+  leave the kill room: you said stop; 70 creepers, 61 gunpowder stored.`; health under 10: `I leave the kill room:
+  health 9.`; any other `until`: `I do not understand "<until>": say "level 30" or "20 minutes", or nothing.` On the
+  way out the bot leaves by the ladder (the walk to the place `kill_exit` when saved, else the way it came: the
+  route in reverse or `walkNear` to the ladder's foot... the simplest rule: the bot walks back to where it stood
+  when the order came, with doors on).
+- The job: the farm runs as one action (`runPack`), so routines (F3's `isBusy`/`actionRunning`) start no round
+  while it runs (K-4), and the supervisor's `runs` tool shows it.
+- Tests: `xy_afk_logic.test.js` (the room check on grids: hoppers, the slab, the texts; the until parsing; the
+  target rule: a creeper on a hopper within 3 counts, a creeper 4 blocks off does not, a villager never; the kill
+  check's arithmetic), `xy_kill_farm.test.js` (the fake bot in a built room with fake creeper entities on hopper
+  cells: sneak set, hits with `attack`, the kill count, the stop at "level N" with a fake experience, the modes
+  restored on exit, the store trip at 4 free slots).
+
+### 8.5 Interfaces between the parts
+
+| From | To | What |
+|---|---|---|
+| E6 | E7, E8 | `ctx.permits` (StockPermits) and `ctx.stock.takeOrAsk(bot, ctx, item, count, { low, purpose })` exposed by `packContext` when the breeding pack is loaded; E7/E8 call it with optional chaining and fall back to asking with their own texts when it is absent |
+| E6 | E7, E8 | The switch lists and `rtg_agent`'s pinned line: E6 alone edits them, at the start of the round |
+| round 1 | E7 | `enchantsOf` of the mineflayer patch (committed in 5abf721) |
+| home pack | E8 | `sleepInBed`, `eatBestFood` imported from `packs/home/index.js` (as the farming pack imports `eatBestFood`); `makeMovements`/`walkNear` of `motion.js` |
+| mining pack | E8 | `usesLeftOf`, `nameReader`, `blockAt` of `dig.js`; `ctx.tools.ensureTool` |
+
+### 8.6 The scenarios of round two (T5)
+
+| Entry | File | Checks |
+|---|---|---|
+| `the_pens` | `w134_breeding.js` | The W126 pens (`small_base.js`): `!breed("cow_pen", 2)` with wheat in the bag: the bot stands on the ring outside the fence, never inside the box, the gate stays closed (block state), two cows get `InLove` (data get) and a calf appears (an entity with `Age` negative) within the cooldown reset by `/data merge entity ... {Age:0}` for the next pair; the pair lines and the end line; `!breed` on the pen with 12 animals summoned: the full line; `!breed("pig_pen", 1)` with carrots only in a chest and no permit: the question, the owner's "yes" (the fake model maps it to `!allowTaking("carrot", true)`), the took-line, the feed |
+| `the_table` | `w135_enchanting.js` | A table with 15 bookshelves placed by the test, lapis in a chest, `!allowTaking("lapis_lazuli", true)` typed, `/xp set <bot> 30 levels`, a diamond pickaxe given: `!enchant("diamond_pickaxe")` says the offers line (the pattern with three offers); `!enchantTake(1)` enchants (the item's `enchantments` component read by `data get entity`) and says the line; at `/xp set 12 levels`: the level line and the pickaxe back in the bag; `!enchant("diamond_pickaxe", "unbreaking")` with a matching offer takes it without the question; no table: the line |
+| `the_kill_room` | `w136_kill_room.js` | A kill room built by the test at y 170 (hoppers, two chests under them, a slab row, a 2-block drop face, a ladder up to y 180 where the bot starts), `kill_spot` saved by `!rememberHere`, creepers summoned on the hoppers every 10 s with `Health:4f` and `NoAI:1b` (20 in all): `!killFarm("level 2")`: the climb down the ladder, the sneak (the bot's `isSneaking`/pose), hits and kills (the entities gone), XP gained (`bot.experience` or `/xp query`), gunpowder in the chests or the bag, the stop line at level 2; `/damage <bot> 12` during a second run: `I leave the kill room: health 9.` and the bot above the room; `creeper_safety` silent at the spot and on again after; the slab removed: the refusal line and no farming |
+
+Each fails on 5abf721 (no pack) for the pack it proves.
+
+### 8.7 The order of round two
+
+1. E6 starts with the switch lists and `StockPermits`/`!allowTaking` (so E7 and E8 build on them), then the
+   breeding pack; E7 with the enchanting probe, then the pack and F13; E8 with the attack-reach probe on the test
+   server (a creeper summoned on a hopper under a slab with `Health:4f`, the bot sneaking at the spot: one hit
+   kills? the distance that works), then the pack. T5 writes W134 to W136 from this section.
+2. Reports; the lead commits; T5 runs each scenario when its pack lands; findings to DECISIONS; the fix round.
+3. The gate from a fresh clone: round one's set plus `the_pens the_table the_kill_room`; the PR; the owner's word;
+   the merge; the tag; the play guide.
