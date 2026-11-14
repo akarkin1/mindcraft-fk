@@ -68,7 +68,13 @@ describe('rememberRuleReply(store, text)', () => {
     });
 
     test('too long', () => {
-        assert.equal(C.rememberRuleReply(store(), 'x'.repeat(201)), 'A rule has at most 200 characters.');
+        // v0.1.4.16 (F3): the cap with the count, as the store counts the text (trimmed, line breaks as spaces)
+        assert.equal(C.rememberRuleReply(store(), 'x'.repeat(201)), 'A rule has at most 200 characters; yours has 201.');
+        assert.equal(C.rememberRuleReply(store(), ` ${'y'.repeat(230)}\n`), 'A rule has at most 200 characters; yours has 230.');
+        const said = [];
+        assert.equal(C.rememberRuleReply(store(), 'x'.repeat(201), (line) => said.push(line)), 'A rule has at most 200 characters; yours has 201.');
+        assert.deepEqual(said, ['A rule has at most 200 characters; yours has 201.'], 'the bot says the cap itself when a say is given');
+        assert.equal(C.ruleTooLongText(231), 'A rule has at most 200 characters; yours has 231.');
     });
 
     test('full, with the limit of the store', () => {

@@ -90,7 +90,7 @@ const NEW_EXAMPLES = [
     ['collect some logs for me', '!chopTrees'],
     ['make yourself a stone pickaxe', '!getTool'],
     ['we need torches for the cave', '!craftSupplies'],
-    ['find some iron', '!mineOre'],
+    ['mine 32 iron', '!mineOre'], // v0.1.4.16 (F5): the example keeps the player's number
     ['go down into the mine', '!goToMine'],
     ['come back up to the surface', '!leaveMine'],
     // v0.1.4.8, part G: the new commands and types, and the commands of the parts that had no example
@@ -125,9 +125,22 @@ const NEW_EXAMPLES = [
     ['here is the base, scan it', '!surveyBase'],
     ['this is the east base, look around', '!surveyBase'],
     ['that is the wheat farm, not carrots', '!renameArea'],
+    // v0.1.4.16, F2: the rename in words
+    ['rename pen to horse_house', '!renameArea'],
+    // v0.1.4.16, F10 (E1): an opening into a cave closed with stone
+    ['seal that hole at (12, 40, -7)', '!sealOpening'],
     // v0.1.4.15, part R (SPEC 3.5): the routines
     ['keep the farm going when you have nothing to do', '!rememberRoutine'],
     ['do the farm routine', '!doRoutine'],
+    // v0.1.4.16 (SPEC 8.1, 8.2, E6): the breeding pack and the stock permits (the owner's "yes" after the bot's question, his "you may")
+    ['breed the cows', '!breed'],
+    ['yes, take it', '!allowTaking'],
+    ['you may take lapis from the chests', '!allowTaking'],
+    // v0.1.4.16 (SPEC 8.3, E7): the enchanting pack (PLAN 3: "enchant my pickaxe"; the owner's "take 2" after the offers line)
+    ['enchant my pickaxe', '!enchant'],
+    ['take 2', '!enchantTake'],
+    // v0.1.4.16 (SPEC 8.4, E8): the AFK creeper kill (PLAN 3: "farm creepers until level 30")
+    ['farm creepers until level 30', '!killFarm'],
 ];
 
 const exampleOf = (sentence) => PROFILE.conversation_examples.find((example) => example.some((t) => t.role === 'user' && t.content.endsWith(': ' + sentence)));
@@ -313,7 +326,7 @@ describe('no example with a hidden command reaches the prompt', () => {
     test('with every part on, all examples remain', () => {
         const hidden = new Set(T.hiddenPartCommands({ player_rules: true, protected_areas: true, world_memory: true, home_pack: true, cost_meter: true,
             storage_pack: true, farming_pack: true, wood_pack: true, mining_pack: true, routes_pack: true, mine_routes: true, watch_and_learn: true,
-            base_survey: true, routines: true }));
+            base_survey: true, routines: true, breeding: true, enchanting: true, afk_kill: true })); // v0.1.4.16 (SPEC 8.0): the three packs
         assert.equal(hidden.size, 0);
         assert.equal(F.visibleExamples(PROFILE.conversation_examples, (n) => hidden.has(n)).length, PROFILE.conversation_examples.length);
     });

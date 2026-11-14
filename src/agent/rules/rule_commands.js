@@ -18,11 +18,26 @@ function warn(what, error) {
 }
 
 /**
+ * v0.1.4.16 (F3): the cap of a rule with the count of the text given: `A rule has at most 200 characters; yours has 231.`
+ * @param {number} n the length of the text, as the store counts it (trimmed, line breaks as spaces)
+ * @returns {string}
+ */
+export function ruleTooLongText(n) {
+    return `A rule has at most 200 characters; yours has ${Number.isInteger(n) && n >= 0 ? n : 0}.`;
+}
+
+// The length of a text as the store counts it (RuleStore.add's cleanText: line breaks as spaces, trimmed).
+function textLength(text) {
+    return typeof text === 'string' ? text.replace(/\r\n|\r|\n/g, ' ').trim().length : 0;
+}
+
+/**
  * @param {{add: function, list: function, max: number}} store - a RuleStore
  * @param {string} text
+ * @param {(line: string) => void} [say] v0.1.4.16 (F3): says the cap line itself (agent.sayText) when the text is too long
  * @returns {string} `Rule 3 saved: "<text>"` or the reason why not
  */
-export function rememberRuleReply(store, text) {
+export function rememberRuleReply(store, text, say = null) {
     try {
         const result = store.add(text);
         if (result.ok) {
@@ -32,8 +47,17 @@ export function rememberRuleReply(store, text) {
         switch (result.reason) {
             case 'duplicate':
                 return 'That rule is already saved.';
-            case 'too_long':
-                return 'A rule has at most 200 characters.';
+            case 'too_long': {
+                const line = ruleTooLongText(textLength(text));
+                if (typeof say === 'function') {
+                    try {
+                        say(line); // the bot says the cap itself; the model gets the same line
+                    } catch (error) {
+                        warn('say the cap of a rule', error);
+                    }
+                }
+                return line;
+            }
             case 'full':
                 return `I already have ${store.max} rules. Forget one first with !forgetRule.`;
             case 'empty':

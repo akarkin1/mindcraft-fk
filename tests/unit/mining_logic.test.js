@@ -350,13 +350,21 @@ describe('tunnelStep', () => {
     });
 
     test('air behind the blocks ahead: a cave starts there, turn and leave the blocks ahead as its wall', () => {
+        // v0.1.4.16 (F10): the air cells beyond the wall are the patches (v0.1.4.7 patched nothing), so the wall grows a block
+        // thicker; the blocks ahead still stay
         for (const y of [16, 17]) {
             const r = step(world().set(0, y, -2, 'cave_air'));
             assert.equal(r.action, 'turn', `beyond at y ${y}`);
-            assert.deepEqual(r.patch, []);
+            assert.deepEqual(slots(r.patch), [y === 16 ? 'beyond.lower' : 'beyond.upper']);
+            assert.deepEqual(keys(r.patch), [`0,${y},-2`]);
         }
+        const both = step(world().set(0, 16, -2, 'cave_air').set(0, 17, -2, 'cave_air'));
+        assert.equal(both.action, 'turn');
+        assert.deepEqual(slots(both.patch), ['beyond.lower', 'beyond.upper']);
+        assert.deepEqual(both.patch.map(p => p.y), [17, 16], 'higher first, as every patch');
         const r = step(world().set(0, 16, -2, 'air').set(-1, 16, -1, 'lava'));
         assert.equal(r.action, 'turn', 'the cave wins over patching: nothing is dug');
+        assert.deepEqual(slots(r.patch), ['beyond.lower'], 'the beyond cell is patched, the lava beside the wall is left for the side step');
     });
 
     test('a lone pocket of air ahead is no cave: the step goes on', () => {

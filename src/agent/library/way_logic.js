@@ -402,19 +402,74 @@ export function fallbackAllowed(feet, goal) {
     return { allowed: blocks <= FALLBACK_RULES.maxWay, blocks: Math.round(blocks), point };
 }
 
+/** v0.1.4.16 (F7): a start cell with leaves in this many of its six neighbours or more is inside a canopy. */
+export const CANOPY_RULES = Object.freeze({ leaves: 2 });
+
+const SIX = Object.freeze([[0, 1, 0], [0, -1, 0], [1, 0, 0], [-1, 0, 0], [0, 0, 1], [0, 0, -1]]);
+
+/**
+ * v0.1.4.16 (F7): true for a leaves block, every `*_leaves` (oak_leaves, azalea_leaves, ...).
+ * @param {string|null} name
+ * @returns {boolean}
+ */
+export function isLeavesName(name) {
+    return typeof name === 'string' && /_leaves$/.test(name.replace(/^minecraft:/, ''));
+}
+
+/**
+ * v0.1.4.16 (F7, the play of 2026-11-10: "no way without digging" inside a leaf canopy): true when the cell `start`
+ * (the bot's feet when the walk began) has leaves in two or more of its six neighbours. read(x, y, z) gives the name
+ * of a block, or null for one that is not loaded.
+ * @param {(x: number, y: number, z: number) => string|null} read
+ * @param {{x, y, z}} start
+ * @returns {boolean}
+ */
+export function inCanopy(read, start) {
+    if (typeof read !== 'function' || !isPoint(start)) {
+        return false;
+    }
+    const s = cellOf(start);
+    let leaves = 0;
+    for (const [dx, dy, dz] of SIX) {
+        let name = null;
+        try {
+            name = read(s.x + dx, s.y + dy, s.z + dz);
+        } catch {
+            name = null;
+        }
+        if (isLeavesName(name)) {
+            leaves++;
+        }
+    }
+    return leaves >= CANOPY_RULES.leaves;
+}
+
 /**
  * P-19: true when the fallback may dig the block at `pos`: not below the start level minus 1, and none of its 6
  * neighbours is water or lava. read(x, y, z) gives the name of a block, or null for one that is not loaded (rock).
+ * v0.1.4.16 (F7): with the start cell given and inside a canopy (inCanopy), every `*_leaves` block is allowed.
  * @param {(x: number, y: number, z: number) => string|null} read
  * @param {{x, y, z}} pos the block
  * @param {number} startY the y of the bot's feet when the walk began
+ * @param {{x, y, z}|null} [start] the bot's feet when the walk began, for the canopy rule
  * @returns {boolean}
  */
-export function mayDigOnFallback(read, pos, startY) {
+export function mayDigOnFallback(read, pos, startY, start = null) {
     if (typeof read !== 'function' || !isPoint(pos)) {
         return false;
     }
     const p = { x: Math.floor(pos.x), y: Math.floor(pos.y), z: Math.floor(pos.z) };
+    if (start !== null && inCanopy(read, start)) {
+        let here = null;
+        try {
+            here = read(p.x, p.y, p.z);
+        } catch {
+            here = null;
+        }
+        if (isLeavesName(here)) {
+            return true;
+        }
+    }
     if (Number.isFinite(startY) && p.y < Math.floor(startY + 0.01) - FALLBACK_RULES.digBelowStart) {
         return false;
     }

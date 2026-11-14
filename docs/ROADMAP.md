@@ -21,7 +21,8 @@ Rules that hold for every release:
 | 0.1.4.13 | Supervision | Released: `CHANGELOG.md` |
 | 0.1.4.14 | Minecraft 26.1 | Released: `CHANGELOG.md`, merged 2026-11-09 (#24) |
 | 0.1.4.15 | The base survey and Routines | Released: `CHANGELOG.md`, merged 2026-11-12 (#26). The plan `docs/releases/0.1.4.15/PLAN.md`. Decided by the owner on 2026-11-09 (option A): two rounds on one branch, the survey first, Routines with a budget of four days and a cut rule (over the budget, the release ships the survey alone); one gate, one play of both |
-| 0.1.4.16 | Stability | In work from 2026-11-12 (`docs/releases/0.1.4.16/PLAN.md`): the fixes and small items planned for 0.1.4.15 below (tunnels as beams, caves, routes and places, supplies by need, the rest), moved by the owner on 2026-11-09; the findings of the play of 2026-11-11 on v0.1.4.15 (R-1 to R-13) and three packs behind switches (AFK creeper kill, enchanting, breeding), put here by the owner on 2026-11-11; not started until the owner says so |
+| 0.1.4.16 | Stability, and three packs | In work from 2026-11-12 (`docs/releases/0.1.4.16/PLAN.md`): the fixes of the plays of 2026-11-10 (Q-2 to Q-9) and 2026-11-11 (R-1 to R-13) with the caves, "orders stay orders" and the history race of the October list, then three packs behind switches (AFK creeper kill, enchanting, breeding). The owner's decisions of 2026-11-12: the split of the October list off this release |
+| 0.1.4.17 | Stability 2 | The rest of the Stability list of October below (tunnels as beams, routes and places, the shelter, the smaller ones of 2026-10-06, supplies by need, the mine and its route, a full bag far from the chest, chests by position, `!craftRecipe` with a count, a ladder through a trapdoor, code that cannot be stopped, the load of the laptop), moved by the owner on 2026-11-12; the first draft of its plan is `docs/releases/0.1.4.16/PLAN.md` section 4b |
 | Later | See the backlog | Not decided |
 
 ## 0.1.4.9 The mine, the routes of the player, and the model comparison
@@ -183,11 +184,12 @@ servers on 2026-11-03). Node 22, Java 25 for the test server, the 8 patches rege
 bot's tables (copper pickaxes, copper chests, the corrected foods). The plan is `docs/releases/0.1.4.14/PLAN.md`,
 the spec `SPEC.md`. About 4 days.
 
-## 0.1.4.16 Stability (the list planned for 0.1.4.15 until 2026-11-09)
+## 0.1.4.17 Stability 2 (the list planned for 0.1.4.15 until 2026-11-09, for 0.1.4.16 until 2026-11-12)
 
 Split off 0.1.4.13 by the owner on 2026-10-04, moved behind the upgrade to 26.1 on 2026-11-03. On 2026-11-09 the owner
 moved Routines into 0.1.4.15 with the base survey (option A, above) and this list to 0.1.4.16; one row from the fix
-round of 0.1.4.14 joins it at the end.
+round of 0.1.4.14 joins it at the end. On 2026-11-12 the owner moved the list to 0.1.4.17, but for three rows that
+the plays keep hitting and that 0.1.4.16 fixes in its first round: Caves, Orders stay orders, The history race.
 
 | Part | Content |
 |---|---|
@@ -208,6 +210,7 @@ round of 0.1.4.14 joins it at the end.
 | Code that cannot be stopped | Generated code that ran `collectBlock` in a loop ended the process (`refused stop after 10 seconds`). About 0.5 day. |
 | The load of the laptop | Only if it remains in the play after the quiet supervisor of the fix of 0.1.4.13. |
 | The history race (0.1.4.14, P-21) | `history.add` awaits the memory summary at `max_messages` while a concurrent `handleMessage` pushes the assistant's command turn, so the turns can end with the bot's own line; the model class closes them with a user turn since 0.1.4.14, the race itself is to be removed (one add at a time, or the summary off the add path). About 0.5 day. |
+| The shaft out of ladders near the surface (0.1.4.16, B-15) | A shaft that runs out of ladders a few blocks under the grass goes on as a staircase whose column stands in the open air; the patch has nothing to hold on to and the stop says `Lava, water or caves block the way down at (x, y, z): air`. The staircase starts below the surface, or the stop says the ladders ran out. About 0.5 day. |
 
 Setting `routines` (off) belongs to 0.1.4.15 now.
 
@@ -275,6 +278,45 @@ with a world test, enchanting with a test world that needs a table and XP by com
 | AFK creeper kill (switch `afk_kill`) | The farm: the owner's creeper farm tower at about (-2276, 870); the tier floor at y 197, the roof at y 200; the drop shaft has water at y 190, so the creepers land on the hoppers at y 170 to 171 with little health left, and a slab between them and the killer keeps them from exploding (intended, never to be "fixed"); the kill room at about (-2275, 170, 870) with the hoppers and 2 chests at y 170, z 870 to 872. The job: climb the tower ladder to the kill room and stand at the kill spot under the slab; hit only the hostile mobs in reach that stand on the hoppers, one hit each (sword); collect the XP orbs and the drops; put the gunpowder and the other drops into the hopper chests; eat when hungry; stop at a set time or level, or when the owner says stop. Safety: `creeper_safety` must be off at the kill spot (the creepers are 1 block away) or the bot flees; never leave the kill room except by the ladder; stop when health falls below a threshold. A rule for the owner and the docs: while the bot farms, the owner is more than 128 blocks from the tower or offline, since both players' bubbles share the monster cap (on 2026-11-11 the farm gave almost nothing while the bot stood near the tower). The XP: level 30 needs 1,395 XP, a creeper gives 5, so about 280 creepers. |
 | Enchanting (switch `enchanting`) | Mineflayer's `bot.openEnchantmentTable(block)`: put in the item and the lapis, read the 3 offers, choose by the owner's preference (default the highest offer the levels allow), `enchant(choice)`; optionally the anvil (`bot.openAnvil`) to combine books. The lapis comes from the owner's chest (the valuables chest at (-2299, 63, 816) holds 55). The owner may not have a table with 15 bookshelves yet: the pack says what is missing ("no enchanting table within 32 blocks", "level 12, need 30") and never crafts or places a table without the owner's order. The 26.1 item components: `bot.dig` already fails with `enchantments.concat is not a function` on an enchanted pickaxe (R-10); reading enchantments must work with the 26.1 format. |
 | Breeding (switch `breeding`) | Feed the animals only from outside a pen, never through or at a gate: wheat for cows and sheep, carrots for pigs, seeds for chickens; skip the animals out of reach, wait 5 minutes per animal, cap the number per pen. Item pickup off near the pens and on again after; never place a block in a pen or by a gate. Pigs come to the fence when the bot holds a carrot for a few seconds. The pen guard refused a feed 3 blocks from a gate (R-9): feeding must be allowed, opening must not. The owner's pens are saved areas: the sheep, cow, chicken and pig pens on z 836 to 841, the gates on z 836, the feed row z 835. |
+
+### The play of 2026-11-13 on v0.1.4.15 (K-1 to K-7; the owner's input for the AFK kill pack of 0.1.4.16)
+
+Reported by the owner's gameplay session on 2026-11-13 (main at 9a28d07), curated by the owner (the unclear cases left
+out). K-2 to K-6 go into the spec of the AFK kill pack; K-1 is a fix of 0.1.4.16's round two; K-7 is R-5, fixed in
+round one (W130 proves it).
+
+| Id | Finding | Where it goes |
+|---|---|---|
+| K-1 | When the owner restarted the game for a backup, the bot posted `[LoginGuard] Connection Failed: Server is under maintenance or restarting. (socketClosed)` and `[LoginGuard] Network Error: Connection timed out or was lost. (Error: connect ECONNREFUSED 127.0.0.1:55914)` to the game chat and the web chat, and the voice spoke them. Errors go to the log only, never to the chat or the voice. | the login guard's output path (`src/agent/*login*`, the chat and voice sinks) |
+| K-2 | `creeper_safety` turns itself back on at every restart (the profile's modes) and flees at once: from the phantom creepers in the caves under the pens (R-1, fixed in round one) and from the farm's creepers in the kill room, where it climbed the ladder to y 173; the supervisor switched it off four times. | the AFK kill pack switches it off at the kill spot and keeps it off while it runs, on again when it leaves |
+| K-3 | The kill spot and the reach: a by-hand loop at (-2274, 170, 869), the owner's spot, hit for an hour, wore out a stone sword and a stone axe, and the XP stayed at level 6: the hits did not kill; in this farm the creepers never die from the fall, the bot was too far. The owner's method: sneak and step forward, partly under the slab over the hopper chests at (-2275..-2274, 170..171, 870), close to the creepers on the hoppers at z 871 to 872; then every kill gives XP that flows to him. | the pack: sneak (`setControlState('sneak', true)`) and the step under the slab, a reach check against the entity before each hit, a kill check by XP gained (or the creeper's death) after the first minutes |
+| K-4 | The routine "maintain base" started its own rounds while the bot stood at the kill spot and walked it away twice; the supervisor forgot the routine for the farm time and saved it again after. | the AFK kill runs as a job, so no routine round starts while it runs |
+| K-5 | At night the bot goes to bed in the middle of the kill loop (`!goToBed` ended the `!newAction`). The owner: that is right, phantoms come otherwise; it should use the bed next to the kill room (it did once and woke up there). Missing: after sleeping, back to the spot and on with the kill. | the pack sleeps in the bed by the kill room at night and resumes by itself |
+| K-6 | The stone sword and the stone axe broke after about 30 minutes each and the bot went on with its fists. | the pack takes or crafts a replacement (from a chest, or asks the owner) and stops or asks when it has none |
+| K-7 | Still open from 2026-11-11: the routine's chopping step plans `!chopTrees(128, "spruce")` around where the bot stands and ends the round with "no spruce tree within 48 blocks" instead of walking to the forest chest named in the text (R-5). | fixed in round one (F3: a named place or coordinate is a walk step; a failed step is skipped); W130 proves it |
+
+### The play of 2026-11-14 on v0.1.4.15 (M-1 to M-8; the owner decides the release, but for the AFK kill pack's input)
+
+Reported by the owner's gameplay session on 2026-11-14 (main at 9a28d07), the unclear cases left out. The owner: do not
+start until he says so. M-5 and M-6 and the method below are input for the AFK kill pack being built in 0.1.4.16
+(SPEC 8.4); the rest wait for the owner's word.
+
+| Id | Finding | Where to look |
+|---|---|---|
+| M-1 | `!farmCycle` stores the harvest in the nearest chest, not the farm chest the owner set: farm_east put carrots into a chest in the trading hall at (-2280, 62, 817), farm_by_house potatoes into the house's food chest; the farm chest is at (-2307, 63, 811). | the farming pack's store step (`farming.js`: the chest of the farm, a saved place or the chest the owner named) |
+| M-2 | A full farm chest gets no new chest beside it: `!farmCycle` and `!putInChest` put nothing ("destination full"); the owner's rule: a full chest gets a new chest placed beside it (the supervisor placed one at (-2308, 63, 811)). | the storage pack (`storeItems`: place a chest beside a full one, as `depositAtBase` of the mining does) |
+| M-3 | Sugar cane: `!harvest("sugar_cane")` cuts nothing; `!farmCycle` does not handle cane; while the cane was a saved area of type farm the area guard refused every dig there ("I do not break or place blocks there"); a `!newAction` cut 37 tops twice, keeping the bottom blocks. | round one's F3 has the cane harvest in `!harvest` and `!farmCycle` (cut above the bottom block); the area guard's rule for a farm area (`AREA_RULES.farm`: breaking a crop or a cane top is the farm's work) is new: the owner's word |
+| M-4 | `!farmCycle` on farm_west, started outside the house next to an open field: "I could not reach 1 ripe plant", the next day 2. | the farming pack's reach of a cell (`walkToCell`, `standSpots`); not F4 (the bot was outside) |
+| M-5 | `creeper_safety` is on again after the owner's restart (K-2) and fled the phantom creepers under the pens before the supervisor switched it off. | round one's F1 (sight and the level) ends the phantom creepers; the kill pack switches it off at the spot (K-2) |
+| M-6 | The kill loop does not resume: a skeleton reached the kill room, `self_defense` fought it (health 20 to 18.4), which ended the supervisor's `!newAction` loop, and then the bot's own model ran `!stop`; at night `!goToBed` ended the loop too (the sleep is wanted). The pack should hit the other monsters on the hoppers as well and resume by itself after a reflex or a sleep. | the kill pack (SPEC 8.4 amended on 2026-11-14) |
+| M-7 | The unstuck reflex stopped `!goToCoordinates(-2274, 170, 869, 0)` on the tower ladder at y 84; a second call finished the climb. | `modes.js` `unstuck` on a ladder (the climb is progress: the y changes) |
+| M-8 | Lines meant for the supervisor are acted on by the bot: the owner's "Yes, get a new weapon and keep farming", meant for the supervisor but without its name in front, was taken by the bot's model (`!getTool("sword", "")`, the climb down from the kill room). A line that answers a question the supervisor just asked should go to the supervisor. | the routing of the owner's lines (`agent.js` handleMessage with the watch: the supervisor's last question within a minute claims the owner's next line) |
+
+The owner's method at the kill room (2026-11-14), which works: sneak, face the hoppers (+z), walk forward 0.7 s from
+(-2274, 170, 869) to (-2273.46, 170, 869.70), against the chests under the slab; hit only creepers whose centre is
+within 3.0 blocks of the eye (the nearest seen 1.74); XP 9 to 30 in about 55 minutes (a 3-minute test of 25 hits for
+65 points, then 179 hits for 535 points and 298 hits for 480 points); an iron sword lasts about 250 hits there, a
+stone sword about 130. The owner forbids diamond items for the bot's tools.
 
 ## The base survey (brief of 2026-11-09; built in 0.1.4.15)
 

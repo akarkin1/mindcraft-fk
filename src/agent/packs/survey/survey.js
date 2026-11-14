@@ -9,10 +9,11 @@
 // (ctx.routes of the routes pack: store, walkTo), bases (the BaseStore of the world, null without the pack), settings, now,
 // log, say, world (getVillagerProfession). The clock is the pack's (clockOf: options.now and options.wait for tests).
 import { Vec3 } from 'vec3';
-import { SEED_NAMES, SEED_CATEGORIES, oreBlind, seedsOf, findPlaces, uniqueName } from './survey_logic.js';
+import { SEED_NAMES, SEED_CATEGORIES, CLUSTER_GAP, oreBlind, seedsOf, findPlaces, uniqueName, clustersOf, startClusterOf, leftOutOf,
+    xzDistance } from './survey_logic.js';
 import { undergroundOf } from './underground_logic.js';
 import { reportText, tiedRuleText, nothingText, againText, renamedText, unknownPlaceText, placeExistsText, forgotBaseText, atBaseText,
-    noBaseText } from './texts.js';
+    noBaseText, leftOutText } from './texts.js';
 import { botPos, clockOf, dimensionOf, listAreas, logTo } from '../home/context.js';
 import { walkNear } from '../home/motion.js';
 import { containsPos, isBox } from '../home/box_math.js';
@@ -28,12 +29,20 @@ export const SURVEY_RULES = Object.freeze({
     walkMs: 120000,      // the walk of !goToBase at most
     walkNear: 2,         // ... to within this many blocks of the door
     defaultName: 'base', // the name of a base when none is given
+    clusterGap: CLUSTER_GAP, // v0.1.4.16 (F2): finds farther apart than this in x/z belong to another base (survey_cluster_gap)
 });
 
 /** The text of a place that was forgotten by name (the text of !forgetPlace, as today). */
 export function forgotPlaceText(name) {
     return `Forgot the place "${name}".`;
 }
+
+/**
+ * The answer to the model when the bot said its result in the chat itself (v0.1.4.16, F2): the report of !surveyBase, the
+ * lines of !renameArea, !forgetArea (a base or a place) and !goToBase go through ctx.say (agent.sayText: the history and the
+ * chat), and the model gets this line.
+ */
+export const SAID_TEXT = 'Done; I said it in the chat.';
 
 /** The text of !goToBase when neither a route nor the path search reaches the base (E4's own: the walk has no text). */
 export function noWayToBaseText(name) {
@@ -57,6 +66,22 @@ function result(ok, reason, text, more = {}) {
     return { ok, reason, text, ...more };
 }
 
+// v0.1.4.16 (F2): a result the bot says itself. The text goes through ctx.say (agent.sayText: the history and the chat) and
+// the answer to the model is SAID_TEXT; `said` carries the line. Without ctx.say (a context without a chat) the text is the
+// answer, as before. Never throws.
+function said(ctx, reason, text, more = {}) {
+    if (typeof ctx?.say !== 'function' || typeof text !== 'string' || text === '') {
+        return result(true, reason, text, more);
+    }
+    try {
+        ctx.say(text);
+    } catch (err) {
+        console.warn('Survey pack: could not say the result:', err?.message ?? err);
+        return result(true, reason, text, more);
+    }
+    return result(true, reason, SAID_TEXT, { ...more, said: text });
+}
+
 /**
  * The reach of the survey (SPEC 2.1): min(settings.survey_radius, 128), 128 without a number, at least 1.
  * @param {object|null} settings
@@ -68,6 +93,28 @@ export function surveyRadius(settings) {
         return SURVEY_RULES.radiusDefault;
     }
     return Math.min(Math.floor(value), SURVEY_RULES.radiusMax);
+}
+
+/**
+ * The gap of the clusters (v0.1.4.16, F2, section 1): settings.survey_cluster_gap, a number of 0 or more; 48 without one.
+ * @param {object|null} settings
+ * @returns {number}
+ */
+export function clusterGap(settings) {
+    const value = settings?.survey_cluster_gap;
+    return isFiniteNumber(value) && value >= 0 ? value : SURVEY_RULES.clusterGap;
+}
+
+// v0.1.4.16 (F2, F6): the bot's own bed, the place `my_bed` E1 saves when the bot sleeps (read through ctx.places with
+// optional chaining: a PlaceStore's get, a MemoryBank's recallPlaceInfo, a store's recall); null when none is saved.
+function myBedOf(ctx) {
+    const places = ctx?.places;
+    try {
+        const found = places?.get?.('my_bed') ?? places?.recallPlaceInfo?.('my_bed') ?? places?.recall?.('my_bed') ?? null;
+        return posOf(found);
+    } catch {
+        return null;
+    }
 }
 
 // A reader of the names of the blocks of the bot, null when not loaded. Never throws.
@@ -296,7 +343,9 @@ function savePoint(ctx, place, dimension, base) {
     }
     try {
         if (typeof places.rememberPlace === 'function') {
-            return places.rememberPlace(place.name, at.x, at.y, at.z, dimension, base) !== false;
+            // v0.1.4.16 (F2): a save counts only when the store confirmed it (true); a MemoryBank without a store says nothing,
+            // and a point it keeps in RAM only is not listed as saved
+            return places.rememberPlace(place.name, at.x, at.y, at.z, dimension, base) === true;
         }
         if (typeof places.remember === 'function') {
             return Boolean(places.remember(place.name, at.x, at.y, at.z, dimension, base));
@@ -344,12 +393,43 @@ function removePoint(ctx, name) {
     }
 }
 
-// The base of the found places (2.4): the centre of the found boxes (the points when there is no box, the bot without
-// either), the door of the home, else of the first building.
-function baseOf(name, found, dimension, botAt) {
+// The door of a place or an area: its first entrance of the kind door, or null.
+function doorOf(place) {
+    return posOf((Array.isArray(place?.entrances) ? place.entrances : []).find(e => e?.kind === 'door') ?? null);
+}
+
+// v0.1.4.16 (F2, F6): the house that holds the bot's own bed: a home or a building (a find or an owner's area) whose box
+// holds `bed`; null without a bed or a house around it.
+function houseOfBed(candidates, bed) {
+    if (!bed) {
+        return null;
+    }
+    return candidates.find(p => isBuildingPlace(p) && containsPos(boxOfArea(p), bed)) ?? null;
+}
+
+// The nearest of the places to a point in x and z (edge to edge; ties: the first), the first without a point; null for none.
+function nearestTo(places, at) {
+    let best = null;
+    let bestDistance = Infinity;
+    for (const p of places) {
+        const d = at ? xzDistance(at, p) : 0;
+        if (d < bestDistance) {
+            best = p;
+            bestDistance = d;
+        }
+    }
+    return best;
+}
+
+// The base of the saved places (2.4; v0.1.4.16, F2): the centre of the saved boxes (the points when there is no box, the bot
+// without either); the door of the house that holds the bot's own bed (`my_bed`, F6), else of the home nearest the start, else
+// of the building with a door nearest the start. The candidates for the door are the saved places, the kept finds and the
+// owner's areas of the base's cluster (the owner's house is the base's house).
+function baseOf(name, found, dimension, botAt, options = {}) {
     const boxes = found.map(boxOfArea).filter(Boolean);
     const points = found.map(p => posOf(p.at)).filter(Boolean);
-    let centre = botAt ? posOf(botAt) : null;
+    const at = botAt ? posOf(botAt) : null;
+    let centre = at;
     const list = boxes.length > 0 ? boxes.map(centreOf) : points;
     if (list.length > 0) {
         centre = {
@@ -358,10 +438,28 @@ function baseOf(name, found, dimension, botAt) {
             z: Math.floor(list.reduce((s, p) => s + p.z, 0) / list.length),
         };
     }
-    const doorOf = (place) => posOf((Array.isArray(place?.entrances) ? place.entrances : []).find(e => e?.kind === 'door') ?? null);
-    const home = found.find(p => p.kind === 'home' && doorOf(p));
-    const building = found.find(p => isBuildingPlace(p) && doorOf(p));
-    return { name, centre: centre ?? { x: 0, y: 0, z: 0 }, dimension, door: doorOf(home ?? building), places: found.map(p => p.name) };
+    const candidates = [...found, ...(Array.isArray(options.candidates) ? options.candidates : [])].filter(p => doorOf(p));
+    const house = houseOfBed(candidates, options.myBed ?? null)
+        ?? nearestTo(candidates.filter(p => (p.kind ?? p.type) === 'home'), at)
+        ?? nearestTo(candidates.filter(isBuildingPlace), at);
+    return { name, centre: centre ?? { x: 0, y: 0, z: 0 }, dimension, door: doorOf(house), places: found.map(p => p.name) };
+}
+
+// v0.1.4.16 (F2): `home` once. The house that holds the bot's own bed keeps the kind home (an owner's area or a kept find
+// counts: then no find of the survey is the home), else the found home nearest the start; every other found home becomes a
+// building (kind and type building: no shelter), its name as uniqueName gave it. The places are changed in place.
+function oneHome(places, others, botAt, myBed) {
+    const homes = places.filter(p => p.kind === 'home');
+    if (homes.length === 0) {
+        return;
+    }
+    const keep = houseOfBed([...places, ...others], myBed) ?? nearestTo(homes, botAt ? posOf(botAt) : null);
+    for (const home of homes) {
+        if (home !== keep) {
+            home.kind = 'building';
+            home.type = 'building';
+        }
+    }
 }
 
 // --- the difference of a second survey (2.4) --------------------------------------------------------------------------------
@@ -478,7 +576,7 @@ function baseNameOf(ctx, name) {
 export async function surveyBase(bot, ctx, name = '', options = {}) {
     const clock = clockOf(ctx, options);
     const radius = surveyRadius(ctx?.settings);
-    const empty = { base: null, places: [], kept: [], skipped: [], changed: null, radius };
+    const empty = { base: null, places: [], kept: [], skipped: [], changed: null, radius, leftOut: [] };
     try {
         if (!bot || typeof bot.blockAt !== 'function') {
             return result(false, 'no_bot', 'I cannot see the blocks around me.', empty);
@@ -511,16 +609,60 @@ export async function surveyBase(bot, ctx, name = '', options = {}) {
         if (interrupted(bot)) {
             return result(false, 'interrupted', '', empty);
         }
-        const places = [...found.places];
-        const kept = [...found.kept];
+        let places = [...found.places];
+        let kept = [...found.kept];
         const skipped = [...found.skipped];
-
-        // 3. the underground of each found building and each saved home or building of the owner's
         const ownerAreas = areas.filter(a => a.source !== 'survey').map(a => ({ ...a, box: boxOfArea(a) })).filter(a => a.box);
         const surveyAreas = areas.filter(a => a.source === 'survey').map(a => ({ ...a, box: boxOfArea(a) })).filter(a => a.box);
         const surveyPoints = savedPlaces.filter(p => p.source === 'survey');
+
+        // 2b. the clusters (v0.1.4.16, F2): the finds (the places and the kept ones) and the owner's areas, grouped by the gap
+        // of survey_cluster_gap; the cluster the bot stands in is the base, every other cluster with a find is reported
+        // ("another base or a village") and not saved
+        const botAt = posOf(botPos(bot));
+        const gap = clusterGap(ctx?.settings);
+        const members = [...places, ...kept, ...ownerAreas];
+        const clusters = clustersOf(members, gap);
+        const start = startClusterOf(clusters, botAt);
+        const here = new Set(start >= 0 ? clusters[start] : members);
+        const leftOut = [];
+        const leftOutFinds = [];
+        for (const [i, cluster] of clusters.entries()) {
+            if (i === start) {
+                continue;
+            }
+            const finds = cluster.filter(m => !ownerAreas.includes(m));
+            if (finds.length === 0) {
+                continue; // the owner's areas alone: saved already, nothing to survey there
+            }
+            const left = leftOutOf(finds, botAt);
+            leftOut.push(left);
+            leftOutFinds.push(...finds);
+            const nearest = left.finds[0]?.at ?? left.finds[0]?.place?.at ?? (boxOfArea(left.finds[0]?.place ?? left.finds[0]) ? centreOf(boxOfArea(left.finds[0]?.place ?? left.finds[0])) : null);
+            logTo(ctx, `Survey: left out ${left.count} finds about ${left.distance} blocks ${left.dir}${nearest ? ` at (${nearest.x}, ${nearest.y}, ${nearest.z})` : ''}: another base or a village, not saved.`);
+        }
+        places = places.filter(p => here.has(p));
+        kept = kept.filter(k => here.has(k));
+        const ownerHere = ownerAreas.filter(a => here.has(a));
+        if (leftOutFinds.length > 0) {
+            // the names as if the other clusters were not there: `house`, `house_2` of the base, whatever the village took
+            const used = new Set([...areas.map(a => a.name), ...savedPlaces.map(p => p.name), ...places.filter(p => p.detail?.replaces).map(p => p.name)]);
+            for (const place of places) {
+                if (place.detail?.replaces) {
+                    continue;
+                }
+                place.name = uniqueName(place.name.replace(/_\d+$/, ''), used);
+                used.add(place.name);
+            }
+        }
+
+        // 2c. one home (F2): the house with the bot's own bed, else the home nearest the start; the other homes are buildings
+        const myBed = myBedOf(ctx);
+        oneHome(places, [...kept.map(k => k.place).filter(Boolean), ...ownerHere], botAt, myBed);
+
+        // 3. the underground of each found building and each saved home or building of the owner's in the base
         const taken = new Set([...areas.map(a => a.name), ...savedPlaces.map(p => p.name), ...places.map(p => p.name)]);
-        const buildings = [...places.filter(isBuildingPlace), ...ownerAreas.filter(a => a.type === 'home' || a.type === 'building')];
+        const buildings = [...places.filter(isBuildingPlace), ...ownerHere.filter(a => a.type === 'home' || a.type === 'building')];
         const seen = new Set();
         for (const building of buildings) {
             const box = boxOfArea(building);
@@ -576,6 +718,17 @@ export async function surveyBase(bot, ctx, name = '', options = {}) {
         // 4. the saves: everything at once
         const before = former ? [...(ctx.areas.ofBase?.(baseName) ?? areas.filter(a => a.source === 'survey' && a.base === baseName)),
             ...savedPlaces.filter(p => p.base === baseName).map(p => ({ ...p, at: { x: p.x, y: p.y, z: p.z } }))] : [];
+        // F2; review 16, finding 7: a former place of this base that lies in another cluster now is never deleted from the stores
+        // (its rename and its flags, such as no_enter on a cave mouth, stay with it): it only leaves this base's `places`. It lies
+        // there when the survey found it there (the village of a first survey), or when the survey did not find it again and it
+        // is farther than the gap from every find of the start's cluster (the cave mouth or the mine entrance under a house of an
+        // outlying part: the underground is read in the start's cluster only). It is no part of the difference either: the report
+        // says nothing more of it.
+        const leftOutNames = new Set(leftOutFinds.map(p => p?.name));
+        const foundHere = new Set(places.map(p => p.name));
+        const startFinds = [...here, ...places];
+        const elsewhere = (b) => leftOutNames.has(b.name) || (startFinds.length > 0 && startFinds.every(m => xzDistance(b, m) > gap));
+        const leftBehind = former ? [...new Set(before.filter(b => !foundHere.has(b.name) && elsewhere(b)).map(b => b.name))] : [];
         const saved = [];
         for (const place of places) {
             if (boxOfArea(place)) {
@@ -592,7 +745,7 @@ export async function surveyBase(bot, ctx, name = '', options = {}) {
         }
         let changed = null;
         if (former) {
-            changed = differenceOf(before, saved, read);
+            changed = differenceOf(before.filter(b => !leftBehind.includes(b.name)), saved, read);
             for (const gone of changed.gone) {
                 if (!removeArea(ctx, gone)) {
                     removePoint(ctx, gone);
@@ -600,23 +753,31 @@ export async function surveyBase(bot, ctx, name = '', options = {}) {
             }
         }
         let base = null;
-        if (saved.length > 0 || former) {
-            const all = former ? [...saved.map(p => p.name), ...before.map(p => p.name).filter(n => !changed.gone.includes(n))] : saved.map(p => p.name);
-            base = ctx?.bases?.set?.({ ...baseOf(baseName, saved, dimension, botPos(bot)), places: [...new Set(all)], surveyed: new Date(clock.now()).toISOString() }) ?? null;
+        // F2: the owner's areas of the base: the areas of the cluster and the areas around the kept finds, by name
+        const keptNames = [...new Set([...ownerHere.map(a => a.name), ...kept.map(k => k.inside)].filter(n => typeof n === 'string' && n !== ''))];
+        if (saved.length > 0 || kept.length > 0 || former) {
+            const all = former ? [...saved.map(p => p.name), ...before.map(p => p.name).filter(n => !changed.gone.includes(n) && !leftBehind.includes(n))]
+                : saved.map(p => p.name);
+            const candidates = [...kept.map(k => k.place).filter(Boolean), ...ownerHere];
+            base = ctx?.bases?.set?.({ ...baseOf(baseName, saved, dimension, botAt, { myBed, candidates }), places: [...new Set(all)], kept: keptNames,
+                surveyed: new Date(clock.now()).toISOString() }) ?? null;
         }
         logTo(ctx, `Survey: ${saved.length} saved, ${kept.length} kept, ${skipped.length} skipped within ${radius} blocks.`);
+        const more = { base, places: saved, kept, skipped, changed, radius, leftOut };
 
-        // 5. the report
+        // 5. the report: the bot's own line (F2), the model gets SAID_TEXT
+        const left = leftOutText(leftOut);
         if (former) {
             // the kept finds go along for the day againText takes them (W126 C); an extra argument is ignored today
-            return result(true, null, againText(baseName, changed, kept), { base, places: saved, kept, skipped, changed, radius });
+            const again = againText(baseName, changed, kept);
+            return said(ctx, null, left ? `${again} ${left}` : again, more);
         }
         if (saved.length === 0 && kept.length === 0) {
-            return result(true, 'nothing', nothingText(radius), { base, places: saved, kept, skipped, changed, radius });
+            return said(ctx, 'nothing', nothingText(radius), more);
         }
-        const report = reportText(saved, kept, saved.filter(p => p.detail?.replaces).map(p => p.name));
+        const report = reportText(saved, kept, saved.filter(p => p.detail?.replaces).map(p => p.name), leftOut);
         const tied = tiedRuleText(saved);
-        return result(true, null, tied ? `${report} ${tied}` : report, { base, places: saved, kept, skipped, changed, radius });
+        return said(ctx, null, tied ? `${report} ${tied}` : report, more);
     } catch (err) {
         console.warn('Survey pack: the survey failed:', err?.message ?? err);
         return result(false, 'error', `I could not survey the base: ${err?.message ?? err}`, empty);
@@ -625,17 +786,51 @@ export async function surveyBase(bot, ctx, name = '', options = {}) {
 
 // --- !renameArea, !forgetArea, !goToBase (2.5) -----------------------------------------------------------------------------
 
-// A renamed place keeps its slot in the list of its base, so !forgetArea of the base still counts it. Never throws.
+// A renamed place keeps its slot in the lists of its base (`places`, and `kept` for the owner's areas, F2), so !forgetArea of
+// the base still counts it. Never throws.
 function renameInBases(ctx, oldName, newName) {
     try {
         for (const base of ctx?.bases?.list?.() ?? []) {
-            if (Array.isArray(base.places) && base.places.includes(oldName)) {
-                ctx.bases.set({ ...base, places: base.places.map(n => (n === oldName ? newName : n)) });
+            const inPlaces = Array.isArray(base.places) && base.places.includes(oldName);
+            const inKept = Array.isArray(base.kept) && base.kept.includes(oldName);
+            if (inPlaces || inKept) {
+                ctx.bases.set({ ...base, places: (base.places ?? []).map(n => (n === oldName ? newName : n)), kept: (base.kept ?? []).map(n => (n === oldName ? newName : n)) });
             }
         }
     } catch {
         // the list of a base is a help, not the truth: the stores carry the base of each place
     }
+}
+
+/**
+ * v0.1.4.16 (F2): a forgotten name leaves every base's `places` and `kept` (!forgetArea of a survey place or of an owner's
+ * area, the place branch of forgetSurveyed). Never throws.
+ * @param {object} ctx
+ * @param {string} name
+ * @returns {string[]} the names of the bases that changed
+ */
+export function removeFromBases(ctx, name) {
+    const changed = [];
+    try {
+        const plain = typeof name === 'string' ? name.trim() : '';
+        const area = normalizeAreaName(name) ?? '';
+        if (plain === '' && area === '') {
+            return changed;
+        }
+        const is = (n) => n === plain || n === area;
+        for (const base of ctx?.bases?.list?.() ?? []) {
+            const places = Array.isArray(base.places) ? base.places : [];
+            const kept = Array.isArray(base.kept) ? base.kept : [];
+            if (places.some(is) || kept.some(is)) {
+                if (ctx.bases.set({ ...base, places: places.filter(n => !is(n)), kept: kept.filter(n => !is(n)) })) {
+                    changed.push(base.name);
+                }
+            }
+        }
+    } catch (err) {
+        console.warn(`Survey pack: could not take "${name}" out of the bases:`, err?.message ?? err);
+    }
+    return changed;
 }
 
 function placeInfo(ctx, name) {
@@ -686,7 +881,7 @@ export function renameArea(ctx, oldName, newName) {
                 return result(false, 'error', placeExistsText(newArea), { kind: 'area' });
             }
             renameInBases(ctx, area.name, renamed.name);
-            return result(true, null, renamedText(area.name, renamed.name), { kind: 'area' });
+            return said(ctx, null, renamedText(area.name, renamed.name), { kind: 'area' });
         }
         const places = ctx.places;
         const ok = typeof places.rename === 'function' ? places.rename(oldPlace, newPlace) : false;
@@ -694,7 +889,7 @@ export function renameArea(ctx, oldName, newName) {
             return result(false, 'error', placeExistsText(newPlace), { kind: 'place' });
         }
         renameInBases(ctx, oldPlace, newPlace);
-        return result(true, null, renamedText(oldPlace, newPlace), { kind: 'place' });
+        return said(ctx, null, renamedText(oldPlace, newPlace), { kind: 'place' });
     } catch (err) {
         console.warn('Survey pack: the rename failed:', err?.message ?? err);
         return result(false, 'error', unknownPlaceText(String(oldName ?? '')), { kind: null });
@@ -736,11 +931,12 @@ export function forgetSurveyed(ctx, name) {
                 }
             }
             ctx.bases.remove(baseName);
-            return result(true, null, forgotBaseText(baseName, count), { kind: 'base', count });
+            return said(ctx, null, forgotBaseText(baseName, count), { kind: 'base', count });
         }
         const placeName = typeof name === 'string' ? name.trim() : '';
         if (placeName !== '' && removePoint(ctx, placeName)) {
-            return result(true, null, forgotPlaceText(placeName), { kind: 'place', count: 1 });
+            removeFromBases(ctx, placeName); // F2: the name leaves its base's list
+            return said(ctx, null, forgotPlaceText(placeName), { kind: 'place', count: 1 });
         }
         return result(false, 'unknown', '', { kind: null, count: 0 });
     } catch (err) {
@@ -779,7 +975,7 @@ export async function goToBase(bot, ctx, name, options = {}) {
         if (typeof walkTo === 'function' && !interrupted(bot)) {
             const byRoute = await walkTo(bot, target, { clock });
             if (byRoute?.ok) {
-                return result(true, null, atBaseText(baseName), { base });
+                return said(ctx, null, atBaseText(baseName), { base });
             }
             if (byRoute && byRoute.reason !== 'no_route') {
                 return result(false, byRoute.reason === 'interrupted' ? 'interrupted' : 'no_path', byRoute.text ?? '', { base });
@@ -791,7 +987,7 @@ export async function goToBase(bot, ctx, name, options = {}) {
         const walk = typeof options?.walk === 'function' ? options.walk : walkNear;
         const direct = await walk(bot, target, SURVEY_RULES.walkNear, { clock, timeoutMs: options?.timeoutMs ?? SURVEY_RULES.walkMs, allowDig: false, allowDoors: true });
         if (direct?.ok) {
-            return result(true, null, atBaseText(baseName), { base });
+            return said(ctx, null, atBaseText(baseName), { base });
         }
         if (direct?.reason === 'interrupted') {
             return result(false, 'interrupted', '', { base });

@@ -7,7 +7,7 @@ import { normalizeAreaName } from '../areas/area_store.js';
 import { commandText } from '../repeat_guard.js';
 import { buildRulesSection } from '../rules/rule_prompt.js';
 import { MINE_COMMANDS, PLAN_COMMANDS, checkOf, countIn, inventoryCounts } from '../job/plan_logic.js';
-import { planReasons, sentenceOf } from './routine_texts.js';
+import { lostPlaceWords, planReasons, sentenceOf } from './routine_texts.js';
 
 /** The fixed numbers of the routines (3.1, 3.2, 3.3). */
 export const ROUTINE_RULES = Object.freeze({
@@ -48,9 +48,21 @@ export const ROUTINE_COMMANDS = Object.freeze([
         params: Object.freeze([{ type: 'string' }, { type: 'int' }]) }),
     Object.freeze({ name: '!goToRememberedPlace', usage: '!goToRememberedPlace(name)', description: 'Walk to a saved place.',
         params: Object.freeze([{ type: 'string' }]) }),
+    // v0.1.4.16 (F3): a coordinate the player named is a step of its own; the three numbers may be 0 or negative (signed)
+    Object.freeze({ name: '!goToCoordinates', usage: '!goToCoordinates(x, y, z, closeness)', description: 'Walk to a coordinate.',
+        params: Object.freeze([{ type: 'int', signed: true }, { type: 'int', signed: true }, { type: 'int', signed: true }, { type: 'int', default: 2 }]) }),
     Object.freeze({ name: '!goToBase', usage: '!goToBase(name)', description: 'Walk to the door of a surveyed base.',
         params: Object.freeze([{ type: 'string' }]), when: 'base_survey' }),
 ]);
+
+/** v0.1.4.16 (F3): the two lines of the plan prompt about the places and the coordinates of the task, word for word. */
+export const PLAN_PLACE_LINES = Object.freeze([
+    'Every place the player names and every coordinate (x, y, z) in the task is a step of its own before the work there: !goToRememberedPlace("name") for a saved place, !goToCoordinates(x, y, z, 2) for a coordinate.',
+    'Keep the player\'s numbers.',
+]);
+
+/** v0.1.4.16 (F6): the bot's own bed, saved by the sleep as a place; never in the places line of a prompt. */
+export const HIDDEN_PLACES = Object.freeze(['my_bed']);
 
 /** The names of ROUTINE_COMMANDS. */
 export const ROUTINE_PLAN_NAMES = Object.freeze(ROUTINE_COMMANDS.map(c => c.name));
@@ -224,11 +236,22 @@ function inventoryText(inventory) {
     return entries.length > 0 ? entries.map(([name, n]) => `${n} ${name}`).join(', ') : 'nothing';
 }
 
+/**
+ * The names of the remembered places of the prompt (v0.1.4.16, F3, F6): the names given (strings or { name }), without the
+ * hidden ones (`my_bed`, the bot's own bed).
+ * @param {(string|{name: string})[]} places
+ * @returns {string[]}
+ */
+export function placeNamesOf(places) {
+    return (Array.isArray(places) ? places : []).map(p => (typeof p === 'string' ? p : p?.name))
+        .filter(n => typeof n === 'string' && n.length > 0 && !HIDDEN_PLACES.includes(n));
+}
+
 // `The places the bot knows: the areas farm (farm), home (home); the places post, spot.`: the saved areas by name and
 // kind, and the remembered places (!rememberHere) by name, so that the model knows the names it may walk to.
 function placesLine(areas, places) {
     const list = (Array.isArray(areas) ? areas : []).filter(a => isPlainObject(a) && typeof a.name === 'string' && a.name.length > 0);
-    const names = (Array.isArray(places) ? places : []).map(p => (typeof p === 'string' ? p : p?.name)).filter(n => typeof n === 'string' && n.length > 0);
+    const names = placeNamesOf(places);
     const parts = [];
     if (list.length > 0) {
         parts.push(`the areas ${list.map(a => `${a.name} (${a.kind ?? a.type ?? 'area'})`).join(', ')}`);
@@ -291,6 +314,7 @@ export function routinePlanPrompt(routine, inventory, areas, chests, commands, c
         `What the bot carries: ${inventoryText(inventory)}.`,
         'The commands you may use:',
         ...list.map(c => `${c.usage ?? c.name}: ${c.description ?? ''}`.trim()),
+        ...PLAN_PLACE_LINES, // v0.1.4.16 (F3): the places and the coordinates of the task are steps of their own
         `Answer with the steps of one round of the task, one command per line, in the order the bot runs them; the first command runs first; at most ${ROUTINE_RULES.maxSteps} lines.`,
         'Write the commands with their arguments, strings in double quotes, for example !harvest("farm"). Use no other command and write nothing else.',
         'When the task cannot be done with these commands, answer NONE.',
@@ -387,8 +411,10 @@ function fitArgs(def, args) {
             continue;
         }
         if (param.type === 'int') {
-            value = typeof value === 'string' && /^\d+$/.test(value.trim()) ? Number(value) : value;
-            if (!Number.isInteger(value) || value < 1) {
+            // v0.1.4.16 (F3): a signed param (a coordinate) takes 0 and negative numbers too
+            const pattern = param.signed === true ? /^-?\d+$/ : /^\d+$/;
+            value = typeof value === 'string' && pattern.test(value.trim()) ? Number(value) : value;
+            if (!Number.isInteger(value) || (param.signed !== true && value < 1)) {
                 return { ok: false, reason: planReasons.number(def.name) };
             }
         } else if (typeof value !== 'string') {
@@ -415,17 +441,87 @@ function refuse(reason, step) {
     return { ok: false, reason, step, steps: null };
 }
 
+// v0.1.4.16 (F3): a coordinate of the task, `(x, y, z)` inside parentheses, whole numbers, negative too.
+const COORDINATE = /\(\s*(-?\d+)\s*,\s*(-?\d+)\s*,\s*(-?\d+)\s*\)/g;
+
+/**
+ * The coordinates the task names (v0.1.4.16, F3): every `(x, y, z)` of the text, each once, in order.
+ * @param {string} text
+ * @returns {{x: number, y: number, z: number}[]}
+ */
+export function coordinatesIn(text) {
+    const out = [];
+    const seen = new Set();
+    for (const m of str(text).matchAll(COORDINATE)) {
+        const key = `${Number(m[1])},${Number(m[2])},${Number(m[3])}`;
+        if (!seen.has(key)) {
+            seen.add(key);
+            out.push({ x: Number(m[1]), y: Number(m[2]), z: Number(m[3]) });
+        }
+    }
+    return out;
+}
+
+// The words of a name for a match in the text: lower case, `_` and runs of spaces one space.
+function wordsOf(name) {
+    return str(name).toLowerCase().replace(/[_\s]+/g, ' ').trim();
+}
+
+function escapeRegExp(words) {
+    return words.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * The saved places the task names (v0.1.4.16, F3): the names of `places` (the names of the places line, strings or
+ * { name }, the hidden ones left out) whose words stand in the text as whole words, `_` and spaces alike ("the west
+ * forest chest" names `west_forest_chest`). In the order of `places`, each once.
+ * @param {string} text
+ * @param {(string|{name: string})[]} places
+ * @returns {string[]} the names as given
+ */
+export function placesIn(text, places) {
+    const haystack = wordsOf(text);
+    if (haystack === '') {
+        return [];
+    }
+    const out = [];
+    for (const name of placeNamesOf(places)) {
+        const words = wordsOf(name);
+        if (words === '' || out.includes(name)) {
+            continue;
+        }
+        if (new RegExp(`(^|[^a-z0-9])${escapeRegExp(words)}($|[^a-z0-9])`).test(haystack)) {
+            out.push(name);
+        }
+    }
+    return out;
+}
+
+// The step of a checked plan that walks to the coordinate: !goToCoordinates with the same three numbers.
+function hasWalkTo(walks, c) {
+    return walks.some(w => w.name === '!goToCoordinates' && w.full[0] === c.x && w.full[1] === c.y && w.full[2] === c.z);
+}
+
+// The step of a checked plan that walks to the place: !goToRememberedPlace with that name (its words).
+function hasWalkToPlace(walks, name) {
+    return walks.some(w => w.name === '!goToRememberedPlace' && wordsOf(w.full[0]) === wordsOf(name));
+}
+
 /**
  * The check of a plan (3.2): every command one of `commands` (ROUTINE_COMMANDS without) and none of `blocked`
  * (agent.blocked_actions) nor a routine command, its args of the types of its params (ints of 1 or more, texts), 1
  * to 8 steps. ok: `steps` holds the steps to save, { command, check } each; else `reason` is one of 3.6 and `step`
- * the step that failed, as written.
+ * the step that failed, as written. v0.1.4.16 (F3): with `context.text` (the task) every coordinate `(x, y, z)` of the
+ * text must be a `!goToCoordinates` step with the same three numbers, and every saved place of `context.places` (the
+ * names of the places line) whose name stands in the text a `!goToRememberedPlace` step; else the plan is refused
+ * with planReasons.places (`the plan lost the place (x, y, z) you named`), `step` null.
  * @param {(string|{name: string, args: Array}|{command: string})[]} steps the commands of the answer (readPlan) or texts
  * @param {object[]} [commands]
  * @param {string[]} [blocked]
+ * @param {{text?: string, places?: (string|{name: string})[]}} [context] the task text and the saved places
  * @returns {{ok: boolean, reason: string|null, step: string|null, steps: {command: string, check: object}[]|null}}
  */
-export function checkPlan(steps, commands, blocked) {
+export function checkPlan(steps, commands, blocked, context = {}) {
     try {
         const list = Array.isArray(commands) && commands.length > 0 ? commands : ROUTINE_COMMANDS;
         const hidden = Array.isArray(blocked) ? blocked : [];
@@ -437,6 +533,7 @@ export function checkPlan(steps, commands, blocked) {
             return refuse(planReasons.tooMany, null);
         }
         const out = [];
+        const walks = [];
         for (const entry of given) {
             const step = stepOf(entry);
             const label = typeof entry === 'string' ? entry : (typeof entry?.text === 'string' ? entry.text : (typeof entry?.command === 'string' ? entry.command : (step?.name ?? '')));
@@ -451,7 +548,22 @@ export function checkPlan(steps, commands, blocked) {
             if (!fit.ok) {
                 return refuse(fit.reason, label);
             }
+            walks.push({ name: step.name, full: fit.full });
             out.push({ command: commandText(step.name, fit.given), check: routineCheckOf(step.name, fit.full) });
+        }
+        // v0.1.4.16 (F3): the places and the coordinates the player named are steps of the plan
+        const c = isPlainObject(context) ? context : {};
+        if (typeof c.text === 'string') {
+            for (const coordinate of coordinatesIn(c.text)) {
+                if (!hasWalkTo(walks, coordinate)) {
+                    return refuse(planReasons.places(lostPlaceWords(coordinate)), null);
+                }
+            }
+            for (const name of placesIn(c.text, c.places)) {
+                if (!hasWalkToPlace(walks, name)) {
+                    return refuse(planReasons.places(lostPlaceWords(name)), null);
+                }
+            }
         }
         return { ok: true, reason: null, step: null, steps: out };
     } catch {
@@ -556,15 +668,17 @@ export function noteRound(routine, outcome, now) {
 }
 
 /**
- * The routines for the watch tool (3.5): `{ routines: [{ name, text, every, condition, state, rounds, fails,
- * lastRound, steps }] }` as JSON text, the steps as their commands (null before the plan).
+ * The routines for the watch tool (3.5): `{ routines: [{ name, text, every, condition, state, rounds, runs, fails,
+ * lastRound, steps }] }` as JSON text, the steps as their commands (null before the plan). v0.1.4.16 (F3): `runs`, the
+ * rounds started (the round number of the texts); `rounds` stays the rounds done.
  * @param {object[]} routines
  * @returns {string}
  */
 export function routinesJson(routines) {
     const list = (Array.isArray(routines) ? routines : []).filter(isPlainObject).map(r => ({
         name: r.name, text: r.text, every: r.every, condition: r.condition ?? null, state: r.state,
-        rounds: Number.isInteger(r.rounds) ? r.rounds : 0, fails: Number.isInteger(r.fails) ? r.fails : 0, lastRound: r.lastRound ?? null,
+        rounds: Number.isInteger(r.rounds) ? r.rounds : 0, runs: Number.isInteger(r.runs) ? r.runs : 0,
+        fails: Number.isInteger(r.fails) ? r.fails : 0, lastRound: r.lastRound ?? null,
         steps: Array.isArray(r.steps) ? r.steps.map(s => s?.command).filter(c => typeof c === 'string') : null,
     }));
     return JSON.stringify({ routines: list });

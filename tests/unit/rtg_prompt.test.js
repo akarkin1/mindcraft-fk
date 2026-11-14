@@ -29,12 +29,17 @@ const NEW_COMMANDS = [...ROUTE_COMMANDS, ...MINE_COMMANDS];
 // v0.1.4.15 (SPEC 4): the eight commands of the base survey (552 characters) and the routines (533) add 1,085 characters of
 // one-line docs; measured with every switch on: 18,596 with the block of the new things (17,511 at the end of v0.1.4.14). Both
 // limits rise by that growth rounded up to the next 100 (1,100): 17,200 to 18,300 and 17,600 to 18,700.
-const LIMIT_ALL_ON = 18300;
+// v0.1.4.16 (SPEC 5, E1): the one line of docs of !sealOpening adds 195 characters; both limits rise by that growth only:
+// 18,300 to 18,495 and 18,700 to 18,895.
+// v0.1.4.16 round two (SPEC 8.0, E6, the lead's decision): the docs of !breed, !allowTaking, !enchant, !enchantTake, !killFarm
+// (1,180) and the longer enchanting example chosen in place of a !newAction one (90), measured 1,270; every limit rises by that
+// growth rounded up to the next 100 (1,300): 18,495 to 19,795 and 18,895 to 20,195.
+const LIMIT_ALL_ON = 19795;
 // v0.1.4.14 (part K, SPEC 4.7): the lead's decision, since the budget of v0.1.4.13 had 13 characters left: with every
 // switch on, new_things_in_prompt among them, a block of 600 and the three longest lines of the new things present, the
 // prompt may hold 17,400 characters; without the block of the new things the old 17,000 hold (17,600 and 17,200 since part 8;
-// 18,700 and 18,300 since v0.1.4.15).
-const LIMIT_NEW_THINGS = 18700;
+// 18,700 and 18,300 since v0.1.4.15; 18,895 and 18,495 since v0.1.4.16; 20,195 and 19,795 since its round two).
+const LIMIT_NEW_THINGS = 20195;
 const NEW_THINGS_HEADER = 'NEW SINCE 1.21.8 (true, even if you do not know it):';
 // a bot with the things of the three longest lines of the new things: a copper golem statue and a copper pickaxe in the
 // bag, a nautilus 3 blocks away; the block holds what fits in its 360 characters
@@ -138,7 +143,7 @@ describe('the size of the conversing prompt (section 10, item 7)', () => {
         return lines.join('\n').slice(0, max);
     };
     const PARTS = ['cost_meter', 'protected_areas', 'player_rules', 'home_pack', 'storage_pack', 'farming_pack', 'wood_pack', 'mining_pack', 'routes_pack', 'mine_routes',
-        'watch_and_learn', 'base_survey', 'routines']; // v0.1.4.15: every switch that hides commands
+        'watch_and_learn', 'base_survey', 'routines', 'breeding', 'enchanting', 'afk_kill']; // v0.1.4.15: every switch that hides commands; v0.1.4.16 (8.0): the three packs
     const SWITCHES_ON = { knowledge_in_prompt: true, knowledge_max_chars: 600, protect_built_blocks: true, repeat_guard: 3, restart_context: true,
         say_results: true, flee_below_health: 8, stuck_restart_after: 3, log_timestamps: true, trail_max_steps: 500, ore_sense_range: 3, skills_over_code: true };
 

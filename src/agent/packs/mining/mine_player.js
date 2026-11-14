@@ -17,7 +17,7 @@ import { mineRoutesOn, walksRoute, wayIn } from './mine_way.js';
 import { HERE_ROOM_RANGE, madeMineText, nextMineName } from './here_logic.js';
 import { oreOf } from './ore_table.js';
 import { TEXTS, collectPassedText, forgetMineText, mineEntryText, minesListText, noEntranceText, rememberMineText, rememberTunnelText,
-    unknownOreText } from './texts.js';
+    tunnelIsMineText, unknownOreText } from './texts.js';
 // v0.1.4.11: the texts of W2 that part W adds to texts.js are reached at run time (noCorridorText); a named
 // import of a name that does not exist yet would break the loading of the pack
 import * as TX from './texts.js';
@@ -378,8 +378,12 @@ function hereAnchor(get, feet, room) {
  *   mine as "dig here" adds it, with its text (a tunnel 1 or 2 wide is left to mineOre, as in v0.1.4.11).
  * The mine made has its entrance 2 blocks above the floor of the bot's cell: the climb of the trip then asks for the
  * way out, which says it is unknown (noWayOutText), instead of taking the bot for one on the surface.
- * Nothing happens (made false) on the surface, in a known mine, without mine_routes or without a store; and in open
- * rock with no tunnel at the feet, where mineOre gives its refusal of v0.1.4.11.
+ * Nothing happens (made false) on the surface, in a known mine or without a store; and in open rock with no tunnel at
+ * the feet, where mineOre gives its refusal of v0.1.4.11.
+ * v0.1.4.16 (F5, the play of 2026-11-11: "A new mine starts from the surface" in a forgotten mine): a tunnel 1 or 2 wide
+ * at the bot's feet becomes the mine `mine_<n>` with the line `This tunnel is a mine now: "mine_2" at (x, y, z).`, with
+ * or without mine_routes; the widened tunnel of Q1 (3 or 4 wide) and the tunnel added to a known mine near stay with
+ * mine_routes only, with their texts. Only a bot in open rock or a cave gets no mine (mineOre's undergroundNoMine).
  * @param {object} bot
  * @param {object} ctx the pack context (mines, whereAmI, settings, routes, say, log)
  * @param {string} ore
@@ -391,16 +395,17 @@ export function mineHere(bot, ctx = {}, ore = '') {
         const row = oreOf(ore);
         const store = storeOf(ctx);
         const feet = feetOf(bot);
-        if (!row || !store || !feet || !mineRoutesOn(ctx) || ctx?.whereAmI?.()?.underground !== true) {
+        if (!row || !store || !feet || ctx?.whereAmI?.()?.underground !== true) {
             return none;
         }
+        const routes = mineRoutesOn(ctx);
         const dimension = dimensionOf(bot) ?? 'overworld';
         const mines = store.list(dimension);
         if (mineAt(mines, feet)) {
             return none; // in a known mine: the rules of v0.1.4.11 (I4)
         }
         const get = nameReader(bot);
-        const near = store.nearest?.(feet, dimension, NEAREST_RANGE) ?? null;
+        const near = routes ? store.nearest?.(feet, dimension, NEAREST_RANGE) ?? null : null;
         if (near) {
             // a known mine near: v0.1.4.11 measures a tunnel 1 or 2 wide (measureHere); Q1 adds a widened one
             const anchor = near.room?.center ?? near.base ?? near.entrance;
@@ -417,7 +422,8 @@ export function mineHere(bot, ctx = {}, ore = '') {
             return { ok: true, reason: null, text, made: true, mine: saved };
         }
         const room = roomNear(bot, feet);
-        const found = tunnelAt(get, feet, { anchor: hereAnchor(get, feet, room), minCells: MIN_TUNNEL_CELLS, maxWidth: WIDENED_TUNNEL_WIDTH });
+        // F5: a tunnel 1 or 2 wide with or without mine_routes (the forgotten mine); a widened one (Q1) with mine_routes only
+        const found = tunnelAt(get, feet, { anchor: hereAnchor(get, feet, room), minCells: MIN_TUNNEL_CELLS, ...(routes ? { maxWidth: WIDENED_TUNNEL_WIDTH } : {}) });
         if (!found.ok) {
             return none; // open rock with no tunnel: the old refusal of mineOre
         }
@@ -429,7 +435,8 @@ export function mineHere(bot, ctx = {}, ore = '') {
             room: room ?? { center: { ...feet }, chest: null, table: null, furnace: null }, tunnels: [tunnel], passed: [],
             area: mineAreaName(bot, ctx, feet),
         });
-        const text = madeMineText(name, tunnel);
+        const narrow = !(Number.isFinite(found.tunnel?.width) && found.tunnel.width > 2);
+        const text = narrow ? tunnelIsMineText(cleanMineName(name) ?? name, feet) : madeMineText(name, tunnel);
         sayOrLog(ctx, text);
         return { ok: true, reason: null, text, made: true, mine: saved };
     } catch (err) {

@@ -107,7 +107,8 @@ export const TEXTS = Object.freeze({
     ran: (done, total) => `Ran ${done} of ${total}.`,
     ranLine: (n, command, text) => `${n}. ${command}: ${text}`,
     runStarted: 'started.',
-    stillRunning: (n, total) => `Still running: ${n} of ${total}.`,
+    // v0.1.4.16 (F9): the command that still runs and the id of its queue item, which the tool runs lists
+    stillRunning: (command, id) => `Still running: ${command} (run ${id}).`,
     commandsOnly: 'run takes commands only; use say for words.',
     badCommands: 'run takes commands: an array of 1 to 10 strings.', // decided by E1
     stoppedAt: (n, total) => `Stopped at ${n} of ${total}.`, // decided by E1: the stop rule

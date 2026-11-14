@@ -1,5 +1,5 @@
 // v0.1.4.13 (part S): the command queue of the run tool (spec 4.1). The commands of a run call are handed to
-// agent.handleMessage(owner, text) one after the other, each after the previous one's result: the result of
+// agent.handleMessage(owner, text, { quiet: true }) one after the other, each after the previous one's result: the result of
 // a command of a pack is the entry of agent.running_commands (its `pack`: { ok, reason, text }), the result of
 // any command is the last line the agent routed to the owner while it ran (agent.routeResponse, wrapped). A
 // result that is a failure stops the queue when stop_on_failure. A skill that ran 2 s without a failure
@@ -118,10 +118,22 @@ export function runAnswer(batch) {
         out.push(batch.stopped.by ? TEXTS.stoppedBy(batch.stopped.by, batch.stopped.at, total) : TEXTS.stoppedAt(batch.stopped.at, total));
         return out.join('\n');
     }
-    const running = items.findIndex((item) => item.status === 'running');
-    if (running >= 0)
-        out.push(TEXTS.stillRunning(running + 1, total));
+    // v0.1.4.16 (F9): the command that still runs and the id of its item, so a supervisor polls the tool runs for it
+    const running = items.find((item) => item.status === 'running');
+    if (running)
+        out.push(TEXTS.stillRunning(running.text, running.id ?? '?'));
     return out.join('\n');
+}
+
+/** v0.1.4.16 (F9): the tool runs lists the items that ran within this time. */
+export const RUNS_KEEP_MS = 3600000;
+const RUNS_KEEP_MAX = 200;
+
+// The state of an item for the tool runs: running (also started), done, failed (also skipped: never run).
+const RUN_STATES = Object.freeze({ running: 'running', started: 'running', done: 'done', failed: 'failed', skipped: 'failed' });
+
+function isoOf(ms) {
+    return Number.isFinite(ms) ? new Date(ms).toISOString() : null;
 }
 
 function warn(what, error) {
@@ -148,6 +160,16 @@ export function createQueue(agent, options = {}) {
     const batches = new Set(); // batches that wait for their answer
     let current = null; // the item that runs
     let closed = false;
+    // v0.1.4.16 (F9): every item gets an id (the answer names it: `Still running: <command> (run <id>)`); the items that
+    // ran within the last hour are kept for the tool runs
+    let nextId = 1;
+    const history = [];
+    const pruneHistory = (t) => {
+        while (history.length > 0 && (history[0].endedAt ?? history[0].startedAt ?? t) < t - RUNS_KEEP_MS)
+            history.shift();
+        if (history.length > RUNS_KEEP_MAX)
+            history.splice(0, history.length - RUNS_KEEP_MAX);
+    };
 
     // the inner handleMessage: the one the queue's own commands go through
     const innerHandle = typeof agent?.handleMessage === 'function' ? agent.handleMessage : null;
@@ -208,6 +230,7 @@ export function createQueue(agent, options = {}) {
             return;
         item.status = status;
         item.result = result;
+        item.endedAt = now();
         current = null;
         clearInterval(item.poll);
         clearTimeout(item.longTimer);
@@ -225,6 +248,9 @@ export function createQueue(agent, options = {}) {
         item.captured = [];
         item.entry = null;
         item.startedAt = now();
+        item.endedAt = null;
+        history.push(item);
+        pruneHistory(item.startedAt);
         const findEntry = () => {
             if (item.entry)
                 return;
@@ -256,9 +282,12 @@ export function createQueue(agent, options = {}) {
         let handed;
         try {
             // v0.1.4.13 fix1: a command of the run tool runs quiet: its echo, its result and the texts of its skill
-            // go to the answer and the bot's log, never to the game chat; a command the owner typed is said as before
-            const hand = () => innerHandle.call(agent, item.by, item.text);
-            handed = innerHandle ? Promise.resolve(item.batch?.answers ? runQuiet(hand) : hand()) : Promise.reject(new Error('the agent has no handleMessage'));
+            // go to the answer and the bot's log, never to the game chat; a command the owner typed is said as before.
+            // v0.1.4.16 (F9): the command of the run tool also carries { quiet: true } to handleMessage, so the agent
+            // skips the echo `*<owner> used <command>*` and the model's command echo whatever the async context
+            const quiet = item.batch?.answers === true;
+            const hand = () => (quiet ? innerHandle.call(agent, item.by, item.text, { quiet: true }) : innerHandle.call(agent, item.by, item.text));
+            handed = innerHandle ? Promise.resolve(quiet ? runQuiet(hand) : hand()) : Promise.reject(new Error('the agent has no handleMessage'));
         } catch (error) {
             handed = Promise.reject(error);
         }
@@ -292,7 +321,7 @@ export function createQueue(agent, options = {}) {
     const enqueue = (texts, by, batchOptions) => {
         const batch = { items: [], stopOnFailure: batchOptions?.stopOnFailure !== false, stopped: null, resolve: null, timer: null, answers: batchOptions?.answers === true };
         for (const text of texts) {
-            const item = { text: String(text).trim(), by, batch, status: 'waiting', result: '' };
+            const item = { id: nextId++, text: String(text).trim(), by, batch, status: 'waiting', result: '', startedAt: null, endedAt: null };
             batch.items.push(item);
             items.push(item);
         }
@@ -354,7 +383,7 @@ export function createQueue(agent, options = {}) {
                     stopRest(null, by, current?.batch ? current.batch.items.indexOf(current) + 1 : 0);
                     let stopped;
                     try {
-                        stopped = Promise.resolve(runQuiet(() => innerHandle?.call(agent, by, stopText)));
+                        stopped = Promise.resolve(runQuiet(() => innerHandle?.call(agent, by, stopText, { quiet: true }))); // F9: quiet too
                     } catch (error) {
                         stopped = Promise.reject(error);
                     }
@@ -380,7 +409,26 @@ export function createQueue(agent, options = {}) {
         isActive,
         size: () => items.length + (current ? 1 : 0),
         /** The items that wait and the one that runs, for the digest and the tests. */
-        pending: () => (current ? [current, ...items] : [...items]).map((item) => ({ text: item.text, by: item.by, status: item.status })),
+        pending: () => (current ? [current, ...items] : [...items]).map((item) => ({ id: item.id, text: item.text, by: item.by, status: item.status })),
+        /**
+         * v0.1.4.16 (F9): the items that ran within the last hour, oldest first, for the tool runs: { id, command, state:
+         * 'running' | 'done' | 'failed', text, startedAt, endedAt } (a long skill that counts as started is running; an item
+         * the queue dropped is failed with the text `not run`; endedAt null while it runs). A supervisor polls this for a run
+         * that answered `Still running: <command> (run <id>)`.
+         * @returns {Array<{id: number, command: string, state: string, text: string, startedAt: string|null, endedAt: string|null}>}
+         */
+        runs() {
+            const t = now();
+            pruneHistory(t);
+            return history.map((item) => ({
+                id: item.id,
+                command: item.text,
+                state: RUN_STATES[item.status] ?? 'running',
+                text: item.status === 'skipped' ? TEXTS.notRun : (typeof item.result === 'string' ? item.result : ''),
+                startedAt: isoOf(item.startedAt),
+                endedAt: isoOf(item.endedAt),
+            }));
+        },
         close() {
             if (closed)
                 return;

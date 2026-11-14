@@ -35,6 +35,7 @@ function cleanStep(step) {
 /**
  * The clean record to store (3.1), or null when it is no routine: a name like an area name, a text of 1 to 400
  * characters. The plan, the condition, the state and the counts are taken when they are sound, their defaults else.
+ * v0.1.4.16 (F3): `runs`, the rounds started (the counter of the round texts), default 0.
  * @param {object} routine
  * @param {string|null} now ISO time for updated (and created when it has none)
  * @returns {object|null}
@@ -60,6 +61,7 @@ export function validateRoutine(routine, now) {
         condition,
         state: ROUTINE_STATES.includes(routine.state) ? routine.state : 'active',
         rounds: Number.isInteger(routine.rounds) && routine.rounds >= 0 ? routine.rounds : 0,
+        runs: Number.isInteger(routine.runs) && routine.runs >= 0 ? routine.runs : 0, // v0.1.4.16 (F3): the rounds started
         fails: Number.isInteger(routine.fails) && routine.fails >= 0 ? routine.fails : 0,
         lastRound: typeof routine.lastRound === 'string' ? routine.lastRound : null,
         created: typeof routine.created === 'string' ? routine.created : now,

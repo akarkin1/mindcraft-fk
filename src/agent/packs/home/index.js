@@ -14,8 +14,8 @@ import { sleepInBed } from './sleep.js';
 
 export { DOOR_RULES, DOOR_SERVICE_RULES, DoorTracker, DoorWatch, doorAxis, doorCenter, doorKey, doorSides, isIronOpenable, openableKind,
     sideOf } from './door_logic.js';
-export { DAY_TICKS, NIGHT_END, NIGHT_START, NOT_HOSTILE_FOR_SHELTER, SHELTER_BUSY_ACTIONS, SHELTER_COOLDOWN_MS,
-    isHostileForShelter, isNight, normalizeTimeOfDay, orderedThisNight, shouldShelter } from './night_logic.js';
+export { DAY_TICKS, NIGHT_END, NIGHT_START, NOT_HOSTILE_FOR_SHELTER, PHASE_NIGHT_START, SHELTER_BUSY_ACTIONS, SHELTER_COOLDOWN_MS,
+    isHostileForShelter, isNight, isShelterNight, normalizeTimeOfDay, orderedThisNight, shouldShelter } from './night_logic.js'; // v0.1.4.16 (F8): isShelterNight
 export { CREEPER_RULES, countsForArea, countsForBot, decide, fuseIsBurning, lineOfSight } from './creeper_logic.js';
 export { SHELTER_RANGE, STANDING_RANGE, chooseCoverBlock, chooseShelter, chooseStandingPlace, isBuildingArea,
     isFallingBlockName, isInsideArea, isShelterArea, orderEntrances, roomCenter, sameDimension } from './shelter_logic.js';
@@ -30,7 +30,7 @@ export { boxCenter, containsPos, distanceToBox, expandBox, horizontalDistanceToB
 
 export { DOOR_SAFETY, canOpen, closeDoor, closeDoorsBehind, closeNear, createDoorService, doorDanger, doorIsSafe, doorState, findOpenables,
     isPassingThrough, openDoor, passThrough, releaseDoor, reserveDoor, somebodyInDoor } from './doors.js';
-export { bedInShelter, emergencyShelter, enterBuilding, findShelter, goToShelter, isInShelter, standingTest } from './shelter.js';
+export { bedInShelter, emergencyShelter, enterBuilding, findShelter, goToShelter, isInShelter, leaveBuilding, standingTest } from './shelter.js'; // v0.1.4.16 (F4): leaveBuilding
 export { MAX_SLEEP_MS, findBeds, sleepInBed } from './sleep.js';
 export { OFFHAND_SLOT, eatBestFood, foodItems, hungerStep, knownFood, moveOffhandBack } from './food.js';
 // v0.1.4.8, fix round: one lock for eating (X10) and getting out of bed (X5, the glue calls wakeUp before a

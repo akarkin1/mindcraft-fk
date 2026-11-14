@@ -19,6 +19,7 @@ import { isPenWord, penAllowedText, noPenText } from '../areas/keep_out_logic.js
 import { permitPenNear } from '../areas/pen_gate.js';
 import { leaveGameText, LEAVE_GAME_NOTE } from '../library/skill_texts.js'; // v0.1.4.14 (P-28): !leaveGame
 import { ROUTINES_OFF } from '../routines/routine_texts.js'; // v0.1.4.15 (part R): the routine commands answer with agent.routines
+import { ALLOW_SAID_TEXT, allowTakingText, noWordText, normalizeItemName } from '../world/stock_permits.js'; // v0.1.4.16 (SPEC 8.1, E6): a store, no pack
 
 
 // v0.1.4.8, I5 (S3, S4): a command that was stopped starts no turn of the model. What it did so far goes
@@ -371,6 +372,45 @@ const ROUTES_OFF = 'The routes pack is off.';
 const MINE_ROUTES_OFF = 'The mine routes are off. They need mine_routes, mining_pack and routes_pack.';
 // v0.1.4.15 (part S, SPEC 2.5): the commands of the survey pack (hidden while base_survey is off)
 const SURVEY_OFF = 'The base survey is off.';
+// v0.1.4.16 (SPEC 8.0): the three packs of round two, each hidden while its switch is off; !allowTaking with any of them
+const BREEDING_OFF = 'The breeding pack is off.';
+const ENCHANTING_OFF = 'The enchanting pack is off.';
+const AFK_KILL_OFF = 'The AFK kill pack is off.';
+
+// v0.1.4.16 (SPEC 8.1, E6, O-3): the player whose word !allowTaking carries: who typed it, else who the model answered with
+// it; null for the model on its own, a round of a routine, a job's resume or another bot: the bot never gives itself a permit.
+function permitGiver(agent) {
+    const typed = typedCommandPlayer(agent, '!allowTaking');
+    if (typed !== null)
+        return typed;
+    const order = agent?.last_order;
+    if (order !== null && typeof order === 'object' && order.command === '!allowTaking' && typeof order.by === 'string' && order.by !== ''
+        && order.by !== 'system' && order.by !== agent?.name)
+        return order.by;
+    return null;
+}
+
+// v0.1.4.16 (SPEC 8.1, E6): !allowTaking sets the permit of the world's stock (ctx.permits) and says the line through
+// agent.sayText; the model gets the short answer, a typed order the line itself. Without a player's word the permit stays as it
+// was and the model gets the no-permit line. Never throws.
+function allowTaking(agent, permits, item, allowed) {
+    const name = normalizeItemName(item);
+    if (name === null)
+        return { ok: false, reason: 'bad_name', text: `Invalid item type: ${item}.` };
+    if (permitGiver(agent) === null) {
+        const text = noWordText(name);
+        console.log(`!allowTaking(${JSON.stringify(name)}, ${allowed}): no player's word, the permit stays: ${text}`);
+        return { ok: false, reason: 'no_word', text };
+    }
+    const saved = permits.set(name, allowed === true);
+    if (!saved)
+        return { ok: false, reason: 'error', text: `Invalid item type: ${item}.` };
+    const line = allowTakingText(saved.item, saved.allowed);
+    if (typedCommandPlayer(agent, '!allowTaking') !== null)
+        return { ok: true, reason: null, text: line };
+    agent.sayText?.(line);
+    return { ok: true, reason: null, text: ALLOW_SAID_TEXT, said: line };
+}
 
 /**
  * v0.1.4.9 (section 2): mine_routes as it takes effect. It needs mining_pack and routes_pack; without
@@ -602,6 +642,45 @@ function collectWork(agent, type) {
 // M5: !goToMine goes down into the mine of the ore, without an ore into the nearest mine of the store,
 // with descendToLevel of the mining pack.
 
+// v0.1.4.16 fix round (review finding 2; SPEC 8.4 "the owner saves it standing at his spot"): the places of the AFK kill pack's
+// room (the names of packs/afk_kill/afk_kill.js, which this file does not import) that !rememberHere saves where the player who
+// gave the order stands.
+const KILL_ROOM_PLACES = Object.freeze(['kill_spot', 'kill_chest', 'kill_bed', 'kill_exit']);
+const ORDER_PLAYER_RANGE = 8;
+
+// The position of the player who gave the order that runs (agent.last_order), when the bot sees that player (bot.players[name]
+// has an entity) within 8 blocks; else null. Never throws.
+function orderPlayerNear(agent) {
+    try {
+        const by = agent?.last_order?.by;
+        const p = typeof by === 'string' && by !== '' ? agent.bot?.players?.[by]?.entity?.position : null;
+        const me = agent.bot?.entity?.position;
+        if (!p || !me || ![p.x, p.y, p.z, me.x, me.y, me.z].every(Number.isFinite))
+            return null;
+        return Math.hypot(p.x - me.x, p.y - me.y, p.z - me.z) <= ORDER_PLAYER_RANGE ? { x: p.x, y: p.y, z: p.z } : null;
+    } catch (error) {
+        return null;
+    }
+}
+
+// v0.1.4.16 (review 16b, finding 5): who sets the goal of the !goal that runs (the newest !goal of agent.running_commands): the
+// player who typed it, else the order behind the model's chain (executeCommand's running.chain: a player, the supervisor or
+// 'model'); undefined when unknown (the self prompter then counts it a player's). Never throws.
+export function goalSetterOf(agent) {
+    try {
+        const list = Array.isArray(agent?.running_commands) ? agent.running_commands : [];
+        const r = [...list].reverse().find(c => c && c.name === '!goal');
+        if (!r)
+            return undefined;
+        if (r.typed === true)
+            return typeof r.by === 'string' && r.by !== '' ? r.by : 'player';
+        const by = r.chain?.by;
+        return typeof by === 'string' && by !== '' ? by : undefined;
+    } catch (error) {
+        return undefined;
+    }
+}
+
 // v0.1.4.9 (B3, I10): the yaw of the player who gave the order that runs (agent.last_order), in radians as
 // mineflayer gives it, when that player is in bot.players and has an entity; else undefined. Never throws.
 function orderPlayerYaw(agent) {
@@ -694,6 +773,28 @@ function surfaceContext(agent) {
         return typeof agent?.homeContext === 'function' ? agent.homeContext() ?? null : null;
     } catch (error) {
         console.warn('Could not build the context of !goToSurface:', error);
+        return null;
+    }
+}
+
+// v0.1.4.16 (F10, E1): what skills.collectBlock reads for the cave rule (bot.caveContext): the pack context (areas, the mine
+// store, say) with the mining pack as `mining` for its mineAt; the home context without the work packs. null when nothing
+// can be built. Never throws.
+function caveContext(agent) {
+    try {
+        let ctx = null;
+        let mining = null;
+        if (settings.mining_pack && agent?.work_packs?.mining) {
+            ctx = agent.packContext(); // the mine store and the pack's mineAt: a block in a known mine is in no cave
+            mining = agent.work_packs.mining;
+        } else if (typeof agent?.homeContext === 'function') {
+            ctx = agent.homeContext();
+        }
+        if (!ctx || typeof ctx !== 'object')
+            return null;
+        return { ...ctx, mining, say: (text) => agent.sayText?.(text) };
+    } catch (error) {
+        console.warn('Could not build the context of the cave rule:', error);
         return null;
     }
 }
@@ -1033,16 +1134,19 @@ export const actionsList = [
         description: 'Save the current location with a given name.',
         params: {'name': { type: 'string', description: 'The name to remember the location as.' }},
         perform: async function (agent, name) {
-            const pos = agent.bot.entity.position;
+            // v0.1.4.16 fix round (review finding 2): the places of the kill room are saved where the owner stands
+            const player = typeof name === 'string' && KILL_ROOM_PLACES.includes(name.trim()) ? orderPlayerNear(agent) : null;
+            const pos = player ?? agent.bot.entity.position;
             const saved = agent.memory_bank.rememberPlace(name, pos.x, pos.y, pos.z, agent.bot.game?.dimension);
             if (saved === false)
                 return `Could not save the location "${name}".`;
+            const reply = player ? `Location saved as "${name}" where you stand.` : `Location saved as "${name}".`;
             if (agent.area_store) {
                 const building = saveBuildingAround(agent, name);
                 if (building)
-                    return `Location saved as "${name}". ${building}`;
+                    return `${reply} ${building}`;
             }
-            return `Location saved as "${name}".`;
+            return reply;
         }
     },
     {
@@ -1245,8 +1349,17 @@ export const actionsList = [
             if (!store)
                 return AREAS_OFF;
             try {
-                if (store.remove(name))
+                if (store.remove(name)) {
+                    // v0.1.4.16 (F2): the name leaves every base's `places` and `kept` (a survey place or an owner's area in a base)
+                    if (settings.base_survey && agent.work_packs?.survey) {
+                        try {
+                            agent.work_packs.survey.removeFromBases?.(agent.packContext(), name);
+                        } catch (error) {
+                            console.warn('Could not take the area out of the bases:', error);
+                        }
+                    }
                     return `Forgot the area "${name}".`;
+                }
             } catch (error) {
                 console.warn('Could not forget the area:', error);
             }
@@ -1295,6 +1408,75 @@ export const actionsList = [
             return await runPack(agent, 'goToBase', agent.work_packs?.survey, 'survey', (pack, bot, ctx) => pack.goToBase(bot, ctx, name));
         }
     },
+    // v0.1.4.16 (SPEC 8.2, E6): the breeding pack, behind breeding (the pack is loaded by _loadWorkPacks); !breed moves the bot
+    // around the pen, so it runs as a pack action (!stop ends it)
+    {
+        name: '!breed',
+        description: 'Breed the animals of a saved pen from outside its fence: feed pairs until count new animals, never opening a gate.',
+        params: {
+            'pen': { type: 'string', description: 'The saved pen, for example "cow_pen".' },
+            'count': { type: 'int', description: 'The new animals wanted.', domain: [1, 12, '[]'], default: 2 }
+        },
+        perform: async function (agent, pen, count) {
+            if (!settings.breeding)
+                return BREEDING_OFF;
+            return await runPack(agent, 'breed', agent.work_packs?.breeding, 'breeding', (pack, bot, ctx) => pack.breed(bot, ctx, pen, count));
+        }
+    },
+    // v0.1.4.16 (SPEC 8.3, E7): the enchanting pack, behind enchanting (the pack is loaded by _loadWorkPacks). !enchant walks to the
+    // table and holds its window open while the question waits, so it runs as a pack action (!stop ends it and the item comes
+    // back); !enchantTake is the owner's answer, a plain command that stops no running action
+    {
+        name: '!enchant',
+        description: 'Enchant an item at the enchanting table with the bot\'s lapis: choice "" asks you which offer, else a number 1 to 3 or an enchantment name takes that offer.',
+        params: {
+            'item': { type: 'string', description: 'The item, for example "diamond_pickaxe" or "pickaxe".' },
+            'choice': { type: 'string', description: '"", 1 to 3, or an enchantment name.', default: '' }
+        },
+        perform: async function (agent, item, choice) {
+            if (!settings.enchanting)
+                return ENCHANTING_OFF;
+            return await runPack(agent, 'enchant', agent.work_packs?.enchanting, 'enchanting', (pack, bot, ctx) => pack.enchant(bot, ctx, item, choice));
+        }
+    },
+    {
+        name: '!enchantTake',
+        description: 'Answer the bot\'s enchanting question: 1, 2 or 3 take that offer, 0 takes the item back.',
+        params: {'n': { type: 'int', description: 'The offer, 0 for none.', domain: [0, 3, '[]'] }},
+        perform: async function (agent, n) {
+            if (!settings.enchanting)
+                return ENCHANTING_OFF;
+            return await runPlain(agent, agent.work_packs?.enchanting, 'enchanting', (pack) => pack.enchantTake(agent.bot, agent.packContext(), n));
+        }
+    },
+    // v0.1.4.16 (SPEC 8.4 and 8.4a, E8): the AFK creeper kill, behind afk_kill (the pack is loaded by _loadWorkPacks); it runs as one
+    // pack action until "stop" (!stop ends the action and the job), the level or the time of `until`; with job_memory the job of
+    // the kind kill_farm brings it back after anything else ended the action
+    {
+        name: '!killFarm',
+        description: 'Farm creepers at the saved kill spot: climb there, kill what lands on the hoppers, store the drops, eat and sleep, until you say stop, or until "level 30" or "20 minutes".',
+        params: {'until': { type: 'string', description: '"level N", "N minutes", or empty.', default: '' }},
+        perform: async function (agent, until) {
+            if (!settings.afk_kill)
+                return AFK_KILL_OFF;
+            return await runPack(agent, 'killFarm', agent.work_packs?.afk_kill, 'AFK kill', (pack, bot, ctx) => pack.killFarm(bot, ctx, until));
+        }
+    },
+    // v0.1.4.16 (SPEC 8.1, E6): the owner's permit to take an item from the known chests, behind breeding, enchanting or afk_kill;
+    // a plain command: it moves nothing and stops no running action (the feeding waits for it)
+    {
+        name: '!allowTaking',
+        description: 'Allow (true) or forbid (false) the bot to take an item from the chests it knows for its work, for example wheat or lapis_lazuli.',
+        params: {
+            'item': { type: 'ItemName', description: 'The item.' },
+            'allowed': { type: 'boolean', description: 'true or false.' }
+        },
+        perform: async function (agent, item, allowed) {
+            if (!settings.breeding && !settings.enchanting && !settings.afk_kill)
+                return BREEDING_OFF;
+            return await runPlain(agent, agent.packContext().permits ?? null, 'stock permits', (permits) => allowTaking(agent, permits, item, allowed));
+        }
+    },
     {
         name: '!allowChanges',
         description: 'Allow yourself to break and place blocks in a protected area for some minutes, only when the player asks you to build, repair or break something there.',
@@ -1333,7 +1515,8 @@ export const actionsList = [
         description: REMEMBER_RULE_DESCRIPTION,
         params: {'text': { type: 'string', description: 'The rule as one short sentence.' }},
         perform: async function (agent, text) {
-            const reply = rememberRuleReply(agent.rule_store, text); // never throws, also without a store
+            // never throws, also without a store; v0.1.4.16 (F3): the cap line is said by the bot too
+            const reply = rememberRuleReply(agent.rule_store, text, (line) => agent.sayText?.(line));
             const marked = markKeepOut(agent, text, reply); // v0.1.4.10 (R2): a rule about a saved area marks it
             return marked ? `${reply} ${marked}` : reply;
         }
@@ -1450,6 +1633,10 @@ export const actionsList = [
             const work = collectWork(agent, type);
             if (work)
                 return await runPack(agent, 'collectBlocks', work.pack, work.name, (pack, bot, ctx) => work.run(pack, bot, ctx, num));
+            // v0.1.4.16 (F10, E1): the context of the cave rule of skills.collectBlock (the blocks in a cave last, the line `The
+            // <type> is in a cave; I go carefully.` said once through agent.sayText): the pack context with the mining pack for mineAt
+            if (agent.bot && typeof agent.bot === 'object')
+                agent.bot.caveContext = caveContext(agent);
             return await runForText(agent, 'collectBlocks', async () => {
                 await skills.collectBlock(agent.bot, type, num);
             }, 10); // 10 minute timeout
@@ -1777,6 +1964,22 @@ export const actionsList = [
             return await runPlain(agent, agent.work_packs?.mining, 'mining', (pack) => pack.forgetMine(agent.packContext(), name));
         }
     },
+    // v0.1.4.16 (F10, E1): an opening into a cave closed with stone from the bag, behind mining_pack
+    {
+        name: '!sealOpening',
+        description: 'Close an opening into a cave at a block position with stone from the bag, up to 9 blocks.',
+        params: {
+            'x': { type: 'int', description: 'The x of a block of the opening.', domain: [-30000000, 30000000] },
+            'y': { type: 'int', description: 'Its y.', domain: [-64, 320] },
+            'z': { type: 'int', description: 'Its z.', domain: [-30000000, 30000000] }
+        },
+        perform: async function (agent, x, y, z) {
+            if (!settings.mining_pack)
+                return MINING_OFF;
+            return await runPack(agent, 'sealOpening', agent.work_packs?.mining, 'mining', (pack, bot, ctx) => (typeof pack.sealOpening === 'function'
+                ? pack.sealOpening(bot, ctx, x, y, z) : { ok: false, reason: 'unknown', text: 'The mining pack cannot seal an opening yet.' }));
+        }
+    },
     // v0.1.4.9 (I10): the ways of the player (routes_pack) and the mine of the player (mine_routes). All but
     // !collectPassedOre (it walks) are plain commands that do not move the bot and stop no running action.
     {
@@ -1913,11 +2116,12 @@ export const actionsList = [
         perform: async function (agent, prompt) {
             if (!costAllows(agent, 'self_prompt'))
                 return 'I reached my cost limit and do not work on goals by myself now.';
+            const by = goalSetterOf(agent); // review 16b, finding 5: from this command's chain, not the shared agent.order_chain
             if (convoManager.inConversation()) {
-                agent.self_prompter.setPromptPaused(prompt);
+                agent.self_prompter.setPromptPaused(prompt, by);
             }
             else {
-                agent.self_prompter.start(prompt);
+                agent.self_prompter.start(prompt, by);
             }
         }
     },
@@ -2168,7 +2372,12 @@ export const actionsList = [
             'text': { type: 'string', description: 'The work in the player\'s words, "every N minutes" and "when fewer than N torches" included.' }
         },
         perform: async function (agent, name, text) {
-            return await routineReply(agent, (routines) => routines.remember(name, text));
+            return await routineReply(agent, (routines) => {
+                const out = routines.remember(name, text);
+                if (out?.reason === 'bad_text')
+                    agent.sayText?.(out.text); // v0.1.4.16 (F3): the cap of the text, with the count, is said by the bot too
+                return out;
+            });
         }
     },
     {

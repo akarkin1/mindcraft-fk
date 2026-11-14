@@ -114,7 +114,11 @@ const settings = {
     "new_things_in_prompt": false, // v0.1.4.14: name the things of 1.21.9 to 26.1 that are in the bag, in view or in the last lines in the chat prompt
     "base_survey": false, // v0.1.4.15: the base survey: !surveyBase finds every place of a base from the loaded blocks around the bot and saves them with the base's name; !renameArea, !goToBase. needs protected_areas and world_memory
     "survey_radius": 128, // with base_survey: how far sideways from the bot the survey reaches at most, in blocks; it takes what the server has loaded within it
+    "survey_cluster_gap": 48, // v0.1.4.16: with base_survey: two finds farther apart than this (x/z distance between their boxes or points) belong to different bases; the survey saves the cluster the bot stands in and reports the others
     "routines": false, // v0.1.4.15: standing work in your words (!rememberRoutine, !routines, !forgetRoutine, !doRoutine): the bot does a round when it has no job, one at a time, planned once with the model; the watch tool routines. needs job_memory
+    "breeding": false, // v0.1.4.16: the breeding pack: !breed feeds the animals of a saved pen from outside its fence until new animals are born; the feed from the bag, else from the chests the bot knows with your permit (!allowTaking). needs protected_areas and world_memory
+    "enchanting": false, // v0.1.4.16: the enchanting pack: !enchant reads the offers of an enchanting table and says them, you choose (!enchantTake); the lapis from the bag, else from the chests the bot knows with your permit (!allowTaking)
+    "afk_kill": false, // v0.1.4.16: the AFK creeper kill: !killFarm stands at your saved kill_spot, kills the creepers that land on the hoppers, stores the drops, eats and sleeps, until you say stop or until the level or the time you gave
     "allow_vision": false, // allows vision model to interpret screenshots as inputs
     "blocked_actions" : ["!checkBlueprint", "!checkBlueprintLevel", "!getBlueprint", "!getBlueprintLevel", "!restart"] , // commands to disable and remove from docs. Ex: ["!setMode"]
     "code_timeout_mins": -1, // minutes code is allowed to run. -1 for no timeout

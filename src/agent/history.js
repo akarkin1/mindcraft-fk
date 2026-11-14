@@ -117,7 +117,16 @@ export class History {
         }
     }
 
-    async add(name, content) {
+    // v0.1.4.16 (F12, P-21 of 0.1.4.14; the lead's rule after T4's W129 check 2c): add pushes the turn synchronously at
+    // call time and, when the length reaches max_messages, splices the summary's chunk in the same tick, so no push of a
+    // concurrent add lands between the push and the splice and every turn stands in the very next prompt (several
+    // callers in agent.js do not await add; the promise chain of the first round deferred the push, and every command
+    // result reached the model one prompt late). Only the summarising of the chunk (summarizeMemories into this.memory,
+    // appendFullHistory, the put-back on a failure) runs afterwards, one chunk at a time, so two summaries never run at
+    // once: while one runs the turns grow past max_messages, and the first add after it takes the next chunk. The
+    // promise resolves when the summary this add started, or found running, is done (for the callers that await); it
+    // never rejects. The closedByUser guard of the model class stays.
+    add(name, content) {
         let role = 'assistant';
         if (name === 'system') {
             role = 'system';
@@ -128,11 +137,21 @@ export class History {
         }
         this.turns.push({role, content});
 
-        if (this.turns.length >= this.max_messages) {
+        if (this.turns.length >= this.max_messages && !this._summarizing) {
+            // the chunk leaves the turns in the same tick as the push: no await between them
             let chunk = this.turns.splice(0, this.summary_chunk_size);
             while (this.turns.length > 0 && this.turns[0].role === 'assistant')
                 chunk.push(this.turns.shift()); // remove until turns starts with system/user message
+            this._summarizing = this._summarizeChunk(chunk).finally(() => {
+                this._summarizing = null;
+            });
+        }
+        return this._summarizing ?? Promise.resolve();
+    }
 
+    // F12: the summary of one chunk that add spliced, after the push. Never throws.
+    async _summarizeChunk(chunk) {
+        try {
             const summarized = await this.summarizeMemories(chunk);
             if (summarized) {
                 await this.appendFullHistory(chunk);
@@ -146,6 +165,8 @@ export class History {
                 console.warn(`Memory summary failed and history reached ${2 * this.max_messages} turns, dropping ${chunk.length} turns from context without a summary.`);
                 await this.appendFullHistory(chunk);
             }
+        } catch (error) {
+            console.warn('Storing the memory chunk failed:', error);
         }
     }
 

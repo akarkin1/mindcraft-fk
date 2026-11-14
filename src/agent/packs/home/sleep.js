@@ -1,11 +1,16 @@
 // Sleeping in a bed (spec v0.1.4.6 H4, v0.1.4.8 C6).
+// v0.1.4.16 (F6, R-8: !goToBed by the trading hall chose the villagers' beds): the bot's own bed first (the saved place
+// my_bed, the foot of the bed it slept in last), then a bed in a home or a shelter the owner saved, then the rest by
+// distance; a bed in a trading hall, within 8 blocks of a villager's job site or of a villager is a villager's and never a
+// candidate.
 import { Vec3 } from 'vec3';
+import { areaType, isShelterArea } from './area_kinds.js';
 import { containsPos } from './box_math.js';
-import { botPos, clockOf, dimensionOf, listAreas, logTo, noteProgress, pauseMode } from './context.js';
+import { botPos, clockOf, dimensionOf, entitiesWhere, listAreas, logTo, noteProgress, pauseMode } from './context.js';
 import { blockReader, walkNear } from './motion.js';
 import { goToShelter } from './shelter.js';
 import { isBuildingArea, isInsideArea, withEdge } from './shelter_logic.js';
-import { isBedName, minutesUntilNight, orderBeds, sleepErrorKind, sleepTimeState } from './sleep_logic.js';
+import { BED_RULES, JOB_SITE_NAMES, MY_BED, bedFoot, isBedName, isMyBed, minutesUntilNight, orderBeds, sleepErrorKind, sleepTimeState } from './sleep_logic.js';
 import { TEXTS, couldNotSleepText, dayText } from './texts.js';
 import { wakeUp } from './wake.js';
 
@@ -38,6 +43,161 @@ export function findBeds(bot, range = 32) {
         return orderBeds(beds, botPos(bot));
     } catch {
         return [];
+    }
+}
+
+// ---- the bot's own bed and the villagers' beds (v0.1.4.16, F6) ----
+
+// The place `my_bed` from ctx.places (a PlaceStore: recall; a MemoryBank: recallPlaceInfo), or null. Never throws.
+function recallMyBed(ctx) {
+    const places = ctx?.places;
+    try {
+        for (const fn of ['recall', 'recallPlaceInfo']) {
+            if (typeof places?.[fn] === 'function') {
+                const p = places[fn](MY_BED);
+                if (p && Number.isFinite(p.x) && Number.isFinite(p.y) && Number.isFinite(p.z)) {
+                    return { x: p.x, y: p.y, z: p.z, dimension: p.dimension ?? null };
+                }
+                return null;
+            }
+        }
+    } catch (err) {
+        console.warn('Home pack: could not read the place my_bed:', err?.message ?? err);
+    }
+    return null;
+}
+
+// Saves the foot of the bed as the place `my_bed` (a PlaceStore: remember; a MemoryBank: rememberPlace); a later
+// sleep in another bed moves it. Never throws.
+function rememberMyBed(ctx, bed, dimension) {
+    const foot = bedFoot(bed);
+    const places = ctx?.places;
+    if (!foot || !places) {
+        return false;
+    }
+    try {
+        if (typeof places.remember === 'function') {
+            places.remember(MY_BED, foot.x, foot.y, foot.z, dimension ?? null);
+            return true;
+        }
+        if (typeof places.rememberPlace === 'function') {
+            return places.rememberPlace(MY_BED, foot.x, foot.y, foot.z, dimension ?? null) !== false;
+        }
+    } catch (err) {
+        console.warn('Home pack: could not save the place my_bed:', err?.message ?? err);
+    }
+    return false;
+}
+
+// The saved places as { name, x, y, z } (a PlaceStore: list; a MemoryBank: getJson). Never throws.
+function listPlaces(ctx) {
+    const places = ctx?.places;
+    try {
+        if (typeof places?.list === 'function') {
+            return places.list().filter(p => p && typeof p.name === 'string' && Number.isFinite(p.x) && Number.isFinite(p.y) && Number.isFinite(p.z));
+        }
+        if (typeof places?.getJson === 'function') {
+            return Object.entries(places.getJson() ?? {})
+                .filter(([, p]) => Array.isArray(p) && p.length >= 3 && p.slice(0, 3).every(Number.isFinite))
+                .map(([name, p]) => ({ name, x: p[0], y: p[1], z: p[2] }));
+        }
+    } catch (err) {
+        console.warn('Home pack: could not list the places:', err?.message ?? err);
+    }
+    return [];
+}
+
+const HALL_NAME = /^trading_hall(_\d+)?$/;
+
+// An area of the villagers' trading hall: the kind or the name trading_hall (the survey names the building so).
+function isHallArea(area) {
+    return area?.kind === 'trading_hall' || (typeof area?.name === 'string' && HALL_NAME.test(area.name));
+}
+
+// A home, or a shelter the owner saved (the survey's `home` counts, its other shelters do not).
+function isHomeArea(area) {
+    return areaType(area) === 'home' || (isShelterArea(area) && area.source !== 'survey');
+}
+
+// Why a bed is a villager's (F6): 'hall' inside a trading hall area or within 8 blocks of a trading hall place, 'job' within
+// 8 blocks of a job-site block, 'villager' within 8 blocks of a villager; null for a bed the bot may use. Never throws.
+// v0.1.4.16 (SPEC F6 corrected, T4's W126 run: the house's bed 7.3 blocks from the trading hall's lectern was a villager's and
+// the bot never slept): the box of a trading hall area counts for every bed; the rules of nearness (a trading hall place, a job
+// site, a villager within 8 blocks) only for a bed that is not `my_bed` and lies in no home and no shelter the owner saved
+// (`own`). The houses of a village are buildings: their beds keep every rule.
+function bedExclusion(bot, bed, center, areas, places, own = false) {
+    try {
+        if (areas.some(a => isHallArea(a) && containsPos(a, center))) {
+            return 'hall';
+        }
+        if (own) {
+            return null;
+        }
+        const near = (p, range) => Math.hypot(p.x + 0.5 - center.x, p.y - center.y, p.z + 0.5 - center.z) <= range;
+        if (places.some(p => HALL_NAME.test(p.name) && near(p, BED_RULES.jobRange))) {
+            return 'hall';
+        }
+        const jobs = bot.findBlocks({ matching: b => Boolean(b) && JOB_SITE_NAMES.includes(b.name), maxDistance: BED_RULES.jobRange, count: 1,
+            point: new Vec3(bed.x, bed.y, bed.z) });
+        if (Array.isArray(jobs) && jobs.length > 0) {
+            return 'job';
+        }
+        if (entitiesWhere(bot, BED_RULES.villagerRange, e => e?.name === 'villager', center).length > 0) {
+            return 'villager';
+        }
+    } catch (err) {
+        console.warn('Home pack: could not look at the bed:', err?.message ?? err);
+    }
+    return null;
+}
+
+// The bed whose block stands at the point, as an entry of findBeds, in a list; [] when no bed stands there. Never throws.
+function bedAt(bot, point) {
+    try {
+        const p = new Vec3(Math.floor(point.x), Math.floor(point.y), Math.floor(point.z));
+        const block = bot.blockAt(p);
+        if (!block || !isBedName(block.name)) {
+            return [];
+        }
+        const props = typeof block.getProperties === 'function' ? block.getProperties() : (block._properties ?? {});
+        return [{ x: p.x, y: p.y, z: p.z, name: block.name, part: props.part, facing: props.facing, occupied: props.occupied === true }];
+    } catch {
+        return [];
+    }
+}
+
+/**
+ * The beds the bot may sleep in (v0.1.4.16, F6), in the order of orderBeds: its own bed (the place `my_bed`) first,
+ * then the beds in a home or a shelter the owner saved, then the rest by distance; the villagers' beds (bedExclusion)
+ * are left out and counted in `excluded`. Never throws.
+ * v0.1.4.16 fix round (the review's finding 9, the AFK kill pack's kill bed): `options.only` ({x, y, z}) makes the bed
+ * standing there the only candidate, whatever its distance, and the caller's own (only the trading hall's box excludes it);
+ * no other bed is looked for.
+ * @param {object} bot
+ * @param {object} ctx
+ * @param {number} [range]
+ * @param {{only?: {x: number, y: number, z: number}}} [options]
+ * @returns {{beds: object[], excluded: number}}
+ */
+export function candidateBeds(bot, ctx, range = 32, options = {}) {
+    try {
+        const dimension = dimensionOf(bot);
+        const areas = listAreas(ctx, dimension);
+        const places = listPlaces(ctx);
+        const myBed = recallMyBed(ctx);
+        const only = options?.only;
+        const onlyGiven = only !== null && typeof only === 'object' && [only.x, only.y, only.z].every(Number.isFinite);
+        const all = (onlyGiven ? bedAt(bot, only) : findBeds(bot, range)).map(bed => {
+            const center = { x: bed.x + 0.5, y: bed.y, z: bed.z + 0.5 };
+            const inHome = areas.some(a => isHomeArea(a) && containsPos(a, center));
+            // the own bed and a home's bed keep only the trading hall's box (SPEC F6 corrected); so does the only one
+            const excluded = bedExclusion(bot, bed, center, areas, places, onlyGiven || inHome || isMyBed(bed, myBed, dimension));
+            return { ...bed, home: excluded === null && inHome, excluded };
+        });
+        return { beds: orderBeds(all, botPos(bot), { myBed, dimension }), excluded: all.filter(b => b.excluded).length };
+    } catch (err) {
+        console.warn('Home pack: could not choose a bed:', err?.message ?? err);
+        return { beds: [], excluded: 0 };
     }
 }
 
@@ -79,9 +239,15 @@ function isMorning(timeOfDay) {
  * night starts in about N minutes.` (by day), `I cannot sleep now, it is not night.`, `I found no bed
  * nearby.`, `I cannot sleep, monsters are nearby.`, `All beds nearby are taken.`, `I could not sleep:
  * <error text>`. Never throws.
+ * v0.1.4.16 (F6): the beds in the order of candidateBeds (the own bed, then a home's, then by distance; the villagers'
+ * beds left out). When every bed within 32 blocks is a villager's: `The beds nearby are the villagers'; I found no bed
+ * of mine.`; `All beds nearby are taken.` only when a candidate bed was occupied. Once the bot lies in a bed, its foot
+ * is saved as the place `my_bed` through ctx.places; a later sleep in another bed moves it.
+ * v0.1.4.16 fix round (finding 9): `options.only` ({x, y, z}): the bed there is the only candidate (candidateBeds); when it
+ * is taken or out of reach, the bot sleeps in no other bed.
  * @param {object} bot
  * @param {object} ctx
- * @param {{maxSleepMs?: number, now?: Function, wait?: Function}} [options]
+ * @param {{maxSleepMs?: number, now?: Function, wait?: Function, only?: {x: number, y: number, z: number}}} [options]
  * @returns {Promise<{ok: boolean, reason: string|null, text: string}>}
  */
 export async function sleepInBed(bot, ctx = {}, options = {}) {
@@ -93,9 +259,10 @@ export async function sleepInBed(bot, ctx = {}, options = {}) {
             const minutes = minutesUntilNight(bot.time?.timeOfDay);
             return { ok: false, reason: 'not_night', text: minutes === null ? TEXTS.notNight : dayText(minutes) };
         }
-        const beds = findBeds(bot, 32);
+        const { beds, excluded } = candidateBeds(bot, ctx, 32, { only: options?.only });
         if (beds.length === 0) {
-            return { ok: false, reason: 'no_bed', text: TEXTS.noBed };
+            // F6: every bed within 32 blocks is a villager's, or there is none
+            return excluded > 0 ? { ok: false, reason: 'villagers', text: TEXTS.villagersBeds } : { ok: false, reason: 'no_bed', text: TEXTS.noBed };
         }
         const areas = listAreas(ctx, dimensionOf(bot)).filter(isBuildingArea);
         let taken = 0;
@@ -177,6 +344,7 @@ export async function sleepInBed(bot, ctx = {}, options = {}) {
                 return { ok: false, reason: 'error', text: couldNotSleepText(res.err) };
             }
             logTo(ctx, 'I am in bed.');
+            rememberMyBed(ctx, bed, dimensionOf(bot)); // F6: this bed is the bot's own from now on
             pauseMode(bot, 'unstuck');
             const start = clock.now();
             const limit = isFiniteNumber(options.maxSleepMs) ? options.maxSleepMs : MAX_SLEEP_MS;

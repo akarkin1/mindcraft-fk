@@ -331,6 +331,45 @@ describe('harvestCrops', () => {
         assert.equal(digs(bot).length, 0);
     });
 
+    // v0.1.4.16 (F4): a farm command started inside a building leaves it first through ctx.home.leaveBuilding of the home pack
+    test('from inside a building: leaveBuilding of the home pack runs first, then the harvest; a failure gives the text', async () => {
+        const { bot, area, ctx } = farm();
+        const house = { name: 'home', type: 'home', dimension: 'overworld', min: { x: -3, y: 62, z: 7 }, max: { x: 4, y: 68, z: 12 }, entrances: [{ x: 0, y: 64, z: 7, kind: 'door' }] };
+        ctx.areas = [area, house];
+        const calls = [];
+        ctx.home = {
+            leaveBuilding: async (b, c) => {
+                calls.push({ at: b.entity.position.clone(), areas: c.areas });
+                b.entity.position = v(0.5, 64, 6.5); // out of the house, south of the farm's gate
+                return { ok: true, area: house, reason: 'left', text: '' };
+            },
+        };
+        assert.ok(bot.entity.position.z > 7, 'the bot starts inside the house box');
+        const s = sim(bot);
+        const res = await harvestCrops(bot, ctx, '', { now: s.now, wait: s.wait });
+        assert.equal(res.ok, true, res.text);
+        assert.equal(res.harvested, 10);
+        assert.equal(calls.length, 1, 'the house was left once, before the field');
+        assert.equal(calls[0].at.z, 8.5);
+        // the walk out fails: the farm command ends with the text of the spec, nothing is dug
+        const again = farm();
+        again.ctx.areas = [again.area, house];
+        again.ctx.home = { leaveBuilding: async () => ({ ok: false, area: house, reason: 'no_path', text: 'I cannot get out of "home". I found no way to the door at (0, 64, 7).' }) };
+        const failed = await harvestCrops(again.bot, again.ctx, '', { now: s.now, wait: s.wait });
+        assert.equal(failed.ok, false);
+        assert.equal(failed.reason, 'no_path');
+        assert.equal(failed.text, 'I cannot get out of "home" to the farm.');
+        assert.equal(digs(again.bot).length, 0);
+        // outside every building, or in the farm itself, leaveBuilding is not called
+        const outside = farm();
+        outside.ctx.areas = [outside.area, { ...house, min: { x: 30, y: 62, z: 30 }, max: { x: 36, y: 68, z: 36 } }];
+        const leaves = [];
+        outside.ctx.home = { leaveBuilding: async () => { leaves.push(1); return { ok: true, area: null }; } };
+        const s3 = sim(outside.bot);
+        assert.equal((await harvestCrops(outside.bot, outside.ctx, '', { now: s3.now, wait: s3.wait })).ok, true);
+        assert.deepEqual(leaves, []);
+    });
+
     test('with the area guard installed nothing is refused', async () => {
         const { world, bot, area, ctx } = farm({ ages: (x) => (x === 0 ? 7 : 4) });
         const house = { name: 'home', type: 'building', dimension: 'overworld', min: { x: 10, y: 60, z: 10 }, max: { x: 16, y: 70, z: 16 }, entrances: [] };

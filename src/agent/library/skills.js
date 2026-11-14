@@ -8,7 +8,7 @@ import { isOreName, oreInSight, oreKind, outOfSightText, sightRange, SIGHT_TEXT_
 import { ladderStepTowards, ladderWayTowards, STEP_RULES } from "./ladder_pass.js";
 import { findOpenables, openDoor, passThrough, reserveDoor } from "../packs/home/doors.js";
 import { noteTowardReserved, releasePassedToward } from "./toward_doors.js";
-import { walkNear } from "../packs/home/motion.js";
+import { applyKeepOut, walkNear } from "../packs/home/motion.js"; // v0.1.4.16 (F10): applyKeepOut, the no_enter areas of every walk
 import { BOAT_TEXTS, GIVE_TEXTS, SURFACE_TEXTS } from "./skill_texts.js";
 import { sideOf } from "../packs/home/door_logic.js";
 import { acquireEatLock } from "../packs/home/eat_lock.js";
@@ -20,7 +20,9 @@ import { KIT_HINT, KIT_HINT_RANGE, SHAFT_RULES, containerFullText, dropOf, giveF
     // v0.1.4.14, the play of 2026-11-09 (SPEC 8.3.1, 8.4): the fallback of the way (P-19), the honest count (P-20), the give beside
     // water (P-25), the drops of a kill (P-26), the boats (P-28), the sprint and the long way (P-29)
     BOAT_RANGE, KILL_DROP_RULES, brokeNoneText, drySides, fallbackAllowed, isLongWay, longWayText, mayDigOnFallback,
-    nearestBoat, noWayText, notPlacedText, stoodReason, wetGiveText, wetLine } from "./way_logic.js";
+    nearestBoat, noWayText, notPlacedText, stoodReason, wetGiveText, wetLine,
+    // v0.1.4.16 (F7): the leaves of a canopy are a way out (inCanopy, isLeavesName)
+    inCanopy, isLeavesName } from "./way_logic.js";
 import { maySprint } from "../packs/home/food_logic.js"; // v0.1.4.14 (P-29): no sprint below 7 food points, one rule for every walk
 import { digLadderShaft, ladderCount } from "./ladder_shaft.js";
 import { leftAlone, startTossing, takeLeaveText } from "../reflex/drop_watch.js";
@@ -77,6 +79,15 @@ export async function craftRecipe(bot, itemName, num=1) {
      * await skills.craftRecipe(bot, "stick");
      **/
     let placedTable = false;
+
+    // v0.1.4.16 (F5, the play of 2026-11-11: a table craft broken by the reflex unstuck): the craft runs with the mode unstuck
+    // paused, as a pack command does (pauseUnstuck of actions.js: bot.modes.pause('unstuck')); the modes release the pause
+    // when the bot is idle again, as for every pack command. Never throws.
+    try {
+        bot.modes?.pause?.('unstuck');
+    } catch (err) {
+        console.warn('Could not pause the mode unstuck for the craft:', err?.message ?? err);
+    }
 
     if (!mc.getItemCraftingRecipes(itemName)?.length) { // null: no recipe, or not an item
         log(bot, `${itemName} is either not an item, or it does not have a crafting recipe!`);
@@ -639,19 +650,94 @@ export async function collectBlock(bot, blockType, num=1, exclude=null) {
     const breaks = watchBreaks(bot, blocktypes, target);
     const releaseTargets = keepOtherTargets(bot, blocktypes, target);
     try {
-        return await collectBlocks(bot, blockType, num, exclude, blocktypes, breaks, target);
+        // F10: the context of the cave rule (bot.caveContext: areas, mines, the mining pack, say), set by !collectBlocks of
+        // actions.js; the signature of collectBlock stays as the model's code uses it
+        return await collectBlocks(bot, blockType, num, exclude, blocktypes, breaks, target, bot.caveContext ?? null);
     } finally {
         releaseTargets();
         breaks.stop();
     }
 }
 
-async function collectBlocks(bot, blockType, num, exclude, blocktypes, breaks, target) {
+// v0.1.4.16 (F10, the owner's rule of 2026-11-12): a block order is never refused for a cave. The candidates of a search are
+// ordered, the blocks outside caves first (inCave), and when the next block to take is the first one in a cave the bot says
+// once per command `The <type> is in a cave; I go carefully.` (ctx.say, the output and the console) and collects it.
+const CAVE_CANDIDATES = 32; // the nearest candidates of a search that are ordered by the cave rule
+
+export function caveCarefulText(blockType) {
+    /**
+     * The line said once per !collectBlocks when the next block to take is the first one in a cave (v0.1.4.16, F10).
+     * @param {string} blockType, the block type of the order.
+     * @returns {string} `The stone is in a cave; I go carefully.`
+     * @example
+     * skills.caveCarefulText('stone');
+     **/
+    return `The ${blockType} is in a cave; I go carefully.`;
+}
+
+// v0.1.4.16 (T4's W133 rerun, the lead's decision in the spirit of the owner's "no refusal" and "I go carefully"): a target in
+// a cave may be reached with a fall of up to CAVE_DROP blocks (the path search's own measure; elsewhere its default of 4 holds)
+// while the bot's health is CAVE_DROP_HEALTH or more (a fall of 5 costs 2 of 20). Lower, or when the path search finds no way
+// even so, the command leaves the cave's blocks with caveLeaveText and goes on with the others. A path search that found no
+// way is never echoed raw (noWayToBlockText).
+const CAVE_DROP = 5;
+const CAVE_DROP_HEALTH = 12;
+
+// `The granite in the cave is too far down to reach safely; I leave it.`
+function caveLeaveText(blockType) {
+    return `The ${blockType} in the cave is too far down to reach safely; I leave it.`;
+}
+
+// `I found no way to the granite at (472, 49, 1).` (noWayText of way_logic.js is the long walk's)
+function noWayToBlockText(blockType, pos) {
+    return `I found no way to the ${blockType} at (${pos.x}, ${pos.y}, ${pos.z}).`;
+}
+
+// The path search found no way (mineflayer-pathfinder's goto: Timeout `Took to long to decide path to goal!`, NoPath).
+function isNoPathError(err) {
+    return err?.name === 'Timeout' || err?.name === 'NoPath' || /Took to long to decide path to goal|No path to the goal/.test(String(err?.message ?? err));
+}
+
+// True unless the bot's health is known and under CAVE_DROP_HEALTH.
+function healthAllowsCaveDrop(bot) {
+    const health = bot?.health;
+    return !(typeof health === 'number' && Number.isFinite(health) && health < CAVE_DROP_HEALTH);
+}
+
+// The collect plugin's movements (its path search) allow the fall of CAVE_DROP while one cave target is collected; returns the
+// function that puts the old value back. Nothing changes without those movements.
+function allowCaveDrop(bot) {
+    const movements = bot?.collectBlock?.movements;
+    if (!movements || typeof movements !== 'object')
+        return () => {};
+    const before = movements.maxDropDown;
+    movements.maxDropDown = Math.max(Number.isFinite(before) ? before : 0, CAVE_DROP);
+    return () => {
+        movements.maxDropDown = before;
+    };
+}
+
+async function collectBlocks(bot, blockType, num, exclude, blocktypes, breaks, target, ctx = null) {
     const isLiquid = blockType === 'lava' || blockType === 'water';
 
     let collected = 0;
     const brokenNames = {}; // v0.1.4.8 (B1, F4): the broken blocks by name
     const invBefore = inventoryCounts(bot);
+    let caveSaid = false; // F10: the cave line once per command
+    let caveLeft = false; // v0.1.4.16: the cave's blocks are left for this command (caveLeaveText, said once)
+    const leaveCave = (p) => {
+        if (caveLeft)
+            return;
+        caveLeft = true;
+        const line = caveLeaveText(blockType);
+        console.log(`Caves: the ${blockType} in a cave at (${p.x}, ${p.y}, ${p.z}) is left: ${line} (health ${bot.health})`);
+        log(bot, line);
+        try {
+            ctx?.say?.(line);
+        } catch (err) {
+            // the line is in the output all the same
+        }
+    };
 
     // v0.1.4.9 (C1): an ore is a candidate only when it is in sight (ore_sight_logic.js): with
     // ore_sense_range 0 a face in the open, with 3 an open cell within 3 blocks. A cell dug in this call
@@ -805,7 +891,34 @@ async function collectBlocks(bot, blockType, num, exclude, blocktypes, breaks, t
             if (block.position && unsafe === null)
                 unsafe = { name: block.name, pos: block.position, why: unsafeWhy(bot, movements, block) };
             return false;
-        }, range, 1);
+        }, range, CAVE_CANDIDATES);
+        // F10: the blocks outside caves first; the first block taken in a cave is said once (never refused). v0.1.4.16: once the
+        // cave's blocks are left (caveLeft) they are no candidates for the rest of the command
+        if (blocks.length > 1 || caveLeft) {
+            const outside = blocks.filter(b => !b?.position || !inCave(bot, b.position, ctx));
+            if (outside.length > 0 || caveLeft)
+                blocks = outside;
+        }
+        if (blocks.length === 0 && caveLeft)
+            break; // the line of the cave says why; no "No granite nearby"
+        // v0.1.4.16: with health under 12 the fall into the cave is too much: the cave's blocks are left, the others go on
+        if (blocks.length > 0 && blocks[0]?.position && !healthAllowsCaveDrop(bot) && inCave(bot, blocks[0].position, ctx)) {
+            leaveCave(blocks[0].position);
+            i--;
+            continue;
+        }
+        if (blocks.length > 0 && !caveSaid && blocks[0]?.position && inCave(bot, blocks[0].position, ctx)) {
+            caveSaid = true;
+            const p = blocks[0].position;
+            const line = caveCarefulText(blockType);
+            console.log(`Caves: the first ${blockType} to take is in a cave at (${p.x}, ${p.y}, ${p.z}): ${line}`);
+            log(bot, line);
+            try {
+                ctx?.say?.(line);
+            } catch (err) {
+                // the line is in the output all the same
+            }
+        }
 
         // Blocks that players build with are refused everywhere: a wider search does not help (v0.1.4.8)
         if (blocks.length === 0 && refused > 0 && refusedBuilt === 0 && range === 64) {
@@ -879,6 +992,9 @@ async function collectBlocks(bot, blockType, num, exclude, blocktypes, breaks, t
             log(bot, `Don't have right tools to harvest ${blockType}.`);
             return false;
         }
+        // v0.1.4.16: a target in a cave: the path search may fall up to CAVE_DROP blocks for it (health is checked above)
+        const caveTarget = !isLiquid && inCave(bot, block.position, ctx);
+        const dropBack = caveTarget ? allowCaveDrop(bot) : () => {};
         try {
             let success = false;
             if (isLiquid) {
@@ -909,12 +1025,27 @@ async function collectBlocks(bot, blockType, num, exclude, blocktypes, breaks, t
                 log(bot, `Failed to collect ${blockType}: Inventory full, no place to deposit.`);
                 break;
             }
+            else if (isNoPathError(err) && !bot.interrupt_code) {
+                // v0.1.4.16: never the path search's raw text. A target in a cave with no way even with the fall allowed: the
+                // cave's blocks are left for this command and the others go on (the attempt is not counted)
+                console.log(`Collect: no way to the ${block.name} at (${block.position.x}, ${block.position.y}, ${block.position.z}): ${err}`);
+                if (caveTarget) {
+                    leaveCave(block.position);
+                    i--;
+                    continue;
+                }
+                log(bot, noWayToBlockText(blockType, block.position));
+                continue;
+            }
             else {
                 log(bot, `Failed to collect ${blockType}: ${err}.`);
                 if (bot.interrupt_code)
                     break; // v0.1.4.8 (B3): a stopped action does not go on with the next block
                 continue;
             }
+        }
+        finally {
+            dropBack();
         }
         
         if (bot.interrupt_code)
@@ -944,7 +1075,10 @@ async function collectBlocks(bot, blockType, num, exclude, blocktypes, breaks, t
             brokenNames[a.name] = (brokenNames[a.name] ?? 0) + 1;
         }
     }
-    const result = await collectResult(bot, blockType, mostBroken(brokenNames, breaks.names()), collected, invBefore, stood);
+    // v0.1.4.16 (T4's W133 rerun: `I broke 1 granite` while nothing broke on the server): the count is the bot's own (P-20);
+    // the block updates only check it and never raise it (a block that only left the bot's view counted as broken)
+    noteUncountedBreaks(brokenNames, breaks.names());
+    const result = await collectResult(bot, blockType, brokenNames, collected, invBefore, stood);
     log(bot, result.text);
     return result.got;
 }
@@ -1130,12 +1264,18 @@ function gainOf(before, after, names) {
     return [...new Set(names)].reduce((n, name) => n + (gain[name] ?? 0), 0);
 }
 
-// X11: per name the larger count of the own count and the watched count.
-function mostBroken(own, watched) {
-    const out = { ...own };
-    for (const [name, n] of Object.entries(watched))
-        out[name] = Math.max(out[name] ?? 0, n);
-    return out;
+// v0.1.4.16 (T4's W133 rerun): the watched breaks are a check of the own count, never a count of their own (before, the larger
+// of the two counted: X11's mostBroken). A name the block updates show gone more often than the bot broke it is logged only.
+function noteUncountedBreaks(own, watched) {
+    try {
+        for (const [name, n] of Object.entries(watched ?? {})) {
+            const more = n - (own?.[name] ?? 0);
+            if (more > 0)
+                console.log(`Collect: the block updates show ${more} more ${name} gone near the bot than it broke itself; not counted.`);
+        }
+    } catch (err) {
+        // only a note
+    }
 }
 
 // v0.1.4.8 (B1, F4): the result of collectBlock names what the inventory gained, not what was broken
@@ -2206,7 +2346,7 @@ export async function goToGoal(bot, goal) {
     if (bot.interrupt_code)
         return false; // v0.1.4.8 (B3): a stopped action starts no walk
 
-    const nonDestructiveMovements = runRule(bot, new pf.Movements(bot));
+    const nonDestructiveMovements = keepOutRule(bot, runRule(bot, new pf.Movements(bot)));
     const dontBreakBlocks = ['glass', 'glass_pane'];
     for (let block of dontBreakBlocks) {
         nonDestructiveMovements.blocksCantBreak.add(mc.getBlockId(block));
@@ -2214,7 +2354,7 @@ export async function goToGoal(bot, goal) {
     nonDestructiveMovements.placeCost = 2;
     nonDestructiveMovements.digCost = 10;
 
-    const destructiveMovements = runRule(bot, new pf.Movements(bot));
+    const destructiveMovements = keepOutRule(bot, runRule(bot, new pf.Movements(bot)));
 
     let final_movements = destructiveMovements;
 
@@ -2235,7 +2375,7 @@ export async function goToGoal(bot, goal) {
         if (!way.allowed)
             return await walkNearWithoutDigging(bot, goal, way.point);
         log(bot, `Path not found, but attempting to navigate anyway using destructive movements.`);
-        restrictFallbackDigging(bot, destructiveMovements, bot.entity.position.y);
+        restrictFallbackDigging(bot, destructiveMovements, bot.entity.position.y, bot.entity.position);
     }
 
     if (bot.interrupt_code)
@@ -2267,15 +2407,56 @@ function releaseRun(bot) {
 // P-19: the dig rule of the fallback as a break exclusion of the path search (Movements.exclusionAreasBreak, which
 // safeToBreak reads): never (cost 100) a block below the start level minus 1 or one touching water or lava. The path
 // finder's dontCreateFlow keeps the top and the four sides dry already; the block below is ours. Never throws.
-function restrictFallbackDigging(bot, movements, startY) {
+// v0.1.4.16 (F7): with the start cell, the leaves of a canopy around it are allowed (mayDigOnFallback's canopy rule).
+function restrictFallbackDigging(bot, movements, startY, start = null) {
     try {
         if (!Array.isArray(movements.exclusionAreasBreak))
             movements.exclusionAreasBreak = [];
-        const read = (x, y, z) => bot.blockAt(new Vec3(x, y, z))?.name ?? null;
-        movements.exclusionAreasBreak.push(block => (block?.position && !mayDigOnFallback(read, block.position, startY) ? 100 : 0));
+        const read = blockNameReader(bot);
+        const from = start ? { x: Math.floor(start.x), y: Math.floor(start.y + 0.01), z: Math.floor(start.z) } : null;
+        movements.exclusionAreasBreak.push(block => (block?.position && !mayDigOnFallback(read, block.position, startY, from) ? 100 : 0));
     } catch (err) {
         // the path search keeps its own rules
     }
+}
+
+// The name of the block at a cell, null for one that is not loaded.
+function blockNameReader(bot) {
+    return (x, y, z) => bot.blockAt(new Vec3(x, y, z))?.name ?? null;
+}
+
+// v0.1.4.16 (F10): the keep-out rule of every walk of the skills (applyKeepOut of the home pack): the no_enter areas of the
+// saved areas (bot.areaGuard.listAreas, the store's areas of the dimension of the bot, when the guard gives them: a cave
+// mouth the survey saved, an area a rule keeps the bot out of) cost 100 a cell, so a walk crosses one only when there is no
+// other way. An area the bot stands in is free, so it can walk out. Returns the movements. Never throws.
+function keepOutRule(bot, movements) {
+    try {
+        const list = bot?.areaGuard?.listAreas?.();
+        if (Array.isArray(list) && list.length > 0)
+            applyKeepOut(movements, list, { from: bot.entity?.position ?? null, dimension: bot.game?.dimension ?? null });
+    } catch (err) {
+        // the path search keeps its own rules
+    }
+    return movements;
+}
+
+// v0.1.4.16 (F7, the play of 2026-11-10: "no way without digging" inside a leaf canopy): true when the bot's feet have
+// leaves in two or more of their six neighbours (inCanopy of way_logic.js).
+function inCanopyHere(bot) {
+    try {
+        return inCanopy(blockNameReader(bot), bot.entity.position);
+    } catch (err) {
+        return false;
+    }
+}
+
+// F7: the movements of the long way out of a canopy: they may dig leaves and nothing else (the model is movementsFor of
+// the wood pack: blocksCantBreak holds every block but the leaves). The text of the walk is unchanged.
+function leavesOnlyMovements(bot) {
+    const movements = new pf.Movements(bot);
+    movements.canDig = true;
+    movements.blocksCantBreak = new Set((bot.registry?.blocksArray ?? []).filter(b => !isLeavesName(b.name)).map(b => b.id));
+    return runRule(bot, movements);
 }
 
 // P-19: the long way (more than 32 blocks) with no path found in a second: the bot walks as near as the path finder gets
@@ -2289,13 +2470,15 @@ async function walkNearWithoutDigging(bot, goal, point) {
     const aim = new Vec3(point.x + 0.5, point.y, point.z + 0.5);
     const far = () => bot.entity.position.distanceTo(aim);
     const budget = { leftMs: PLAYER_SEARCH.totalMs }; // at most 20 s of search in all, as the walk to the player (F15)
+    // v0.1.4.16 (F7): inside a canopy the walk may dig leaves only; elsewhere nothing, as before
+    const movementsOf = inCanopyHere(bot) ? leavesOnlyMovements : noDigMovements;
     for (let round = 0; round < NO_WAY_ROUNDS && !bot.interrupt_code; round++) {
-        const r = await searchWithoutDigging(bot, goal, budget);
+        const r = await searchWithoutDigging(bot, goal, budget, movementsOf(bot));
         if (!r || r.status === 'interrupted' || r.status === 'budget')
             break;
         if (r.status === 'success') {
             try {
-                if ((await walkWith(bot, goal, noDigMovements(bot))) === 'arrived')
+                if ((await walkWith(bot, goal, movementsOf(bot))) === 'arrived')
                     return true;
             } catch (err) {
                 // measured below
@@ -2307,7 +2490,7 @@ async function walkNearWithoutDigging(bot, goal, point) {
         if (!end || aim.distanceTo(new Vec3(end.x + 0.5, end.y, end.z + 0.5)) > before - 1)
             break; // the best node brings the bot no nearer
         try {
-            await walkWith(bot, new pf.goals.GoalNear(end.x, end.y, end.z, 1), noDigMovements(bot));
+            await walkWith(bot, new pf.goals.GoalNear(end.x, end.y, end.z, 1), movementsOf(bot));
         } catch (err) {
             // a walk that ends short is measured below
         }
@@ -3041,7 +3224,7 @@ function caveText(at) {
 function noDigMovements(bot) {
     const movements = new pf.Movements(bot);
     movements.canDig = false;
-    return runRule(bot, movements); // v0.1.4.14 (P-29): no sprint below 7 food points
+    return keepOutRule(bot, runRule(bot, movements)); // v0.1.4.14 (P-29): no sprint below 7 food points; v0.1.4.16 (F10): the keep-out
 }
 
 // The walk of goToPlayer: without digging, as goToGoal walks once it has chosen its movements.
@@ -3058,7 +3241,7 @@ async function walkWithoutDigging(bot, goal) {
 // them do not count); a search that finds it spent answers { status: 'budget' }. While it runs, bot.searching is
 // true: the mode unstuck does not count that time (a bot that stands still while it thinks is not stuck;
 // stuckSample of modes.js).
-async function searchWithoutDigging(bot, goal, budget = null) {
+async function searchWithoutDigging(bot, goal, budget = null, withMovements = null) {
     const left = budget ? budget.leftMs : Infinity;
     if (left <= 0)
         return { status: 'budget', path: [] };
@@ -3067,7 +3250,7 @@ async function searchWithoutDigging(bot, goal, budget = null) {
     bot.searching = true;
     try {
         const finder = bot.pathfinder;
-        const movements = noDigMovements(bot);
+        const movements = withMovements ?? noDigMovements(bot); // v0.1.4.16 (F7): the leaves-only movements of a canopy
         if (typeof finder?.getPathFromTo === 'function') {
             const search = finder.getPathFromTo(movements, bot.entity.position, goal, { timeout, searchRadius: -1 });
             const end = Date.now() + timeout + 200;
@@ -3240,6 +3423,83 @@ function underRock(bot, x, y, z) {
         return isNaturalCeiling(bot, b.name);
     }
     return false;
+}
+
+// v0.1.4.16 (F10): the known mine that holds a position, through the context: ctx.mines.mineAt(pos) when the store gives
+// one, else the mining pack's mineAt (ctx.mining.mineAt(mines, pos) over the mines of the dimension of the bot). Never throws.
+function knownMineAt(bot, pos, ctx) {
+    try {
+        const mines = ctx?.mines;
+        if (typeof mines?.mineAt === 'function')
+            return mines.mineAt(pos) ?? null;
+        const packMineAt = ctx?.mining?.mineAt;
+        if (typeof packMineAt === 'function' && typeof mines?.list === 'function')
+            return packMineAt(mines.list(bot?.game?.dimension) ?? [], pos) ?? null;
+    } catch (err) {
+        // without the mines nothing is a mine
+    }
+    return null;
+}
+
+// v0.1.4.16 (F10): the saved area that holds a position: the guard's view (bot.areaGuard.areaAt), else the areas of the
+// context (ctx.areas: a list, a function that gives one, or a store with list()). Never throws.
+function savedAreaAt(bot, pos, ctx) {
+    try {
+        const fromGuard = bot?.areaGuard?.areaAt?.(pos);
+        if (fromGuard)
+            return fromGuard;
+        let list = ctx?.areas;
+        if (typeof list === 'function')
+            list = list();
+        if (list && typeof list.list === 'function')
+            list = list.list();
+        if (Array.isArray(list)) {
+            const x = Math.floor(pos.x), y = Math.floor(pos.y), z = Math.floor(pos.z);
+            return list.find((a) => a?.min && a?.max && x >= Math.min(a.min.x, a.max.x) && x <= Math.max(a.min.x, a.max.x)
+                && y >= Math.min(a.min.y, a.max.y) && y <= Math.max(a.min.y, a.max.y)
+                && z >= Math.min(a.min.z, a.max.z) && z <= Math.max(a.min.z, a.max.z)) ?? null;
+        }
+    } catch (err) {
+        // without the areas nothing is saved
+    }
+    return null;
+}
+
+// v0.1.4.16 (F10, R-13 and the caves row: two deaths in caves under the old mine): collectBlock takes the blocks in a cave
+// last and says once that it goes carefully (never a refusal: the owner's rule). A cave: an open cell beside the block (one
+// of its six faces; for an open cell the cell itself) whose first block above that is not open, within 24 blocks, is natural
+// rock (isNaturalCeiling of the CAVE_RULES: stone, deepslate, dirt, ores ...; never a built block, never leaves, never the
+// sky). A block in the floor, the wall or the ceiling of a cave is in it; a stone buried in the rock with no open cell
+// beside it is not (the bot digs to it as before), nor a block under the sky or under a canopy. Never a cave: a position in
+// a saved area (bot.areaGuard.areaAt or ctx.areas: a basement, a cave room the owner saved) or in a known mine
+// (ctx.mines.mineAt(pos), or the mining pack's mineAt through ctx.mining, optional chaining), and nothing while the bot
+// itself stands in a saved area or a known mine. Never throws.
+export function inCave(bot, pos, ctx = null) {
+    /**
+     * True when a block position lies in a cave: an open cell beside it has natural rock above it and no sky, and neither the block nor you are in a saved area or a known mine.
+     * @param {MinecraftBot} bot, reference to the minecraft bot.
+     * @param {Vec3} pos, the block position.
+     * @param {object} ctx, the pack context (areas, mines) when you have one; null without.
+     * @returns {boolean} true for a block in a cave.
+     * @example
+     * if (skills.inCave(bot, block.position)) { ... }
+     **/
+    try {
+        if (!bot || !pos || !Number.isFinite(pos.x) || !Number.isFinite(pos.y) || !Number.isFinite(pos.z))
+            return false;
+        const x = Math.floor(pos.x), y = Math.floor(pos.y), z = Math.floor(pos.z);
+        const me = bot.entity?.position;
+        const feet = me ? { x: Math.floor(me.x), y: Math.floor(me.y + 0.01), z: Math.floor(me.z) } : null;
+        if (savedAreaAt(bot, { x, y, z }, ctx) || knownMineAt(bot, { x, y, z }, ctx))
+            return false;
+        if (feet && (savedAreaAt(bot, feet, ctx) || knownMineAt(bot, feet, ctx)))
+            return false;
+        const cells = openForCave(bot, x, y, z) ? [[x, y, z]]
+            : [[x + 1, y, z], [x - 1, y, z], [x, y + 1, z], [x, y - 1, z], [x, y, z + 1], [x, y, z - 1]].filter(([cx, cy, cz]) => openForCave(bot, cx, cy, cz));
+        return cells.some(([cx, cy, cz]) => underRock(bot, cx, cy, cz));
+    } catch (err) {
+        return false;
+    }
 }
 
 // The cell of a cave at the feet (N2), or null: open air 3 wide and 3 high around the feet, natural rock above, in

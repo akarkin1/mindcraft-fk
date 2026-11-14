@@ -152,6 +152,94 @@ export function fieldCells(getBlock, box) {
     return cells;
 }
 
+/** v0.1.4.16 (F3): the block of the sugar cane. */
+export const CANE_BLOCK = 'sugar_cane';
+
+/**
+ * True for a name that means the cane (v0.1.4.16, F3): `sugar_cane`, `sugarcane`, `cane`, with or without `minecraft:`,
+ * any case.
+ * @param {string} name
+ * @returns {boolean}
+ */
+export function isCaneName(name) {
+    const n = lower(name).replace(/^minecraft:/, '').replace(/[\s-]+/g, '_');
+    return n === 'sugar_cane' || n === 'sugarcane' || n === 'cane';
+}
+
+/**
+ * The columns of sugar cane in a box (v0.1.4.16, F3): for every column x, z the lowest cane block (the one on the sand)
+ * and how many cane blocks stand on it, the bottom one counted. Columns that are not loaded or hold no cane are left out.
+ * Never throws.
+ * @param {(x: number, y: number, z: number) => ({name: string}|null)} getBlock null: not loaded
+ * @param {{min: {x,y,z}, max: {x,y,z}}} box
+ * @returns {{x: number, y: number, z: number, height: number}[]} y is the bottom cane block; sorted by x, then z
+ */
+export function caneColumns(getBlock, box) {
+    if (typeof getBlock !== 'function' || !isBox(box)) {
+        return [];
+    }
+    const min = { x: Math.floor(box.min.x), y: Math.floor(box.min.y), z: Math.floor(box.min.z) };
+    const max = { x: Math.floor(box.max.x), y: Math.floor(box.max.y), z: Math.floor(box.max.z) };
+    if (max.x - min.x >= MAX_SIDE || max.z - min.z >= MAX_SIDE || max.y - min.y >= MAX_HEIGHT) {
+        return [];
+    }
+    const columns = [];
+    try {
+        for (let x = min.x; x <= max.x; x++) {
+            for (let z = min.z; z <= max.z; z++) {
+                let bottom = null;
+                let height = 0;
+                for (let y = min.y - 1; y <= max.y + 2; y++) {
+                    const block = getBlock(x, y, z);
+                    if (block && block.name === CANE_BLOCK) {
+                        if (bottom === null) {
+                            bottom = y;
+                        }
+                        height++;
+                    } else if (bottom !== null) {
+                        break;
+                    }
+                }
+                if (bottom !== null) {
+                    columns.push({ x, y: bottom, z, height });
+                }
+            }
+        }
+    } catch {
+        return columns;
+    }
+    return columns;
+}
+
+/**
+ * True when a cell of the box has farmland or a crop, as fieldCells reads the field (v0.1.4.16, review 16 finding 3: the
+ * test of a crop farm). Columns that are not loaded count as nothing. Never throws.
+ * @param {(x: number, y: number, z: number) => ({name: string}|null)} getBlock
+ * @param {{min: {x,y,z}, max: {x,y,z}}} box
+ * @returns {boolean}
+ */
+export function hasFarmland(getBlock, box) {
+    return fieldCells(getBlock, box).some(isFieldGround);
+}
+
+/**
+ * True for a cane area (v0.1.4.16, F3; review 16 finding 3): a farm area marked so, its name `cane` or `cane_2` ... (the
+ * survey's) or its detail `what: 'cane'` (where a store keeps it), or one with sugar cane standing in its box and no farmland
+ * at all. A farm with crops and some cane is a crop farm (one cane by the water made the whole field a cane area before).
+ * @param {(x: number, y: number, z: number) => ({name: string}|null)} getBlock
+ * @param {object} area as the AreaStore lists it
+ * @returns {boolean}
+ */
+export function isCaneArea(getBlock, area) {
+    if (!area || typeof area !== 'object') {
+        return false;
+    }
+    if (/^cane(_\d+)?$/.test(lower(area.name)) || area.detail?.what === 'cane') {
+        return true;
+    }
+    return isBox(area) && caneColumns(getBlock, area).length > 0 && !hasFarmland(getBlock, area);
+}
+
 function readColumn(getBlock, x, z, top, bottom) {
     let above = null;
     for (let y = top; y >= bottom; y--) {

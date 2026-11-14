@@ -62,8 +62,9 @@ describe('state', () => {
     test('the five lines of the spec', async () => {
         const { agent } = fixtureAgent();
         const watch = fixtureWatch({ lastLine: { text: 'go to the farm', by: 'MartyByrde2', at: NOW - 180000 } });
+        // v0.1.4.16 (F8): the label of the one clock (Night); before: night
         assert.equal(await TOOL_HANDLERS.state(agent, {}, watch), [
-            'Luna at (12, 67, 52) in overworld, on oak_planks. Time 13500 (night). Health 20 of 20, food 18 of 20.',
+            'Luna at (12, 67, 52) in overworld, on oak_planks. Time 13500 (Night). Health 20 of 20, food 18 of 20.',
             'Running: !farmCycle("farm") for 42 s.',
             'Job: the farming.',
             'Last order: "go to the farm" by MartyByrde2, 3 min ago.',
@@ -94,10 +95,13 @@ describe('state', () => {
     });
 
     test('phaseOf and agoText', () => {
-        assert.equal(phaseOf(1000), 'day');
-        assert.equal(phaseOf(12500), 'dusk');
-        assert.equal(phaseOf(13500), 'night');
-        assert.equal(phaseOf(23500), 'dawn');
+        // v0.1.4.16 (F8): the labels of the one clock (dayPhase of clock_logic.js); before: day, dusk, night, dawn
+        assert.equal(phaseOf(1000), 'Morning');
+        assert.equal(phaseOf(7000), 'Afternoon');
+        assert.equal(phaseOf(12500), 'Evening');
+        assert.equal(phaseOf(13500), 'Night');
+        assert.equal(phaseOf(23500), 'Dawn');
+        assert.equal(phaseOf(undefined), 'unknown');
         assert.equal(agoText(5000), '5 s ago');
         assert.equal(agoText(180000), '3 min ago');
         assert.equal(agoText(7200000), '2 h ago');

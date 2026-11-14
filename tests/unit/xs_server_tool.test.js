@@ -32,7 +32,7 @@ describe('the server tool', () => {
         const lines = (await TOOL_HANDLERS.server(fixture(), {}, watch)).split('\n');
         assert.match(lines[0], /^Up 42 min, heap \d+ of \d+ MB, tick lag 0 ms\.$/);
         assert.equal(lines[1], 'Players: MartyByrde2, gpt.');
-        assert.equal(lines[2], 'Time 14290 (night), weather clear.');
+        assert.equal(lines[2], 'Time 14290 (Night), weather clear.'); // v0.1.4.16 (F8): the label of the one clock; before: night
         assert.equal(lines[3], 'Model calls 177, session $0.04 (chat $0.03, memory $0.01).');
         assert.equal(lines[4], 'Switches on: smelting, voice_ui, watch_server.');
         assert.equal(lines[5], 'Supervisor: connected 12 s ago.');
@@ -48,12 +48,12 @@ describe('the server tool', () => {
         const lines = (await TOOL_HANDLERS.server(agent, {}, watch)).split('\n');
         assert.match(lines[0], /^Up 30 s, heap \d+ of \d+ MB, tick lag 250 ms\.$/);
         assert.equal(lines[1], 'Players: none.');
-        assert.equal(lines[2], 'Time 14290 (night), weather rain.');
+        assert.equal(lines[2], 'Time 14290 (Night), weather rain.');
         assert.equal(lines[3], 'Model calls: no cost meter.');
         assert.equal(lines[4], 'Switches on: none.');
         assert.equal(lines[5], 'Supervisor: none.');
         agent.bot.thunderState = 1;
-        assert.equal((await TOOL_HANDLERS.server(agent, {}, watch)).split('\n')[2], 'Time 14290 (night), weather thunder.');
+        assert.equal((await TOOL_HANDLERS.server(agent, {}, watch)).split('\n')[2], 'Time 14290 (Night), weather thunder.');
         assert.equal(TEXTS.noSupervisor, 'Supervisor: none.');
     });
 

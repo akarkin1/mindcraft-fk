@@ -467,7 +467,9 @@ function tunnelName(view, slot) {
  * ahead is lava or water: `turn`, `patch` has it (close it, go on 3 blocks to the side); a block
  * ahead is air and the space behind it is a cave (air beyond, above, below or beside it): `turn`
  * with the opening in `patch`; air behind the blocks ahead (beyond): a cave starts there, `turn`
- * without digging, the blocks ahead stay as its wall; lava, water or air in the other blocks
+ * without digging, the blocks ahead stay as its wall and the air cells beyond them are the `patch`
+ * (v0.1.4.16, F10: the wall is made one block thicker with filler, so a cave one block beyond the
+ * end is walled off); lava, water or air in the other blocks
  * around, lava or water beyond: `patch` with the positions, then dig; otherwise `dig`. Always:
  * `ores` has the ore blocks ahead and around,
  * `torch` is true every 8 steps (`view.step`), `falling` when the upper block ahead or the block
@@ -503,9 +505,11 @@ export function tunnelStep(view) {
         return result('turn', sortPatches(airAhead.map(at)));
     }
     // air right behind the blocks ahead: the space behind them is a cave, and the blocks ahead are
-    // the wall between it and the tunnel. They stay; the tunnel goes to the side.
-    if (['beyond.upper', 'beyond.lower'].some(slot => kindOf(slot) === 'air')) {
-        return result('turn');
+    // the wall between it and the tunnel. They stay; the tunnel goes to the side. v0.1.4.16 (F10): the
+    // air cells beyond are patched first, so the wall of the cave is two blocks thick where it was seen.
+    const beyondAir = ['beyond.upper', 'beyond.lower'].filter(slot => kindOf(slot) === 'air');
+    if (beyondAir.length > 0) {
+        return result('turn', sortPatches(beyondAir.map(at)));
     }
     const patch = AROUND.filter(slot => patchable(kindOf(slot))).map(at);
     return patch.length > 0 ? result('patch', sortPatches(patch)) : result('dig');
@@ -794,10 +798,17 @@ export function tripNeeds(ore, fromY, toY, inventory, options = {}) {
  * the setting mine_from_inside (`fromInside`: a shaft down from where the bot stands), else `in_mine`
  * (refused as `underground` was, with the text that names the mine and the setting). Without `inMine`
  * everything is as before.
+ * v0.1.4.16 (F5, the play of 2026-11-11: new_mine true walked to the old mine): on the surface `newMine`, the player's
+ * word for a new mine, comes first, before a known mine is used (mineOre starts it where the bot stands). Under the
+ * ground the rules above stay: a new mine starts only from the surface (W3), a known mine is used, a shaft from inside
+ * needs its setting (I4).
  * @param {{mine?: object|null, newMine?: boolean, underground?: boolean, inMine?: boolean, fromInside?: boolean}} input
  * @returns {'use'|'underground'|'ask'|'new'|'inside'|'in_mine'}
  */
 export function tripStart(input) {
+    if (input?.newMine === true && input?.underground !== true) {
+        return 'new';
+    }
     if (input?.mine) {
         return 'use';
     }

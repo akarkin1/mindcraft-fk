@@ -218,7 +218,7 @@ function itemsOf(places, role) {
  * @param {string[]} [changed] the names of the found places that replaced a former survey's (reported like the rest)
  * @returns {string} '' when nothing was found and nothing kept (the caller says nothingFoundText)
  */
-export function reportText(found, kept = [], changed = []) {
+export function reportText(found, kept = [], changed = [], leftOut = []) {
     const places = Array.isArray(found) ? found.filter(p => p && typeof p === 'object') : [];
     const keptList = Array.isArray(kept) ? kept.filter(k => k && typeof k === 'object') : [];
     void changed;
@@ -231,7 +231,33 @@ export function reportText(found, kept = [], changed = []) {
         items.push(...keptList.filter(k => roleOf(k.place ?? k) === role).map(keptText));
     }
     const n = places.length;
-    return `I found ${n} ${n === 1 ? 'place' : 'places'}: ${items.join(', ')}. All saved. Say "rename X to Y" or "forget X" to correct.`;
+    const left = leftOutText(leftOut);
+    return `I found ${n} ${n === 1 ? 'place' : 'places'}: ${items.join(', ')}. All saved.${left ? ` ${left}` : ''} Say "rename X to Y" or "forget X" to correct.`;
+}
+
+/**
+ * One cluster the survey left out (v0.1.4.16, F2), word for word: `N places about D blocks <dir> (another base or a
+ * village): not saved; survey it from there for its own name`, N its count, D the distance from the start to its nearest
+ * find rounded to 10, `<dir>` one of north, south, east, west, north-east, north-west, south-east, south-west.
+ * @param {{count: number, distance: number, dir: string}} cluster of leftOutOf (survey_logic.js)
+ * @returns {string}
+ */
+export function leftOutItem(cluster) {
+    const n = count(cluster?.count);
+    const d = typeof cluster?.distance === 'number' && Number.isFinite(cluster.distance) ? Math.max(0, Math.round(cluster.distance)) : 0;
+    const dir = typeof cluster?.dir === 'string' && cluster.dir !== '' ? cluster.dir : 'north';
+    return `${n} places about ${d} blocks ${dir} (another base or a village): not saved; survey it from there for its own name`;
+}
+
+/**
+ * The sentence of the clusters the survey left out (F2), after `All saved.` of the report: `I left out <item>; <item>.`
+ * (one item per cluster, joined with `; `); '' without a cluster.
+ * @param {{count: number, distance: number, dir: string}[]} clusters
+ * @returns {string}
+ */
+export function leftOutText(clusters) {
+    const list = Array.isArray(clusters) ? clusters.filter(c => c && typeof c === 'object') : [];
+    return list.length === 0 ? '' : `I left out ${list.map(leftOutItem).join('; ')}.`;
 }
 
 /**
