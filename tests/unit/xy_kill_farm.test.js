@@ -169,7 +169,7 @@ describe('the farm at the kill spot', () => {
         const r = await s.run('level 2');
         assert.equal(r.ok, true, r.text);
         assert.equal(r.reason, null);
-        assert.equal(r.text, 'I stop the farming: level 2 reached; 4 creepers, 0 minutes; 0 gunpowder stored.');
+        assert.equal(r.text, 'I stop the farming: level 2 reached; 4 creepers, 0 minutes.', 'no look without the storage pack: the part left out');
         assert.equal(r.kills, 4);
         assert.equal(s.bot.experience.level, 2);
         // the sneak first, then the forward control for 700 ms
@@ -199,7 +199,7 @@ describe('the farm at the kill spot', () => {
         const b = s.summon('creeper', { x: -0.5, y: 66, z: 2.5 });
         const r = await s.run('');
         assert.equal(r.reason, 'interrupted');
-        assert.equal(r.text, 'I leave the kill room: you said stop; 2 creepers, 0 gunpowder stored.');
+        assert.equal(r.text, 'I leave the kill room: you said stop; 2 creepers.');
         const ids = s.attacks.map((x) => x.id);
         assert.deepEqual(ids, [a.id, a.id, a.id, a.id, b.id, b.id, b.id, b.id]);
         modesRestored(s.bot);
@@ -232,7 +232,7 @@ describe('the farm at the kill spot', () => {
         const s = scene({ pos: [0.5, 64, -5.5] });
         const r = await s.run('1 minutes');
         assert.equal(r.ok, true);
-        assert.match(r.text, /^I stop the farming: 1 minute is over; \d+ creepers; 0 gunpowder stored\.$/);
+        assert.match(r.text, /^I stop the farming: 1 minute is over; \d+ creepers\.$/);
         assert.ok(r.kills >= 10, `${r.kills} kills in a minute`);
         const p = s.bot.entity.position;
         assert.ok(Math.hypot(p.x - 0.5, p.z + 5.5) <= 1.5, `back where it stood: ${p}`);
@@ -254,16 +254,82 @@ describe('the farm at the kill spot', () => {
         assert.deepEqual(sneaks.slice(0, 3), [true, false, true], 'off for the trip, on again at the spot');
     });
 
-    test('the saved kill_chest takes the drops; the index\'s gunpowder is the stored count', async () => {
+    // The kill chests the hoppers feed (T5's finding of 2026-11-14): a fake lookIntoChests gives the chests by the spot with the
+    // gunpowder the hoppers brought so far (2 per kill into (0, 64, 1), 1 into (1, 64, 1)) and a far chest that never counts.
+    function hopperChests(s, looks) {
+        return async (range, opts) => {
+            looks.push({ range, sneaking: s.bot.controls.sneak, t: s.clock.t, opts: typeof opts?.wait });
+            const k = s.kills();
+            return [
+                { x: 0, y: 64, z: 1, items: { gunpowder: 5 + 2 * k } },
+                { x: 1, y: 64, z: 1, items: { gunpowder: 1 * k, string: 2 } },
+                { x: 40, y: 64, z: 40, items: { gunpowder: 900 } },
+            ];
+        };
+    }
+
+    test('the stop line\'s figure: the bot looks into the kill chests after the climb and at the stop, not sneaking (T5: 5 and 2 in the chests)', async () => {
+        const looks = [];
+        const s = scene();
+        s.ctx.storage = { lookIntoChests: hopperChests(s, looks) };
+        const r = await s.run('level 2');
+        assert.equal(r.text, 'I stop the farming: level 2 reached; 4 creepers, 0 minutes; 12 gunpowder stored.', '(5 + 8) - 5 + 4 - 0');
+        assert.equal(looks.length, 2, 'the start and the stop');
+        assert.ok(looks.every((l) => l.sneaking === false && l.range >= L.LOOK_RANGE && l.opts === 'function'), JSON.stringify(looks));
+        const firstHit = s.attacks[0].t;
+        assert.ok(looks[0].t < firstHit && looks[1].t > s.attacks[s.attacks.length - 1].t);
+        assert.equal(r.gunpowder, 12);
+    });
+
+    test('the saved kill_chest takes the drops; its gunpowder is counted once with the hoppers\' (the bot\'s store is in the difference)', async () => {
         const calls = [];
-        const storage = { storeItems: async (opts) => { calls.push(opts); return { ok: true, stored: { gunpowder: 10 } }; } };
-        const chests = { nearest: () => null, find: () => [], get: (p) => (p.x === 5 ? { x: 5, y: 64, z: 5, items: { gunpowder: 62 } } : null) };
-        const s = scene({ storage, chests, places: { kill_chest: { x: 5, y: 64, z: 5 } } });
+        const looks = [];
+        let stored = 0;
+        const s = scene({ places: { kill_chest: { x: 0, y: 64, z: 1 } } });
+        const look = hopperChests(s, looks);
+        s.ctx.storage = {
+            storeItems: async (opts) => { calls.push(opts); stored += 10; return { ok: true, stored: { gunpowder: 10 } }; },
+            lookIntoChests: async (...args) => (await look(...args)).map((c) => (c.x === 0 && c.z === 1 ? { ...c, items: { gunpowder: c.items.gunpowder + stored } } : c)),
+        };
         let free = 4;
         s.bot.inventory.emptySlotCount = () => { const f = free; free = 30; return f; };
         const r = await s.run('1 minutes');
-        assert.deepEqual(calls[0].chest, { x: 5, y: 64, z: 5 });
-        assert.match(r.text, /; 62 gunpowder stored\.$/);
+        assert.deepEqual(calls[0].chest, { x: 0, y: 64, z: 1 });
+        assert.equal(looks.length, 3, 'the start, after the store trip, the stop');
+        assert.equal(r.gunpowder, 3 * r.kills + 10);
+        assert.match(r.text, new RegExp(`; ${3 * r.kills + 10} gunpowder stored\\.$`));
+    });
+
+    test('a store into a chest the looks do not cover counts as it is', async () => {
+        const looks = [];
+        const s = scene({ places: { kill_chest: { x: 30, y: 64, z: 30 } } });
+        const look = hopperChests(s, looks);
+        s.ctx.storage = {
+            storeItems: async () => ({ ok: true, stored: { gunpowder: 20 } }),
+            lookIntoChests: async (...args) => (await look(...args)).filter((c) => c.x !== 40),
+        };
+        let free = 4;
+        s.bot.inventory.emptySlotCount = () => { const f = free; free = 30; return f; };
+        const r = await s.run('1 minutes');
+        assert.equal(r.gunpowder, 3 * r.kills + 20);
+    });
+
+    test('the progress line: the figure of the last look (a store trip), else the part left out', async () => {
+        const looks = [];
+        const s = scene({ spawn: 200, hook: (sc) => { if (sc.kills() >= 50 && sc.said.length >= 2) sc.bot.interrupt_code = true; } });
+        let free = 36;
+        s.bot.inventory.emptySlotCount = () => free;
+        s.ctx.storage = { lookIntoChests: hopperChests(s, looks), storeItems: async () => { free = 30; return { ok: true, stored: { gunpowder: 0, bone: 4 } }; } };
+        s.stepHook = (sc) => {
+            if (sc.kills() === 10 && free === 36) free = 4; // a store trip after 10 kills: the look there gives the figure
+            if (sc.kills() >= 50 && sc.said.length >= 2) sc.bot.interrupt_code = true;
+        };
+        const r = await s.run('');
+        assert.equal(r.kills, 50);
+        assert.match(s.said[1], /^I killed 50 creepers with 50 hits; level 12; (\d+) gunpowder stored\.$/);
+        const figure = Number(/; (\d+) gunpowder/.exec(s.said[1])[1]);
+        assert.ok(figure >= 30 && figure <= 33, `the look after 10 or 11 kills: ${figure}`);
+        assert.match(r.text, /^I leave the kill room: you said stop; 50 creepers, \d+ gunpowder stored\.$/, 'the owner\'s stop: the last look, no new one');
     });
 
     test('the owner\'s stop: the stop line, the modes restored, no walk out', async () => {
@@ -271,7 +337,7 @@ describe('the farm at the kill spot', () => {
         const r = await s.run('');
         assert.equal(r.ok, false);
         assert.equal(r.reason, 'interrupted');
-        assert.equal(r.text, 'I leave the kill room: you said stop; 3 creepers, 0 gunpowder stored.');
+        assert.equal(r.text, 'I leave the kill room: you said stop; 3 creepers.');
         modesRestored(s.bot);
     });
 
@@ -300,7 +366,7 @@ describe('the farm at the kill spot', () => {
         assert.equal(r.kills, 50);
         // the line comes with the 50th death; that kill's XP comes after it (in the game with its orbs): 49 kills of XP, level 12
         assert.equal(levelOf(49 * 5), 12);
-        assert.equal(s.said[1], 'I killed 50 creepers with 50 hits; level 12; 0 gunpowder stored.');
+        assert.equal(s.said[1], 'I killed 50 creepers with 50 hits; level 12.');
     });
 });
 
@@ -326,6 +392,26 @@ describe('the refusals: nothing moves, the modes untouched', () => {
         assert.deepEqual([r.ok, r.reason, r.text], [false, 'no_slab', 'The kill room has no slab over the hoppers; I do not farm there.']);
         untouched(s.bot);
         assert.equal(s.bot.modes.on.creeper_safety, true);
+    });
+
+    test('after the refusal the bot walks back to where the order came, doors on; the modes as they were (T5, 2026-11-14)', async () => {
+        for (const slab of [false, true]) {
+            const s = scene({ slab, pos: [0.5, 64, -5.5] });
+            if (slab) for (let x = -1; x <= 1; x++) for (let z = 1; z <= 3; z++) s.world.set(x, 65, z, 'stone'); // no hopper
+            s.world.door(0, 64, -3, { facing: 'south' }); // a closed door on the way, closed again behind the bot
+            s.bot.gotoImpl = async (goal) => {
+                const { straightGoto } = await import('./home_fake_bot.test.js');
+                await straightGoto(s.bot, goal);
+                if (s.world.propsAt(0, 64, -3).open) s.world.toggle(0, 64, -3);
+            };
+            const r = await s.run('level 2');
+            assert.equal(r.reason, slab ? 'no_hopper' : 'no_slab');
+            const p = s.bot.entity.position;
+            assert.ok(Math.hypot(p.x - 0.5, p.z + 5.5) <= 1.5, `back where it stood: ${p}`);
+            const opened = s.bot.calls.filter((c) => c[0] === 'pf_open');
+            assert.equal(opened.length, 2, 'the door opened on the way there and on the way back (doors on)');
+            untouched(s.bot);
+        }
     });
 
     test('no hopper within 3 blocks', async () => {

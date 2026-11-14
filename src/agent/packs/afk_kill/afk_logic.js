@@ -547,14 +547,67 @@ export function badWindowVerdict(badWindows) {
     return (num(badWindows) ?? 0) >= 1 ? 'give_up' : 'closer';
 }
 
+/** The bot looks into the chests within this range of the spot (the kill chests the hoppers feed, at arm's length). */
+export const LOOK_RANGE = CHEST_RANGE;
+
 /**
- * The stored count for the lines: the kill chest's gunpowder when the index knows the chest, else what the bot stored
- * itself this run.
- * @param {{items?: Object<string, number>}|null} chest the chest of the index, or null
- * @param {number} storedByMe
- * @returns {number}
+ * The key of a chest position.
+ * @param {{x,y,z}} p
+ * @returns {string}
  */
-export function storedCount(chest, storedByMe) {
-    const inChest = num(chest?.items?.gunpowder);
-    return inChest !== null ? inChest : Math.max(0, num(storedByMe) ?? 0);
+export function chestKey(p) {
+    return `${Math.floor(p.x)},${Math.floor(p.y)},${Math.floor(p.z)}`;
+}
+
+/**
+ * The gunpowder of each looked chest by its key: the chests a look gave (`{ x, y, z, items }` of the chest index) that
+ * stand within LOOK_RANGE of the spot (cell centre to cell centre), and the kill chest wherever it stands.
+ * @param {object[]} chests
+ * @param {{x,y,z}} spot
+ * @param {{x,y,z}|null} [killChest]
+ * @returns {Object<string, number>}
+ */
+export function gunpowderByChest(chests, spot, killChest = null) {
+    const out = {};
+    const s = cell(spot);
+    if (!s || !Array.isArray(chests)) {
+        return out;
+    }
+    const centre = (p) => ({ x: p.x + 0.5, y: p.y, z: p.z + 0.5 });
+    const kill = killChest && cell(killChest) ? chestKey(killChest) : null;
+    for (const c of chests) {
+        const p = cell(c);
+        if (!p) {
+            continue;
+        }
+        if (chestKey(p) === kill || distance(centre(p), centre(s)) <= LOOK_RANGE + 0.5) {
+            out[chestKey(p)] = num(c.items?.gunpowder) ?? 0;
+        }
+    }
+    return out;
+}
+
+/**
+ * The gunpowder stored during the farm (the lead's rule of 2026-11-14 on T5's finding: the hoppers feed the kill chests, so
+ * the bot never stores the gunpowder itself): the gunpowder in the looked chests at the latest look minus at the first look,
+ * the chests seen both times, plus what the bot stored itself into a chest outside them (its stores into a looked chest are
+ * in the difference already). null when no look after the first one happened and the bot stored nothing elsewhere: the
+ * lines then leave the part out.
+ * @param {Object<string, number>|null} first the look at the start
+ * @param {Object<string, number>|null} last the latest look after it
+ * @param {number} [outside] gunpowder the bot stored into a chest that is not a looked one
+ * @returns {number|null}
+ */
+export function storedFigure(first, last, outside = 0) {
+    const elsewhere = Math.max(0, num(outside) ?? 0);
+    if (!first || !last) {
+        return elsewhere > 0 ? elsewhere : null;
+    }
+    let diff = 0;
+    for (const [key, n] of Object.entries(last)) {
+        if (Object.hasOwn(first, key)) {
+            diff += (num(n) ?? 0) - (num(first[key]) ?? 0);
+        }
+    }
+    return Math.max(0, diff) + elsewhere;
 }

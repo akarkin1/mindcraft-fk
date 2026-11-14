@@ -110,51 +110,61 @@ export function wornWeaponText(worn, next) {
     return `My ${worn} is worn; I take the ${next}.`;
 }
 
+// The stored figure is known only after the bot looked into the kill chests (the lead's rule of 2026-11-14); without
+// one the lines leave the part out.
+function known(stored) {
+    return typeof stored === 'number' && Number.isFinite(stored);
+}
+
 /**
- * The progress line (8.4a, with the hits): `I killed 50 creepers with 61 hits; level 14; 62 gunpowder stored.`
+ * The progress line (8.4a, with the hits): `I killed 50 creepers with 61 hits; level 14; 62 gunpowder stored.`, without a
+ * stored figure `I killed 50 creepers with 61 hits; level 14.`
  * @param {number} kills
  * @param {number} hits every hit of the run, also those on targets that are not dead yet
  * @param {number} level
- * @param {number} stored
+ * @param {number|null} [stored] the figure of the last look into the kill chests, null without one
  * @returns {string}
  */
-export function progressText(kills, hits, level, stored) {
+export function progressText(kills, hits, level, stored = null) {
     const h = count(hits);
-    return `I killed ${creepersText(kills)} with ${h === 1 ? '1 hit' : `${h} hits`}; level ${count(level)}; ${storedText(stored)}.`;
+    return `I killed ${creepersText(kills)} with ${h === 1 ? '1 hit' : `${h} hits`}; level ${count(level)}${known(stored) ? `; ${storedText(stored)}` : ''}.`;
 }
 
 /**
- * `I stop the farming: level 30 reached; 280 creepers, 1 hour 10 minutes; 268 gunpowder stored.`
+ * `I stop the farming: level 30 reached; 280 creepers, 1 hour 10 minutes; 268 gunpowder stored.`, without a stored figure
+ * `I stop the farming: level 30 reached; 280 creepers, 1 hour 10 minutes.`
  * @param {number} level
  * @param {number} kills
  * @param {number} ms the time farmed
- * @param {number} stored
+ * @param {number|null} [stored]
  * @returns {string}
  */
-export function stopLevelText(level, kills, ms, stored) {
-    return `I stop the farming: level ${count(level)} reached; ${creepersText(kills)}, ${durationText(ms)}; ${storedText(stored)}.`;
+export function stopLevelText(level, kills, ms, stored = null) {
+    return `I stop the farming: level ${count(level)} reached; ${creepersText(kills)}, ${durationText(ms)}${known(stored) ? `; ${storedText(stored)}` : ''}.`;
 }
 
 /**
- * `I stop the farming: 20 minutes are over; 70 creepers; 61 gunpowder stored.`
+ * `I stop the farming: 20 minutes are over; 70 creepers; 61 gunpowder stored.`, without a stored figure
+ * `I stop the farming: 20 minutes are over; 70 creepers.`
  * @param {number} minutes
  * @param {number} kills
- * @param {number} stored
+ * @param {number|null} [stored]
  * @returns {string}
  */
-export function stopMinutesText(minutes, kills, stored) {
+export function stopMinutesText(minutes, kills, stored = null) {
     const m = count(minutes);
-    return `I stop the farming: ${m === 1 ? '1 minute is' : `${m} minutes are`} over; ${creepersText(kills)}; ${storedText(stored)}.`;
+    return `I stop the farming: ${m === 1 ? '1 minute is' : `${m} minutes are`} over; ${creepersText(kills)}${known(stored) ? `; ${storedText(stored)}` : ''}.`;
 }
 
 /**
- * The owner's stop: `I leave the kill room: you said stop; 70 creepers, 61 gunpowder stored.`
+ * The owner's stop: `I leave the kill room: you said stop; 70 creepers, 61 gunpowder stored.`, without a stored figure
+ * `I leave the kill room: you said stop; 70 creepers.`
  * @param {number} kills
- * @param {number} stored
+ * @param {number|null} [stored]
  * @returns {string}
  */
-export function stoppedText(kills, stored) {
-    return `I leave the kill room: you said stop; ${creepersText(kills)}, ${storedText(stored)}.`;
+export function stoppedText(kills, stored = null) {
+    return `I leave the kill room: you said stop; ${creepersText(kills)}${known(stored) ? `, ${storedText(stored)}` : ''}.`;
 }
 
 /**

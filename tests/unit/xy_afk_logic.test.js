@@ -263,10 +263,47 @@ describe('the kill check (K-3, the lead\'s rule of 2026-11-13)', () => {
         assert.equal(L.badWindowVerdict(2), 'give_up');
     });
 
-    test('the stored count: the kill chest\'s gunpowder when the index knows it, else what the bot stored', () => {
-        assert.equal(L.storedCount({ items: { gunpowder: 62 } }, 10), 62);
-        assert.equal(L.storedCount({ items: {} }, 10), 10);
-        assert.equal(L.storedCount(null, 7), 7);
+});
+
+describe('the stored figure (the lead\'s rule of 2026-11-14: the bot looks into the kill chests the hoppers feed)', () => {
+    test('gunpowderByChest: the chests within 6 blocks of the spot and the kill chest wherever it is; no gunpowder is 0', () => {
+        const chests = [
+            { x: 0, y: 0, z: 1, items: { gunpowder: 5 } }, { x: 1, y: 0, z: 1, items: { bone: 3 } },
+            { x: 6, y: 0, z: 0, items: { gunpowder: 9 } }, { x: 7, y: 0, z: 0, items: { gunpowder: 40 } },
+            { x: 30, y: 64, z: 30, items: { gunpowder: 2 } }, { x: 'a' },
+        ];
+        assert.deepEqual(L.gunpowderByChest(chests, SPOT), { '0,0,1': 5, '1,0,1': 0, '6,0,0': 9 });
+        assert.deepEqual(L.gunpowderByChest(chests, SPOT, { x: 30, y: 64, z: 30 }), { '0,0,1': 5, '1,0,1': 0, '6,0,0': 9, '30,64,30': 2 });
+        assert.deepEqual(L.gunpowderByChest(null, SPOT), {});
+        assert.equal(L.LOOK_RANGE, 6);
+        assert.equal(L.chestKey({ x: -2274.7, y: 170, z: 869.2 }), '-2275,170,869');
+    });
+
+    test('storedFigure: the latest look minus the first, the chests seen both times, plus what the bot stored elsewhere', () => {
+        // T5's run: the hoppers fed 5 and 2 gunpowder into the two kill chests
+        assert.equal(L.storedFigure({ a: 0, b: 0 }, { a: 5, b: 2 }), 7);
+        assert.equal(L.storedFigure({ a: 10, b: 3 }, { a: 15, b: 3, c: 99 }), 5, 'a chest not seen at the start does not count');
+        assert.equal(L.storedFigure({ a: 10, b: 3 }, { a: 12 }), 2, 'a chest not seen now does not count');
+        assert.equal(L.storedFigure({ a: 10 }, { a: 4 }), 0, 'the owner took some: never below 0');
+        assert.equal(L.storedFigure({ a: 0 }, { a: 64 }, 0), 64, 'the bot\'s own store into a looked chest is in the difference, once');
+        assert.equal(L.storedFigure({ a: 0 }, { a: 5 }, 20), 25, 'plus what it stored into a chest outside the looks');
+    });
+
+    test('without a look after the first: null (the lines leave the part out), or what the bot stored elsewhere', () => {
+        assert.equal(L.storedFigure(null, null), null);
+        assert.equal(L.storedFigure({ a: 5 }, null), null);
+        assert.equal(L.storedFigure(null, null, 64), 64);
+    });
+});
+
+describe('the lines without a stored figure', () => {
+    test('the part is left out', () => {
+        assert.equal(T.progressText(50, 61, 14, null), 'I killed 50 creepers with 61 hits; level 14.');
+        assert.equal(T.progressText(50, 61, 14), 'I killed 50 creepers with 61 hits; level 14.');
+        assert.equal(T.stopLevelText(2, 4, 60000, null), 'I stop the farming: level 2 reached; 4 creepers, 1 minute.');
+        assert.equal(T.stopMinutesText(20, 70, null), 'I stop the farming: 20 minutes are over; 70 creepers.');
+        assert.equal(T.stoppedText(70, null), 'I leave the kill room: you said stop; 70 creepers.');
+        assert.equal(T.stoppedText(70, 0), 'I leave the kill room: you said stop; 70 creepers, 0 gunpowder stored.', 'a looked 0 is said');
     });
 });
 

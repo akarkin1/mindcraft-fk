@@ -15,10 +15,10 @@ import { goals, gotoGoal, makeMovements, stopMoving, walkNear } from '../home/mo
 import { isNight } from '../home/night_logic.js';
 import { isBedName } from '../home/sleep_logic.js';
 import {
-    BED_RANGE, CHEST_RANGE, CREEPER_MODE, EAT_AT_FOOD, HIT_GAP_MS, KILL_DROPS, KILL_WINDOW_MS, LOOP_MS, PAUSED_MODES, PROGRESS_EVERY,
-    STEP_MORE_MS, STEP_MS, STORE_FREE_SLOTS, WEAPON_CHEST_RANGE, WEAPON_NAMES, WEAPON_WEAR, badWindowVerdict, checkRoom, chooseWeapon,
-    distance, eyeOf, isWeaponName, isWorn, needsSpare, newWindow, parseUntil, pickTarget, stopReason, storedCount, stuckHits, usesLeft,
-    windowIsBad, windowOver,
+    BED_RANGE, CHEST_RANGE, CREEPER_MODE, EAT_AT_FOOD, HIT_GAP_MS, KILL_DROPS, KILL_WINDOW_MS, LOOK_RANGE, LOOP_MS, PAUSED_MODES, PROGRESS_EVERY,
+    STEP_MORE_MS, STEP_MS, STORE_FREE_SLOTS, WEAPON_CHEST_RANGE, WEAPON_NAMES, WEAPON_WEAR, badWindowVerdict, checkRoom, chestKey, chooseWeapon,
+    distance, eyeOf, gunpowderByChest, isWeaponName, isWorn, needsSpare, newWindow, parseUntil, pickTarget, stopReason, storedFigure, stuckHits,
+    usesLeft, windowIsBad, windowOver,
 } from './afk_logic.js';
 import {
     TEXTS, badUntilText, lowHealthText, noWeaponText, progressText, stepCloserText, stopLevelText, stopMinutesText, stoppedText,
@@ -110,7 +110,7 @@ function recallPlace(ctx, name) {
 // The result of the command, its text logged (rule 8 of the spec: a stop and a refusal write one line).
 function finish(s, ok, reason, text) {
     logTo(s.ctx, text);
-    return { ok, reason, text, kills: s.kills, hits: s.hits, stored: s.storedByMe, level: levelOf(s.bot), ms: s.clock.now() - s.started };
+    return { ok, reason, text, kills: s.kills, hits: s.hits, stored: s.storedByMe, gunpowder: storedNow(s), level: levelOf(s.bot), ms: s.clock.now() - s.started };
 }
 
 function levelOf(bot) {
@@ -489,9 +489,14 @@ async function storeTrip(s) {
         return;
     }
     const stored = res?.stored && typeof res.stored === 'object' ? res.stored : {};
-    s.storedByMe += num(stored.gunpowder) ?? 0;
+    const gunpowder = num(stored.gunpowder) ?? 0;
+    s.storedByMe += gunpowder;
+    if (!s.lookFirst || !Object.hasOwn(s.lookFirst, chestKey(s.chest))) {
+        s.storedOutside += gunpowder; // a chest the looks do not cover: what the bot stored there counts as it is
+    }
     if (Object.keys(stored).length > 0) {
         logTo(s.ctx, storedLineText(stored)); // the quiet line
+        await lookAtChests(s); // the bot is by the chests anyway: the figure of the progress line
     } else {
         logTo(s.ctx, `I stored nothing in the kill chest. ${res?.text ?? ''}`.trim());
         s.storeFailedAt = s.clock.now();
@@ -659,14 +664,39 @@ function stuckCount(s) {
     return n;
 }
 
-function storedNow(s) {
-    let known = null;
-    try {
-        known = s.chest ? s.ctx?.chests?.get?.(s.chest) ?? null : null;
-    } catch {
-        known = null;
+// The gunpowder of the kill chests (the lead's rule of 2026-11-14, T5's finding): the hoppers feed the chests, so the bot looks
+// into the kill chest and the chests within 6 blocks of the spot through the storage pack (at arm's length; the walk to them
+// is the storage pack's). A sneaking bot with a sword in hand cannot open a chest (the click goes to the item), so the sneak
+// ends first; the caller takes the stance again. The first look is the baseline, each later one gives the figure. Returns
+// true when it looked. Never throws.
+async function lookAtChests(s) {
+    const look = s.ctx?.storage?.lookIntoChests;
+    if (typeof look !== 'function' || s.bot.interrupt_code) {
+        return false;
     }
-    return storedCount(known, s.storedByMe);
+    sneak(s, false);
+    let chests = null;
+    try {
+        chests = await look(LOOK_RANGE + 1, { now: s.clock.now, wait: s.clock.wait });
+    } catch (err) {
+        logTo(s.ctx, `I could not look into the kill chests: ${err?.message ?? err}`);
+        return false;
+    }
+    if (s.bot.interrupt_code || !Array.isArray(chests)) {
+        return false;
+    }
+    const counts = gunpowderByChest(chests, s.spot, s.chest);
+    if (s.lookFirst === null) {
+        s.lookFirst = counts;
+    } else {
+        s.lookLast = counts;
+    }
+    return true;
+}
+
+// The stored figure of the lines: null before a look after the first one (the lines leave the part out).
+function storedNow(s) {
+    return storedFigure(s.lookFirst, s.lookLast, s.storedOutside);
 }
 
 // The kill check (K-3) at the end of each 2-minute window: a bad window steps closer, a second one ends the farm.
@@ -703,11 +733,14 @@ async function loop(s) {
         if (why === 'health') {
             return finish(s, false, 'low_health', lowHealthText(bot.health));
         }
-        if (why === 'level') {
-            return finish(s, true, null, stopLevelText(levelOf(bot), s.kills, s.clock.now() - s.started, storedNow(s)));
-        }
-        if (why === 'minutes') {
-            return finish(s, true, null, stopMinutesText(s.until.minutes, s.kills, storedNow(s)));
+        if (why === 'level' || why === 'minutes') {
+            // the stop of the order: one more look into the kill chests for the stored figure
+            const elapsed = s.clock.now() - s.started;
+            const level = levelOf(bot);
+            await lookAtChests(s);
+            return finish(s, true, null, why === 'level'
+                ? stopLevelText(level, s.kills, elapsed, storedNow(s))
+                : stopMinutesText(s.until.minutes, s.kills, storedNow(s)));
         }
         const now = s.clock.now();
         // the night (K-5): the bed by the room, then back; without a bed the farm goes on (said once)
@@ -803,7 +836,7 @@ export async function killFarm(bot, ctx = {}, until = '', options = {}) {
         bot, ctx: ctx ?? {}, clock, started: clock.now(), until: parseUntil(until),
         spot: null, aim: null, chest: null, bed: null, cameFrom: botPos(bot), stance: null, sneaking: false, extraSteps: 0,
         kills: 0, hits: 0, lastHitAt: -Infinity, focus: null, records: new Map(), dying: new Set(), window: null, badWindows: 0,
-        storedByMe: 0, storeFailedAt: null, ateAt: -Infinity, saidNoFood: false, saidNoBed: false, sleepRetryAt: 0, spareRetryAt: 0,
+        storedByMe: 0, storedOutside: 0, lookFirst: null, lookLast: null, storeFailedAt: null, ateAt: -Infinity, saidNoFood: false, saidNoBed: false, sleepRetryAt: 0, spareRetryAt: 0,
         sleep: typeof options?.sleep === 'function' ? options.sleep : sleepInBed,
         eat: typeof options?.eat === 'function' ? options.eat : eatBestFood,
     };
@@ -826,13 +859,13 @@ export async function killFarm(bot, ctx = {}, until = '', options = {}) {
         walk = null;
     }
     if (walk?.reason === 'interrupted' || bot.interrupt_code) {
-        return finish(s, false, 'interrupted', stoppedText(0, 0));
+        return finish(s, false, 'interrupted', stoppedText(0));
     }
     if (!walk?.ok) {
         walk = await walkNear(bot, s.spot, 1, { clock, timeoutMs: WALK_MS, allowDoors: true });
     }
     if (walk.reason === 'interrupted' || bot.interrupt_code) {
-        return finish(s, false, 'interrupted', stoppedText(0, 0));
+        return finish(s, false, 'interrupted', stoppedText(0));
     }
     if (!walk.ok) {
         return finish(s, false, 'no_way', TEXTS.noWay);
@@ -840,6 +873,9 @@ export async function killFarm(bot, ctx = {}, until = '', options = {}) {
     // the room check at the spot
     const room = checkRoom(blockNames(bot), s.spot);
     if (!room.ok) {
+        // the lead's rule of 2026-11-14 (T5's finding): the bot does not stay in a room it called unsafe; it walks back to
+        // where it stood when the order came, doors on; the modes were not touched yet
+        await wayOut(s);
         return finish(s, false, room.reason, room.reason === 'no_hopper' ? TEXTS.noHopper : TEXTS.noSlab);
     }
     const first = room.hoppers.find(h => room.towards && (h.x - s.spot.x) * room.towards.x + (h.z - s.spot.z) * room.towards.z > 0) ?? room.hoppers[0];
@@ -863,6 +899,10 @@ export async function killFarm(bot, ctx = {}, until = '', options = {}) {
         }
         if (!weapon.ok) {
             return finish(s, false, 'no_weapon', weapon.text);
+        }
+        await lookAtChests(s); // the baseline of the stored figure
+        if (bot.interrupt_code) {
+            return finish(s, false, 'interrupted', stoppedText(0, storedNow(s)));
         }
         const stance = await takeStance(s);
         if (stance.reason === 'interrupted' || bot.interrupt_code) {
