@@ -8,7 +8,7 @@ Every finding of the tests and every decision of the owner, with the decision an
 |---|---|
 | O-1 | 2026-11-12, the cut of PLAN section 2: everything goes together in 0.1.4.16: the fixes of the plays, the whole Stability list of October and the three packs. The lead had recommended the October list for a 0.1.4.17, reading the owner's "the bug fixes can wait" of 2026-11-09 as a standing preference; the owner: that was about 0.1.4.15, not about this release. The plan had three rounds (the plays' fixes, the October list, the packs) and an estimate of 20.5 days for an hour. |
 | O-2 | 2026-11-12, the same day: the owner takes O-1 back on seeing the size of the list and chooses the split as recommended: 0.1.4.16 is the fixes of the plays of 2026-11-10 and 2026-11-11 (round one, with the caves, "orders stay orders" and the history race of the October list) and the three packs (round two, capped at four days); the rest of the October list is 0.1.4.17 "Stability 2". The estimate is 12.5 days again. PLAN section 4b keeps the October rows with their intended behaviour as the first draft of the next plan. |
-| O-4 | 2026-11-13: the owner's play of 2026-11-13 (ROADMAP K-1 to K-7) is input for the AFK kill pack; K-1 (the login guard's errors in the chats and the voice) is fixed in this release as F13. 2026-11-14: the play of 2026-11-14 (M-1 to M-8) waits for the owner's word, but for M-5, M-6 and his kill-room method, which amend the kill pack (SPEC 8.4a). Before the merge of the release's pull request, a Fable model reviews it. |
+| O-4 | 2026-11-13: the owner's play of 2026-11-13 (ROADMAP K-1 to K-7) is input for the AFK kill pack; K-1 (the login guard's errors in the chats and the voice) is fixed in this release as F13. 2026-11-14: the play of 2026-11-14 (M-1 to M-8) waits for the owner's word, but for M-5, M-6 and his kill-room method, which amend the kill pack (SPEC 8.4a). Before the merge of the release's pull request, an independent reviewer reviews it. |
 | O-3 | 2026-11-12, the owner's answers to PLAN section 10: (2) the AFK kill has no default stop, it farms as much as it can, a level or a time can be given; (3) enchanting is driven by the owner or by code, the bot reads the offers and says them and never chooses by itself; (4) lapis and feed come from the bot's known chests, with a question the first time and when the stock is low, never every time; (5) no refusal of `!collectBlocks` underground, "that would be a blocker immediately for the bot": F10 loses its refusal (the cave blocks come last with one line), the lead's reading of "mining is too dangerous for the bot alone" was wrong. Also: the creeper farm's working is looked up online for this version of the game, not speculated. E1 and T3 were told the F10 change the same day. |
 
 ## Round 1: the fixes of the plays (started 2026-11-12)
@@ -34,7 +34,7 @@ on 2026-11-13 and 2026-11-14.
 | B-13 | T5, W134 to W136 on the server: all pass (the pens 30/30, the table, the kill room 2 of 2). Findings: the kill pack's stop line said `0 gunpowder stored` while the kill chests held 5 and 2 (the bot never opens the chests the hoppers feed); after the slab refusal the bot stays in the room; with `say_results` on, the short answer `Done; I said it in the chat.` was said in the game chat; the spec's stand ring formula (8.2) and its example offers (8.3, in the reverse of the game's order) were wrong in the text; the breeding cooldown is never reached in W134. | E8: the kill chests looked into at the start and the stop, the figure their difference plus the bot's own stores; after a refusal the bot walks back to where the order found it. The lead: `say_results` never says the short answer; SPEC 8.2 and 8.3 corrected; the cooldown stays with `xy_breed`. |
 | B-14 | T4, the regression set: `route_joined` (W95) failed once (a stall of 117 s one cell from shaft 2's hole, `I got stuck at (1003, 53, -1)`) and passed alone; it also failed once in 0.1.4.15's gate. | Noted as an intermittent stall; HANDOFF "Open". |
 
-## The review (2026-11-14, a reviewer on the Fable model, the owner's word: before the merge)
+## The review (2026-11-14, an independent reviewer, the owner's word: before the merge)
 
 Of 62bce43 against main 9a28d07; the report is the lead's `review16.md`. Twelve defects, all fixed in the fix round
 (FX1 to FX3) unless said.
@@ -55,7 +55,7 @@ Of 62bce43 against main 9a28d07; the report is the lead's `review16.md`. Twelve 
 | V-12 | Enchanting puts one lapis stack and never checks it covers the offer. | FX3: the slot holds the offer's lapis before the enchant, a second stack moved, the shortfall taken by the stock rule first. |
 | V-13 | FX1's note on V-1: with the order chain, a goal's self prompts (`!goal`) would count as the model's own and could no longer start work. | The lead: a goal is a standing order of whoever set it; the self prompter records the chain's `by` at its start and its prompts carry it (a goal loaded after a restart counts as a player's); a goal the model set from an AUTO MESSAGE stays the model's. `xz_goal_chain` (3). |
 
-## The second review (2026-11-14, a reviewer on the Fable model, of the fix round 62bce43..a96685c)
+## The second review (2026-11-14, an independent reviewer, of the fix round 62bce43..a96685c)
 
 The report is the lead's `review16b.md`: of the twelve findings nine fixed in full, V-6, V-8 and V-10 in part; six new
 defects of the fix round, fixed by FX4 (the packs) and the lead (the goal's chain).
@@ -69,7 +69,7 @@ defects of the fix round, fixed by FX4 (the packs) and the lead (the goal's chai
 | V-18 | Who set a goal was read from the shared `agent.order_chain` when the self prompter started, also on a resume: a system line between the owner's words and the model's `!goal` made the owner's goal the model's, and a goal resumed after a conversation turned the same way. | The lead: `!goal` reads it from its own command (`goalSetterOf`: the player who typed it, else the chain on executeCommand's running entry); `start(prompt, by)` sets it only for a new goal, a resume and the conversation's pause keep it. `xz_goal_chain` (10). |
 | V-19 | After a meal the sneak could be off while the pack believed it on (a walk to food lying near clears the controls). | FX4: the sneak is set after every meal. |
 
-## The third review (2026-11-14, a reviewer on the Fable model, of 9355e92 against a96685c)
+## The third review (2026-11-14, an independent reviewer, of 9355e92 against a96685c)
 
 The report is the lead's `review16c.md`: V-15 to V-19 fixed, V-14 in part; G-2 does what it was decided for. Two new
 defects, fixed by the lead.
