@@ -41,6 +41,12 @@ What each finished part gives to the parts that follow. Where it differs from `S
 | The kill farm | `afk_logic.js` (`WALK_PAUSED_MODES`, `spotPausedModes`, `storeDue` with `STORE_RETRY_MS`), `afk_kill.js` (`startBag`, `markStore`), `job/index.js` (`bagAtStart`, `progress()` answers `kill_farm`), `job_store.js` (`cleanBag`) | Two modes paused for the walk, the rest at the spot; the start counts live in the job (V-15, V-16); the sneak after every meal (V-19). |
 | The resume count | `mining.js` (`jobGotOf(ctx, num)`) | The bag's earlier ore counts only for an order of the job's whole count (G-1). |
 
+## The gate (G-3, 2026-11-14)
+
+One fresh clone, two background runs. Part A on 9355e92: unit 9,665 (2 skipped), end-to-end 19 of 19, 46 of 46 world
+scenarios. Part B on f1378cf: unit 9,669 (2 skipped), end-to-end 19 of 19, 20 of 20 world scenarios (W128 to W136 and
+the order and job scenarios again). Hygiene clean. Run a full gate in two parts: the background limit is 2 hours.
+
 ## Open for the next engineer
 
 - B-8: a mine made from a forgotten tunnel knows no way out; a bot in its own deep 1 x 1 hole cannot walk home from
