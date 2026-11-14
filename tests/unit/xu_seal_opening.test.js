@@ -110,7 +110,11 @@ describe('F10: sealOpening', () => {
         world.fill(-2, 40, 4, 2, 42, 8, 'cave_air'); // a longer room
         bot.entity.position.set(0.5, 40, 7.5);
         const r = await M.sealOpening(bot, ctx, 0, 41, -1, opts);
-        assert.equal(r.ok, true, JSON.stringify(r));
+        // v0.1.4.16 (T4's W133 rerun): only the cells that hold the filler count. The fake path search ends this walk in the
+        // opening itself (the feet at (1, 40, -1)), so the two cells of the bot's body stay open and the answer says so; before,
+        // it said `with 7 cobblestone` as if the opening were closed
+        assert.equal(r.text, 'I sealed 7 of 9 blocks of the opening at (0, 41, -1); the rest I could not reach.', JSON.stringify(r));
+        assert.deepEqual({ x: Math.floor(bot.entity.position.x), y: Math.floor(bot.entity.position.y), z: Math.floor(bot.entity.position.z) }, { x: 1, y: 40, z: -1 });
         assert.ok(bot.calls.some(c => c[0] === 'goto'), 'walked first');
         assert.ok(bot.entity.position.distanceTo({ x: 0.5, y: 41, z: -0.5 }) <= 3.6, 'within reach');
         const stopped = await scene({ hole: FULL });
@@ -124,6 +128,70 @@ describe('F10: sealOpening', () => {
         assert.equal(typeof P.sealOpening, 'function');
         assert.equal(typeof P.openingCells, 'function');
         assert.deepEqual(P.SEAL_RULES, { side: 3, walkRange: 3 });
+    });
+});
+
+// v0.1.4.16, T4's W133 rerun (2026-11-14): `I sealed the opening at (402, 42, 3) with 9 cobblestone.` while the server held
+// cobblestone in the opening's middle column only. The plane came from where the bot stood after its walk: from the feet
+// (0, 41, 2) the way to the cell (2, 42, 3) is longest along x, so the old rule took a wall across x and filled the column
+// x 2 from z 2 to z 4 (in front of the opening, its middle, behind it). The plane is the wall's now, and the answer counts
+// only the cells that hold the filler.
+describe('F10: sealOpening in the room of the W118 base', () => {
+    // the room (x 0..4, z -2..2, y 41..43, floor y 40), its south wall at z 3 with a 3 x 3 hole (x 1..3, y 41..43), a cave
+    // behind it (z 4..8); the bot by the west wall of the room, near the opening
+    async function w133({ pos = [0.5, 41, 2.5], cobble = 32 } = {}) {
+        const world = makeWorld();
+        world.fill(0, 41, -2, 4, 43, 2, 'cave_air');
+        world.fill(0, 41, 4, 4, 43, 8, 'cave_air');
+        world.fill(1, 41, 3, 3, 43, 3, 'cave_air');
+        const bot = makeMiningBot({ world, pos });
+        const clock = makeClock(bot);
+        const ctx = await makeCtx(clock);
+        give(bot, 'cobblestone', cobble);
+        return { world, bot, clock, ctx, opts: { now: clock.now, wait: clock.wait } };
+    }
+    const OPENING = [];
+    for (let x = 1; x <= 3; x++) for (let y = 41; y <= 43; y++) OPENING.push([x, y]);
+
+    test('openingCells: the 9 cells of the wall at z 3, though the way from the feet is longest along x', async () => {
+        const { bot } = await w133();
+        assert.deepEqual({ x: Math.floor(bot.entity.position.x), y: Math.floor(bot.entity.position.y), z: Math.floor(bot.entity.position.z) }, { x: 0, y: 41, z: 2 },
+            'precondition: the feet where the old rule chose a wall across x');
+        const cells = M.openingCells(bot, { x: 2, y: 42, z: 3 });
+        assert.equal(cells.length, 9);
+        assert.ok(cells.every(c => c.z === 3), JSON.stringify(cells));
+        assert.deepEqual(cells[0], { x: 2, y: 42, z: 3 }, 'the cell first');
+    });
+
+    test('!sealOpening: the 9 cells of the opening hold cobblestone, nothing in front of it or behind it, 9 from the bag, the text', async () => {
+        const { bot, ctx, opts, world } = await w133();
+        const r = await M.sealOpening(bot, ctx, 2, 42, 3, opts);
+        assert.equal(r.ok, true, JSON.stringify(r));
+        assert.equal(r.text, 'I sealed the opening at (2, 42, 3) with 9 cobblestone.');
+        assert.equal(r.placed, 9);
+        for (const [x, y] of OPENING) {
+            assert.equal(world.nameAt(x, y, 3), 'cobblestone', `the opening at ${x},${y}`);
+            assert.equal(world.nameAt(x, y, 2), 'cave_air', `in front at ${x},${y}`);
+            assert.equal(world.nameAt(x, y, 4), 'cave_air', `behind at ${x},${y}`);
+        }
+        assert.equal(count(bot, 'cobblestone'), 23);
+    });
+
+    test('blocks that land beside the opening do not count: `I sealed 6 of 9 blocks of the opening at (2, 42, 3); the rest I could not reach.`', async () => {
+        const { bot, ctx, opts, world } = await w133();
+        // the server puts the blocks for the cells x 3 one cell behind them (z 4): the bot's view of those cells stays open
+        const place = bot.placeBlock;
+        bot.placeBlock = (ref, face) => {
+            const t = ref.position.plus(face);
+            return t.x === 3 && t.z === 3 ? place({ position: t.offset(0, 0, 1).minus(face) }, face) : place(ref, face);
+        };
+        const r = await M.sealOpening(bot, ctx, 2, 42, 3, opts);
+        assert.equal(r.text, 'I sealed 6 of 9 blocks of the opening at (2, 42, 3); the rest I could not reach.');
+        assert.deepEqual({ ok: r.ok, reason: r.reason, placed: r.placed }, { ok: false, reason: 'partial', placed: 6 });
+        for (let y = 41; y <= 43; y++) {
+            assert.equal(world.nameAt(3, y, 3), 'cave_air', `the cell x 3, y ${y} stays open`);
+        }
+        assert.ok(ctx.logs.some(t => t.startsWith('Seal: 3 of 9 cells of the opening at (2, 42, 3) hold no filler')), ctx.logs.join('\n'));
     });
 });
 

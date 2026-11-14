@@ -111,14 +111,16 @@ export function wornWeaponText(worn, next) {
 }
 
 /**
- * The progress line: `I killed 50 creepers; level 14; 62 gunpowder stored.`
+ * The progress line (8.4a, with the hits): `I killed 50 creepers with 61 hits; level 14; 62 gunpowder stored.`
  * @param {number} kills
+ * @param {number} hits every hit of the run, also those on targets that are not dead yet
  * @param {number} level
  * @param {number} stored
  * @returns {string}
  */
-export function progressText(kills, level, stored) {
-    return `I killed ${creepersText(kills)}; level ${count(level)}; ${storedText(stored)}.`;
+export function progressText(kills, hits, level, stored) {
+    const h = count(hits);
+    return `I killed ${creepersText(kills)} with ${h === 1 ? '1 hit' : `${h} hits`}; level ${count(level)}; ${storedText(stored)}.`;
 }
 
 /**

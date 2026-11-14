@@ -2,32 +2,41 @@
 // this module reads the pen and its animals, gets the feed (the bag, else takeOrAsk of 8.1), walks the ring one block
 // outside the fence, equips the feed, clicks the animals (bot.activateEntity, which the pen guard does not wrap: feeding
 // over the fence is allowed by construction) and counts the young. The bot never enters the pen's box (the walk cannot
-// open doors or gates, the pen's cells cost the path search the keep-out price, and no stand cell lies inside), never
-// clicks a gate, and places nothing. The pack runs as an action, so the item reflex is off meanwhile.
+// open doors or gates, the pen's cells cost the path search the keep-out price, a goal inside the fence box is refused, and
+// no stand cell lies inside), never clicks a gate, and places nothing. The pack runs as an action, so the item reflex is off
+// meanwhile.
+//
+// A round: the stand cell is the ring cell nearest to the nearest adult that may be fed; there the bot holds the feed and
+// waits up to 10 s for two adults within reach, feeds them (a pair), and goes on while pairs come; an adult that did not come
+// to its nearest cell is skipped for the round, and the next stand cell is the one of the next adult. Rounds repeat after
+// the game's cooldown, at most two more, until `count` young are born.
 //
 // ctx: { areas, log, say, now, chests?, storage?, permits? } of the pack context. options { now, wait, askMs } for tests.
 import { countContents } from '../../areas/area_sense.js';
 import { isBox } from '../home/box_math.js';
-import { botPos, clockOf, listAreas, logTo, sayTo } from '../home/context.js';
+import { botPos, clockOf, dimensionOf, listAreas, logTo, sayTo } from '../home/context.js';
 import { blockReader, goals, gotoGoal, makeMovements } from '../home/motion.js';
 import { goalAvoiding, isNoStandCell } from '../home/stand_logic.js';
-import { findGates } from '../farming/field_logic.js';
 import {
-    BREED_COOLDOWN_MS, COME_WAIT_MS, COOLDOWN_CHECK_MS, EXTRA_ROUNDS, FEED_REACH, PEN_CAP, adultsInReach, animalCount, animalsIn, cleanCount,
-    eyesOf, feedNeeded, feedOf, fenceBoxOf, gatesOf, insideBoxXZ, isBaby, lowMark, newBabies, ringFrom, speciesOf, standRing, withoutGateCells,
+    BABY_WAIT_MS, BREED_COOLDOWN_MS, COME_WAIT_MS, COOLDOWN_CHECK_MS, COOLDOWN_MARGIN_MS, EXTRA_ROUNDS, FEED_REACH, PEN_CAP, STOP_CHECK_MS, adultsInReach, animalCount,
+    animalsIn, cleanCount, eyesOf, feedNeeded, feedOf, feedableAdults, fenceBoxOf, findGates, gatesOf, insideBoxXZ, lowMark, nearestRingCell, newBabies,
+    speciesOf, standRing, withoutGateCells,
 } from './breeding_logic.js';
-import { bagCount, takeOrAsk } from './stock_logic.js';
+import { bagCount, chestsWith, takeOrAsk } from './stock_logic.js';
 import {
     PURPOSES, endText, fedText, noAnimalsText, noFeedText, noWayText, penFullText, stoppedText, unknownPenText, unknownSpeciesText,
 } from './texts.js';
 
-/** The rules of the feeding: the cap, the reach, the cooldown and its check, the wait for an animal, the rounds, the walks. */
+/** The rules of the feeding: the cap, the reach, the cooldown and its checks, the waits, the rounds, the walks. */
 export const BREED_RULES = Object.freeze({
     cap: PEN_CAP,
     reach: FEED_REACH,
     cooldownMs: BREED_COOLDOWN_MS,
+    marginMs: COOLDOWN_MARGIN_MS,
     checkMs: COOLDOWN_CHECK_MS,
+    stopCheckMs: STOP_CHECK_MS,
     comeMs: COME_WAIT_MS,
+    babyWaitMs: BABY_WAIT_MS,
     extraRounds: EXTRA_ROUNDS,
     walkMs: 20000,
     feedMs: 1500,
@@ -63,18 +72,24 @@ function findPen(ctx, name) {
     return area;
 }
 
-// The feed the bag holds the most of, the preferred one when the bag holds none.
-function chooseFeed(bot, feeds) {
-    let best = feeds[0];
-    let most = 0;
-    for (const feed of feeds) {
-        const n = bagCount(bot, feed);
-        if (n > most) {
-            most = n;
-            best = feed;
+// The feed the bag holds the most of; with none in the bag, the one the known chests hold the most of; else the preferred one.
+function chooseFeed(bot, ctx, feeds) {
+    const most = (countOf) => {
+        let best = null;
+        let n = 0;
+        for (const feed of feeds) {
+            const c = countOf(feed);
+            if (c > n) {
+                n = c;
+                best = feed;
+            }
         }
-    }
-    return best;
+        return best;
+    };
+    const me = botPos(bot);
+    return most(feed => bagCount(bot, feed))
+        ?? most(feed => chestsWith(ctx, feed, me, dimensionOf(bot)).reduce((sum, c) => sum + c.count, 0))
+        ?? feeds[0];
 }
 
 async function equipFeed(bot, feed) {
@@ -111,23 +126,36 @@ function stopped(s) {
     return s.stop !== null;
 }
 
-// The young of the species that appeared in the box since the start (by entity id), counted so far.
+// The young of the species that appeared in the box since the start (by entity id), counted so far; the time a new one was
+// first seen is the start of its parents' cooldown.
 function babies(s) {
     for (const baby of newBabies(s.bot.entities, s.box, s.species, s.known)) {
-        s.babyIds.add(baby.id);
+        if (!s.babyIds.has(baby.id)) {
+            s.babyIds.add(baby.id);
+            s.lastBirthAt = s.clock.now();
+        }
     }
     return s.babyIds.size;
 }
 
-function adultsOf(s) {
-    return animalsIn(s.bot.entities, s.box, s.species).filter(e => !isBaby(e));
+// The options of the adults the pack may feed now: the animals of the start, not fed within the cooldown, not skipped.
+function feedOptions(s, skip) {
+    return { fedAt: s.fedAt, now: s.clock.now(), cooldownMs: BREED_RULES.cooldownMs, only: s.known, skip, reach: BREED_RULES.reach };
+}
+
+// Waits up to `ms` and returns at once on a stop; in steps of at most STOP_CHECK_MS.
+async function pause(s, ms) {
+    const until = s.clock.now() + ms;
+    while (!stopped(s) && s.clock.now() < until) {
+        await s.clock.wait(Math.max(1, Math.min(BREED_RULES.stopCheckMs, until - s.clock.now())));
+    }
 }
 
 // Walks to a stand cell of the ring: never into the pen, never onto the fence. True when the bot stands on the cell.
 async function walkTo(s, cell) {
     const goal = goalAvoiding(new goals.GoalXZ(cell.x, cell.z), s.forbidden);
     const r = await gotoGoal(s.bot, goal, { movements: s.movements, timeoutMs: BREED_RULES.walkMs, clock: s.clock });
-    if (r.reason === 'interrupted') {
+    if (r.reason === 'interrupted' || s.bot.interrupt_code) {
         s.stop = 'interrupted';
         return false;
     }
@@ -135,19 +163,13 @@ async function walkTo(s, cell) {
     return Boolean(p) && Math.floor(p.x) === cell.x && Math.floor(p.z) === cell.z && !insideBoxXZ(s.fenceBox, p);
 }
 
-// Waits up to comeMs for an adult of the species within reach that was not fed in this cooldown and did not refuse the
-// feed at this cell; the nearest, or null.
-async function waitForAdult(s, skip) {
+// Waits up to comeMs for `n` adults within reach that may be fed; the nearest first (fewer when they did not come).
+async function waitForAdults(s, skip, n) {
     const start = s.clock.now();
     for (;;) {
-        const now = s.clock.now();
-        const list = adultsInReach(s.bot.entities, s.box, s.species, eyesOf(botPos(s.bot)),
-            { reach: BREED_RULES.reach, fedAt: s.fedAt, now, cooldownMs: BREED_RULES.cooldownMs }).filter(e => !skip.has(e.id));
-        if (list.length > 0) {
-            return list[0];
-        }
-        if (stopped(s) || now - start >= BREED_RULES.comeMs) {
-            return null;
+        const list = adultsInReach(s.bot.entities, s.box, s.species, eyesOf(botPos(s.bot)), feedOptions(s, skip));
+        if (list.length >= n || stopped(s) || s.clock.now() - start >= BREED_RULES.comeMs) {
+            return list;
         }
         await s.clock.wait(BREED_RULES.pollMs);
     }
@@ -168,55 +190,109 @@ async function feedOne(s, entity) {
     }
     if (bagCount(s.bot, s.feed) < before) {
         s.fedAt.set(entity.id, s.clock.now());
+        s.lastFeedAt = s.clock.now();
         return true;
     }
     return false;
 }
 
-// One round: a pass along the ring, feeding pairs until the pairs of the round are fed, the feed is out, or no adult comes.
+// One feed counted: the line of a pair at every second one.
+function noteFed(s) {
+    s.fed++;
+    if (s.fed % 2 === 0) {
+        sayTo(s.bot, s.ctx, fedText(2, s.species, s.pen.name));
+    }
+}
+
+// Feeds the pairs that come within reach of the cell the bot stands on. Returns the feeds given.
+async function feedAtCell(s, skip, wanted) {
+    let given = 0;
+    for (;;) {
+        // one adult completes a pair whose first one is fed already, else two make one
+        const n = s.fed % 2 === 1 ? 1 : 2;
+        if (stopped(s) || given >= wanted || bagCount(s.bot, s.feed) < n) {
+            return given;
+        }
+        const near = await waitForAdults(s, skip, n);
+        if (stopped(s) || near.length < n) {
+            return given;
+        }
+        for (const adult of near.slice(0, n)) {
+            if (await feedOne(s, adult)) {
+                noteFed(s);
+                given++;
+            } else {
+                skip.add(adult.id); // in love or in the game's cooldown already: the feed stayed in the bag
+            }
+        }
+        babies(s);
+    }
+}
+
+// One round: from stand cell to stand cell, each the ring cell nearest to the next adult that may be fed, until the pairs of
+// the round are fed, the feed is out, or no adult is left to try. Returns the feeds given in the round.
 async function feedRound(s) {
-    const pairsWanted = Math.max(0, s.target - babies(s));
-    let fedThisRound = 0;
-    for (const cell of ringFrom(s.ring, botPos(s.bot))) {
-        if (stopped(s) || fedThisRound >= 2 * pairsWanted || bagCount(s.bot, s.feed) < 1) {
+    const wanted = 2 * Math.max(0, s.target - babies(s)) - (s.fed % 2);
+    const skip = new Set();
+    const tried = new Set();
+    let given = 0;
+    while (!stopped(s) && given < wanted && bagCount(s.bot, s.feed) >= 1) {
+        const open = feedableAdults(s.bot.entities, s.box, s.species, feedOptions(s, skip));
+        if (open.length < (s.fed % 2 === 1 ? 1 : 2)) {
             break;
         }
+        const me = botPos(s.bot);
+        const next = open.map(e => ({ e, d: me ? Math.hypot(e.position.x - me.x, e.position.z - me.z) : 0 })).sort((a, b) => a.d - b.d)[0].e;
+        const cell = nearestRingCell(s.ring, next.position);
+        const key = cell ? `${cell.x},${cell.z}` : null;
+        if (key === null || tried.has(key)) {
+            skip.add(next.id); // its stand cell was tried: out of reach from outside the fence this round
+            continue;
+        }
+        tried.add(key);
         if (!(await walkTo(s, cell))) {
+            if (stopped(s)) {
+                break;
+            }
+            s.walkFailed++;
+            skip.add(next.id);
             continue;
         }
         s.reached++;
         if (!(await equipFeed(s.bot, s.feed))) {
             break;
         }
-        const skip = new Set();
-        for (;;) {
-            if (stopped(s) || fedThisRound >= 2 * pairsWanted || bagCount(s.bot, s.feed) < 1) {
-                break;
-            }
-            const adult = await waitForAdult(s, skip);
-            if (!adult) {
-                break;
-            }
-            if (await feedOne(s, adult)) {
-                s.fed++;
-                fedThisRound++;
-                if (s.fed % 2 === 0) {
-                    sayTo(s.bot, s.ctx, fedText(2, s.species, s.pen.name));
-                }
-            } else {
-                skip.add(adult.id);
-            }
-            babies(s);
+        given += await feedAtCell(s, skip, wanted - given);
+        if (!s.fedAt.has(next.id)) {
+            skip.add(next.id); // it did not come to its stand cell
         }
     }
-    return fedThisRound;
+    return given;
 }
 
-// Waits the breeding cooldown in steps, so "stop" ends it; ends early when the young are all there.
+// After feeds: waits up to babyWaitMs for the young of the pairs fed (two in love find each other within seconds).
+async function waitForYoung(s) {
+    const expected = Math.min(s.target, Math.floor(s.fed / 2));
+    const until = s.clock.now() + BREED_RULES.babyWaitMs;
+    while (!stopped(s) && babies(s) < expected && s.clock.now() < until) {
+        await s.clock.wait(Math.max(1, Math.min(BREED_RULES.stopCheckMs, until - s.clock.now())));
+    }
+}
+
+// Waits the game's cooldown: from the last birth (the game starts it there), else the last feed, plus the margin; the young are
+// counted every checkMs and end the wait when all are there; the stop is looked at every stopCheckMs.
 async function waitCooldown(s) {
-    const until = s.clock.now() + BREED_RULES.cooldownMs;
-    while (!stopped(s) && s.clock.now() < until && babies(s) < s.target) {
-        await s.clock.wait(Math.max(1, Math.min(BREED_RULES.checkMs, until - s.clock.now())));
+    const from = Math.max(s.lastFeedAt ?? -Infinity, s.lastBirthAt ?? -Infinity);
+    const until = (Number.isFinite(from) ? from : s.clock.now()) + BREED_RULES.cooldownMs + BREED_RULES.marginMs;
+    let nextCount = s.clock.now() + BREED_RULES.checkMs;
+    while (!stopped(s) && s.clock.now() < until) {
+        if (s.clock.now() >= nextCount) {
+            nextCount += BREED_RULES.checkMs;
+            if (babies(s) >= s.target) {
+                return;
+            }
+        }
+        await pause(s, Math.min(BREED_RULES.checkMs, until - s.clock.now(), nextCount - s.clock.now()));
     }
 }
 
@@ -256,7 +332,7 @@ export async function breed(bot, ctx, penName, count = BREED_RULES.defaultCount,
     }
     const target = Math.min(cleanCount(count), BREED_RULES.cap - animals);
     // the feed: two per pair; from the bag, else the chests with the owner's permit (8.1), the low mark two rounds
-    const feed = chooseFeed(bot, feeds);
+    const feed = chooseFeed(bot, ctx, feeds);
     if (bagCount(bot, feed) < feedNeeded(target)) {
         const r = await takeOrAsk(bot, ctx, feed, feedNeeded(target), { low: lowMark(target), purpose: PURPOSES.feeding, now: options?.now, wait: options?.wait, askMs: options?.askMs });
         if (!r.ok) {
@@ -290,17 +366,21 @@ export async function breed(bot, ctx, penName, count = BREED_RULES.defaultCount,
     const s = {
         bot, ctx, clock, pen, box, fenceBox, species, feed, target, ring, movements,
         forbidden: node => insideBoxXZ(fenceBox, node) || isNoStandCell(get, node),
-        fed: 0, fedAt: new Map(), known: new Set(animalsIn(bot.entities, box, species).map(e => e.id)), babyIds: new Set(), stop: null, reached: 0,
+        fed: 0, fedAt: new Map(), lastFeedAt: null, lastBirthAt: null, known: new Set(animalsIn(bot.entities, box, species).map(e => e.id)), babyIds: new Set(),
+        stop: null, reached: 0, walkFailed: 0,
     };
     for (let round = 0; !stopped(s); round++) {
-        await feedRound(s);
+        const given = await feedRound(s);
         if (stopped(s)) {
             break;
         }
-        if (s.reached === 0) {
+        if (s.fed === 0 && s.reached === 0 && s.walkFailed > 0) {
             return refuse('no_way', noWayText(pen.name), { species, pen: pen.name });
         }
-        if (babies(s) >= s.target || round >= BREED_RULES.extraRounds || bagCount(bot, feed) < 2 || adultsOf(s).length < 2) {
+        if (given > 0) {
+            await waitForYoung(s);
+        }
+        if (stopped(s) || babies(s) >= s.target || given === 0 || round >= BREED_RULES.extraRounds || bagCount(bot, feed) < 2) {
             break;
         }
         await waitCooldown(s);

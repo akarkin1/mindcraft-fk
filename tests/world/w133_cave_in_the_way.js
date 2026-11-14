@@ -40,6 +40,7 @@ import { region, prepareRegion, releaseRegion, blockNames, inventoryOf, itemsTex
 import { basePlan, buildBase, buildRoomTunnel, BASE_RADIUS } from './base_world.js';
 import { loadDump } from './owner_region.js';
 import { startJourney, partTeachMineInRoom, spots, saidLines, SUPERVISION_SETTINGS } from './journey.js';
+import { Vec3 } from 'vec3';
 
 const NAME = 'w_cave';
 const KIT = [['iron_pickaxe', 1], ['torch', 16], ['ladder', 8], ['bread', 4], ['cobblestone', 32]];
@@ -192,6 +193,17 @@ await scenarioMain({
             const saidD = saidLines(s, tD);
             const sealedText = `I sealed the opening at ${cellText(middle)} with 9 cobblestone.`;
             note(`D: !sealOpening(${middle.x}, ${middle.y}, ${middle.z}) answered after ${(sealed.ms / 1000).toFixed(0)} s: ${JSON.stringify(replyD.slice(0, 200))}; the 9 cells ${JSON.stringify(cells)}; cobblestone ${cobbleD0} -> ${cobbleD}; the bot said ${JSON.stringify(saidD.slice(0, 4))}`);
+            // T4 2026-11-14 (read only, for the report): where the cobblestone went when the 9 cells do not all hold it (the first rerun:
+            // only the middle column, 9 out of the bag). The cells x then y (x ox+1..ox+3, y 41..43), on the server and in the bot's
+            // view, and the cells in front (the room, z-1) and behind (the cave, z+1) on the server.
+            if (!cells.every((n) => n === 'cobblestone')) {
+                const NAMES = ['cobblestone', 'air', 'cave_air', 'stone', 'granite', 'dirt', 'torch'];
+                const viewOf = (c) => { try { return agent.bot.blockAt(new Vec3(c.x, c.y, c.z))?.name ?? null; } catch { return null; } };
+                const serverCells = await blockNames(openingCells, NAMES);
+                const front = await blockNames(openingCells.map((c) => ({ ...c, z: c.z - 1 })), NAMES);
+                const behind = await blockNames(openingCells.map((c) => ({ ...c, z: c.z + 1 })), NAMES);
+                note(`D: the 9 cells on the server ${JSON.stringify(serverCells)}, in the bot's view ${JSON.stringify(openingCells.map(viewOf))}; in front (z ${opening.min.z - 1}) on the server ${JSON.stringify(front)}; behind (z ${opening.min.z + 1}) on the server ${JSON.stringify(behind)}; the bot at ${fmt(await entityPos(NAME))}`);
+            }
             check(sealed.done && (replyD === sealedText || saidD.includes(sealedText)), `D1: \`${sealedText}\``, JSON.stringify(replyD.slice(0, 200)));
             check(cells.every((n) => n === 'cobblestone') && cobbleD0 - cobbleD === 9, 'D2: the 9 cells of the opening hold cobblestone and 9 cobblestone left the bag (server)', `${cells.filter(Boolean).length} of 9 cobblestone, bag ${cobbleD0} -> ${cobbleD}`);
 

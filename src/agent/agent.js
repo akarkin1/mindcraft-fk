@@ -20,6 +20,7 @@ import { speak } from './speak.js';
 import { log, validateNameFormat, handleDisconnection, createDisconnectWatcher } from './connection_handler.js';
 import { initSandbox, makeCompartment } from './library/lockdown.js';
 import { WorldMemory } from './world/world_memory.js';
+import { StockPermits, PERMITS_FILE } from './world/stock_permits.js'; // v0.1.4.16 (SPEC 8.1, E6): a file store, no pack
 import { shouldResumeGoal, ResumeGuard } from './world/resume_policy.js';
 import { SkillManager, skillFlags } from './skills/skill_manager.js';
 import * as skills from './library/skills.js';
@@ -369,6 +370,18 @@ export class Agent {
         // v0.1.4.15 (part S, SPEC 1 and 2.5): the base survey, with base_survey and its pack loaded (!forgetArea stays with the areas)
         if (!settings.base_survey || !this.work_packs?.survey)
             this.blocked_actions.push('!surveyBase', '!renameArea', '!goToBase');
+        // v0.1.4.16 (SPEC 8.2, E6): the breeding pack, with breeding and its pack loaded
+        if (!settings.breeding || !this.work_packs?.breeding)
+            this.blocked_actions.push('!breed');
+        // v0.1.4.16 (SPEC 8.3, E7): the enchanting pack, with enchanting and its pack loaded
+        if (!settings.enchanting || !this.work_packs?.enchanting)
+            this.blocked_actions.push('!enchant', '!enchantTake');
+        // v0.1.4.16 (SPEC 8.4, E8): the AFK creeper kill, with afk_kill and its pack loaded
+        if (!settings.afk_kill || !this.work_packs?.afk_kill)
+            this.blocked_actions.push('!killFarm');
+        // v0.1.4.16 (SPEC 8.1, E6): the permits of the stock (a store of the world, no pack) while one of the three packs is on
+        if (!settings.breeding && !settings.enchanting && !settings.afk_kill)
+            this.blocked_actions.push('!allowTaking');
         // v0.1.4.15 (part R, SPEC 1): the routine commands only with the switch routines and the routines made
         if (!settings.routines || !this.routines)
             this.blocked_actions.push(...ROUTINE_COMMAND_NAMES);
@@ -971,7 +984,8 @@ export class Agent {
         // commands stay hidden. Never throws. loaders is for tests: a function per pack that replaces its import.
         const packs = {};
         const failed = (name, error) => console.warn(`Could not load the ${name} pack, its commands stay hidden:`, error?.message ?? error);
-        if (settings.storage_pack || settings.farming_pack || settings.wood_pack || settings.mining_pack) {
+        // v0.1.4.16 (SPEC 8.1, E6): the three packs of round two take from the chests (the chest index, fetchItem, storeItems)
+        if (settings.storage_pack || settings.farming_pack || settings.wood_pack || settings.mining_pack || settings.breeding || settings.enchanting || settings.afk_kill) {
             try {
                 packs.storage = await (loaders.storage ? loaders.storage() : import('./packs/storage/index.js'));
             } catch (error) {
@@ -985,7 +999,8 @@ export class Agent {
                 failed('farming', error);
             }
         }
-        if (settings.wood_pack || settings.mining_pack) {
+        // v0.1.4.16 (SPEC 8.4, E8): the AFK kill makes a stone sword through ctx.tools.ensureTool when it has no weapon left
+        if (settings.wood_pack || settings.mining_pack || settings.afk_kill) {
             try {
                 packs.wood = await (loaders.wood ? loaders.wood() : import('./packs/wood/index.js'));
             } catch (error) {
@@ -1028,6 +1043,30 @@ export class Agent {
                 failed('survey', error);
             }
         }
+        // v0.1.4.16 (SPEC 8.2, E6): the breeding pack (!breed, and takeOrAsk for the other packs as ctx.stock), with breeding
+        if (settings.breeding) {
+            try {
+                packs.breeding = await (loaders.breeding ? loaders.breeding() : import('./packs/breeding/index.js'));
+            } catch (error) {
+                failed('breeding', error);
+            }
+        }
+        // v0.1.4.16 (SPEC 8.3, E7): the enchanting pack (!enchant, !enchantTake), with enchanting
+        if (settings.enchanting) {
+            try {
+                packs.enchanting = await (loaders.enchanting ? loaders.enchanting() : import('./packs/enchanting/index.js'));
+            } catch (error) {
+                failed('enchanting', error);
+            }
+        }
+        // v0.1.4.16 (SPEC 8.4, E8): the AFK creeper kill pack (!killFarm), with afk_kill
+        if (settings.afk_kill) {
+            try {
+                packs.afk_kill = await (loaders.afk_kill ? loaders.afk_kill() : import('./packs/afk_kill/index.js'));
+            } catch (error) {
+                failed('afk_kill', error);
+            }
+        }
         return packs;
     }
 
@@ -1068,6 +1107,9 @@ export class Agent {
         // v0.1.4.15 (part S, SPEC 2.4): the bases of the world (bases.json, ctx.bases), with the survey pack loaded
         if (packs.survey)
             stores.bases = this._workStore('bases', packs.survey.BaseStore, 'bases.json');
+        // v0.1.4.16 (SPEC 8.1, E6): the stock permits of the world (permits.json, ctx.permits) while one of the three packs is on
+        if (settings.breeding || settings.enchanting || settings.afk_kill)
+            stores.permits = this._workStore('permits', StockPermits, PERMITS_FILE);
         return stores;
     }
 
@@ -1157,6 +1199,10 @@ export class Agent {
             ctx.tools = packs.wood.TOOLS_API ?? null; // ensureTool and craftSupplies, not bound (Amendment 1, part T)
             ctx.wood = packs.wood.WOOD_API ?? null; // chopTrees, not bound
         }
+        // v0.1.4.16 (SPEC 8.1, 8.5, E6): the asking rule of the stock for the enchanting and kill packs, not bound
+        // (ctx.stock.takeOrAsk(bot, ctx, item, count, { low, purpose })), while the breeding pack is loaded
+        if (typeof packs.breeding?.takeOrAsk === 'function')
+            ctx.stock = { takeOrAsk: packs.breeding.takeOrAsk };
         return ctx;
     }
 

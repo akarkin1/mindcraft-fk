@@ -82,20 +82,23 @@ describe('SPEC 4.7 the budget', () => {
     // 100 (1,100): 18,300 and 18,700.
     // v0.1.4.16 (SPEC 5, E1): the one line of docs of !sealOpening adds 195 characters (getCommandDocs with and without it);
     // both limits rise by that growth only: 18,495 and 18,895.
-    test('each allows 18,895 with the block of the new things and holds 18,495 without it (v0.1.4.16)', () => {
+    // v0.1.4.16 round two (SPEC 8.0, E6, the lead's decision): the docs of !breed, !allowTaking, !enchant, !enchantTake, !killFarm
+    // (1,180) and the longer enchanting example chosen in place of a !newAction one (90), measured 1,270; every limit rises by
+    // that growth rounded up to the next 100 (1,300): 19,795 and 20,195.
+    test('each allows 20,195 with the block of the new things and holds 19,795 without it (v0.1.4.16 round two)', () => {
         for (const f of files) {
             const src = fs.readFileSync(repoPath(`tests/unit/${f}`), 'utf8');
-            assert.match(src, /const LIMIT_NEW_THINGS = 18895;/, f);
+            assert.match(src, /const LIMIT_NEW_THINGS = 20195;/, f);
             const allOn = src.match(/const LIMIT_ALL_ON = (\d+);/);
-            if (allOn) assert.equal(allOn[1], '18495', f);
-            assert.match(src, /\.length <= (LIMIT_ALL_ON|18495), 'without the block of the new things'\)/, `${f}: the limit without the block`);
-            assert.doesNotMatch(src, /LIMIT_ALL_ON = (?!18495;)\d+/, f);
+            if (allOn) assert.equal(allOn[1], '19795', f);
+            assert.match(src, /\.length <= (LIMIT_ALL_ON|19795), 'without the block of the new things'\)/, `${f}: the limit without the block`);
+            assert.doesNotMatch(src, /LIMIT_ALL_ON = (?!19795;)\d+/, f);
         }
     });
 
-    test('stg_prompt: LIMIT_ALL_ON 18495 and LIMIT_NEW_THINGS 18895', () => {
+    test('stg_prompt: LIMIT_ALL_ON 19795 and LIMIT_NEW_THINGS 20195', () => {
         const src = fs.readFileSync(repoPath('tests/unit/stg_prompt.test.js'), 'utf8');
-        assert.match(src, /^const LIMIT_ALL_ON = 18495;$/m);
-        assert.match(src, /^const LIMIT_NEW_THINGS = 18895;$/m);
+        assert.match(src, /^const LIMIT_ALL_ON = 19795;$/m);
+        assert.match(src, /^const LIMIT_NEW_THINGS = 20195;$/m);
     });
 });

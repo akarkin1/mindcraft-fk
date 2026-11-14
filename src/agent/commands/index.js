@@ -16,7 +16,9 @@ for (let command of commandList) {
  * that are work. The model starts none of them without an order of the player or the supervisor behind it.
  */
 export const WORK_COMMANDS = Object.freeze(['!collectBlocks', '!mineOre', '!chopTrees', '!farmCycle', '!harvest', '!plant', '!newAction',
-    '!digDown', '!smeltItem', '!craftSupplies']);
+    '!digDown', '!smeltItem', '!craftSupplies',
+    // v0.1.4.16 round two: the packs' work (the owner: "no enchanting as it wishes")
+    '!breed', '!enchant', '!killFarm']);
 /** F8: the commands the model may not use against a command the player or the supervisor typed. */
 export const STOP_COMMANDS = Object.freeze(['!stop', '!setMode']);
 /** F8: the answers to the model, returned to it and never said. */

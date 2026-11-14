@@ -31,12 +31,15 @@ const CLAUDE = JSON.parse(fs.readFileSync(repoPath('profiles/claude.json'), 'utf
 // 17,600 to 18,700.
 // v0.1.4.16 (SPEC 5, E1): the one line of docs of !sealOpening adds 195 characters; both limits rise by that growth only:
 // 18,300 to 18,495 and 18,700 to 18,895.
-const LIMIT_ALL_ON = 18495;
+// v0.1.4.16 round two (SPEC 8.0, E6, the lead's decision): the docs of !breed, !allowTaking, !enchant, !enchantTake, !killFarm
+// (1,180) and the longer enchanting example chosen in place of a !newAction one (90), measured 1,270; every limit rises by that
+// growth rounded up to the next 100 (1,300): 18,495 to 19,795 and 18,895 to 20,195.
+const LIMIT_ALL_ON = 19795;
 // v0.1.4.14 (part K, SPEC 4.7): the lead's decision, since the budget of v0.1.4.13 had 13 characters left: with every
 // switch on, new_things_in_prompt among them, a block of 600 and the three longest lines of the new things present, the
 // prompt may hold 17,400 characters; without the block of the new things the old 17,000 hold (17,600 and 17,200 since part 8;
-// 18,700 and 18,300 since v0.1.4.15; 18,895 and 18,495 since v0.1.4.16).
-const LIMIT_NEW_THINGS = 18895;
+// 18,700 and 18,300 since v0.1.4.15; 18,895 and 18,495 since v0.1.4.16; 20,195 and 19,795 since its round two).
+const LIMIT_NEW_THINGS = 20195;
 const NEW_THINGS_HEADER = 'NEW SINCE 1.21.8 (true, even if you do not know it):';
 // a bot with the things of the three longest lines of the new things: a copper golem statue and a copper pickaxe in the
 // bag, a nautilus 3 blocks away; the block holds what fits in its 360 characters

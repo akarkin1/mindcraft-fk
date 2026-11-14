@@ -58,7 +58,7 @@ afterEach(() => { cap.restore(); });
 
 describe('F8: the lists and the texts', () => {
     test('WORK_COMMANDS and the two answers, word for word', () => {
-        assert.deepEqual([...C.WORK_COMMANDS], ['!collectBlocks', '!mineOre', '!chopTrees', '!farmCycle', '!harvest', '!plant', '!newAction', '!digDown', '!smeltItem', '!craftSupplies']);
+        assert.deepEqual([...C.WORK_COMMANDS], ['!collectBlocks', '!mineOre', '!chopTrees', '!farmCycle', '!harvest', '!plant', '!newAction', '!digDown', '!smeltItem', '!craftSupplies', '!breed', '!enchant', '!killFarm']);
         assert.deepEqual([...C.STOP_COMMANDS], ['!stop', '!setMode']);
         assert.equal(C.ORDER_TEXTS.noOrder, 'I do not start work without an order from the player or the supervisor.');
         assert.equal(C.ORDER_TEXTS.playersOrder, "That is the player's order; I do not stop it.");

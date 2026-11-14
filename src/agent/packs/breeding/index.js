@@ -10,14 +10,14 @@
 import { breed } from './breeding.js';
 import { takeOrAsk } from './stock_logic.js';
 
-export { FEED, PEN_CAP, FEED_REACH, BREED_COOLDOWN_MS, COOLDOWN_CHECK_MS, COME_WAIT_MS, EXTRA_ROUNDS, EYE_HEIGHT, FENCE_ENDINGS, feedOf, speciesOf,
-    animalCount, cleanCount, feedNeeded, lowMark, isBaby, eyesOf, insideBox, insideBoxXZ, isFenceName, fenceBoxOf, standRing, withoutGateCells,
-    ringFrom, gatesOf, animalsIn, adultsInReach, newBabies } from './breeding_logic.js';
+export { FEED, PEN_CAP, FEED_REACH, BREED_COOLDOWN_MS, COOLDOWN_CHECK_MS, STOP_CHECK_MS, BABY_WAIT_MS, COOLDOWN_MARGIN_MS, COME_WAIT_MS, EXTRA_ROUNDS, EYE_HEIGHT,
+    FENCE_ENDINGS, feedOf, speciesOf, animalCount, cleanCount, feedNeeded, lowMark, isBaby, eyesOf, insideBox, insideBoxXZ, isFenceName, fenceBoxOf,
+    standRing, withoutGateCells, ringFrom, nearestRingCell, findGates, gatesOf, animalsIn, feedableAdults, adultsInReach, newBabies } from './breeding_logic.js';
 export { PURPOSES, BRED_SPECIES, whereText, speciesWords, youngWords, penWords, unknownPenText, unknownSpeciesText, noAnimalsText, penFullText,
     noFeedText, fedText, endText, stoppedText, noWayText, tookText, askText, askLowText, noPermitText, noStockText } from './texts.js';
 export { STOCK_RULES, bagCount, chestsWith, takeOrAsk } from './stock_logic.js';
 export { BREED_RULES, breed } from './breeding.js';
-export { PERMITS_FILE, ALLOW_SAID_TEXT, StockPermits, normalizeItemName, allowTakingText } from '../../world/stock_permits.js';
+export { PERMITS_FILE, ALLOW_SAID_TEXT, StockPermits, normalizeItemName, allowTakingText, noWordText } from '../../world/stock_permits.js';
 
 /** The work of the command and the asking rule, not bound (the glue gives bot and ctx). */
 export const BREEDING_API = Object.freeze({ breed, takeOrAsk });

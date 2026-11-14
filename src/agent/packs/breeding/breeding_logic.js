@@ -19,8 +19,15 @@ export const PEN_CAP = 12;
 export const FEED_REACH = 3;
 /** The game's breeding cooldown of a fed adult. */
 export const BREED_COOLDOWN_MS = 300000;
-/** The cooldown is waited in steps of this, so "stop" ends the wait. */
+/** During the cooldown the young are counted every this many ms (the spec's 15 s). */
 export const COOLDOWN_CHECK_MS = 15000;
+/** Every wait of the pack looks at the owner's stop this often: the action manager kills a process whose action has not
+ *  ended 10 s after a stop, so no wait may be longer than this (the spec's 15 s steps would be). */
+export const STOP_CHECK_MS = 500;
+/** After a round with feeds, the young are awaited this long before the next decision (two in love find each other). */
+export const BABY_WAIT_MS = 15000;
+/** The game's cooldown starts at the birth, a few seconds after the feed; the next round waits this much longer. */
+export const COOLDOWN_MARGIN_MS = 5000;
 /** At a stand cell the bot waits this long for an adult to come within reach. */
 export const COME_WAIT_MS = 10000;
 /** After the first round of feeding, at most this many rounds more. */
@@ -280,6 +287,43 @@ export function ringFrom(ring, from) {
 }
 
 /**
+ * The fence gates around a box: blocks whose name ends with `_fence_gate` on the ring one block outside the box, from the
+ * bottom of the box to 2 blocks above its top. A copy of findGates of the farming pack (field_logic.js), as a pack never
+ * imports another one statically (the switch rule; xy_breeding_logic pins the copy to the original). Never throws.
+ * @param {(x: number, y: number, z: number) => ({name: string}|null)} getBlock
+ * @param {{min: {x,y,z}, max: {x,y,z}}} box
+ * @returns {{x: number, y: number, z: number, kind: 'gate'}[]} sorted by x, z, y
+ */
+export function findGates(getBlock, box) {
+    if (typeof getBlock !== 'function' || !isBox(box)) {
+        return [];
+    }
+    const gates = [];
+    const x0 = box.min.x - 1;
+    const x1 = box.max.x + 1;
+    const z0 = box.min.z - 1;
+    const z1 = box.max.z + 1;
+    try {
+        for (let x = x0; x <= x1; x++) {
+            for (let z = z0; z <= z1; z++) {
+                if (x !== x0 && x !== x1 && z !== z0 && z !== z1) {
+                    continue;
+                }
+                for (let y = box.min.y; y <= box.max.y + 2; y++) {
+                    const name = getBlock(x, y, z)?.name;
+                    if (typeof name === 'string' && name.endsWith('_fence_gate')) {
+                        gates.push({ x, y, z, kind: 'gate' });
+                    }
+                }
+            }
+        }
+    } catch {
+        return [];
+    }
+    return gates.sort((a, b) => a.x - b.x || a.z - b.z || a.y - b.y);
+}
+
+/**
  * The gates of a saved pen: its entrances of the kind gate.
  * @param {{entrances?: object[]}|null} area
  * @returns {{x: number, y: number, z: number}[]}
@@ -315,13 +359,36 @@ export function animalsIn(entities, box, species) {
 }
 
 /**
- * The adults of the species that the bot can feed from where it stands: inside the box, not babies, not fed within the
- * cooldown, within reach of the eyes; the nearest first.
+ * The adults of the species the pack may feed: inside the box, not babies, not fed within the cooldown; with `only` just
+ * those ids (the animals of the start: a calf born meanwhile shows as an adult until its metadata arrives), without the ids
+ * of `skip` (the ones that did not come this round).
+ * @param {object} entities bot.entities
+ * @param {object} box the pen
+ * @param {string} species
+ * @param {{fedAt?: Map<number, number>, now?: number, cooldownMs?: number, only?: Set<number>|null, skip?: Set<number>|null}} [options]
+ * @returns {object[]}
+ */
+export function feedableAdults(entities, box, species, options = {}) {
+    const cooldown = isFiniteNumber(options.cooldownMs) ? options.cooldownMs : BREED_COOLDOWN_MS;
+    const fedAt = options.fedAt instanceof Map ? options.fedAt : new Map();
+    const now = isFiniteNumber(options.now) ? options.now : 0;
+    const only = options.only instanceof Set ? options.only : null;
+    const skip = options.skip instanceof Set ? options.skip : null;
+    return animalsIn(entities, box, species)
+        .filter(e => !isBaby(e))
+        .filter(e => only === null || only.has(e.id))
+        .filter(e => skip === null || !skip.has(e.id))
+        .filter(e => !(fedAt.has(e.id) && now - fedAt.get(e.id) < cooldown));
+}
+
+/**
+ * The adults of the species that the bot can feed from where it stands: feedableAdults within reach of the eyes (to the middle
+ * of the body, half a block above the feet); the nearest first.
  * @param {object} entities bot.entities
  * @param {object} box the pen
  * @param {string} species
  * @param {{x: number, y: number, z: number}|null} eyes
- * @param {{reach?: number, fedAt?: Map<number, number>, now?: number, cooldownMs?: number}} [options]
+ * @param {{reach?: number, fedAt?: Map<number, number>, now?: number, cooldownMs?: number, only?: Set<number>|null, skip?: Set<number>|null}} [options]
  * @returns {object[]}
  */
 export function adultsInReach(entities, box, species, eyes, options = {}) {
@@ -329,16 +396,34 @@ export function adultsInReach(entities, box, species, eyes, options = {}) {
         return [];
     }
     const reach = isFiniteNumber(options.reach) ? options.reach : FEED_REACH;
-    const cooldown = isFiniteNumber(options.cooldownMs) ? options.cooldownMs : BREED_COOLDOWN_MS;
-    const fedAt = options.fedAt instanceof Map ? options.fedAt : new Map();
-    const now = isFiniteNumber(options.now) ? options.now : 0;
-    return animalsIn(entities, box, species)
-        .filter(e => !isBaby(e))
-        .filter(e => !(fedAt.has(e.id) && now - fedAt.get(e.id) < cooldown))
+    return feedableAdults(entities, box, species, options)
         .map(e => ({ e, d: distance(eyes, { x: e.position.x, y: e.position.y + 0.5, z: e.position.z }) }))
         .filter(({ d }) => d <= reach)
         .sort((a, b) => a.d - b.d)
         .map(({ e }) => e);
+}
+
+/**
+ * The stand cell of the ring nearest to a position (x/z, to the middle of the cell); ties by the order of the ring.
+ * @param {{x: number, z: number}[]} ring
+ * @param {{x: number, z: number}|null} pos
+ * @returns {{x: number, z: number}|null}
+ */
+export function nearestRingCell(ring, pos) {
+    const list = Array.isArray(ring) ? ring : [];
+    if (list.length === 0 || !pos || !isFiniteNumber(pos.x) || !isFiniteNumber(pos.z)) {
+        return null;
+    }
+    let best = null;
+    let bestD = Infinity;
+    for (const c of list) {
+        const d = Math.hypot(c.x + 0.5 - pos.x, c.z + 0.5 - pos.z);
+        if (d < bestD) {
+            bestD = d;
+            best = c;
+        }
+    }
+    return best ? { x: best.x, z: best.z } : null;
 }
 
 /**

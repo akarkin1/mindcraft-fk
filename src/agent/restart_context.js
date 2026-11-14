@@ -11,6 +11,20 @@ import { readJsonSafe, writeJsonAtomic } from '../utils/safe_json.js';
 
 export const EXIT_FILE = 'last_exit.json';
 export const MAX_AGE_MS = 10 * 60 * 1000;
+/** v0.1.4.16 (F13, K-1): the note's sentence for an end by a lost connection, without the error, the address or the port. */
+export const CONNECTION_LOST_TEXT = 'The connection to the server was lost.';
+const CONNECTION_ERROR = /^\s*\[LoginGuard\]|ECONNREFUSED|ECONNRESET|ETIMEDOUT|EHOSTUNREACH|ENETUNREACH|ENOTFOUND|EPIPE|socketClosed/i;
+
+/**
+ * v0.1.4.16 (F13, K-1): whether an exit reason is a line of the login guard (`[LoginGuard] ...`) or a connection error
+ * (ECONNREFUSED, ETIMEDOUT, socketClosed, ...). The exit file keeps such a reason as it is, for the log; the note for the
+ * model says only CONNECTION_LOST_TEXT, so the raw error never reaches the game chat through the model.
+ * @param {*} reason
+ * @returns {boolean}
+ */
+export function isConnectionError(reason) {
+    return typeof reason === 'string' && CONNECTION_ERROR.test(reason);
+}
 const FILE_VERSION = 1;
 const MAX_TEXT = 300;
 
@@ -166,8 +180,8 @@ export function restartNote(exit) {
         parts.push(sentence(`Before the restart ${order.by ?? 'a player'} had ordered: ${order.command}`));
     else if (action !== null)
         parts.push(sentence(`Before the restart you were running: ${action}`));
-    if (reason !== null)
-        parts.push(sentence(`The process ended because: ${reason}`));
+    if (reason !== null) // v0.1.4.16 (F13): a connection error as one plain sentence, the raw line stays in the exit file
+        parts.push(isConnectionError(reason) ? CONNECTION_LOST_TEXT : sentence(`The process ended because: ${reason}`));
     if (position !== null)
         parts.push(`You are at (${position.x}, ${position.y}, ${position.z}).`);
     if (parts.length === 0)

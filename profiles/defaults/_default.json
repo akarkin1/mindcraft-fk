@@ -509,6 +509,47 @@
         ],
 
         [
+            {"role": "user", "content": "lea_4: breed the cows"},
+            {"role": "assistant", "content": "I feed them over the fence. !breed(\"cow_pen\", 2)"},
+            {"role": "system", "content": "I fed 4 cows in the cow pen; 2 calves."},
+            {"role": "assistant", "content": "Two calves in the cow pen."}
+        ],
+
+        [
+            {"role": "assistant", "content": "May I take 8 wheat from the chest at (11, 67, 53) for the feeding? Say yes or no."},
+            {"role": "user", "content": "rob_2: yes, take it"},
+            {"role": "assistant", "content": "Thank you. !allowTaking(\"wheat\", true)"},
+            {"role": "system", "content": "Done; I said it in the chat."}
+        ],
+
+        [
+            {"role": "user", "content": "max_9: you may take lapis from the chests"},
+            {"role": "assistant", "content": "Good, I will. !allowTaking(\"lapis_lazuli\", true)"},
+            {"role": "system", "content": "Done; I said it in the chat."}
+        ],
+
+        [
+            {"role": "user", "content": "nia_5: enchant my pickaxe"},
+            {"role": "assistant", "content": "I read the table's offers for you. !enchant(\"pickaxe\")"},
+            {"role": "system", "content": "I enchanted your diamond_pickaxe: Unbreaking II (13 levels, 2 lapis)."},
+            {"role": "assistant", "content": "Your pickaxe has Unbreaking II now."}
+        ],
+
+        [
+            {"role": "assistant", "content": "The table offers for your diamond_pickaxe: 1) Unbreaking I (8 levels, 1 lapis), 2) Unbreaking II (13 levels, 2 lapis), 3) Efficiency IV (30 levels, 3 lapis). Say \"take 1\", \"take 2\", \"take 3\" or \"none\"."},
+            {"role": "user", "content": "kai_8: take 2"},
+            {"role": "assistant", "content": "Offer 2 it is. !enchantTake(2)"},
+            {"role": "system", "content": "I take offer 2."}
+        ],
+
+        [
+            {"role": "user", "content": "ida_2: farm creepers until level 30"},
+            {"role": "assistant", "content": "I go to the kill spot. !killFarm(\"level 30\")"},
+            {"role": "system", "content": "I stop the farming: level 30 reached; 280 creepers, 1 hour 10 minutes; 268 gunpowder stored."},
+            {"role": "assistant", "content": "Level 30 with 280 creepers; the gunpowder is in the chests."}
+        ],
+
+        [
             {"role": "user", "content": "cal_3: the farm goes from 10 63 20 to 25 67 35"},
             {"role": "assistant", "content": "I'll save it with those corners. !setArea(\"farm\", \"farm\", 10, 63, 20, 25, 67, 35)"},
             {"role": "system", "content": "Area \"farm\" (farm) saved: 16 x 5 x 16 blocks, from (10, 63, 20) to (25, 67, 35), 1 gate."},

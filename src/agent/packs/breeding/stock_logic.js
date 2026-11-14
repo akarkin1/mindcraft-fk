@@ -109,7 +109,7 @@ export async function takeOrAsk(bot, ctx, item, count, options = {}) {
     const isLow = stock - need <= low;
     let asked = false;
     if (!allowed || isLow) {
-        if (permits === null || typeof permits.entry !== 'function') {
+        if (permits === null || (typeof permits.entry !== 'function' && typeof permits.allowedAt !== 'function')) {
             // nothing can remember a yes: the question would wait for nothing
             const text = noPermitText(name);
             logTo(ctx, text);
@@ -121,16 +121,23 @@ export async function takeOrAsk(bot, ctx, item, count, options = {}) {
         logTo(ctx, question);
         asked = true;
         const askMs = isFiniteNumber(opts.askMs) && opts.askMs >= 0 ? opts.askMs : STOCK_RULES.askMs;
+        // the owner's answer: a permit newer than the question (allowedAt > askedAt, 8.1); a store with entry() also tells a
+        // "no" newer than the question, which ends the wait at once
+        const answerOf = () => {
+            try {
+                if (typeof permits.entry === 'function') {
+                    const entry = permits.entry(name);
+                    return entry && entry.at > askedAt ? entry.allowed === true : null;
+                }
+                return permits.allowedAt(name) > askedAt ? true : null;
+            } catch {
+                return null;
+            }
+        };
         let answer = null;
         for (;;) {
-            let entry = null;
-            try {
-                entry = permits.entry(name);
-            } catch {
-                entry = null;
-            }
-            if (entry && entry.at > askedAt) {
-                answer = entry.allowed === true;
+            answer = answerOf();
+            if (answer !== null) {
                 break;
             }
             if (bot?.interrupt_code) {

@@ -65,7 +65,10 @@ const BLOCK = 'WHAT YOU KNOW (from memory, no need to check):\nYou are in the ar
 // base survey (552 characters) and the routines (533) add 1,085 characters of one-line docs (18,596 measured with every switch
 // on, 17,511 before); both limits rise by that growth rounded up to the next 100 (1,100): 18,300 and 18,700. v0.1.4.16 (SPEC 5,
 // E1): the one line of docs of !sealOpening adds 195 characters; both limits rise by that growth only: 18,495 and 18,895.
-const LIMIT_NEW_THINGS = 18895;
+// v0.1.4.16 round two (SPEC 8.0, E6, the lead's decision): the docs of !breed, !allowTaking, !enchant, !enchantTake, !killFarm
+// (1,180) and the longer enchanting example chosen in place of a !newAction one (90), measured 1,270; every limit rises by that
+// growth rounded up to the next 100 (1,300): 19,795 and 20,195.
+const LIMIT_NEW_THINGS = 20195;
 const NEW_THINGS_HEADER = 'NEW SINCE 1.21.8 (true, even if you do not know it):';
 // a bot with the things of the three longest lines of the new things: a copper golem statue and a copper pickaxe in the
 // bag, a nautilus 3 blocks away; the block holds what fits in its 360 characters
@@ -169,7 +172,7 @@ describe('item 7: the size of the conversing prompt', () => {
         assert.ok(prompt.includes(`${block}\n${NEW_THINGS_BLOCK}`));
         for (const name of ['!pickUpItems', '!closeDoor', '!chests', '!mineOre', '!chopTrees', '!rememberArea']) assert.ok(prompt.includes(`\n${name}: `), name);
         assert.ok(prompt.length <= LIMIT_NEW_THINGS, `${prompt.length} characters`);
-        assert.ok(prompt.replace(`\n${NEW_THINGS_BLOCK}`, '').length <= 18495, 'without the block of the new things'); // v0.1.4.16: 18,300 + 195
+        assert.ok(prompt.replace(`\n${NEW_THINGS_BLOCK}`, '').length <= 19795, 'without the block of the new things'); // v0.1.4.16: 18,300 + 195; round two + 1,300
     });
 
     // T1-Q5, decided by the tech lead: the limit of 17,000 holds for the packs and the switches of v0.1.4.8
@@ -179,10 +182,12 @@ describe('item 7: the size of the conversing prompt', () => {
     // limit rises by the same 1,100 as the others, to 19,100.
     // v0.1.4.16 (SPEC 5, E1): the one line of docs of !sealOpening adds 195 characters (19,101 measured here); the limit rises
     // by the same 195 as the others, to 19,295.
-    test('every switch on, the skill commands and three saved rules included: 19,295 characters or less', async (t) => {
+    // v0.1.4.16 round two (SPEC 8.0, E6, the lead's decision): the five commands of the three packs and the longer enchanting
+    // example, measured 1,270 (20,371 measured here); the limit rises by the same 1,300 as the others, to 20,595.
+    test('every switch on, the skill commands and three saved rules included: 20,595 characters or less', async (t) => {
         const prompt = await promptOf(CLAUDE.conversing, { settings: ALL_ON, blocked: SPEC.blocked_actions.default, knowledge: fullBlock(), rules: RULES });
         t.diagnostic(`every switch on, skill commands shown, 3 rules: ${prompt.length} characters`);
-        assert.ok(prompt.length <= 19295, `${prompt.length} characters`);
+        assert.ok(prompt.length <= 20595, `${prompt.length} characters`);
     });
 
     test('every switch off: the size, for the report', async (t) => {

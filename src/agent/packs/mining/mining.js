@@ -2944,6 +2944,8 @@ export const SEAL_RULES = Object.freeze({ side: 3, walkRange: 3 });
 // The texts of !sealOpening, word for word (SPEC 3 F10).
 const SEAL_TEXTS = Object.freeze({
     sealed: (p, n, filler) => `I sealed the opening at ${posText(p)} with ${n} ${filler}.`,
+    // v0.1.4.16 (T4's W133 rerun): fewer cells hold the filler afterwards than the opening has
+    sealedSome: (p, n, m) => `I sealed ${n} of ${m} blocks of the opening at ${posText(p)}; the rest I could not reach.`,
     noStone: 'I have no stone to seal it.',
     cannotReach: (p) => `I cannot reach ${posText(p)}.`,
 });
@@ -2954,11 +2956,30 @@ function fillerName(bot) {
     return FILLERS.find(n => names.has(n)) ?? null;
 }
 
+// The solid cells of the ring around the 3 x 3 of a plane through the cell (the 16 cells of its 5 x 5 outside the 3 x 3):
+// the wall a hole is cut into surrounds it in the hole's own plane.
+function ringSolid(bot, cell, axes) {
+    let solid = 0;
+    for (let i = -2; i <= 2; i++) {
+        for (let j = -2; j <= 2; j++) {
+            if (Math.abs(i) < 2 && Math.abs(j) < 2) {
+                continue;
+            }
+            if (isSolid(blockAt(bot, { ...cell, [axes[0]]: cell[axes[0]] + i, [axes[1]]: cell[axes[1]] + j }))) {
+                solid++;
+            }
+        }
+    }
+    return solid;
+}
+
 /**
- * The open cells of the face of an opening around a cell (F10): the plane of the face is the one the bot looks at it
- * through (the axis of the longest side of the way from the feet to the cell: a hole in a wall stands in a vertical
- * plane, a hole in the floor or the ceiling lies flat), the cells those of the 3 x 3 of that plane around the cell that
- * are not solid and are connected to the cell through such cells. Empty when the cell itself is solid or not loaded.
+ * The open cells of the face of an opening around a cell (F10): the cells of the 3 x 3 of the opening's plane around the
+ * cell that are not solid and are connected to the cell through such cells. Empty when the cell itself is solid or not
+ * loaded. The plane (v0.1.4.16, T4's W133 rerun: with the plane read from where the bot stood after its walk, the bot
+ * filled a column in front of the opening, its middle column and a column behind it) is the one of the wall the hole is
+ * cut into: of the three planes through the cell, the one whose ring around the 3 x 3 has the most solid cells; on a tie
+ * the one the bot looks at it through (the axis of the longest side of the way from the feet to the cell).
  * @param {object} bot
  * @param {{x: number, y: number, z: number}} cell
  * @returns {{x: number, y: number, z: number}[]} the cell first
@@ -2973,13 +2994,23 @@ export function openingCells(bot, cell) {
     }
     const feet = feetOf(bot) ?? { x: cell.x, y: cell.y, z: cell.z + 1 };
     const d = { x: cell.x - feet.x, y: cell.y - feet.y, z: cell.z - feet.z };
-    let axes;
+    let looked;
     if (d.y !== 0 && Math.abs(d.y) >= Math.max(Math.abs(d.x), Math.abs(d.z))) {
-        axes = ['x', 'z']; // a hole in the floor or the ceiling (a cell one step away and one below is one in the floor)
+        looked = ['x', 'z']; // a hole in the floor or the ceiling (a cell one step away and one below is one in the floor)
     } else if (Math.abs(d.x) >= Math.abs(d.z)) {
-        axes = ['y', 'z']; // a wall across x
+        looked = ['y', 'z']; // a wall across x
     } else {
-        axes = ['x', 'y']; // a wall across z
+        looked = ['x', 'y']; // a wall across z
+    }
+    const planes = [looked, ...[['y', 'z'], ['x', 'z'], ['x', 'y']].filter(p => p.join() !== looked.join())];
+    let axes = looked;
+    let best = -1;
+    for (const plane of planes) {
+        const score = ringSolid(bot, cell, plane);
+        if (score > best) {
+            best = score;
+            axes = plane;
+        }
     }
     const half = Math.floor(SEAL_RULES.side / 2);
     const inFace = p => axes.every(a => Math.abs(p[a] - cell[a]) <= half);
@@ -3006,10 +3037,13 @@ export function openingCells(bot, cell) {
 /**
  * `!sealOpening(x, y, z)` (v0.1.4.16, F10): closes an opening into a cave at a block position with stone from the bag,
  * up to 9 blocks: the bot walks within reach of the cell, finds the open cells of the opening's face connected to it within
- * a 3 x 3 (openingCells) and places filler into each (placeInto through patchAll, FILLERS, cobblestone first). Texts, word
- * for word: `I sealed the opening at (x, y, z) with N cobblestone.` (the filler's name), `I have no stone to seal it.`
- * (no filler in the bag), `I cannot reach (x, y, z).` (no way within 3 blocks of the cell, or nothing could be placed).
- * Ends on bot.interrupt_code. Never throws.
+ * a 3 x 3 (openingCells) and places filler into each (placeInto through patchAll, FILLERS, cobblestone first), from the
+ * edge of the opening inwards, so that every cell has a solid neighbour when its turn comes. Only the cells that hold a
+ * filler after a short wait count (v0.1.4.16, T4's W133 rerun: the answer counted 9 while 6 blocks stood beside the
+ * opening). Texts, word for word: `I sealed the opening at (x, y, z) with N cobblestone.` (the filler's name; every cell
+ * of the opening holds one), `I sealed N of M blocks of the opening at (x, y, z); the rest I could not reach.` (some do),
+ * `I have no stone to seal it.` (no filler in the bag), `I cannot reach (x, y, z).` (no way within 3 blocks of the cell,
+ * or none holds one). Ends on bot.interrupt_code. Never throws.
  * @param {object} bot
  * @param {object} ctx
  * @param {number} x
@@ -3039,18 +3073,27 @@ export async function sealOpening(bot, ctx = {}, x, y, z, options = {}) {
         if (cells.length === 0) {
             return { ok: true, reason: null, text: SEAL_TEXTS.sealed(cell, 0, filler), placed: 0, cells };
         }
-        const r = await patchAll(bot, cells, { clock });
+        // from the edge inwards: the cells farthest from the middle touch the wall around the opening (corners first)
+        const away = c => Math.abs(c.x - cell.x) + Math.abs(c.y - cell.y) + Math.abs(c.z - cell.z);
+        const order = cells.map((c, i) => ({ c, i })).sort((a, b) => away(b.c) - away(a.c) || a.i - b.i).map(e => e.c);
+        const r = await patchAll(bot, order, { clock });
         if (r.reason === 'interrupted') {
             return { ok: false, reason: 'interrupted', text: 'I stopped sealing the opening.', placed: r.placed, cells };
         }
-        if (r.placed === 0) {
+        // the cells that hold a filler after a short wait (a late block update counts; a block that went elsewhere does not)
+        await clock.wait(300);
+        const sealed = cells.filter(c => FILLERS.includes(blockAt(bot, c)?.name)).length;
+        if (sealed < cells.length) {
+            logTo(ctx, `Seal: ${cells.length - sealed} of ${cells.length} cells of the opening at ${posText(cell)} hold no filler (placed ${r.placed}, ${r.reason ?? 'no reason'}).`);
+        }
+        if (sealed === 0) {
             const reason = r.reason === 'no_block' ? 'no_block' : 'no_reach';
             return { ok: false, reason, text: reason === 'no_block' ? SEAL_TEXTS.noStone : SEAL_TEXTS.cannotReach(cell), placed: 0, cells };
         }
-        if (!r.ok) {
-            logTo(ctx, `Seal: ${r.open.length} cells of the opening at ${posText(cell)} stay open (${r.reason}).`);
+        if (sealed < cells.length) {
+            return { ok: false, reason: 'partial', text: SEAL_TEXTS.sealedSome(cell, sealed, cells.length), placed: sealed, cells };
         }
-        return { ok: true, reason: null, text: SEAL_TEXTS.sealed(cell, r.placed, filler), placed: r.placed, cells };
+        return { ok: true, reason: null, text: SEAL_TEXTS.sealed(cell, sealed, filler), placed: sealed, cells };
     } catch (err) {
         console.warn('Mining pack: sealing the opening failed:', errText(err));
         return { ok: false, reason: 'error', text: SEAL_TEXTS.cannotReach(raw), placed: 0, cells: [] };

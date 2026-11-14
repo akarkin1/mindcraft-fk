@@ -8,6 +8,8 @@ import { loadSrc } from '../helpers/load.js';
 const L = await loadSrc('src/agent/packs/breeding/breeding_logic.js');
 const X = await loadSrc('src/agent/packs/breeding/texts.js');
 const I = await loadSrc('src/agent/packs/breeding/index.js');
+const P = await loadSrc('src/agent/world/stock_permits.js');
+const FIELD = await loadSrc('src/agent/packs/farming/field_logic.js');
 
 // A 5 x 5 pen: the ground at y 63 from x 0..4, z 0..4, the fence ring at y 64 on x -1..5, z -1..5, its gate at (2, 64, -1).
 // The saved box holds the fence (scanPen): (-1, 62, -1) to (5, 66, 5).
@@ -116,6 +118,25 @@ describe('the fence box and the stand ring (8.2: the ring one block outside the 
         assert.deepEqual(L.gatesOf(null), []);
     });
 
+    test('findGates is the copy of the farming pack\'s findGates (a pack never imports another one): the same answer on every grid', () => {
+        const inner = { min: { x: 0, y: 62, z: 0 }, max: { x: 4, y: 66, z: 4 } };
+        const grids = [
+            getBlock,
+            (x, y, z) => (y === 64 && onRing(x, z) ? { name: (x === 5 && z === 2) || (x === -1 && z === 4) ? 'spruce_fence_gate' : 'oak_fence' } : getBlock(x, y, z)),
+            (x, y, z) => (y === 66 && x === 2 && z === 5 ? { name: 'birch_fence_gate' } : getBlock(x, y, z)),
+            () => ({ name: 'air' }),
+            () => { throw new Error('not loaded'); },
+        ];
+        for (const [i, get] of grids.entries()) {
+            assert.deepEqual(L.findGates(get, inner), FIELD.findGates(get, inner), `grid ${i}`);
+            assert.deepEqual(L.findGates(get, BOX), FIELD.findGates(get, BOX), `grid ${i}, the saved box`);
+        }
+        assert.deepEqual(L.findGates(getBlock, inner), [{ x: 2, y: 64, z: -1, kind: 'gate' }]);
+        assert.deepEqual(L.findGates(null, inner), FIELD.findGates(null, inner));
+        assert.deepEqual(L.findGates(getBlock, null), []);
+        assert.equal(I.findGates, L.findGates);
+    });
+
     test('the walk starts at the cell nearest to the bot and goes on around the ring', () => {
         const ring = L.standRing(BOX);
         const from = L.ringFrom(ring, { x: 2.5, z: 8.5 });
@@ -154,6 +175,33 @@ describe('the adults in reach and the new babies', () => {
         const entities = { 1: cow(1, 1.5, 4.5), 7: cow(7, 2.5, 2.5, { metadata: { 16: true } }), 8: cow(8, 1.5, 1.5, { metadata: { 16: true } }), 9: cow(9, 9.5, 2.5, { metadata: { 16: true } }) };
         assert.deepEqual(L.newBabies(entities, BOX, 'cow', new Set([1, 7])).map((e) => e.id), [8]);
         assert.deepEqual(L.newBabies(entities, BOX, 'cow', new Set()).map((e) => e.id), [7, 8]);
+    });
+
+    test('the adults the pack may feed: only the animals of the start (a calf without its metadata yet looks adult), without the skipped', () => {
+        const entities = { 1: cow(1, 1.5, 4.5), 2: cow(2, 3.5, 4.5), 3: cow(3, 2.5, 0.5), 10: cow(10, 2.5, 2.5) };
+        const only = new Set([1, 2, 3]);
+        assert.deepEqual(L.feedableAdults(entities, BOX, 'cow', { only }).map((e) => e.id), [1, 2, 3], 'the new animal 10 is left out');
+        assert.deepEqual(L.feedableAdults(entities, BOX, 'cow', { only, skip: new Set([2]) }).map((e) => e.id), [1, 3]);
+        assert.deepEqual(L.feedableAdults(entities, BOX, 'cow', { only, fedAt: new Map([[3, 0]]), now: 1000 }).map((e) => e.id), [1, 2]);
+        assert.deepEqual(L.feedableAdults(entities, BOX, 'cow').map((e) => e.id), [1, 2, 3, 10], 'without only: every adult');
+        assert.deepEqual(L.adultsInReach(entities, BOX, 'cow', { x: 2.5, y: 65.62, z: 6.5 }, { only, skip: new Set([1]) }).map((e) => e.id), [2]);
+    });
+
+    test('the stand cell nearest to an animal: the ring cell outside the fence closest to it', () => {
+        const ring = L.standRing(BOX);
+        assert.deepEqual(L.nearestRingCell(ring, { x: 3.5, z: 4.5 }), { x: 3, z: 6 });
+        assert.deepEqual(L.nearestRingCell(ring, { x: 0.5, z: 2.5 }), { x: -2, z: 2 });
+        assert.deepEqual(L.nearestRingCell(ring, { x: 0.5, z: 0.5 }), { x: 0, z: -2 }, 'a tie: the first of the ring');
+        assert.deepEqual(L.nearestRingCell(ring, { x: 4.6, z: 2.5 }), { x: 6, z: 2 });
+        assert.equal(L.nearestRingCell(ring, null), null);
+        assert.equal(L.nearestRingCell([], { x: 1, z: 1 }), null);
+    });
+
+    test('the waits: the young counted every 15 s, the stop seen every 500 ms (the action manager kills after 10 s), 15 s for the young', () => {
+        assert.equal(L.COOLDOWN_CHECK_MS, 15000);
+        assert.equal(L.STOP_CHECK_MS, 500);
+        assert.ok(L.STOP_CHECK_MS < 10000);
+        assert.equal(L.BABY_WAIT_MS, 15000);
     });
 });
 
@@ -194,6 +242,7 @@ describe('the texts (8.1, 8.2), word for word', () => {
         assert.equal(X.askLowText(6, 8, 'wheat', X.PURPOSES.feeding), 'Only 6 wheat are left in the chests; may I take 8 for the feeding? Say yes or no.');
         assert.equal(X.askLowText(1, 3, 'lapis_lazuli', X.PURPOSES.killRoom), 'Only 1 lapis_lazuli is left in the chests; may I take 3 for the kill room? Say yes or no.');
         assert.equal(X.noPermitText('wheat'), 'I take no wheat without your word; say "you may take wheat" when you want.');
+        assert.equal(P.noWordText('lapis_lazuli'), X.noPermitText('lapis_lazuli'), 'the copy of the store for actions.js is the same sentence');
         assert.equal(X.noStockText('wheat'), 'I have no wheat and the chests have none.');
         assert.deepEqual(X.PURPOSES, { feeding: 'the feeding', enchanting: 'the enchanting', killRoom: 'the kill room' });
         assert.equal(X.whereText({ x: -13.7, y: 63, z: 28.2 }), '(-14, 63, 28)');

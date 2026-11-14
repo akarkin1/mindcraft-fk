@@ -89,7 +89,10 @@ await scenarioMain({
             output = recordOutput(agent);
             const t0 = Date.now();
             const ironOf = async () => (await inventoryOf(NAME)).raw_iron || 0;
-            const stopLines = (from) => [...(s.logs ?? []).map((l) => ({ text: String(l), t: null })), ...output.lines.filter((l) => l.t >= from)].map((l) => l.text).filter((l) => /Mining stop:/.test(l));
+            // T4 2026-11-14: the scenario's own NOTE, CHECK and TRACE lines are console lines too (s.logs); a NOTE that quotes a stop line
+            // must not count for a later check
+            const stopLines = (from) => [...(s.logs ?? []).map((l) => ({ text: String(l), t: null })), ...output.lines.filter((l) => l.t >= from)].map((l) => l.text)
+                .filter((l) => /Mining stop:/.test(l) && !/^(NOTE|CHECK|TRACE)\b/.test(l.trim()));
 
             // ---------------------------------------------------------- 0. the mine
             const taught = await partTeachMineInRoom({ ...j, b }, { tunnel: t });

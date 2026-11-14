@@ -55,6 +55,17 @@ export function allowTakingText(item, allowed) {
     return allowed === true ? `I may take ${item} from the chests now.` : `I take no ${item} from the chests.`;
 }
 
+/**
+ * The answer of !allowTaking when no player gave the word (the model on its own, a routine, another bot): the no-permit
+ * line of 8.1, `I take no wheat without your word; say "you may take wheat" when you want.` (noPermitText of the breeding
+ * pack gives the same sentence; actions.js imports no pack).
+ * @param {string} item
+ * @returns {string}
+ */
+export function noWordText(item) {
+    return `I take no ${item} without your word; say "you may take ${item}" when you want.`;
+}
+
 function toMs(value) {
     if (value instanceof Date) {
         return value.getTime();

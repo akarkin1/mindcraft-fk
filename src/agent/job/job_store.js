@@ -8,6 +8,14 @@ import { JOB_KINDS, JOB_STATES, ROUTINE_KIND } from './job_logic.js';
 
 /** The name of the file in the folder of the bot. */
 export const JOB_FILE = 'job.json';
+/**
+ * v0.1.4.16 (SPEC 8.4a, E8): the kind of the AFK creeper kill's job, beside ROUTINE_KIND. It is no kind of JOB_COMMANDS:
+ * createJob starts it for the order !killFarm(<until>), whose text is its command and its one step; the job resume runs
+ * the order again when anything but the owner's stop ended the action (a reflex, the night, a restart).
+ */
+export const KILL_FARM_KIND = 'kill_farm';
+/** The command of the kill_farm job. */
+export const KILL_FARM_COMMAND = '!killFarm';
 /** The states of a step; v0.1.4.16 (F3): `skipped`, a step of a routine's round that failed after its runs and was passed. */
 export const STEP_STATES = Object.freeze(['todo', 'done', 'failed', 'skipped']);
 
@@ -48,7 +56,12 @@ function cleanStep(step) {
  * @returns {object|null}
  */
 function validateJob(job, now) {
-    if (!isPlainObject(job) || !(JOB_KINDS.includes(job.kind) || job.kind === ROUTINE_KIND) || typeof job.command !== 'string' || job.command.length === 0) {
+    if (!isPlainObject(job) || !(JOB_KINDS.includes(job.kind) || job.kind === ROUTINE_KIND || job.kind === KILL_FARM_KIND)
+        || typeof job.command !== 'string' || job.command.length === 0) {
+        return null;
+    }
+    // v0.1.4.16 (SPEC 8.4a): a kill_farm job is the order !killFarm(<until>)
+    if (job.kind === KILL_FARM_KIND && !job.command.startsWith(KILL_FARM_COMMAND)) {
         return null;
     }
     // v0.1.4.15 (part R, SPEC 3.3): a round of a routine names its routine (and its round, 1 without)

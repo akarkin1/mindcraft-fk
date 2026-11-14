@@ -1,21 +1,24 @@
-// The AFK creeper kill (spec v0.1.4.16, section 8.4, E8; the owner's findings K-2 to K-6): !killFarm(until). The bot
-// walks to the saved place kill_spot, checks the room (hoppers within 3 blocks, a slab over them), switches
-// creeper_safety off and pauses the other reflexes, sneaks and steps forward under the slab (K-3), and hits what
-// lands on the hoppers, one hit per 600 ms, until the owner says stop, the level or the time of the order is
-// reached, its health falls under 10, or it has no weapon left. It stores the drops when the bag is nearly full,
-// eats from the bag, sleeps in the bed by the room at night (K-5) and comes back, and replaces a worn weapon (K-6).
+// The AFK creeper kill (spec v0.1.4.16, sections 8.4 and 8.4a, E8; the owner's findings K-2 to K-6, M-5, M-6):
+// !killFarm(until). The bot walks to the saved place kill_spot, checks the room (hoppers within 3 blocks, a slab over
+// them), switches creeper_safety off and pauses the other reflexes, sneaks and steps forward 0.7 s under the slab (the
+// owner's method), and hits the hostile mobs whose centre is within 3 blocks of its eyes, the nearest first, one hit per
+// 600 ms until it is gone, until the owner says stop, the level or the time of the order is reached, its health falls
+// under 10, or it has no weapon left. It stores the drops when the bag is nearly full, eats from the bag, sleeps in the
+// bed by the room at night (K-5) and comes back, and replaces a worn weapon (K-6; never a diamond or netherite one).
+// When anything else ends the action, the job of the kind kill_farm (src/agent/job) brings it back with the same until.
 // Zero model calls. Every refusal, question and stop writes one line through ctx.log. Executing: it moves the bot.
+// It imports the home pack only: the chests, the storage and the tools of the other packs come through ctx.
 import { Vec3 } from 'vec3';
 import { botPos, clockOf, dimensionOf, logTo, sayTo } from '../home/context.js';
 import { eatBestFood, sleepInBed } from '../home/index.js';
 import { goals, gotoGoal, makeMovements, stopMoving, walkNear } from '../home/motion.js';
 import { isNight } from '../home/night_logic.js';
 import { isBedName } from '../home/sleep_logic.js';
-import { countOf, freeSlots, nameReader, usesLeftOf } from '../mining/dig.js';
 import {
     BED_RANGE, CHEST_RANGE, CREEPER_MODE, EAT_AT_FOOD, HIT_GAP_MS, KILL_DROPS, KILL_WINDOW_MS, LOOP_MS, PAUSED_MODES, PROGRESS_EVERY,
     STEP_MORE_MS, STEP_MS, STORE_FREE_SLOTS, WEAPON_CHEST_RANGE, WEAPON_NAMES, WEAPON_WEAR, badWindowVerdict, checkRoom, chooseWeapon,
-    distance, eyeOf, hitsToKill, isWeaponName, newWindow, parseUntil, pickTarget, stopReason, storedCount, windowIsBad, windowOver,
+    distance, eyeOf, isWeaponName, isWorn, needsSpare, newWindow, parseUntil, pickTarget, stopReason, storedCount, stuckHits, usesLeft,
+    windowIsBad, windowOver,
 } from './afk_logic.js';
 import {
     TEXTS, badUntilText, lowHealthText, noWeaponText, progressText, stepCloserText, stopLevelText, stopMinutesText, stoppedText,
@@ -27,14 +30,59 @@ export const KILL_SPOT = 'kill_spot';
 export const KILL_CHEST = 'kill_chest';
 export const KILL_BED = 'kill_bed';
 export const KILL_EXIT = 'kill_exit';
+/** The start line is said once per this long per bot: a farm the job resumes after a reflex does not say it again. */
+export const START_LINE_EVERY_MS = 30 * 60 * 1000;
 
 const WALK_MS = 180000; // the way to the spot (the tower's ladder)
 const SPOT_MS = 20000; // back to the spot cell from a trip
 const SLEEP_RETRY_MS = 60000;
+const SPARE_RETRY_MS = 5 * 60 * 1000; // a spare that no chest had is looked for again after this long
 const MY_BED = 'my_bed';
+const CHEST_NAMES = /^(chest|trapped_chest|barrel|(?:\w+_)?copper_chest)$/;
+
+// When each bot said the start line last (a WeakMap: no reference keeps a bot alive).
+const startSaid = new WeakMap();
 
 function num(value) {
     return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+// ---- the bot's blocks and bag, read here (the pack does not import the mining pack's dig.js) ----
+
+// A reader of block names for the room check: the name of the block, null when the chunk is not loaded. The plain name,
+// not the mining pack's logic name: a waterlogged slab is a slab here.
+function blockNames(bot) {
+    return (x, y, z) => {
+        try {
+            return bot.blockAt(new Vec3(x, y, z))?.name ?? null;
+        } catch {
+            return null;
+        }
+    };
+}
+
+function items(bot) {
+    try {
+        return bot.inventory.items();
+    } catch {
+        return [];
+    }
+}
+
+function countOf(bot, name) {
+    return items(bot).filter(i => i?.name === name).reduce((sum, i) => sum + (num(i.count) ?? 0), 0);
+}
+
+// Empty slots of the bag (36 slots), as the mining pack counts them.
+function freeSlots(bot) {
+    try {
+        if (typeof bot.inventory.emptySlotCount === 'function') {
+            return bot.inventory.emptySlotCount();
+        }
+    } catch {
+        // counted below
+    }
+    return Math.max(0, 36 - items(bot).length);
 }
 
 // A saved place as { x, y, z, dimension } from ctx.places (a MemoryBank: recallPlaceInfo; a PlaceStore: recall), or null.
@@ -81,33 +129,26 @@ function held(bot) {
     }
 }
 
-function items(bot) {
-    try {
-        return bot.inventory.items();
-    } catch {
-        return [];
-    }
-}
-
+// The weapons of the bag the farm may use, as { item, name, usesLeft }.
 function weaponItems(bot) {
-    return items(bot).filter(i => isWeaponName(i?.name)).map(i => ({ item: i, name: i.name, usesLeft: usesLeftOf(i) }));
+    return items(bot).filter(i => isWeaponName(i?.name)).map(i => ({ item: i, name: i.name, usesLeft: usesLeft(i) }));
 }
 
-function sneak(s, on) {
-    try {
-        s.bot.setControlState('sneak', on);
-    } catch {
-        // the fake bots of the tests may have no controls
-    }
-    s.sneaking = on;
+function weaponOf(item) {
+    return item && isWeaponName(item.name) ? { item, name: item.name, usesLeft: usesLeft(item) } : null;
 }
 
 function control(s, name, on) {
     try {
         s.bot.setControlState(name, on);
     } catch {
-        // see sneak
+        // the fake bots of the tests may have no controls
     }
+}
+
+function sneak(s, on) {
+    control(s, 'sneak', on);
+    s.sneaking = on;
 }
 
 // ---- the modes (K-2, map16-packs 4.4): creeper_safety off, the others paused, all restored on every exit ----
@@ -170,9 +211,8 @@ function chestOfRoom(s) {
     if (saved) {
         return { x: saved.x, y: saved.y, z: saved.z };
     }
-    const dim = dimensionOf(s.bot);
     try {
-        const known = s.ctx?.chests?.nearest?.(s.spot, dim, c => distance(c, s.spot) <= CHEST_RANGE + 0.5);
+        const known = s.ctx?.chests?.nearest?.(s.spot, dimensionOf(s.bot), c => distance(c, s.spot) <= CHEST_RANGE + 0.5);
         if (known) {
             return { x: known.x, y: known.y, z: known.z };
         }
@@ -180,11 +220,10 @@ function chestOfRoom(s) {
         // the index is optional
     }
     try {
-        const found = s.bot.findBlocks({ matching: b => Boolean(b) && (b.name === 'chest' || b.name === 'trapped_chest' || b.name === 'barrel'
-            || b.name === 'copper_chest' || /copper_chest$/.test(b.name)), maxDistance: CHEST_RANGE, count: 4, point: new Vec3(s.spot.x, s.spot.y, s.spot.z) });
+        const found = s.bot.findBlocks({ matching: b => Boolean(b) && CHEST_NAMES.test(b.name), maxDistance: CHEST_RANGE, count: 4,
+            point: new Vec3(s.spot.x, s.spot.y, s.spot.z) });
         if (Array.isArray(found) && found.length > 0) {
-            const p = found[0];
-            return { x: p.x, y: p.y, z: p.z };
+            return { x: found[0].x, y: found[0].y, z: found[0].z };
         }
     } catch {
         // no chest
@@ -198,10 +237,10 @@ function bedOfRoom(s) {
         return { x: saved.x, y: saved.y, z: saved.z };
     }
     try {
-        const found = s.bot.findBlocks({ matching: b => Boolean(b) && isBedName(b.name), maxDistance: BED_RANGE, count: 4, point: new Vec3(s.spot.x, s.spot.y, s.spot.z) });
+        const found = s.bot.findBlocks({ matching: b => Boolean(b) && isBedName(b.name), maxDistance: BED_RANGE, count: 4,
+            point: new Vec3(s.spot.x, s.spot.y, s.spot.z) });
         if (Array.isArray(found) && found.length > 0) {
-            const p = found[0];
-            return { x: p.x, y: p.y, z: p.z };
+            return { x: found[0].x, y: found[0].y, z: found[0].z };
         }
     } catch {
         // no bed
@@ -209,8 +248,8 @@ function bedOfRoom(s) {
     return null;
 }
 
-// The context the sleep gets (K-5): the kill bed is the bot's own bed for the night, so sleepInBed takes it first; the
-// saves of the home pack (my_bed) go to the real places.
+// The context the sleep gets (K-5): the kill bed is the bot's own bed for the night (the place my_bed), so sleepInBed
+// takes it first; the saves of the home pack (my_bed) go to the real places.
 function sleepContext(s) {
     const ctx = s.ctx ?? {};
     const places = ctx.places ?? null;
@@ -226,7 +265,7 @@ function sleepContext(s) {
     return { ...ctx, places: wrap };
 }
 
-// ---- the stance at the spot (K-3): the cell centre, the sneak, the step forward under the slab ----
+// ---- the stance at the spot (K-3, 8.4a): the cell centre, the sneak, the step forward under the slab ----
 
 async function toSpotCell(s) {
     const near = botPos(s.bot);
@@ -249,7 +288,7 @@ async function toSpotCell(s) {
     return ok ? { ok: true, reason: null } : { ok: false, reason: res.reason ?? 'no_path' };
 }
 
-// The step forward (K-3): the forward control held `ms` while sneaking, towards the hoppers; the position read back.
+// The step forward: the forward control held `ms` while sneaking, facing the hoppers; the chests' inset stops it.
 async function stepForward(s, ms) {
     try {
         await s.bot.lookAt(s.aim, true);
@@ -262,7 +301,7 @@ async function stepForward(s, ms) {
     await s.clock.wait(100);
 }
 
-async function takeStance(s, extraMs = 0) {
+async function takeStance(s) {
     stopMoving(s.bot);
     const walk = await toSpotCell(s);
     if (walk.reason === 'interrupted') {
@@ -273,7 +312,7 @@ async function takeStance(s, extraMs = 0) {
     }
     sneak(s, true);
     await s.clock.wait(100);
-    await stepForward(s, STEP_MS + extraMs);
+    await stepForward(s, STEP_MS);
     for (let i = 0; i < s.extraSteps; i++) {
         await stepForward(s, STEP_MORE_MS);
     }
@@ -291,7 +330,7 @@ function offStance(s) {
     return !p || !s.stance || Math.hypot(p.x - s.stance.x, p.z - s.stance.z) > 0.3 || Math.abs(p.y - s.stance.y) > 0.5;
 }
 
-// ---- the weapons (K-6) ----
+// ---- the weapons (K-6, 8.4a) ----
 
 async function equipItem(s, item) {
     try {
@@ -303,30 +342,7 @@ async function equipItem(s, item) {
     }
 }
 
-// The best weapon of the bag in hand. Returns the item, or null when the bag has none.
-async function equipBagWeapon(s) {
-    const best = chooseWeapon(weaponItems(s.bot), { wear: WEAPON_WEAR });
-    if (!best) {
-        return null;
-    }
-    const inHand = held(s.bot);
-    if (!inHand || inHand.name !== best.name || inHand.slot !== best.item.slot) {
-        if (!(await equipItem(s, best.item))) {
-            return null;
-        }
-    }
-    return best.item;
-}
-
-function isWorn(item) {
-    if (!item) {
-        return true;
-    }
-    const uses = usesLeftOf(item);
-    return uses !== null && uses <= WEAPON_WEAR;
-}
-
-// A weapon from the kill chest or a chest within 16 blocks of the spot (the chest index), then the stone sword the
+// A weapon from the kill chest or a chest within 16 blocks of the spot (the chest index), else the stone sword the
 // bag's cobblestone and sticks allow (ctx.tools.ensureTool). Returns the name taken or crafted, or null.
 async function fetchWeapon(s) {
     const dim = dimensionOf(s.bot);
@@ -380,41 +396,67 @@ async function fetchWeapon(s) {
     return null;
 }
 
-// The weapon rule before a hit: the held weapon with 10 uses or fewer is replaced by the next best of the bag, else one
-// fetched or crafted; without any: the farm ends with no_weapon. Returns { ok, text } (text: the stop line).
+// The weapon rule before a hit (K-6, 8.4a): an allowed weapon with more than 10 uses in hand serves, and a spare is
+// fetched once when the bag has none and the held one has 30 uses or fewer; a worn or missing one (or a diamond or
+// netherite item, never used) is replaced by the best of the bag, else by one fetched or crafted; a worn one serves
+// until it breaks when there is nothing else; without any weapon the farm ends with no_weapon.
+// Returns { ok } or { ok: false, text } (the stop line) or { ok: false, interrupted: true }.
 async function ensureWeapon(s) {
-    const inHand = held(s.bot);
-    const holding = isWeaponName(inHand?.name) ? inHand : null;
-    if (holding && !isWorn(holding)) {
+    const inHand = weaponOf(held(s.bot));
+    const others = weaponItems(s.bot).filter(w => w.item !== inHand?.item);
+    if (inHand && !isWorn(inHand)) {
+        if (needsSpare(inHand, others) && s.clock.now() >= s.spareRetryAt) {
+            s.spareRetryAt = s.clock.now() + SPARE_RETRY_MS;
+            const got = await fetchWeapon(s);
+            if (s.bot.interrupt_code) {
+                return { ok: false, interrupted: true };
+            }
+            if (got) {
+                logTo(s.ctx, `I took a spare ${got}.`);
+            }
+            if (!inHand.item || held(s.bot) !== inHand.item) {
+                await equipItem(s, inHand.item);
+            }
+            if (offStance(s)) {
+                await takeStance(s);
+            }
+        }
         return { ok: true };
     }
-    const wornName = holding?.name ?? null;
-    const fresh = weaponItems(s.bot).filter(w => !isWorn(w.item) && w.item !== holding);
+    const fresh = others.filter(w => !isWorn(w));
     if (fresh.length > 0) {
-        const best = chooseWeapon(fresh, { wear: WEAPON_WEAR });
+        const best = chooseWeapon(fresh);
         if (await equipItem(s, best.item)) {
-            if (wornName) {
-                sayTo(s.bot, s.ctx, wornWeaponText(wornName, best.name));
+            if (inHand) {
+                sayTo(s.bot, s.ctx, wornWeaponText(inHand.name, best.name));
             }
             return { ok: true };
         }
     }
-    const got = await fetchWeapon(s);
+    // a worn weapon in hand looks for a replacement once per SPARE_RETRY_MS; without any weapon the bot looks at once
+    let got = null;
+    if (!inHand || s.clock.now() >= s.spareRetryAt) {
+        s.spareRetryAt = s.clock.now() + SPARE_RETRY_MS;
+        got = await fetchWeapon(s);
+    }
     if (s.bot.interrupt_code) {
         return { ok: false, interrupted: true };
     }
     if (got) {
-        const item = await equipBagWeapon(s);
-        if (item && !isWorn(item)) {
-            if (wornName) {
-                sayTo(s.bot, s.ctx, wornWeaponText(wornName, item.name));
+        const best = chooseWeapon(weaponItems(s.bot).filter(w => !isWorn(w)));
+        if (best && await equipItem(s, best.item)) {
+            if (inHand) {
+                sayTo(s.bot, s.ctx, wornWeaponText(inHand.name, best.name));
             }
             await takeStance(s);
             return { ok: true };
         }
     }
-    if (holding) {
-        // K-6: a worn weapon is still a weapon; it serves until it breaks, then the farm ends
+    if (inHand) {
+        return { ok: true }; // K-6: a worn weapon is still a weapon; it serves until it breaks
+    }
+    const worn = chooseWeapon(others);
+    if (worn && await equipItem(s, worn.item)) {
         return { ok: true };
     }
     return { ok: false, text: noWeaponText(levelOf(s.bot)) };
@@ -425,6 +467,10 @@ async function ensureWeapon(s) {
 async function storeTrip(s) {
     const storage = s.ctx?.storage;
     if (!s.chest || typeof storage?.storeItems !== 'function') {
+        if (s.storeFailedAt === null) {
+            logTo(s.ctx, 'I cannot store the drops: the storage pack is not loaded.');
+        }
+        s.storeFailedAt = s.clock.now(); // tried again after 2 minutes, never in a loop
         return;
     }
     sneak(s, false);
@@ -438,9 +484,6 @@ async function storeTrip(s) {
         return;
     }
     const stored = res?.stored && typeof res.stored === 'object' ? res.stored : {};
-    for (const [name, n] of Object.entries(stored)) {
-        s.storedAll[name] = (s.storedAll[name] ?? 0) + (num(n) ?? 0);
-    }
     s.storedByMe += num(stored.gunpowder) ?? 0;
     if (Object.keys(stored).length > 0) {
         logTo(s.ctx, storedLineText(stored)); // the quiet line
@@ -467,9 +510,14 @@ async function eatStep(s) {
         sayTo(s.bot, s.ctx, TEXTS.noFood);
     }
     s.ateAt = s.clock.now();
-    await equipBagWeapon(s);
+    const weapon = chooseWeapon(weaponItems(s.bot));
+    if (weapon && held(s.bot) !== weapon.item) {
+        await equipItem(s, weapon.item); // the food was in hand
+    }
     if (offStance(s)) {
         await takeStance(s);
+    } else {
+        sneak(s, true);
     }
 }
 
@@ -492,34 +540,50 @@ async function sleepStep(s) {
         return;
     }
     logTo(s.ctx, res?.text ?? (res?.ok ? 'I slept.' : 'I could not sleep.'));
-    s.sleepRetryAt = s.clock.now() + (res?.ok ? 0 : SLEEP_RETRY_MS);
+    s.sleepRetryAt = s.clock.now() + SLEEP_RETRY_MS; // a night that goes on (a sleep refused or cut short) is tried again after a minute
     await takeStance(s);
 }
 
 // ---- the kill loop ----
 
+// The record of the hit comes first, so that a hurt or death event the hit brings at once finds it.
 function hitTarget(s, target) {
-    try {
-        s.bot.attack(target);
-    } catch (err) {
-        logTo(s.ctx, `The hit failed: ${err?.message ?? err}`);
-        return;
-    }
     const now = s.clock.now();
-    s.lastHitAt = now;
-    s.hits++;
-    s.window.hits++;
-    const rec = s.records.get(target.id) ?? { id: target.id, name: target.name, hits: 0, landed: 0, lastHitAt: now, dead: false, stuck: false };
+    const known = s.records.get(target.id);
+    const rec = known ?? { id: target.id, name: target.name, hits: 0, landed: 0, lastHitAt: now, dead: false, reachedAt: null };
+    const before = { lastHitAt: rec.lastHitAt, focus: s.focus, lastHit: s.lastHitAt };
     rec.hits++;
     rec.lastHitAt = now;
     s.records.set(target.id, rec);
+    s.lastHitAt = now;
+    s.focus = target.id;
+    s.hits++;
+    s.window.hits++;
+    try {
+        s.bot.attack(target);
+    } catch (err) {
+        rec.hits--;
+        rec.lastHitAt = before.lastHitAt;
+        if (!known) {
+            s.records.delete(target.id);
+        }
+        s.lastHitAt = before.lastHit;
+        s.focus = before.focus;
+        s.hits--;
+        s.window.hits--;
+        logTo(s.ctx, `The hit failed: ${err?.message ?? err}`);
+    }
 }
 
+// A landed hit; the time when the target took its stuck hits (4 with a stone or iron sword) is noted.
 function onHurt(s, entity) {
     const rec = entity ? s.records.get(entity.id) : null;
     if (rec && !rec.dead) {
         rec.landed++;
         s.window.landed++;
+        if (rec.reachedAt === null && rec.landed >= stuckHits(held(s.bot)?.name ?? null)) {
+            rec.reachedAt = s.clock.now();
+        }
     }
 }
 
@@ -529,13 +593,17 @@ function countKill(s, rec) {
     }
     rec.dead = true;
     s.dying.add(rec.id);
+    if (s.focus === rec.id) {
+        s.focus = null;
+    }
     s.kills++;
     s.window.kills++;
     if (s.kills % PROGRESS_EVERY === 0) {
-        sayTo(s.bot, s.ctx, progressText(s.kills, levelOf(s.bot), storedNow(s)));
+        sayTo(s.bot, s.ctx, progressText(s.kills, s.hits, levelOf(s.bot), storedNow(s)));
     }
 }
 
+// entityDead comes with the killing hit (the probe: the body goes about 1 s later)
 function onDead(s, entity) {
     const rec = entity ? s.records.get(entity.id) : null;
     if (rec && s.clock.now() - rec.lastHitAt <= KILL_WINDOW_MS * 4) {
@@ -553,18 +621,22 @@ function onGone(s, entity) {
     }
     s.records.delete(entity.id);
     s.dying.delete(entity.id);
+    if (s.focus === entity.id) {
+        s.focus = null;
+    }
 }
 
-// A target that took its hits to kill without dying, a kill window after the last hit, counts once as stuck.
-function markStuck(s) {
+// The stuck targets of the window (the lead's rule of 2026-11-13 for the kill check): alive a kill window after they took
+// their stuck hits without dying, and hit in this window; a target that stays stuck counts in every window it is hit.
+function stuckCount(s) {
     const now = s.clock.now();
-    const need = hitsToKill(held(s.bot)?.name ?? null);
+    let n = 0;
     for (const rec of s.records.values()) {
-        if (!rec.dead && !rec.stuck && rec.landed >= need && now - rec.lastHitAt >= KILL_WINDOW_MS && s.bot.entities?.[rec.id]) {
-            rec.stuck = true;
-            s.window.stuck++;
+        if (!rec.dead && rec.reachedAt !== null && now - rec.reachedAt >= KILL_WINDOW_MS && rec.lastHitAt >= s.window.since && s.bot.entities?.[rec.id]) {
+            n++;
         }
     }
+    return n;
 }
 
 function storedNow(s) {
@@ -583,7 +655,7 @@ async function killCheck(s) {
     if (!windowOver(s.window, s.clock.now())) {
         return null;
     }
-    markStuck(s);
+    s.window.stuck = stuckCount(s);
     const bad = windowIsBad(s.window, pointsOf(s.bot));
     const hits = s.window.hits;
     s.window = newWindow(s.clock.now(), pointsOf(s.bot));
@@ -618,14 +690,11 @@ async function loop(s) {
             return finish(s, true, null, stopMinutesText(s.until.minutes, s.kills, storedNow(s)));
         }
         const now = s.clock.now();
-        // the night (K-5): the bed by the room, then back
+        // the night (K-5): the bed by the room, then back; without a bed the farm goes on (said once)
         if (isNight(bot.time?.timeOfDay) && now >= s.sleepRetryAt) {
             await sleepStep(s);
-            if (bot.interrupt_code) {
-                continue;
-            }
             if (!s.bed) {
-                s.sleepRetryAt = now + SLEEP_RETRY_MS * 20; // said once; the night passes by itself
+                s.sleepRetryAt = Infinity;
             }
             continue;
         }
@@ -639,14 +708,14 @@ async function loop(s) {
             await storeTrip(s);
             continue;
         }
-        // the kill check
         const stop = await killCheck(s);
         if (stop !== null) {
             return finish(s, false, 'no_kill', stop);
         }
-        // the targets: the nearest hostile on a hopper within reach of the eyes, one hit per 600 ms
+        // the target (8.4a): a hostile whose centre is within reach of the eyes, the one hit last until it is gone, else the
+        // nearest; one hit per 600 ms
         const eye = eyeOf(botPos(bot), s.sneaking);
-        const target = eye ? pickTarget(bot.entities, eye, s.hoppers, { skip: s.dying }) : null;
+        const target = eye ? pickTarget(bot.entities, eye, { skip: s.dying, focus: s.focus }) : null;
         if (target && now - s.lastHitAt >= HIT_GAP_MS) {
             const weapon = await ensureWeapon(s);
             if (weapon.interrupted) {
@@ -655,13 +724,12 @@ async function loop(s) {
             if (!weapon.ok) {
                 return finish(s, false, 'no_weapon', weapon.text);
             }
-            if (offStance(s)) {
-                await takeStance(s);
+            if (offStance(s) || !s.sneaking) {
+                await takeStance(s); // a trip for a weapon moved the bot or ended the sneak
                 continue;
             }
             hitTarget(s, target);
         }
-        markStuck(s);
         await s.clock.wait(LOOP_MS);
     }
 }
@@ -686,23 +754,36 @@ async function wayOut(s) {
     }
 }
 
+function sayStartLine(s) {
+    const last = startSaid.get(s.bot);
+    const now = s.clock.now();
+    if (typeof last === 'number' && now - last >= 0 && now - last < START_LINE_EVERY_MS) {
+        logTo(s.ctx, 'I farm creepers at the kill spot again.');
+        return;
+    }
+    startSaid.set(s.bot, now);
+    sayTo(s.bot, s.ctx, TEXTS.start);
+}
+
 /**
- * !killFarm(until) (spec 8.4). Never throws; ends on bot.interrupt_code (the owner's "stop").
+ * !killFarm(until) (spec 8.4, 8.4a). Never throws; ends on bot.interrupt_code (the owner's "stop", or anything else that
+ * ends the action: the job of the kind kill_farm brings the farm back).
  * @param {object} bot
  * @param {object} ctx the pack context: places, chests, storage, tools, routes (optional), log, say, now
  * @param {string} [until] '', `level N` or `N minutes`
  * @param {{now?: Function, wait?: Function, sleep?: Function, eat?: Function}} [options] the clock of the tests; `sleep` and
  *   `eat` replace sleepInBed and eatBestFood of the home pack (tests)
  * @returns {Promise<{ok: boolean, reason: string|null, text: string, kills: number, hits: number, stored: number, level: number, ms: number}>}
- *   reasons: null (the level or the time reached), bad_until, no_spot, no_way, no_hopper, no_slab, no_weapon, no_kill, low_health, interrupted
+ *   reasons: null (the level or the time reached), bad_until, no_spot, no_way, no_hopper, no_slab, no_weapon, no_kill, low_health,
+ *   interrupted, error
  */
 export async function killFarm(bot, ctx = {}, until = '', options = {}) {
     const clock = clockOf(ctx, options);
     const s = {
         bot, ctx: ctx ?? {}, clock, started: clock.now(), until: parseUntil(until),
-        spot: null, hoppers: [], aim: null, chest: null, bed: null, cameFrom: botPos(bot), stance: null, sneaking: false, extraSteps: 0,
-        kills: 0, hits: 0, lastHitAt: -Infinity, records: new Map(), dying: new Set(), window: null, badWindows: 0,
-        storedByMe: 0, storedAll: {}, storeFailedAt: null, ateAt: -Infinity, saidNoFood: false, saidNoBed: false, sleepRetryAt: 0,
+        spot: null, aim: null, chest: null, bed: null, cameFrom: botPos(bot), stance: null, sneaking: false, extraSteps: 0,
+        kills: 0, hits: 0, lastHitAt: -Infinity, focus: null, records: new Map(), dying: new Set(), window: null, badWindows: 0,
+        storedByMe: 0, storeFailedAt: null, ateAt: -Infinity, saidNoFood: false, saidNoBed: false, sleepRetryAt: 0, spareRetryAt: 0,
         sleep: typeof options?.sleep === 'function' ? options.sleep : sleepInBed,
         eat: typeof options?.eat === 'function' ? options.eat : eatBestFood,
     };
@@ -737,11 +818,10 @@ export async function killFarm(bot, ctx = {}, until = '', options = {}) {
         return finish(s, false, 'no_way', TEXTS.noWay);
     }
     // the room check at the spot
-    const room = checkRoom(nameReader(bot), s.spot);
+    const room = checkRoom(blockNames(bot), s.spot);
     if (!room.ok) {
         return finish(s, false, room.reason, room.reason === 'no_hopper' ? TEXTS.noHopper : TEXTS.noSlab);
     }
-    s.hoppers = room.hoppers;
     const first = room.hoppers.find(h => room.towards && (h.x - s.spot.x) * room.towards.x + (h.z - s.spot.z) * room.towards.z > 0) ?? room.hoppers[0];
     s.aim = new Vec3(first.x + 0.5, first.y + 1.6, first.z + 0.5);
     s.chest = chestOfRoom(s);
@@ -756,7 +836,7 @@ export async function killFarm(bot, ctx = {}, until = '', options = {}) {
         bot.on?.('entityHurt', hurt);
         bot.on?.('entityDead', dead);
         bot.on?.('entityGone', gone);
-        sayTo(bot, ctx, TEXTS.start);
+        sayStartLine(s);
         const weapon = await ensureWeapon(s);
         if (weapon.interrupted || bot.interrupt_code) {
             return finish(s, false, 'interrupted', stoppedText(0, storedNow(s)));

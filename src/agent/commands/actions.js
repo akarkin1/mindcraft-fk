@@ -19,6 +19,7 @@ import { isPenWord, penAllowedText, noPenText } from '../areas/keep_out_logic.js
 import { permitPenNear } from '../areas/pen_gate.js';
 import { leaveGameText, LEAVE_GAME_NOTE } from '../library/skill_texts.js'; // v0.1.4.14 (P-28): !leaveGame
 import { ROUTINES_OFF } from '../routines/routine_texts.js'; // v0.1.4.15 (part R): the routine commands answer with agent.routines
+import { ALLOW_SAID_TEXT, allowTakingText, noWordText, normalizeItemName } from '../world/stock_permits.js'; // v0.1.4.16 (SPEC 8.1, E6): a store, no pack
 
 
 // v0.1.4.8, I5 (S3, S4): a command that was stopped starts no turn of the model. What it did so far goes
@@ -371,6 +372,45 @@ const ROUTES_OFF = 'The routes pack is off.';
 const MINE_ROUTES_OFF = 'The mine routes are off. They need mine_routes, mining_pack and routes_pack.';
 // v0.1.4.15 (part S, SPEC 2.5): the commands of the survey pack (hidden while base_survey is off)
 const SURVEY_OFF = 'The base survey is off.';
+// v0.1.4.16 (SPEC 8.0): the three packs of round two, each hidden while its switch is off; !allowTaking with any of them
+const BREEDING_OFF = 'The breeding pack is off.';
+const ENCHANTING_OFF = 'The enchanting pack is off.';
+const AFK_KILL_OFF = 'The AFK kill pack is off.';
+
+// v0.1.4.16 (SPEC 8.1, E6, O-3): the player whose word !allowTaking carries: who typed it, else who the model answered with
+// it; null for the model on its own, a round of a routine, a job's resume or another bot: the bot never gives itself a permit.
+function permitGiver(agent) {
+    const typed = typedCommandPlayer(agent, '!allowTaking');
+    if (typed !== null)
+        return typed;
+    const order = agent?.last_order;
+    if (order !== null && typeof order === 'object' && order.command === '!allowTaking' && typeof order.by === 'string' && order.by !== ''
+        && order.by !== 'system' && order.by !== agent?.name)
+        return order.by;
+    return null;
+}
+
+// v0.1.4.16 (SPEC 8.1, E6): !allowTaking sets the permit of the world's stock (ctx.permits) and says the line through
+// agent.sayText; the model gets the short answer, a typed order the line itself. Without a player's word the permit stays as it
+// was and the model gets the no-permit line. Never throws.
+function allowTaking(agent, permits, item, allowed) {
+    const name = normalizeItemName(item);
+    if (name === null)
+        return { ok: false, reason: 'bad_name', text: `Invalid item type: ${item}.` };
+    if (permitGiver(agent) === null) {
+        const text = noWordText(name);
+        console.log(`!allowTaking(${JSON.stringify(name)}, ${allowed}): no player's word, the permit stays: ${text}`);
+        return { ok: false, reason: 'no_word', text };
+    }
+    const saved = permits.set(name, allowed === true);
+    if (!saved)
+        return { ok: false, reason: 'error', text: `Invalid item type: ${item}.` };
+    const line = allowTakingText(saved.item, saved.allowed);
+    if (typedCommandPlayer(agent, '!allowTaking') !== null)
+        return { ok: true, reason: null, text: line };
+    agent.sayText?.(line);
+    return { ok: true, reason: null, text: ALLOW_SAID_TEXT, said: line };
+}
 
 /**
  * v0.1.4.9 (section 2): mine_routes as it takes effect. It needs mining_pack and routes_pack; without
@@ -1324,6 +1364,75 @@ export const actionsList = [
             if (!settings.base_survey)
                 return SURVEY_OFF;
             return await runPack(agent, 'goToBase', agent.work_packs?.survey, 'survey', (pack, bot, ctx) => pack.goToBase(bot, ctx, name));
+        }
+    },
+    // v0.1.4.16 (SPEC 8.2, E6): the breeding pack, behind breeding (the pack is loaded by _loadWorkPacks); !breed moves the bot
+    // around the pen, so it runs as a pack action (!stop ends it)
+    {
+        name: '!breed',
+        description: 'Breed the animals of a saved pen from outside its fence: feed pairs until count new animals, never opening a gate.',
+        params: {
+            'pen': { type: 'string', description: 'The saved pen, for example "cow_pen".' },
+            'count': { type: 'int', description: 'The new animals wanted.', domain: [1, 12, '[]'], default: 2 }
+        },
+        perform: async function (agent, pen, count) {
+            if (!settings.breeding)
+                return BREEDING_OFF;
+            return await runPack(agent, 'breed', agent.work_packs?.breeding, 'breeding', (pack, bot, ctx) => pack.breed(bot, ctx, pen, count));
+        }
+    },
+    // v0.1.4.16 (SPEC 8.3, E7): the enchanting pack, behind enchanting (the pack is loaded by _loadWorkPacks). !enchant walks to the
+    // table and holds its window open while the question waits, so it runs as a pack action (!stop ends it and the item comes
+    // back); !enchantTake is the owner's answer, a plain command that stops no running action
+    {
+        name: '!enchant',
+        description: 'Enchant an item at the enchanting table with the bot\'s lapis: choice "" asks you which offer, else a number 1 to 3 or an enchantment name takes that offer.',
+        params: {
+            'item': { type: 'string', description: 'The item, for example "diamond_pickaxe" or "pickaxe".' },
+            'choice': { type: 'string', description: '"", 1 to 3, or an enchantment name.', default: '' }
+        },
+        perform: async function (agent, item, choice) {
+            if (!settings.enchanting)
+                return ENCHANTING_OFF;
+            return await runPack(agent, 'enchant', agent.work_packs?.enchanting, 'enchanting', (pack, bot, ctx) => pack.enchant(bot, ctx, item, choice));
+        }
+    },
+    {
+        name: '!enchantTake',
+        description: 'Answer the bot\'s enchanting question: 1, 2 or 3 take that offer, 0 takes the item back.',
+        params: {'n': { type: 'int', description: 'The offer, 0 for none.', domain: [0, 3, '[]'] }},
+        perform: async function (agent, n) {
+            if (!settings.enchanting)
+                return ENCHANTING_OFF;
+            return await runPlain(agent, agent.work_packs?.enchanting, 'enchanting', (pack) => pack.enchantTake(agent.bot, agent.packContext(), n));
+        }
+    },
+    // v0.1.4.16 (SPEC 8.4 and 8.4a, E8): the AFK creeper kill, behind afk_kill (the pack is loaded by _loadWorkPacks); it runs as one
+    // pack action until "stop" (!stop ends the action and the job), the level or the time of `until`; with job_memory the job of
+    // the kind kill_farm brings it back after anything else ended the action
+    {
+        name: '!killFarm',
+        description: 'Farm creepers at the saved kill spot: climb there, kill what lands on the hoppers, store the drops, eat and sleep, until you say stop, or until "level 30" or "20 minutes".',
+        params: {'until': { type: 'string', description: '"level N", "N minutes", or empty.', default: '' }},
+        perform: async function (agent, until) {
+            if (!settings.afk_kill)
+                return AFK_KILL_OFF;
+            return await runPack(agent, 'killFarm', agent.work_packs?.afk_kill, 'AFK kill', (pack, bot, ctx) => pack.killFarm(bot, ctx, until));
+        }
+    },
+    // v0.1.4.16 (SPEC 8.1, E6): the owner's permit to take an item from the known chests, behind breeding, enchanting or afk_kill;
+    // a plain command: it moves nothing and stops no running action (the feeding waits for it)
+    {
+        name: '!allowTaking',
+        description: 'Allow (true) or forbid (false) the bot to take an item from the chests it knows for its work, for example wheat or lapis_lazuli.',
+        params: {
+            'item': { type: 'ItemName', description: 'The item.' },
+            'allowed': { type: 'boolean', description: 'true or false.' }
+        },
+        perform: async function (agent, item, allowed) {
+            if (!settings.breeding && !settings.enchanting && !settings.afk_kill)
+                return BREEDING_OFF;
+            return await runPlain(agent, agent.packContext().permits ?? null, 'stock permits', (permits) => allowTaking(agent, permits, item, allowed));
         }
     },
     {
