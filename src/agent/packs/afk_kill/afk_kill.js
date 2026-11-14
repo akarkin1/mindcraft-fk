@@ -260,8 +260,13 @@ function sleepContext(s) {
             : (typeof places?.recallPlaceInfo === 'function' ? places.recallPlaceInfo(name) : undefined))),
         remember: (...args) => (typeof places?.remember === 'function' ? places.remember(...args)
             : (typeof places?.rememberPlace === 'function' ? places.rememberPlace(...args) : false)),
-        list: () => (typeof places?.list === 'function' ? places.list() : []),
     };
+    // the places for the home pack's check of the villagers' beds: a PlaceStore lists them, a MemoryBank gives its JSON
+    if (typeof places?.list === 'function') {
+        wrap.list = () => places.list();
+    } else if (typeof places?.getJson === 'function') {
+        wrap.getJson = () => places.getJson();
+    }
     return { ...ctx, places: wrap };
 }
 
@@ -527,6 +532,21 @@ async function sleepStep(s) {
             s.saidNoBed = true;
             sayTo(s.bot, s.ctx, TEXTS.noBed);
         }
+        return;
+    }
+    // the kill bed is the only bed (8.4): gone or taken, the bot farms on and looks again after a minute
+    let block = null;
+    try {
+        block = s.bot.blockAt(new Vec3(s.bed.x, s.bed.y, s.bed.z));
+    } catch {
+        block = null;
+    }
+    const props = typeof block?.getProperties === 'function' ? block.getProperties() : (block?._properties ?? {});
+    if (!block || !isBedName(block.name) || props.occupied === true || props.occupied === 'true') {
+        logTo(s.ctx, !block || !isBedName(block.name)
+            ? `The kill bed at (${s.bed.x}, ${s.bed.y}, ${s.bed.z}) is gone; I farm on.`
+            : 'The kill bed is taken; I farm on.');
+        s.sleepRetryAt = s.clock.now() + SLEEP_RETRY_MS;
         return;
     }
     sneak(s, false);

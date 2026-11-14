@@ -436,12 +436,45 @@ describe('the night and the food', () => {
             return { ok: true, reason: null, text: 'I slept. It is morning.' };
         };
         const s = scene({ places: { kill_bed: { x: 3, y: 64, z: -1 } } });
+        s.world.bed(3, 64, -1, { facing: 'east' });
         s.bot.time.timeOfDay = 18000;
         const r = await s.run('1 minutes', { sleep });
         assert.equal(r.ok, true);
         assert.deepEqual(sleeps, [{ x: 3, y: 64, z: -1, dimension: 'overworld' }]);
         assert.ok(s.logs.includes('I slept. It is morning.'));
         assert.ok(r.kills > 0, 'the loop resumed after the sleep');
+    });
+
+    test('the kill bed is the only bed: taken, or gone, the bot farms on (no sleep elsewhere)', async () => {
+        for (const occupied of [true, null]) {
+            const sleeps = [];
+            const s = scene({ places: { kill_bed: { x: 3, y: 64, z: -1 } } });
+            if (occupied) s.world.bed(3, 64, -1, { facing: 'east', occupied: true });
+            s.bot.time.timeOfDay = 18000;
+            const r = await s.run('1 minutes', { sleep: async () => { sleeps.push(1); return { ok: true }; } });
+            assert.equal(r.ok, true);
+            assert.equal(sleeps.length, 0);
+            assert.ok(s.logs.includes(occupied ? 'The kill bed is taken; I farm on.' : 'The kill bed at (3, 64, -1) is gone; I farm on.'), s.logs.join(' | '));
+            assert.ok(r.kills > 0);
+        }
+    });
+
+    test('the sleep context of a MemoryBank: my_bed is the kill bed, its places come as JSON (the villagers\' beds check)', async () => {
+        let seen = null;
+        const s = scene({ places: { kill_bed: { x: 3, y: 64, z: -1 } } });
+        s.world.bed(3, 64, -1, { facing: 'east' });
+        s.ctx.places = {
+            recallPlaceInfo: (name) => (s.places[name] ? { ...s.places[name], dimension: 'overworld' } : undefined),
+            getJson: () => ({ trading_hall: [40, 64, 40] }),
+        };
+        s.bot.time.timeOfDay = 18000;
+        await s.run('1 minutes', { sleep: async (bot, ctx) => {
+            seen = { bed: ctx.places.recall('my_bed'), spot: ctx.places.recall('kill_spot'), json: ctx.places.getJson?.(), list: typeof ctx.places.list };
+            bot.time.timeOfDay = 1000;
+            return { ok: true, text: 'I slept. It is morning.' };
+        } });
+        assert.deepEqual(seen, { bed: { x: 3, y: 64, z: -1, dimension: 'overworld' }, spot: { x: 0, y: 64, z: 0, dimension: 'overworld' },
+            json: { trading_hall: [40, 64, 40] }, list: 'undefined' });
     });
 
     test('at night without a bed: the line once, the farm goes on', async () => {

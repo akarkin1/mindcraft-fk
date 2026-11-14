@@ -992,7 +992,10 @@ async function collectBlocks(bot, blockType, num, exclude, blocktypes, breaks, t
             brokenNames[a.name] = (brokenNames[a.name] ?? 0) + 1;
         }
     }
-    const result = await collectResult(bot, blockType, mostBroken(brokenNames, breaks.names()), collected, invBefore, stood);
+    // v0.1.4.16 (T4's W133 rerun: `I broke 1 granite` while nothing broke on the server): the count is the bot's own (P-20);
+    // the block updates only check it and never raise it (a block that only left the bot's view counted as broken)
+    noteUncountedBreaks(brokenNames, breaks.names());
+    const result = await collectResult(bot, blockType, brokenNames, collected, invBefore, stood);
     log(bot, result.text);
     return result.got;
 }
@@ -1178,12 +1181,18 @@ function gainOf(before, after, names) {
     return [...new Set(names)].reduce((n, name) => n + (gain[name] ?? 0), 0);
 }
 
-// X11: per name the larger count of the own count and the watched count.
-function mostBroken(own, watched) {
-    const out = { ...own };
-    for (const [name, n] of Object.entries(watched))
-        out[name] = Math.max(out[name] ?? 0, n);
-    return out;
+// v0.1.4.16 (T4's W133 rerun): the watched breaks are a check of the own count, never a count of their own (before, the larger
+// of the two counted: X11's mostBroken). A name the block updates show gone more often than the bot broke it is logged only.
+function noteUncountedBreaks(own, watched) {
+    try {
+        for (const [name, n] of Object.entries(watched ?? {})) {
+            const more = n - (own?.[name] ?? 0);
+            if (more > 0)
+                console.log(`Collect: the block updates show ${more} more ${name} gone near the bot than it broke itself; not counted.`);
+        }
+    } catch (err) {
+        // only a note
+    }
 }
 
 // v0.1.4.8 (B1, F4): the result of collectBlock names what the inventory gained, not what was broken

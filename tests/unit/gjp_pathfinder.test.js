@@ -535,3 +535,31 @@ describe('the patch file', () => {
         }
     });
 });
+
+// v0.1.4.16, T4's W133 rerun (2026-11-14): !collectBlocks of a granite in a closed cave dug a 1 x 1 shaft down to one block above
+// the cave's ceiling, the mode torch_placing put a torch into the bot's own feet cell (`Placed torch at (472, 55, 0)`) and the path
+// search ended with `Took to long to decide path to goal`. The torch is no cause: out of the feet node the moves are the same
+// with it as without it (the tower breaks it first, at no extra cost; the dig down never looks at the feet cell).
+describe('a torch in the feet cell of a 1 x 1 shaft', () => {
+    function shaftMoves(torch) {
+        const world = blockWorld(makeWorld({ groundY: 63 }));
+        world.fill(0, 56, 0, 0, 63, 0, 'air'); // the shaft, the feet at y 56
+        if (torch) world.set(0, 56, 0, 'torch');
+        return movementsOf(simBot(world, [0.5, 56, 0.5])).getNeighbors({ x: 0, y: 56, z: 0, remainingBlocks: 64 });
+    }
+    const cells = (list) => list.map((p) => `${p.x},${p.y},${p.z}`);
+
+    test('the same moves and costs with the torch as without it; the dig down breaks the floor only, the tower the torch first', () => {
+        const without = shaftMoves(false);
+        const lit = shaftMoves(true);
+        assert.deepEqual(lit.map((n) => [at(n), n.cost]), without.map((n) => [at(n), n.cost]));
+        const down = lit.find((n) => at(n) === '0,55,0');
+        assert.ok(down, lit.map(at).join(' '));
+        assert.deepEqual(cells(down.toBreak), ['0,55,0']);
+        const up = lit.find((n) => at(n) === '0,57,0');
+        assert.ok(up, lit.map(at).join(' '));
+        assert.deepEqual(cells(up.toBreak), ['0,56,0'], 'the torch is broken before the block is placed under the bot');
+        assert.equal(up.toPlace.length, 1);
+        assert.deepEqual(cells(without.find((n) => at(n) === '0,57,0').toBreak), []);
+    });
+});
