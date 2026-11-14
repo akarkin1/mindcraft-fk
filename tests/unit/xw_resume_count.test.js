@@ -131,6 +131,20 @@ describe('F5: the count at the start of the trip', () => {
         assert.equal(s.ctx.job.calls.at(-1), r.mined);
     });
 
+    // G-1 (the gate of 62bce43, W85 job_comes_back: 4 raw iron where 8 were ordered): the job's resume orders the remaining
+    // count (wanted - got); the earlier trips' ore in the bag must not count against it again
+    test('a resume of the job (got 2 of 3, the order for the remaining 1) with the 2 coal in the bag mines 1 more', async () => {
+        const s = await scene({ world: coalWorld() });
+        kit(s.bot);
+        give(s.bot, 'coal', 2);
+        s.ctx.job = fakeJob(2, 3);
+        const r = await M.mineOre(s.bot, s.ctx, 'coal', 1, { ...s.opts, newMine: true });
+        assert.equal(r.ok, true, r.text);
+        assert.ok(r.mined >= 1 && r.mined <= 2, `the bag's 2 left out, 1 more mined: ${r.mined}`);
+        assert.ok(s.bot.inventory.items().filter(i => i.name === 'coal').reduce((n, i) => n + i.count, 0) >= 3, 'the bag holds the job\'s 3');
+        assert.equal(s.ctx.job.calls.at(-1), r.mined, 'the report is this run\'s count');
+    });
+
     test('without a job (no ctx.job) everything is as before', async () => {
         const s = await scene({ world: coalWorld() });
         kit(s.bot);

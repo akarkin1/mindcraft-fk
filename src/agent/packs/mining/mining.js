@@ -302,11 +302,20 @@ function hereEntrance(bot, ctx, row) {
     }
 }
 
-// F5: the job's count before this run (ctx.job.progress() without a count answers { ok, got }); 0 without a job.
-function jobGotOf(ctx) {
+// F5: the job's count before this run (ctx.job.progress() without a count answers { ok, got, wanted }); 0 without a job.
+// G-1 (the gate of 62bce43, W85): only for an order of the job's whole count (the owner's order given again, the play's
+// "0 of 32"); a resume of the job orders the remaining count (job_logic resumeCommand: wanted - got), and the ore of the
+// earlier trips must not count again there.
+function jobGotOf(ctx, num) {
     try {
         const r = ctx?.job?.progress?.();
-        return r?.ok === true && isFiniteNumber(r.got) && r.got > 0 ? Math.floor(r.got) : 0;
+        if (r?.ok !== true || !isFiniteNumber(r.got) || r.got <= 0) {
+            return 0;
+        }
+        if (isFiniteNumber(r.wanted) && isFiniteNumber(num) && num < r.wanted) {
+            return 0;
+        }
+        return Math.floor(r.got);
     } catch {
         return 0;
     }
@@ -2519,7 +2528,7 @@ export async function mineOre(bot, ctx = {}, ore = '', count = 8, options = {}) 
     // ore of the earlier trips that is in the bag once: what the job had (ctx.job.progress() without a count) and the bag
     // holds is in the count from the start, and the report to the job leaves it out
     const bagCount = countOf(bot, row.item);
-    const inBag = Math.min(jobGotOf(ctx), bagCount);
+    const inBag = Math.min(jobGotOf(ctx, wanted), bagCount);
     const startCount = bagCount - inBag;
     const stored = {};
     const left = [];
