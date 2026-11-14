@@ -64,7 +64,8 @@ function makeAgent(turns, running = [], chain = undefined) {
     return agent;
 }
 
-const player = (by = 'Owner') => ({ by, at: 1000 });
+// the owner's words that asked for a stop (G-2: the model's !stop of a typed command needs them, STOP_WORDS)
+const player = (by = 'Owner') => ({ by, at: 1000, stop: true });
 const model = () => ({ by: 'model', at: 1000 });
 
 describe('the review\'s cases on executeCommand (the chain as handleMessage leaves it in agent.order_chain)', () => {
@@ -117,10 +118,10 @@ describe('the review\'s cases on executeCommand (the chain as handleMessage leav
 describe('orderChainOf: who stands behind a message', () => {
     test('a player, another bot and the supervisor\'s quiet message give their source; an AUTO MESSAGE, a self prompt and a system line the model', () => {
         const at = 5;
-        assert.deepEqual(C.orderChainOf('Owner', 'get 8 logs', { self: 'andy', at }), { by: 'Owner', at });
-        assert.deepEqual(C.orderChainOf('bob_bot', 'can you get wood?', { self: 'andy', at }), { by: 'bob_bot', at }, 'another bot, as before: its line was a user turn');
-        assert.deepEqual(C.orderChainOf('Owner', 'mine iron', { quiet: true, self: 'andy', at }), { by: 'Owner', at });
-        assert.deepEqual(C.orderChainOf('system', '!collectBlocks("stone", 4)', { quiet: true, self: 'andy', at }), { by: 'supervisor', at });
+        assert.deepEqual(C.orderChainOf('Owner', 'get 8 logs', { self: 'andy', at }), { by: 'Owner', at, stop: false });
+        assert.deepEqual(C.orderChainOf('bob_bot', 'can you get wood?', { self: 'andy', at }), { by: 'bob_bot', at, stop: false }, 'another bot, as before: its line was a user turn');
+        assert.deepEqual(C.orderChainOf('Owner', 'mine iron', { quiet: true, self: 'andy', at }), { by: 'Owner', at, stop: false });
+        assert.deepEqual(C.orderChainOf('system', '!collectBlocks("stone", 4)', { quiet: true, self: 'andy', at }), { by: 'supervisor', at, stop: false });
         assert.deepEqual(C.orderChainOf('system', AUTO, { self: 'andy', at }), { by: 'model', at });
         assert.deepEqual(C.orderChainOf('steve', AUTO, { self: 'andy', at }), { by: 'model', at }, 'a mode\'s line in the last sender\'s name');
         assert.deepEqual(C.orderChainOf('andy', 'I should get wood.', { self: 'andy', at }), { by: 'model', at });
@@ -248,5 +249,41 @@ describe('handleMessage sets agent.order_chain and hands it to the model\'s comm
         await agent.handleMessage('Owner', CHOP);
         assert.ok(agent.opened.includes(WOOD_OFF), agent.opened.join(' | '));
         assert.equal(agent.order_chain.by, 'Owner');
+    });
+});
+
+// The gate of a96685c (G-2, W132 C): the owner's question "how is it going?" answered by the model with !stop while the
+// supervisor's run (a typed command) works: refused; the words that ask for a stop pass (STOP_WORDS).
+describe('G-2: only words that ask for a stop let the model\'s !stop end a typed command', () => {
+    const SUPERVISORS = () => [{ name: '!collectBlocks', args: ['stone', 2], text: '!collectBlocks("stone", 2)', typed: true, by: 'MartyByrde2' }];
+
+    test('W132 C: "how is it going?" answered with !stop ends nothing; the refusal goes to the model', async () => {
+        const chain = C.orderChainOf('MartyByrde2', 'how is it going?', { self: 'andy' });
+        assert.equal(chain.stop, false);
+        const agent = makeAgent([{ role: 'user', content: 'MartyByrde2: how is it going?' }], SUPERVISORS(), chain);
+        assert.equal(await C.executeCommand(agent, '!stop', { typed: false, chain }), C.ORDER_TEXTS.playersOrder);
+        assert.deepEqual(agent.stopped, []);
+        // nothing typed runs: the model's !stop is free as before
+        const free = makeAgent([], [], chain);
+        assert.equal(await C.executeCommand(free, '!stop', { typed: false, chain }), STOPPED);
+    });
+
+    test('the words that ask for a stop pass, also from the supervisor\'s quiet message', async () => {
+        for (const words of ['stop', 'Stop the farm please', 'ok that is enough', 'cancel that', 'hold on', 'never mind', 'wait']) {
+            const chain = C.orderChainOf('MartyByrde2', words, { self: 'andy' });
+            assert.equal(chain.stop, true, words);
+            const agent = makeAgent([], SUPERVISORS(), chain);
+            assert.equal(await C.executeCommand(agent, '!stop', { typed: false, chain }), STOPPED, words);
+        }
+        const quiet = C.orderChainOf('system', 'stop', { quiet: true, self: 'andy' });
+        assert.deepEqual([quiet.by, quiet.stop], ['supervisor', true]);
+        for (const words of ['how is it going?', 'get 8 logs', 'unstoppable', 'the bus stop']) {
+            assert.equal(C.orderChainOf('MartyByrde2', words, { self: 'andy' }).stop, words === 'the bus stop', words);
+        }
+    });
+
+    test('!setMode in a player\'s chain passes whatever the words (the mode command has its own guards)', () => {
+        const chain = C.orderChainOf('MartyByrde2', 'turn off the creeper safety', { self: 'andy' });
+        assert.equal(C.orderRefusal(makeAgent([], SUPERVISORS(), chain), '!setMode', 'model', chain), null);
     });
 });

@@ -8,11 +8,11 @@
 // (the switch-guard rule of glue2_flags_off): those come through ctx.
 export { BED_RANGE, CHECK_HITS, CHECK_WINDOW_MS, CHEST_RANGE, CREEPER_HEALTH, CREEPER_MODE, DEFAULT_HEIGHT, EAT_AT_FOOD, EYE_SNEAK, EYE_STAND,
     FORBIDDEN_MATERIALS, HIT_GAP_MS, HOPPER_RANGE, KILL_CHEST_NAMES, KILL_DROPS, KILL_REACH, KILL_WINDOW_MS, LOOK_RANGE, LOOP_MS, LOW_HEALTH,
-    NOT_KILL_TARGETS, PAUSED_MODES, PROGRESS_EVERY, ROOM_RANGE, SPARE_AT, STEP_MORE_MS, STEP_MS, STORE_FREE_SLOTS, STUCK_HITS, WEAPONS,
-    WEAPON_CHEST_RANGE, WEAPON_NAMES, WEAPON_WEAR, badWindowVerdict, bagCounts, blockDistance, cellsNear, centreOf, checkRoom, chestKey,
-    chooseWeapon, directionTo, distance, eyeOf, gainedDrops, gunpowderByChest, hitsToKill, hopperCells, isForbiddenItem, isHostileEntity,
-    isKillChestName, isKillTarget, isSlabName, isWeaponName, isWorn, needsSpare, newWindow, parseUntil, pickTarget, rowBetween, stopReason,
-    storeDue, storedFigure, stuckHits, usesLeft, windowIsBad, windowOver } from './afk_logic.js';
+    NOT_KILL_TARGETS, PAUSED_MODES, PROGRESS_EVERY, ROOM_RANGE, SPARE_AT, STEP_MORE_MS, STEP_MS, STORE_FREE_SLOTS, STORE_RETRY_MS, STUCK_HITS,
+    WALK_PAUSED_MODES, WEAPONS, WEAPON_CHEST_RANGE, WEAPON_NAMES, WEAPON_WEAR, badWindowVerdict, bagCounts, blockDistance, cellsNear, centreOf,
+    checkRoom, chestKey, chooseWeapon, cleanCounts, directionTo, distance, eyeOf, gainedDrops, gunpowderByChest, hitsToKill, hopperCells,
+    isForbiddenItem, isHostileEntity, isKillChestName, isKillTarget, isSlabName, isWeaponName, isWorn, needsSpare, newWindow, parseUntil,
+    pickTarget, rowBetween, spotPausedModes, stopReason, storeDue, storedFigure, stuckHits, usesLeft, windowIsBad, windowOver } from './afk_logic.js';
 export { TEXTS, badUntilText, countList, creepersText, durationText, lowHealthText, noWeaponText, progressText, stepCloserText,
     stopLevelText, stopMinutesText, stoppedText, storedLineText, storedText, wornWeaponText } from './texts.js';
 export { KILL_SPOT, KILL_CHEST, KILL_BED, KILL_EXIT, START_LINE_EVERY_MS, killFarm } from './afk_kill.js';

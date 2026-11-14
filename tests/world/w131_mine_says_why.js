@@ -210,6 +210,12 @@ await scenarioMain({
             // the plate (the shaft starts where the bot stands, a cell at most from the centre)
             const plateAt = thereE ? { x: Math.floor(atE.x), y: bedrockAt.y, z: Math.floor(atE.z) } : bedrockAt;
             await commands([`fill ${plateAt.x - 1} ${plateAt.y} ${plateAt.z - 1} ${plateAt.x + 1} ${plateAt.y} ${plateAt.z + 1} minecraft:bedrock`]);
+            // the gate of a96685c (G-2): B's shaft takes 5 to 7 of the kit's 8 ladders (how deep it gets before the stop), and with 1
+            // left E's shaft turned into a staircase under the grass, whose column stands in the open air ("Lava, water or caves block
+            // the way down at (x, 63, z): air"; B-15). E is about the plate: the kit's 8 ladders again
+            const laddersE = (await inventoryOf(NAME)).ladder || 0;
+            if (laddersE < 8) await giveItems(NAME, [['ladder', 8 - laddersE]], agent.bot);
+            note(`E: the bot had ${laddersE} ladders before E${laddersE < 8 ? `, given ${8 - laddersE}` : ''}`);
             const tE = Date.now();
             const infoE = await orders.orderInfo('!mineOre("iron", 2, true)', 150000);
             const replyE = String(infoE.reply);
@@ -218,6 +224,11 @@ await scenarioMain({
             const oneOf = (v) => `(?:${v - 1}|${v}|${v + 1})`;
             const couldNot = new RegExp(String.raw`I could not dig the bedrock at \(${oneOf(plateAt.x)}, ${plateAt.y}, ${oneOf(plateAt.z)}\)`);
             note(`E: !mineOre("iron", 2, true) over the bedrock plate around ${cellText(plateAt)} ${infoE.done ? `answered after ${(infoE.ms / 1000).toFixed(0)} s` : 'did NOT end within 150 s'}: ${JSON.stringify(replyE.slice(0, 300))}; the bot at ${fmt(await entityPos(NAME))}; the bot said ${JSON.stringify(saidE.slice(0, 8))}; Mining stop lines ${JSON.stringify(stopE.slice(0, 3))}`);
+            // the gate of a96685c (G-2): the pack's own lines of E (the shaft's patches and moves), for a stop that is not the plate's
+            if (!couldNot.test(replyE)) {
+                note(`E: the output since the order ${JSON.stringify(output.lines.filter((l) => l.t >= tE).map((l) => l.text).slice(0, 40))}`);
+                note(`E: the last console lines ${JSON.stringify((s.logs ?? []).map(String).filter((l) => !/^(NOTE|CHECK|TRACE)\b/.test(l.trim())).slice(-40))}`);
+            }
             check(infoE.done && (couldNot.test(replyE) || saidE.some((l) => couldNot.test(l))), `E1: the stop names the block and its position: \`I could not dig the bedrock at (x, ${plateAt.y}, z)\` with a cell of the plate around ${cellText(plateAt)} (F5: a failed dig is dig_failed, not "lava, water or caves")`, JSON.stringify(replyE.slice(0, 300)));
             check(stopE.some((l) => /Mining stop: dig_failed at /.test(l)), 'E2: the log has `Mining stop: dig_failed at (x, y, z), step <step>: <text>`', JSON.stringify(stopE.slice(0, 2)));
             if (!infoE.done && agent.actions.executing) note(`E: !stop answered ${JSON.stringify(await orders.order('!stop', 20000))}`);

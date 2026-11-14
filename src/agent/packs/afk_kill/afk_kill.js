@@ -1,13 +1,16 @@
 // The AFK creeper kill (spec v0.1.4.16, sections 8.4 and 8.4a, E8; the owner's findings K-2 to K-6, M-5, M-6):
-// !killFarm(until). The bot pauses the reflexes the farm does without (from the start, the walk too), walks to the saved
-// place kill_spot, checks the room (hoppers within 3 blocks, a slab over them), switches creeper_safety off, sneaks and
-// steps forward 0.7 s under the slab (the owner's method), and hits the hostile mobs whose centre is within 3 blocks of
-// its eyes, the nearest first, one hit per 600 ms until it is gone, until the owner says stop, the level or the time of
+// !killFarm(until). The bot pauses the reflexes the farm does without (night_shelter and item_collecting from the start, the
+// others at the spot), walks to the saved place kill_spot, checks the room (hoppers within 3 blocks, a slab over them),
+// switches creeper_safety off, sneaks and steps forward 0.7 s under the slab (the owner's method), and hits the hostile mobs
+// whose centre is within 3 blocks of its eyes, the nearest first, one hit per 600 ms until it is gone, until the owner says stop, the level or the time of
 // the order is reached, its health falls under 10, or it has no weapon left. It stores the drops when the bag is nearly full, eats from the bag, sleeps in the
 // bed by the room at night (K-5) and comes back, and replaces a worn weapon (K-6; never a diamond or netherite one).
 // When anything else ends the action, the job of the kind kill_farm (src/agent/job) brings it back with the same until.
 // Zero model calls. Every refusal, question and stop writes one line through ctx.log. Executing: it moves the bot.
 // It imports the home pack only: the chests, the storage and the tools of the other packs come through ctx.
+// v0.1.4.16 FX4 (review 16b): on the walk to the spot only night_shelter and item_collecting are paused, the other reflexes at
+// the spot (finding 2); the bag of the start is the kill_farm job's, kept across its resumes, and a store trip that stored
+// nothing is tried again after 10 minutes (finding 3); the sneak is set again after every meal (finding 6).
 import { Vec3 } from 'vec3';
 import { botPos, clockOf, dimensionOf, logTo, sayTo } from '../home/context.js';
 import { eatBestFood, sleepInBed } from '../home/index.js';
@@ -15,10 +18,10 @@ import { goals, gotoGoal, makeMovements, stopMoving, walkNear } from '../home/mo
 import { isNight } from '../home/night_logic.js';
 import { bedFoot, isBedName } from '../home/sleep_logic.js';
 import {
-    BED_RANGE, CHEST_RANGE, CREEPER_MODE, EAT_AT_FOOD, HIT_GAP_MS, KILL_WINDOW_MS, LOOK_RANGE, LOOP_MS, PAUSED_MODES, PROGRESS_EVERY,
-    STEP_MORE_MS, STEP_MS, WEAPON_CHEST_RANGE, WEAPON_NAMES, WEAPON_WEAR, badWindowVerdict, bagCounts, cellsNear, checkRoom, chestKey, chooseWeapon,
-    distance, eyeOf, gainedDrops, gunpowderByChest, isKillChestName, isWeaponName, isWorn, needsSpare, newWindow, parseUntil, pickTarget,
-    stopReason, storeDue, storedFigure, stuckHits, usesLeft, windowIsBad, windowOver,
+    BED_RANGE, CHEST_RANGE, CREEPER_MODE, EAT_AT_FOOD, HIT_GAP_MS, KILL_WINDOW_MS, LOOK_RANGE, LOOP_MS, PROGRESS_EVERY,
+    STEP_MORE_MS, STEP_MS, WALK_PAUSED_MODES, WEAPON_CHEST_RANGE, WEAPON_NAMES, WEAPON_WEAR, badWindowVerdict, bagCounts, cellsNear, checkRoom, chestKey,
+    chooseWeapon, cleanCounts, distance, eyeOf, gainedDrops, gunpowderByChest, isKillChestName, isWeaponName, isWorn, needsSpare, newWindow, parseUntil,
+    pickTarget, spotPausedModes, stopReason, storeDue, storedFigure, stuckHits, usesLeft, windowIsBad, windowOver,
 } from './afk_logic.js';
 import {
     TEXTS, badUntilText, lowHealthText, noWeaponText, progressText, stepCloserText, stopLevelText, stopMinutesText, stoppedText,
@@ -83,6 +86,22 @@ function freeSlots(bot) {
         // counted below
     }
     return Math.max(0, 36 - items(bot).length);
+}
+
+// v0.1.4.16 FX4 (review 16b, finding 3): the bag of the farm's start. A kill_farm job takes it when it is new and keeps it across
+// its resumes and restarts; ctx.job.progress() without a count answers it ({ ok, reason: 'kill_farm', bagAtStart }). Without a
+// job, or with a job saved before it kept the bag, the bag now.
+function startBag(bot, ctx) {
+    try {
+        const r = ctx?.job?.progress?.();
+        const kept = r?.ok === true && r.reason === 'kill_farm' ? cleanCounts(r.bagAtStart) : null;
+        if (kept) {
+            return kept;
+        }
+    } catch (err) {
+        console.warn('AFK kill: could not read the job\'s bag:', err?.message ?? err);
+    }
+    return bagCounts(items(bot));
 }
 
 // A saved place as { x, y, z, dimension } from ctx.places (a MemoryBank: recallPlaceInfo; a PlaceStore: recall), or null.
@@ -155,6 +174,9 @@ function sneak(s, on) {
 // The fix round of v0.1.4.16 (review finding 8): the paused modes are paused from the start of the order, before the walk to
 // the spot, so that a farm the job resumes at night does not fight night_shelter on the way (pauseModes); creeper_safety is
 // switched off only at the spot, after the room check (creeperOff). restoreModes in the one finally puts back both.
+// v0.1.4.16 FX4 (review 16b, finding 2): before the walk only WALK_PAUSED_MODES (night_shelter, item_collecting) are paused; the
+// others of PAUSED_MODES (self_defense, cowardice, self_preservation, hunger...) keep watch on the way and are paused at the spot,
+// where creeperOff runs (spotPausedModes), into the same record, so the one finally unpauses them all, also after a failed walk.
 
 function creeperOff(bot, saved) {
     const modes = bot?.modes;
@@ -173,13 +195,16 @@ function creeperOff(bot, saved) {
     }
 }
 
-function pauseModes(bot) {
+// Pauses the modes of `names` that exist, noted in `saved` (a new record without it) for restoreModes. Returns the record.
+function pauseModes(bot, names, saved = { creeperWasOn: null, paused: [] }) {
     const modes = bot?.modes;
-    const saved = { creeperWasOn: null, paused: [] };
     if (!modes) {
         return saved;
     }
-    for (const name of PAUSED_MODES) {
+    for (const name of names) {
+        if (saved.paused.includes(name)) {
+            continue;
+        }
         try {
             if (typeof modes.exists === 'function' && !modes.exists(name)) {
                 continue;
@@ -539,7 +564,14 @@ async function ensureWeapon(s) {
 // The store trip (8.4; the fix round, review finding 10): only the drops the bag gained since the farm started go to the kill
 // chest (the counts of the start are kept: the bot's own string, arrows or bow stay; its sticks, tools and food are never
 // drops). Nothing gained, or a trip that stored nothing (the chest full or out of reach): no trip again until the bag's free
-// slots drop under what they are now (s.storeMark), so a bag full of the bot's own things never takes it off the spot.
+// slots drop under what they are now (s.storeMark), so a bag full of the bot's own things never takes it off the spot;
+// v0.1.4.16 FX4 (review 16b, finding 3): or until STORE_RETRY_MS (10 minutes) passed since (s.storeMarkAt), also with 0 free
+// slots (the owner may have emptied the chest).
+function markStore(s, free) {
+    s.storeMark = free;
+    s.storeMarkAt = s.clock.now();
+}
+
 async function storeTrip(s, free) {
     const storage = s.ctx?.storage;
     if (!s.chest || typeof storage?.storeItems !== 'function') {
@@ -552,7 +584,7 @@ async function storeTrip(s, free) {
     const gained = gainedDrops(s.bagAtStart, bagCounts(items(s.bot)));
     const only = Object.keys(gained);
     if (only.length === 0) {
-        s.storeMark = free; // the bag is full of the bot's own things: it stays at the spot
+        markStore(s, free); // the bag is full of the bot's own things: it stays at the spot
         return;
     }
     const keep = Object.fromEntries(only.map(name => [name, s.bagAtStart[name] ?? 0]));
@@ -574,17 +606,20 @@ async function storeTrip(s, free) {
     }
     if (Object.values(stored).some(n => (num(n) ?? 0) > 0)) {
         s.storeMark = null;
+        s.storeMarkAt = null;
         logTo(s.ctx, storedLineText(stored)); // the quiet line
         await lookAtChests(s); // the bot is by the chests anyway: the figure of the progress line
     } else {
         logTo(s.ctx, `I stored nothing in the kill chest. ${res?.text ?? ''}`.trim());
-        s.storeMark = freeSlots(s.bot);
+        markStore(s, freeSlots(s.bot));
     }
     await takeStance(s);
 }
 
 // The meal (the fix round, review finding 4): eaten sneaking at the spot; standing up would let a creeper see the bot over
-// the slab for the whole meal.
+// the slab for the whole meal. v0.1.4.16 FX4 (review 16b, finding 6): the sneak is set again after every meal, whatever the
+// meal did: eatBestFood may walk to food lying near when the bag has none, and the walk's stop clears the controls while
+// s.sneaking stays true.
 async function eatStep(s) {
     let res;
     try {
@@ -592,6 +627,7 @@ async function eatStep(s) {
     } catch (err) {
         res = { ok: false, ate: 0, reason: 'error', text: `${err?.message ?? err}` };
     }
+    sneak(s, true);
     if (res?.reason === 'interrupted' || s.bot.interrupt_code) {
         return;
     }
@@ -833,8 +869,10 @@ async function loop(s) {
             continue;
         }
         // the drops: the chest when the bag has 4 free slots or fewer, and fewer than after a trip that stored nothing (finding 10)
+        // or 10 minutes after it (FX4, review 16b, finding 3)
         const free = s.chest ? freeSlots(bot) : null;
-        if (s.chest && storeDue(free, s.storeMark) && now - (s.storeFailedAt ?? -Infinity) >= 120000) {
+        const markAge = s.storeMarkAt === null ? null : now - s.storeMarkAt;
+        if (s.chest && storeDue(free, s.storeMark, markAge) && now - (s.storeFailedAt ?? -Infinity) >= 120000) {
             await storeTrip(s, free); // nothing gained: it sets the mark and the bot stays; the next pass goes on to the hit
             continue;
         }
@@ -915,8 +953,9 @@ export async function killFarm(bot, ctx = {}, until = '', options = {}) {
         kills: 0, hits: 0, lastHitAt: -Infinity, focus: null, records: new Map(), dying: new Set(), window: null, badWindows: 0,
         storedByMe: 0, storedOutside: 0, lookFirst: null, lookLast: null, storeFailedAt: null, ateAt: -Infinity, saidNoFood: false, saidNoBed: false, sleepRetryAt: 0, spareRetryAt: 0,
         // the fix round (finding 10): the bag when the farm started (a store trip takes only what was gained since), and the free
-        // slots after a trip that stored nothing (no trip again until they drop under it)
-        bagAtStart: bagCounts(items(bot)), storeMark: null,
+        // slots after a trip that stored nothing (no trip again until they drop under it); v0.1.4.16 FX4 (review 16b, finding 3):
+        // the bag of the job's start across its resumes (startBag), and the time of the mark (a trip again after STORE_RETRY_MS)
+        bagAtStart: startBag(bot, ctx), storeMark: null, storeMarkAt: null,
         sleep: typeof options?.sleep === 'function' ? options.sleep : sleepInBed,
         eat: typeof options?.eat === 'function' ? options.eat : eatBestFood,
     };
@@ -928,9 +967,10 @@ export async function killFarm(bot, ctx = {}, until = '', options = {}) {
         return finish(s, false, 'no_spot', TEXTS.noSpot);
     }
     s.spot = { x: spot.x, y: spot.y, z: spot.z };
-    // the fix round (finding 8): the reflexes the farm pauses are paused from here, before the walk to the spot (a farm the job
-    // resumes at night does not fight night_shelter on the way); creeper_safety goes off at the spot; both come back in the finally
-    const modes = pauseModes(bot);
+    // the fix round (finding 8): night_shelter is paused from here, before the walk to the spot (a farm the job resumes at night
+    // does not fight it on the way); v0.1.4.16 FX4 (review 16b, finding 2): with item_collecting only (WALK_PAUSED_MODES), the
+    // other paused modes and creeper_safety at the spot; all come back in the finally
+    const modes = pauseModes(bot, WALK_PAUSED_MODES);
     const hurt = (entity) => onHurt(s, entity);
     const dead = (entity) => onDead(s, entity);
     const gone = (entity) => onGone(s, entity);
@@ -974,6 +1014,7 @@ export async function killFarm(bot, ctx = {}, until = '', options = {}) {
         s.bed = bedOfRoom(s);
         logTo(ctx, `The kill room: ${room.hoppers.length} hoppers, the slab at (${room.slab.x}, ${room.slab.y}, ${room.slab.z}), `
             + `the chest ${s.chest ? `at (${s.chest.x}, ${s.chest.y}, ${s.chest.z})` : 'unknown'}, the bed ${s.bed ? `at (${s.bed.x}, ${s.bed.y}, ${s.bed.z})` : 'unknown'}.`);
+        pauseModes(bot, spotPausedModes(), modes); // v0.1.4.16 FX4 (review 16b, finding 2): self_defense and the others at the spot
         creeperOff(bot, modes);
         bot.on?.('entityHurt', hurt);
         bot.on?.('entityDead', dead);

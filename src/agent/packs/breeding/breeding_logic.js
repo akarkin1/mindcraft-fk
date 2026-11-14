@@ -2,6 +2,7 @@
 // cap, the stand ring outside the fence, the gates to keep away from, the adults in reach and the new babies. No
 // mineflayer, no src/agent/library, no other pack. Every function here never throws for a missing argument.
 import { expandBox, isBox } from '../home/box_math.js';
+import { isNoStandBlock } from '../home/stand_logic.js'; // v0.1.4.16 FX4 (review 16b, finding 1): the floor of a ring cell
 
 /** The feed of the species the pack breeds: the first item is the one it prefers, the others feed the species too. */
 export const FEED = Object.freeze({
@@ -249,6 +250,98 @@ export function standRing(fenceBox) {
     for (let x = x1 - 1; x >= x0; x--) ring.push({ x, z: z1 });
     for (let z = z1 - 1; z > z0; z--) ring.push({ x: x0, z });
     return ring;
+}
+
+// ---- v0.1.4.16 FX4 (review 16b, finding 1): the ring cells the bot can stand on ----
+// The ring is geometry: cells in a house wall, a neighbouring pen's fence, water or under a hay bale are in it. The walk to the
+// pen skips the cells the bot surely cannot stand on.
+
+/** Liquid blocks: never a place for the feet or the head. */
+export const LIQUID_NAMES = Object.freeze(['water', 'lava', 'bubble_column']);
+
+/**
+ * The height of the feet beside the fence: the lowest fence block (isFenceName) of the cell of the fence box nearest the ring
+ * cell (the fence beside it), between the bottom and the top of the box; null when that cell holds none (a gap) or a block
+ * cannot be read. Never throws.
+ * @param {(x: number, y: number, z: number) => ({name: string}|null)} getBlock
+ * @param {{min: {x, y, z}, max: {x, y, z}}} fenceBox
+ * @param {{x: number, z: number}} cell a cell of the ring
+ * @returns {number|null}
+ */
+export function fenceFootY(getBlock, fenceBox, cell) {
+    if (typeof getBlock !== 'function' || !isBox(fenceBox) || !cell || !isFiniteNumber(cell.x) || !isFiniteNumber(cell.z)) {
+        return null;
+    }
+    const x = Math.min(fenceBox.max.x, Math.max(fenceBox.min.x, Math.floor(cell.x)));
+    const z = Math.min(fenceBox.max.z, Math.max(fenceBox.min.z, Math.floor(cell.z)));
+    try {
+        for (let y = fenceBox.min.y; y <= fenceBox.max.y; y++) {
+            if (isFenceName(getBlock(x, y, z)?.name ?? null)) {
+                return y;
+            }
+        }
+    } catch {
+        return null;
+    }
+    return null;
+}
+
+/**
+ * Whether the bot can stand on the ring cell with its feet at height y: neither the cell nor the cell above holds a solid block
+ * or a liquid, and the block under it is solid, no liquid and no block of isNoStandBlock (a fence, a wall, a chest...). null
+ * when one of the three blocks is not known (not loaded). Never throws.
+ * @param {(x: number, y: number, z: number) => ({name: string, properties?: object|null, solid: boolean}|null)} getBlock
+ * @param {{x: number, z: number}} cell
+ * @param {number} y the height of the feet
+ * @returns {boolean|null}
+ */
+export function standableAt(getBlock, cell, y) {
+    if (typeof getBlock !== 'function' || !cell || !isFiniteNumber(cell.x) || !isFiniteNumber(cell.z) || !isFiniteNumber(y)) {
+        return null;
+    }
+    const read = (dy) => {
+        try {
+            return getBlock(Math.floor(cell.x), Math.floor(y) + dy, Math.floor(cell.z)) ?? null;
+        } catch {
+            return null;
+        }
+    };
+    const feet = read(0);
+    const head = read(1);
+    const floor = read(-1);
+    if (!feet || !head || !floor) {
+        return null;
+    }
+    const liquid = (b) => LIQUID_NAMES.includes(plainName(b.name)) || b.properties?.waterlogged === true || b.properties?.waterlogged === 'true';
+    const free = (b) => b.solid !== true && !liquid(b);
+    return free(feet) && free(head) && floor.solid === true && !liquid(floor) && !isNoStandBlock(floor.name, floor.properties ?? null);
+}
+
+/**
+ * False only when the bot surely cannot stand on the ring cell: at the feet height of the fence beside it (fenceFootY) and one
+ * block above and below it (a slope, a slab), every one of the three heights is known and none is standable (standableAt).
+ * True when the height or a block is not known: the walk tries the cell. Never throws.
+ * @param {(x: number, y: number, z: number) => ({name: string, properties?: object|null, solid?: boolean}|null)} getBlock
+ * @param {{min: {x, y, z}, max: {x, y, z}}} fenceBox
+ * @param {{x: number, z: number}} cell
+ * @returns {boolean}
+ */
+export function ringCellStandable(getBlock, fenceBox, cell) {
+    const base = fenceFootY(getBlock, fenceBox, cell);
+    if (base === null) {
+        return true;
+    }
+    let known = true;
+    for (const y of [base, base + 1, base - 1]) {
+        const ok = standableAt(getBlock, cell, y);
+        if (ok === true) {
+            return true;
+        }
+        if (ok === null) {
+            known = false;
+        }
+    }
+    return !known;
 }
 
 /**

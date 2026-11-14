@@ -147,7 +147,7 @@ describe('F8: the supervisor\'s and the player\'s orders the model cannot stop',
         assert.equal(await C.executeCommand(agent, '!stop', { typed: false }), C.ORDER_TEXTS.playersOrder);
         assert.deepEqual(agent.stopped, []);
         assert.equal(C.orderRefusal(agent, '!stop', 'model'), C.ORDER_TEXTS.playersOrder);
-        const asked = makeAgent([{ role: 'user', content: 'MartyByrde2: stop' }], typedRunning(), playerChain('MartyByrde2'));
+        const asked = makeAgent([{ role: 'user', content: 'MartyByrde2: stop' }], typedRunning(), C.orderChainOf('MartyByrde2', 'stop', { self: 'andy' }));
         assert.equal(await C.executeCommand(asked, '!stop', { typed: false }), 'Agent stopped.');
         assert.deepEqual(asked.stopped, ['!stop']);
     });

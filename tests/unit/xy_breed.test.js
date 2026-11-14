@@ -13,6 +13,7 @@ import { captureConsole } from '../helpers/console_capture.js';
 const B = await loadSrc('src/agent/packs/breeding/breeding.js');
 const P = await loadSrc('src/agent/world/stock_permits.js');
 const S = await loadSrc('src/agent/packs/home/shelter.js'); // leaveBuilding, as the pack context hands it on (ctx.home)
+const BL = await loadSrc('src/agent/packs/breeding/breeding_logic.js'); // v0.1.4.16 FX4: the stand test of the ring
 
 // The fence ring at y 64 on x -1..5, z -1..5 (the ground of the pen x 0..4, z 0..4), the gate at (2, 64, -1); the saved box
 // holds the fence, as the survey and scanPen save a pen.
@@ -398,5 +399,111 @@ describe('!breed: the pace (8.2)', () => {
         assert.equal(r.text, 'I stopped the feeding at the cow pen: 2 cows fed, 0 calves.');
         assert.ok(t.logs.includes(r.text));
         assert.equal(t.feeds.length, 2);
+    });
+});
+
+// ---- v0.1.4.16 FX4 (review 16b, finding 1; each test fails on a96685c but the last, the guard of the refusal) ----
+// A failed walk no longer refuses a pen whose ring has free cells: the cells the bot cannot stand on are skipped, up to six
+// walks, a bot near the ring after the last failed walk goes on to the rounds, and a barn around the pen is no refusal.
+describe('FX4 (review 16b, finding 1): the walk to the pen with blocked ring cells', () => {
+    const noPath = () => Object.assign(new Error('No path to the goal!'), { name: 'NoPath' });
+    const approachWalks = (t) => t.gotos.filter((g) => g.doors === true);
+
+    test('the review\'s case: hay bales on the three ring cells nearest the bot, the rest of the ring free: the next cell, the cows fed', async () => {
+        const t = pen({});
+        for (const x of [1, 2, 3]) {
+            t.world.set(x, 64, 6, 'hay_block');
+            t.bot.blocked.add(`${x},64,6`);
+        }
+        const r = await t.run('cow_pen', 2);
+        assert.deepEqual({ ok: r.ok, reason: r.reason, fed: r.fed, babies: r.babies }, { ok: true, reason: null, fed: 4, babies: 2 }, r.text);
+        assert.equal(r.text, 'I fed 4 cows in the cow pen; 2 calves.');
+        assert.deepEqual(approachWalks(t).map((g) => [g.x, g.z]), [[2, 6], [3, 6], [1, 6], [4, 6]], 'the three blocked cells, then the next one');
+        assert.ok(!t.gotos.slice(4).some((g) => g.z === 6 && g.x >= 1 && g.x <= 3), 'the rounds never walk to a cell the walk could not reach');
+        assert.deepEqual(t.violations, []);
+        assertOutside(t);
+    });
+
+    test('a house wall along the near side (two blocks high): its cells are never walked to; the cows fed from the free cell beside it', async () => {
+        const t = pen({});
+        for (let x = 0; x <= 3; x++) {
+            for (const y of [64, 65]) t.world.set(x, y, 6, 'oak_planks');
+            t.bot.blocked.add(`${x},64,6`);
+        }
+        const r = await t.run('cow_pen', 1);
+        assert.deepEqual({ ok: r.ok, reason: r.reason, fed: r.fed, babies: r.babies }, { ok: true, reason: null, fed: 2, babies: 1 }, r.text);
+        assert.ok(!t.gotos.some((g) => g.z === 6 && g.x >= 0 && g.x <= 3), `no walk into the wall: ${JSON.stringify(t.gotos.map((g) => [g.x, g.z]))}`);
+        assert.deepEqual(approachWalks(t).map((g) => [g.x, g.z]), [[4, 6]], 'one walk to the pen: the nearest cell the bot can stand on');
+        assertOutside(t);
+    });
+
+    test('water and a neighbouring pen\'s fence on the ring are skipped too; a hay bale is a cell to stand on (one block up)', () => {
+        const blocks = new Map();
+        const get = (x, y, z) => blocks.get(`${x},${y},${z}`) ?? (y <= 63 ? { name: 'grass_block', solid: true } : { name: 'air', solid: false });
+        const fenceBox = { min: { x: -1, y: 62, z: -1 }, max: { x: 5, y: 66, z: 5 } };
+        for (let x = -1; x <= 5; x++) blocks.set(`${x},64,5`, { name: 'oak_fence', solid: true });
+        blocks.set('2,63,6', { name: 'water', solid: false });
+        blocks.set('3,64,6', { name: 'spruce_fence', solid: true });
+        blocks.set('4,64,6', { name: 'hay_block', solid: true });
+        blocks.set('0,65,6', { name: 'hay_block', solid: true }); // at head height: the bot cannot stand under it
+        assert.equal(BL.fenceFootY(get, fenceBox, { x: 2, z: 6 }), 64, 'the feet beside the fence');
+        assert.equal(BL.ringCellStandable(get, fenceBox, { x: 1, z: 6 }), true, 'grass under, air above');
+        assert.equal(BL.ringCellStandable(get, fenceBox, { x: 2, z: 6 }), false, 'water');
+        assert.equal(BL.ringCellStandable(get, fenceBox, { x: 3, z: 6 }), false, 'a fence: never stood in or on');
+        assert.equal(BL.ringCellStandable(get, fenceBox, { x: 4, z: 6 }), true, 'on the hay bale');
+        assert.equal(BL.ringCellStandable(get, fenceBox, { x: 0, z: 6 }), false, 'under a hay bale');
+        assert.equal(BL.standableAt(get, { x: 1, z: 6 }, 64), true);
+        assert.equal(BL.standableAt(() => null, { x: 1, z: 6 }, 64), null, 'not loaded: not known');
+        assert.equal(BL.ringCellStandable(() => null, fenceBox, { x: 1, z: 6 }), true, 'not known: the walk tries it');
+        blocks.set('1,64,6', { name: 'oak_slab', solid: false, properties: { waterlogged: true } });
+        assert.equal(BL.standableAt(get, { x: 1, z: 6 }, 64), false, 'a waterlogged block is a liquid');
+    });
+
+    test('every walk fails and ends near the ring (2 blocks off the cell): the rounds go on and feed', async () => {
+        const t = pen({ pos: [2.5, 64, 20.5] });
+        const walk = t.bot.gotoImpl;
+        t.bot.gotoImpl = async (goal) => {
+            if (t.bot.pathfinder.movements?.canOpenDoors !== true) return walk(goal);
+            t.gotos.push({ x: goal.x, z: goal.z, doors: true, fed: t.feeds.length, from: t.bot.entity.position.clone() });
+            t.bot.entity.position = v(goal.x + 0.5, 64, goal.z + 2.5); // the path search gave up two blocks short
+            throw noPath();
+        };
+        const r = await t.run('cow_pen', 1);
+        assert.equal(approachWalks(t).length, 6, 'six walks to the pen');
+        assert.deepEqual({ ok: r.ok, reason: r.reason, fed: r.fed, babies: r.babies }, { ok: true, reason: null, fed: 2, babies: 1 }, r.text);
+        assertOutside(t);
+    });
+
+    test('no way at all (the river): six walks, then "I could not get to the cow pen."', async () => {
+        const t = pen({ pos: [2.5, 64, 65.5], range: 32 });
+        for (let x = -60; x <= 60; x++) t.bot.blocked.add(`${x},64,30`);
+        const r = await t.run('cow_pen', 2);
+        assert.deepEqual({ ok: r.ok, reason: r.reason, text: r.text }, { ok: false, reason: 'unreached', text: 'I could not get to the cow pen.' });
+        assert.equal(t.gotos.length, 6, 'at most six walks');
+        assert.deepEqual(t.feeds, []);
+    });
+
+    // A barn: a saved building whose box holds the pen and the bot; its door cannot be passed (leaveBuilding fails).
+    const BARN = { name: 'barn', type: 'building', dimension: 'overworld', source: 'scan', min: { x: -6, y: 63, z: -6 }, max: { x: 10, y: 70, z: 12 }, entrances: [] };
+
+    test('ordered in a barn around the pen: leaveBuilding fails, the pen lies in the barn\'s box: on to the ring, the cows fed', async () => {
+        for (const area of [BARN, null]) {
+            const left = [];
+            const t = pen({ home: { leaveBuilding: async () => { left.push(1); return { ok: false, area, reason: 'no_entrance', text: 'I cannot get out of "barn".' }; } } });
+            t.ctx.areas.push(BARN);
+            const r = await t.run('cow_pen', 2);
+            assert.deepEqual({ ok: r.ok, reason: r.reason, fed: r.fed, babies: r.babies }, { ok: true, reason: null, fed: 4, babies: 2 }, `${area ? 'the area given' : 'the area found'}: ${r.text}`);
+            assert.equal(left.length, 1);
+            assertOutside(t);
+        }
+    });
+
+    test('a barn that does not hold the pen (the pen beside it): the refusal stays', async () => {
+        const shed = { ...BARN, name: 'shed', min: { x: 0, y: 63, z: 8 }, max: { x: 8, y: 70, z: 12 } };
+        const t = pen({ home: { leaveBuilding: async () => ({ ok: false, area: shed, reason: 'no_entrance', text: 'I cannot get out of "shed".' }) } });
+        t.ctx.areas.push(shed);
+        const r = await t.run('cow_pen', 2);
+        assert.deepEqual({ ok: r.ok, reason: r.reason, text: r.text }, { ok: false, reason: 'unreached', text: 'I could not get to the cow pen.' });
+        assert.deepEqual(t.gotos, [], 'no walk');
     });
 });

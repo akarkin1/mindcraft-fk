@@ -30,7 +30,7 @@ import {
 } from './job_texts.js';
 // v0.1.4.15 (part R): the done line of a round; v0.1.4.16 (F3): the quiet line of a skipped step (pure texts, no pack)
 import { roundDoneText, stepSkippedText } from '../routines/routine_texts.js';
-import { KILL_FARM_COMMAND, KILL_FARM_KIND } from './job_store.js';
+import { KILL_FARM_COMMAND, KILL_FARM_KIND, cleanBag } from './job_store.js';
 
 // v0.1.4.13 fix 2: a failure of these words with nothing gained pauses the job at once
 const STUCK_FAILURE = /\b(got stuck|find no way|found no way|no way from|could not get to|could not reach)\b/i;
@@ -42,26 +42,36 @@ export { JobStore, JOB_FILE, KILL_FARM_COMMAND, KILL_FARM_KIND } from './job_sto
 // a refusal or a stop of the pack, such as no slab, no weapon or low health: paused, the pack's line says why, no plan);
 // anything else that ends the action (a reflex the pack did not pause, a new order, the night's !goToBed, a restart)
 // leaves it running, and tick runs the order again after job_resume_seconds, at night too (the pack sleeps by itself).
-// The owner's !stop ends it as any job.
+// The owner's !stop ends it as any job. v0.1.4.16 FX4 (review 16b, finding 3): the job keeps the bag of its start (bagAtStart,
+// taken when the job is new, or at the first resume of a job saved without it) and gives it to the pack (progress()).
 export const KILL_FARM_WORDS = 'the creeper farming';
 export const KILL_FARM_RESTART = 'I was farming creepers. I go on.';
 const KILL_MINUTES = /^(?:for\s+)?(\d{1,5})\s*(min|mins|minute|minutes|h|hour|hours)$/i; // the pack's "N minutes" (afk_logic.parseUntil)
 
 /**
- * The job record of the order !killFarm(<until>): kind kill_farm, the order as its command and its one step.
+ * The job record of the order !killFarm(<until>): kind kill_farm, the order as its command and its one step; v0.1.4.16 FX4
+ * (review 16b, finding 3): with the bag of the start (bagAtStart, { name: count }) when it is given: the job keeps it across its
+ * resumes and restarts, and the pack reads it back (progress() without a count), so that a resumed farm stores only what it
+ * gained since the order.
  * @param {Array} args the args of the order: [until]
  * @param {string} by 'model' or the player
  * @param {string} now ISO time
+ * @param {Object<string, number>|null} [bag] the counts of the bag when the order came
  * @returns {object}
  */
-export function killFarmJob(args, by, now) {
+export function killFarmJob(args, by, now, bag = null) {
     const until = typeof args?.[0] === 'string' ? args[0].trim() : '';
     const order = commandText(KILL_FARM_COMMAND, [until]);
-    return {
+    const job = {
         version: 1, kind: KILL_FARM_KIND, command: order, args: [until], wanted: null, got: null, words: KILL_FARM_WORDS,
         state: 'running', by: by === 'model' ? 'model' : 'player', started: now, updated: now,
         steps: [{ command: order, check: { item: null, count: null }, state: 'todo' }], plans: 0,
     };
+    const start = cleanBag(bag);
+    if (start) {
+        job.bagAtStart = start;
+    }
+    return job;
 }
 
 /**
@@ -759,8 +769,9 @@ export function createJob(agent, store, options = {}) {
                 }
                 if (command === KILL_FARM_COMMAND) {
                     // v0.1.4.16 (SPEC 8.4a): the creeper farm is a job of the kind kill_farm; a new !killFarm replaces the
-                    // farm without the leave text, another job is left with it
-                    const farm = killFarmJob(args, by, iso());
+                    // farm without the leave text, another job is left with it; v0.1.4.16 FX4 (review 16b, finding 3): the
+                    // new job takes the bag of its start (before the pack runs), kept across its resumes
+                    const farm = killFarmJob(args, by, iso(), call(() => inventory(), null));
                     let left = '';
                     if (job?.state === 'running' && job.kind !== KILL_FARM_KIND) {
                         left = speak(leaveText(job));
@@ -866,6 +877,15 @@ export function createJob(agent, store, options = {}) {
                         }
                         setJob(job);
                         return result(true, 'done', speak(doneText(job)));
+                    }
+                    // v0.1.4.16 FX4 (review 16b, finding 3): a job saved before it kept the bag of its start takes it at its
+                    // first resume and keeps it from then on
+                    if (cleanBag(job.bagAtStart) === null) {
+                        const bag = cleanBag(call(() => inventory(), null));
+                        if (bag) {
+                            job.bagAtStart = bag;
+                            setJob(job);
+                        }
                     }
                     speak(resumeText(job));
                     return await runSystem(text, 'resume', job);
@@ -1007,13 +1027,20 @@ export function createJob(agent, store, options = {}) {
          * v0.1.4.16 (F5, the play of 2026-11-11: "0 of 32" with 22 raw iron in the bag): without a count the call asks:
          * `{ ok: true, reason: 'job', got, wanted, created }` of the running or left job, so that a trip that goes on with
          * a job counts the ore of the earlier trips in its bag once; nothing changes.
+         * v0.1.4.16 FX4 (review 16b, finding 3): for a running kill_farm job the question answers
+         * `{ ok: true, reason: 'kill_farm', bagAtStart, started }`: the bag of the job's start (null for a job saved without it),
+         * which the AFK kill pack keeps as its start counts on a resume; nothing changes.
          * @param {number} [got] the count of the skill in this run; left out, the question
-         * @returns {{ok: boolean, reason: string|null, text: string, got?: number, wanted?: number, created?: string}}
+         * @returns {{ok: boolean, reason: string|null, text: string, got?: number, wanted?: number, created?: string,
+         *   bagAtStart?: Object<string, number>|null, started?: string|null}}
          */
         progress(got) {
             try {
                 if (got === undefined) {
                     const asked = getJob();
+                    if (asked?.kind === KILL_FARM_KIND && asked.state === 'running') {
+                        return { ...result(true, 'kill_farm', ''), bagAtStart: cleanBag(asked.bagAtStart), started: asked.started ?? null };
+                    }
                     if (!asked || !isFiniteNumber(asked.wanted) || (asked.state !== 'running' && asked.state !== 'left')) {
                         return result(false, 'no_job', '');
                     }

@@ -228,6 +228,85 @@ describe('the job of the farm (8.4a)', () => {
     });
 });
 
+// v0.1.4.16 FX4 (review 16b, finding 3): the job keeps the bag of its start across its resumes and restarts, and gives it to
+// the pack (progress() without a count); a job saved without it loads and takes it at its first resume
+describe('FX4 (review 16b): the bag of the farm\'s start in the job (finding 3)', () => {
+    const bagWorld = (items) => {
+        const w = makeWorld();
+        w.agent.bot.inventory.items = () => items;
+        return w;
+    };
+
+    test('a new !killFarm takes the bag of the order; progress() answers it while the job runs, through a reflex\'s stop and the resume', async () => {
+        const items = [{ name: 'string', count: 10 }, { name: 'stone_sword', count: 1 }, { name: 'string', count: 2 }];
+        const w = bagWorld(items);
+        await order(w, '!killFarm("level 30")', 'steve', undefined);
+        assert.deepEqual(w.job.get().bagAtStart, { string: 12, stone_sword: 1 });
+        const seen = [];
+        items.push({ name: 'gunpowder', count: 300 }); // the farm's drops before the reflex
+        w.run = async (text, by) => { seen.push(w.job.progress()); w.ran.push({ text, by }); };
+        w.wait(61);
+        await w.job.tick();
+        assert.deepEqual(w.ran.map((r) => r.text), ['!killFarm("level 30")']);
+        assert.deepEqual(seen, [{ ok: true, reason: 'kill_farm', text: '', bagAtStart: { string: 12, stone_sword: 1 }, started: w.job.get().started }],
+            'the resumed farm reads the start of the order, not the bag with the 300 gunpowder');
+        assert.deepEqual(w.job.get().bagAtStart, { string: 12, stone_sword: 1 }, 'kept');
+    });
+
+    test('an empty bag at the order is kept as {}; a new order takes the bag anew; a left or paused job answers no counts', async () => {
+        const items = [];
+        const w = bagWorld(items);
+        w.job.onCommand('!killFarm', [''], 'steve', '!killFarm("")');
+        assert.deepEqual(w.job.progress().bagAtStart, {});
+        items.push({ name: 'gunpowder', count: 64 });
+        w.job.onCommand('!killFarm', ['level 30'], 'steve', '!killFarm("level 30")');
+        assert.deepEqual(w.job.progress().bagAtStart, { gunpowder: 64 }, 'a new order is a new job');
+        w.job.onCommand('!stop', [], 'steve');
+        assert.equal(w.job.progress().reason, 'no_job');
+        const v = bagWorld([]);
+        await order(v, '!killFarm("")', 'steve', { ok: false, reason: 'no_slab', text: 'The kill room has no slab over the hoppers; I do not farm there.' });
+        assert.equal(v.job.get().state, 'paused');
+        assert.equal(v.job.progress().reason, 'no_job');
+    });
+
+    test('the file keeps the bag (a restart); a job saved without it loads as before and takes the bag at its first resume', async () => {
+        const dir = makeTmpDir();
+        try {
+            const file = path.join(dir, 'job.json');
+            new S.JobStore(file).set(J.killFarmJob([''], 'steve', new Date(T0).toISOString(), { string: 3, stick: 0, bad: 'x' }));
+            assert.deepEqual(new S.JobStore(file).load().bagAtStart, { string: 3 });
+            // a job of the build before: no bagAtStart in the file
+            const old = J.killFarmJob(['level 30'], 'steve', new Date(T0).toISOString());
+            assert.equal(Object.hasOwn(old, 'bagAtStart'), false);
+            fs.writeFileSync(file, JSON.stringify(old));
+            const back = new S.JobStore(file).load();
+            assert.deepEqual([back.kind, back.state, Object.hasOwn(back, 'bagAtStart')], ['kill_farm', 'running', false]);
+            const w = bagWorld([{ name: 'gunpowder', count: 40 }]);
+            w.store = new S.JobStore(file, { now: () => new Date(w.t) });
+            w.job = J.createJob(w.agent, w.store, {
+                settings: { job_resume_seconds: 60, idle_jobs: [], idle_jobs_minutes: 15 }, now: () => w.t,
+                executeCommand: async (text) => { w.ran.push({ text, bag: w.job.progress().bagAtStart }); },
+                nightShelter: () => true, sayQuiet: () => {},
+            });
+            assert.equal(w.job.progress().bagAtStart, null, 'no counts yet: the pack counts the bag itself');
+            w.wait(61);
+            await w.job.tick();
+            assert.deepEqual(w.ran, [{ text: '!killFarm("level 30")', bag: { gunpowder: 40 } }]);
+            assert.deepEqual(new S.JobStore(file).load().bagAtStart, { gunpowder: 40 }, 'kept from then on');
+        } finally {
+            removeTmpDir(dir);
+        }
+    });
+
+    test('the mining question is unchanged: a job with a count answers got and wanted', () => {
+        const w = makeWorld();
+        w.job.onCommand('!mineOre', ['iron', 16, false], 'steve', '!mineOre("iron", 16)');
+        const r = w.job.progress();
+        assert.deepEqual([r.ok, r.reason, r.got, r.wanted], [true, 'job', 0, 16]);
+        assert.equal(Object.hasOwn(r, 'bagAtStart'), false);
+    });
+});
+
 describe('the wiring (8.0, 8.4)', () => {
     const BASE = { language: 'en', blocked_actions: [], max_commands: -1, show_command_syntax: 'full', world_memory: false, protected_areas: false,
         home_pack: false, storage_pack: false, farming_pack: false, wood_pack: false, mining_pack: false, routes_pack: false, protect_built_blocks: false,

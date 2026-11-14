@@ -69,7 +69,23 @@ export const KILL_DROPS = Object.freeze(['gunpowder', 'bone', 'arrow', 'bow', 'r
 
 /** The modes paused while the farm runs (K-2, map16-packs 4.4); creeper_safety is switched off instead. */
 export const PAUSED_MODES = Object.freeze(['cowardice', 'self_defense', 'self_preservation', 'night_shelter', 'hunger', 'item_collecting']);
+/**
+ * v0.1.4.16 FX4 (review 16b, finding 2): the modes of PAUSED_MODES paused already for the walk to the spot: night_shelter (a farm
+ * the job resumes at night does not fight it on the way, review finding 8) and item_collecting. The others (self_defense,
+ * cowardice, self_preservation, hunger and whatever else PAUSED_MODES holds) keep watch on the way and are paused at the spot,
+ * with creeper_safety (spotPausedModes).
+ */
+export const WALK_PAUSED_MODES = Object.freeze(['night_shelter', 'item_collecting']);
 export const CREEPER_MODE = 'creeper_safety';
+
+/**
+ * v0.1.4.16 FX4 (review 16b, finding 2): the modes of PAUSED_MODES paused at the spot (after the room check): all but
+ * WALK_PAUSED_MODES, in the order of PAUSED_MODES.
+ * @returns {string[]}
+ */
+export function spotPausedModes() {
+    return PAUSED_MODES.filter(name => !WALK_PAUSED_MODES.includes(name));
+}
 
 /**
  * The weapons the farm uses, in the owner's order of choice (8.4a): iron, stone, copper, golden, wooden swords, then
@@ -700,18 +716,37 @@ export function gainedDrops(start, now) {
     return out;
 }
 
+/** v0.1.4.16 FX4 (review 16b, finding 3): a trip that stored nothing is tried again after this long, however full the bag is. */
+export const STORE_RETRY_MS = 10 * 60 * 1000;
+
+/**
+ * The counts of a bag as a job saved them (v0.1.4.16 FX4, review 16b, finding 3: the start counts of a kill_farm job): the
+ * entries with a name and a count above 0; null for anything that is no such object. Never throws.
+ * @param {*} counts
+ * @returns {Object<string, number>|null}
+ */
+export function cleanCounts(counts) {
+    if (counts === null || typeof counts !== 'object' || Array.isArray(counts)) {
+        return null;
+    }
+    return bagCounts(Object.entries(counts).map(([name, count]) => ({ name, count })));
+}
+
 /**
  * True when a store trip is due: the bag has STORE_FREE_SLOTS free slots or fewer, and, after a trip that stored nothing (or
- * found nothing gained to store), fewer free slots than then (`mark`, null when no such trip).
+ * found nothing gained to store), fewer free slots than then (`mark`, null when no such trip); v0.1.4.16 FX4 (review 16b,
+ * finding 3): or STORE_RETRY_MS since that trip (`markAgeMs`), also with 0 free slots (the owner may have emptied the chest).
  * @param {number} free the free slots of the bag now
  * @param {number|null} mark the free slots after the last trip that stored nothing
+ * @param {number|null} [markAgeMs] the time since the mark was set, null without one
  * @returns {boolean}
  */
-export function storeDue(free, mark = null) {
+export function storeDue(free, mark = null, markAgeMs = null) {
     const f = num(free);
     if (f === null || f > STORE_FREE_SLOTS) {
         return false;
     }
     const m = num(mark);
-    return m === null || f < m;
+    const age = num(markAgeMs);
+    return m === null || f < m || (age !== null && age >= STORE_RETRY_MS);
 }

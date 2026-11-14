@@ -12,21 +12,29 @@
 // the ring cell nearest it, the path search allowed to open doors (a door is no pen gate; the pen guard keeps every gate of
 // a pen shut by itself); only there it reads the animals of the pen (the species, the cap, the adults it may feed).
 //
+// v0.1.4.16 FX4 (review 16b, finding 1): a failed walk no longer refuses a pen whose ring has free cells. The walk to the pen
+// tries the ring cells by distance, without the cells the bot cannot stand on (a solid block or a liquid in the cell or the
+// cell above, no solid floor under it), up to approachTries walks, and goes on to the rounds when the bot ends within nearRing
+// blocks of the ring after the last failed walk; the rounds take their stand cells from the same cells, without those the walk
+// could not reach. A building the bot cannot leave is no refusal when the pen lies inside its box (a barn around the pen).
+//
 // A round: the stand cell is the ring cell nearest to the nearest adult that may be fed; there the bot holds the feed and
 // waits up to 10 s for two adults within reach, feeds them (a pair), and goes on while pairs come; an adult that did not come
 // to its nearest cell is skipped for the round, and the next stand cell is the one of the next adult. Rounds repeat after
 // the game's cooldown, at most two more, until `count` young are born.
 //
 // ctx: { areas, log, say, now, chests?, storage?, permits? } of the pack context. options { now, wait, askMs } for tests.
+import { Vec3 } from 'vec3';
 import { countContents } from '../../areas/area_sense.js';
-import { isBox } from '../home/box_math.js';
+import { hasWalls } from '../home/area_kinds.js';
+import { containsPos, isBox } from '../home/box_math.js';
 import { botPos, clockOf, dimensionOf, listAreas, logTo, sayTo } from '../home/context.js';
 import { blockReader, goals, gotoGoal, makeMovements } from '../home/motion.js';
 import { goalAvoiding, isNoStandCell } from '../home/stand_logic.js';
 import {
     BABY_WAIT_MS, BREED_COOLDOWN_MS, COME_WAIT_MS, COOLDOWN_CHECK_MS, COOLDOWN_MARGIN_MS, EXTRA_ROUNDS, FEED_REACH, PEN_CAP, STOP_CHECK_MS, adultsInReach, animalCount,
     animalsIn, cleanCount, eyesOf, feedNeeded, feedOf, feedableAdults, fenceBoxOf, findGates, gatesOf, insideBoxXZ, lowMark, nearestRingCell, newBabies,
-    speciesOf, standRing, withoutGateCells,
+    ringCellStandable, speciesOf, standRing, withoutGateCells,
 } from './breeding_logic.js';
 import { bagCount, chestsWith, takeOrAsk } from './stock_logic.js';
 import {
@@ -35,7 +43,8 @@ import {
 
 /** The rules of the feeding: the cap, the reach, the cooldown and its checks, the waits, the rounds, the walks; v0.1.4.16 fix
  *  round (V-6): the walk to the pen (its time limit per block of the way, at least walkMs; the ring cells tried, the nearest
- *  first). */
+ *  first); v0.1.4.16 FX4 (review 16b, finding 1): six walks at most (the cells the bot can stand on), and a bot that ends
+ *  within nearRing blocks of the ring after the last failed walk goes on to the rounds. */
 export const BREED_RULES = Object.freeze({
     cap: PEN_CAP,
     reach: FEED_REACH,
@@ -48,7 +57,8 @@ export const BREED_RULES = Object.freeze({
     extraRounds: EXTRA_ROUNDS,
     walkMs: 20000,
     approachMsPerBlock: 1000,
-    approachTries: 3,
+    approachTries: 6,
+    nearRing: 3,
     feedMs: 1500,
     pollMs: 250,
     defaultCount: 2,
@@ -160,19 +170,69 @@ async function getFeed(bot, ctx, species, target, options) {
     return { feed };
 }
 
+// v0.1.4.16 FX4 (review 16b, finding 1): a block as the stand test of the ring reads it: the name, the properties and whether
+// it is solid (a full collision box); null when the chunk is not loaded. Never throws.
+function standReader(bot) {
+    return (x, y, z) => {
+        try {
+            const b = bot.blockAt(new Vec3(x, y, z));
+            if (!b || typeof b.name !== 'string') {
+                return null;
+            }
+            const properties = typeof b.getProperties === 'function' ? b.getProperties() : (b._properties ?? null);
+            return { name: b.name, properties, solid: b.boundingBox === 'block' };
+        } catch {
+            return null;
+        }
+    };
+}
+
 // The stand ring of the pen as the blocks show it now: the fence box (a saved pen's box holds the fence, B-13), the ring one
 // block outside it without the gates and the cells before them, and the cells a walk may not end on (inside the fence box, on
-// a no-stand block).
+// a no-stand block); v0.1.4.16 FX4 (review 16b, finding 1): and the stand cells, the cells of the ring the bot can stand on
+// (ringCellStandable; the whole ring when the test leaves none), which the walk to the pen and the rounds walk to.
 function ringOf(bot, pen, box) {
     const get = blockReader(bot);
+    const read = standReader(bot);
     const fenceBox = fenceBoxOf(get, box);
     const inside = { min: { x: fenceBox.min.x + 1, y: box.min.y, z: fenceBox.min.z + 1 }, max: { x: fenceBox.max.x - 1, y: box.max.y, z: fenceBox.max.z - 1 } };
     const gates = [...gatesOf(pen), ...(isBox(inside) ? findGates(get, inside) : [])];
+    const ring = withoutGateCells(standRing(fenceBox), gates);
+    const stand = ring.filter(cell => ringCellStandable(read, fenceBox, cell));
     return {
         fenceBox,
-        ring: withoutGateCells(standRing(fenceBox), gates),
+        ring,
+        stand: stand.length > 0 ? stand : ring,
         forbidden: node => insideBoxXZ(fenceBox, node) || isNoStandCell(get, node),
     };
+}
+
+const cellKey = c => `${c.x},${c.z}`;
+
+// v0.1.4.16 FX4 (review 16b, finding 1): the bot near enough to the ring for the rounds, which walk along it by themselves:
+// outside the fence box, within the height of the pen's box (one block more either way), and within nearRing blocks of the
+// middle of a ring cell (x and z).
+function nearRing(bot, w) {
+    const p = botPos(bot);
+    if (!p || insideBoxXZ(w.fenceBox, p) || p.y < w.fenceBox.min.y - 1 || p.y > w.fenceBox.max.y + 1) {
+        return false;
+    }
+    return w.ring.some(c => Math.hypot(c.x + 0.5 - p.x, c.z + 0.5 - p.z) <= BREED_RULES.nearRing);
+}
+
+// v0.1.4.16 FX4 (review 16b, finding 1): the pen lies inside the building the bot could not leave (a barn around the pen): the
+// building leaveBuilding names, else the saved building with walls the bot stands in (not the pen); the pen's fence box within
+// its box in x and z, and the two boxes overlapping in height.
+function penInBuilding(bot, ctx, out, w, pen) {
+    const pos = botPos(bot);
+    const building = isBox(out?.area) ? out.area
+        : (pos ? listAreas(ctx, dimensionOf(bot)).find(a => hasWalls(a) && normalizeName(a.name) !== normalizeName(pen?.name) && containsPos(a, pos)) ?? null : null);
+    if (!building) {
+        return false;
+    }
+    const f = w.fenceBox;
+    return f.min.x >= building.min.x && f.max.x <= building.max.x && f.min.z >= building.min.z && f.max.z <= building.max.z
+        && f.min.y <= building.max.y && f.max.y >= building.min.y;
 }
 
 // True when the bot stands on a cell of the ring.
@@ -203,7 +263,12 @@ async function walkToCell(bot, cell, w, movements, timeoutMs, clock) {
 // F4); then to the ring cell nearest the bot (the next nearest when it cannot be reached, approachTries in all), the path search
 // allowed to open doors (a door is no pen gate: the pen guard keeps every gate of a pen shut by itself, and the pen costs the
 // keep-out price) and never into the pen's box (the goal refuses the fence box). { ok, reason }: reasons interrupted, unreached.
-async function approachPen(bot, ctx, w, areas, clock, options) {
+// v0.1.4.16 FX4 (review 16b, finding 1): a building that cannot be left is no refusal when the pen lies inside it (a barn around
+// the pen); the cells tried are the stand cells of the ring (w.stand: the cells the bot can stand on), by distance, up to
+// approachTries (6) walks; when the last of them failed and the bot ends within nearRing (3) blocks of the ring, it goes on to
+// the rounds (they walk to their stand cells by themselves). The cells whose walk failed go into `failed` (keys "x,z"): the
+// rounds do not take them for stand cells.
+async function approachPen(bot, ctx, w, areas, clock, options, pen, failed = new Set()) {
     const leave = ctx?.home?.leaveBuilding;
     if (typeof leave === 'function') {
         let out = null;
@@ -216,7 +281,7 @@ async function approachPen(bot, ctx, w, areas, clock, options) {
         if (bot.interrupt_code || out?.reason === 'interrupted') {
             return { ok: false, reason: 'interrupted' };
         }
-        if (out && typeof out === 'object' && out.ok !== true) {
+        if (out && typeof out === 'object' && out.ok !== true && !penInBuilding(bot, ctx, out, w, pen)) {
             return { ok: false, reason: 'unreached' };
         }
     }
@@ -230,7 +295,7 @@ async function approachPen(bot, ctx, w, areas, clock, options) {
         console.warn('Breeding pack: could not make the movements:', err?.message ?? err);
     }
     const me = botPos(bot);
-    const cells = w.ring.map(c => ({ c, d: me ? Math.hypot(c.x + 0.5 - me.x, c.z + 0.5 - me.z) : 0 }))
+    const cells = w.stand.map(c => ({ c, d: me ? Math.hypot(c.x + 0.5 - me.x, c.z + 0.5 - me.z) : 0 }))
         .sort((a, b) => a.d - b.d)
         .slice(0, BREED_RULES.approachTries);
     for (const { c, d } of cells) {
@@ -242,8 +307,10 @@ async function approachPen(bot, ctx, w, areas, clock, options) {
         if (r.at) {
             return { ok: true, reason: null };
         }
+        failed.add(cellKey(c));
     }
-    return { ok: false, reason: 'unreached' };
+    // every walk failed: near the ring the rounds walk along it by themselves
+    return cells.length > 0 && nearRing(bot, w) ? { ok: true, reason: null } : { ok: false, reason: 'unreached' };
 }
 
 // --- the session of one order ---
@@ -470,8 +537,9 @@ export async function breed(bot, ctx, penName, count = BREED_RULES.defaultCount,
     // the ring keep doors off. The no_enter areas of the world count (F10); the pen itself is one.
     const areas = [...listAreas(ctx, dimensionOf(bot)).filter(a => normalizeName(a.name) !== normalizeName(pen.name)),
         { ...pen, flags: { ...(pen.flags ?? {}), no_enter: true } }];
+    const failed = new Set(); // v0.1.4.16 FX4 (review 16b, finding 1): the ring cells the walk to the pen could not reach
     const toPen = async (species) => {
-        const r = await approachPen(bot, ctx, w, areas, clock, options);
+        const r = await approachPen(bot, ctx, w, areas, clock, options, pen, failed);
         if (r.ok) {
             return null;
         }
@@ -523,8 +591,11 @@ export async function breed(bot, ctx, penName, count = BREED_RULES.defaultCount,
     } catch (err) {
         console.warn('Breeding pack: could not make the movements:', err?.message ?? err);
     }
+    // v0.1.4.16 FX4 (review 16b, finding 1): the rounds stand on the stand cells of the ring (the cells the bot can stand on),
+    // without those the walk to the pen could not reach (all of them when none is left)
+    const reachable = w.stand.filter(c => !failed.has(cellKey(c)));
     const s = {
-        bot, ctx, clock, pen, box, fenceBox: w.fenceBox, species, feed, target, ring: w.ring, movements, forbidden: w.forbidden,
+        bot, ctx, clock, pen, box, fenceBox: w.fenceBox, species, feed, target, ring: reachable.length > 0 ? reachable : w.stand, movements, forbidden: w.forbidden,
         fed: 0, fedAt: new Map(), lastFeedAt: null, lastBirthAt: null, known: new Set(animalsIn(bot.entities, box, species).map(e => e.id)), babyIds: new Set(),
         stop: null, reached: 0, walkFailed: 0,
     };

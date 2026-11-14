@@ -663,6 +663,24 @@ function orderPlayerNear(agent) {
     }
 }
 
+// v0.1.4.16 (review 16b, finding 5): who sets the goal of the !goal that runs (the newest !goal of agent.running_commands): the
+// player who typed it, else the order behind the model's chain (executeCommand's running.chain: a player, the supervisor or
+// 'model'); undefined when unknown (the self prompter then counts it a player's). Never throws.
+export function goalSetterOf(agent) {
+    try {
+        const list = Array.isArray(agent?.running_commands) ? agent.running_commands : [];
+        const r = [...list].reverse().find(c => c && c.name === '!goal');
+        if (!r)
+            return undefined;
+        if (r.typed === true)
+            return typeof r.by === 'string' && r.by !== '' ? r.by : 'player';
+        const by = r.chain?.by;
+        return typeof by === 'string' && by !== '' ? by : undefined;
+    } catch (error) {
+        return undefined;
+    }
+}
+
 // v0.1.4.9 (B3, I10): the yaw of the player who gave the order that runs (agent.last_order), in radians as
 // mineflayer gives it, when that player is in bot.players and has an entity; else undefined. Never throws.
 function orderPlayerYaw(agent) {
@@ -2098,11 +2116,12 @@ export const actionsList = [
         perform: async function (agent, prompt) {
             if (!costAllows(agent, 'self_prompt'))
                 return 'I reached my cost limit and do not work on goals by myself now.';
+            const by = goalSetterOf(agent); // review 16b, finding 5: from this command's chain, not the shared agent.order_chain
             if (convoManager.inConversation()) {
-                agent.self_prompter.setPromptPaused(prompt);
+                agent.self_prompter.setPromptPaused(prompt, by);
             }
             else {
-                agent.self_prompter.start(prompt);
+                agent.self_prompter.start(prompt, by);
             }
         }
     },

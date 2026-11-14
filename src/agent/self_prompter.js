@@ -1,6 +1,12 @@
 const STOPPED = 0
 const ACTIVE = 1
 const PAUSED = 2
+
+// v0.1.4.16 (V-13; review 16b, finding 5): who set a goal: the given name ('model' for the model's own), else a player
+function goalSetter(by) {
+    return typeof by === 'string' && by !== '' ? by : 'player';
+}
+
 export class SelfPrompter {
     constructor(agent) {
         this.agent = agent;
@@ -12,8 +18,11 @@ export class SelfPrompter {
         this.cooldown = 2000;
     }
 
-    start(prompt) {
+    // by (v0.1.4.16, V-13; review 16b, finding 5): who set the goal, from the chain of the !goal command (goalSetter); a resume
+    // (no prompt) keeps who set it; a goal loaded after a restart (no by) counts as a player's
+    start(prompt, by = undefined) {
         console.log('Self-prompting started.');
+        const fresh = Boolean(prompt);
         if (!prompt) {
             if (!this.prompt)
                 return 'No prompt specified. Ignoring request.';
@@ -21,9 +30,8 @@ export class SelfPrompter {
         }
         this.state = ACTIVE;
         this.prompt = prompt;
-        // v0.1.4.16 (V-1): who set the goal: its self prompts carry that order (a player's goal may start work commands)
-        const chainBy = this.agent?.order_chain?.by;
-        this.started_by = typeof chainBy === 'string' && chainBy !== '' ? chainBy : (this.started_by ?? 'player');
+        // its self prompts carry that order (agent.js: a player's goal may start work commands)
+        this.started_by = fresh ? goalSetter(by) : (this.started_by ?? 'player');
         this.startLoop();
     }
 
@@ -51,9 +59,10 @@ export class SelfPrompter {
         }
     }
 
-    setPromptPaused(prompt) {
+    setPromptPaused(prompt, by = undefined) {
         this.prompt = prompt;
         this.state = PAUSED;
+        this.started_by = goalSetter(by); // review 16b, finding 5: the resume after the conversation keeps it
     }
 
     async startLoop() {

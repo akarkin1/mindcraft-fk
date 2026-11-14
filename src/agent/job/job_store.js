@@ -1,7 +1,8 @@
 // The job of the bot (spec v0.1.4.10, I1), persisted as the record itself in bots/<name>/job.json. One
 // job at a time. Beyond I1 a record may hold: skillDone (the skill said the job is done), fails and
 // failText (the same failure in a row), blocker ({ kind, item } of the last plan), chainAt (ISO time when
-// the bot itself went on: a plan was made or a step was done). Never throws.
+// the bot itself went on: a plan was made or a step was done); v0.1.4.16 FX4 (review 16b, finding 3): a kill_farm job
+// bagAtStart (the bag of its start, { name: count }). Never throws.
 import fs from 'node:fs';
 import { readJsonSafe, writeJsonAtomic } from '../../utils/safe_json.js';
 import { JOB_KINDS, JOB_STATES, ROUTINE_KIND } from './job_logic.js';
@@ -31,6 +32,25 @@ function isFiniteNumber(value) {
 
 function copy(value) {
     return JSON.parse(JSON.stringify(value));
+}
+
+/**
+ * v0.1.4.16 FX4 (review 16b, finding 3): the bag of a kill_farm job's start as the record keeps it: { name: count } of the
+ * names with a count above 0 ({} for an empty bag); null for anything that is no such object (a job saved without it).
+ * @param {*} bag
+ * @returns {Object<string, number>|null}
+ */
+export function cleanBag(bag) {
+    if (!isPlainObject(bag)) {
+        return null;
+    }
+    const out = {};
+    for (const [name, n] of Object.entries(bag)) {
+        if (name.length > 0 && isFiniteNumber(n) && n > 0) {
+            out[name] = Math.floor(n);
+        }
+    }
+    return out;
 }
 
 function cleanStep(step) {
@@ -100,6 +120,14 @@ function validateJob(job, now) {
     if (job.kind === ROUTINE_KIND) {
         out.routine = job.routine;
         out.round = Number.isInteger(job.round) && job.round >= 1 ? job.round : 1;
+    }
+    // v0.1.4.16 FX4 (review 16b, finding 3): the bag of a kill_farm job's start, kept across its resumes and restarts (the farm
+    // stores only what it gained since); a job saved without it loads as before
+    if (job.kind === KILL_FARM_KIND) {
+        const bag = cleanBag(job.bagAtStart);
+        if (bag) {
+            out.bagAtStart = bag;
+        }
     }
     return out;
 }

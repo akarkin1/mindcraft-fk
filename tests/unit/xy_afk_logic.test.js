@@ -377,6 +377,42 @@ describe('the store trip: what was gained since the start (finding 10)', () => {
     });
 });
 
+// v0.1.4.16 FX4 (review 16b, findings 2 and 3): the modes paused on the walk and at the spot; the store trip again after 10 minutes,
+// also with 0 free slots; the counts of a bag as a job saved them
+describe('FX4 (review 16b): the modes of the walk, the store trip again, the saved counts', () => {
+    test('WALK_PAUSED_MODES: night_shelter and item_collecting only; spotPausedModes: the rest of PAUSED_MODES, in its order', () => {
+        assert.deepEqual([...L.WALK_PAUSED_MODES], ['night_shelter', 'item_collecting']);
+        assert.ok(Object.isFrozen(L.WALK_PAUSED_MODES));
+        assert.ok(L.WALK_PAUSED_MODES.every((n) => L.PAUSED_MODES.includes(n)));
+        assert.deepEqual(L.spotPausedModes(), ['cowardice', 'self_defense', 'self_preservation', 'hunger']);
+        assert.deepEqual([...L.spotPausedModes(), ...L.WALK_PAUSED_MODES].sort(), [...L.PAUSED_MODES].sort(), 'together the whole list');
+        assert.equal(P.WALK_PAUSED_MODES, L.WALK_PAUSED_MODES);
+        assert.equal(P.spotPausedModes, L.spotPausedModes);
+    });
+
+    test('storeDue: 10 minutes after a trip that stored nothing it is due again, also with 0 free slots; never with 5 free', () => {
+        assert.equal(L.STORE_RETRY_MS, 600000);
+        assert.equal(L.storeDue(0, 0), false, 'no time given: as before');
+        assert.equal(L.storeDue(0, 0, 599999), false);
+        assert.equal(L.storeDue(0, 0, 600000), true, 'the bag full since the empty trip: tried again');
+        assert.equal(L.storeDue(4, 4, 600000), true);
+        assert.equal(L.storeDue(5, 4, 3600000), false, 'more than 4 free slots: never');
+        assert.equal(L.storeDue(3, 4, 0), true, 'one slot less: at once, as before');
+        assert.equal(L.storeDue(0, null, null), true);
+        assert.equal(L.storeDue(2, 2, null), false);
+        assert.equal(P.storeDue, L.storeDue);
+        assert.equal(P.STORE_RETRY_MS, L.STORE_RETRY_MS);
+    });
+
+    test('cleanCounts: the names with a count above 0; {} for an empty bag; null for no object', () => {
+        assert.deepEqual(L.cleanCounts({ gunpowder: 3, string: 0, stick: -1, bone: 'x', arrow: 2 }), { gunpowder: 3, arrow: 2 });
+        assert.deepEqual(L.cleanCounts({}), {});
+        assert.equal(L.cleanCounts(null), null);
+        assert.equal(L.cleanCounts([{ name: 'gunpowder', count: 3 }]), null);
+        assert.equal(L.cleanCounts('gunpowder'), null);
+    });
+});
+
 describe('the lines without a stored figure', () => {
     test('the part is left out', () => {
         assert.equal(T.progressText(50, 61, 14, null), 'I killed 50 creepers with 61 hits; level 14.');

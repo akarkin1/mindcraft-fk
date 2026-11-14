@@ -391,11 +391,12 @@ describe('the farm at the kill spot', () => {
 
 describe('the refusals: nothing moves, the modes untouched', () => {
     // walked: the room was refused after the walk to the spot; the fix round (finding 8) pauses the paused modes from the start of
-    // the walk, so they were paused and are unpaused again, and creeper_safety was never switched
+    // the walk, so they were paused and are unpaused again, and creeper_safety was never switched; v0.1.4.16 FX4 (review 16b,
+    // finding 2): of them only night_shelter and item_collecting (WALK_PAUSED_MODES), the others are paused at the spot only
     const untouched = (bot, { walked = false } = {}) => {
         if (walked) {
             assert.ok(!bot.modes.log.some((e) => e[0] === 'setOn'), JSON.stringify(bot.modes.log));
-            assert.deepEqual(bot.modes.log.filter((e) => e[0] === 'pause').map((e) => e[1]).sort(), [...L.PAUSED_MODES].sort());
+            assert.deepEqual(bot.modes.log.filter((e) => e[0] === 'pause').map((e) => e[1]).sort(), [...L.WALK_PAUSED_MODES].sort());
             assert.equal(bot.modes.paused.size, 0, 'every paused mode unpaused');
             assert.equal(bot.modes.on.creeper_safety, true);
         } else {
@@ -645,11 +646,13 @@ describe('the fix round: the meal, the modes on the way, the bed and the chest, 
         } });
         assert.equal(r.ok, true, r.text);
         assert.deepEqual(meals, [{ sneak: true }], 'one meal, eaten sneaking');
-        assert.deepEqual(sneaks(s), [true, false], 'on at the stance, off only in the finally');
+        // v0.1.4.16 FX4 (review 16b, finding 6): the sneak is set again after the meal
+        assert.deepEqual(sneaks(s), [true, true, false], 'on at the stance, on again after the meal, off only in the finally');
         assert.ok(r.kills > 0);
     });
 
-    test('finding 8: a night resume: night_shelter and the other paused modes are paused before the walk to the spot; creeper_safety off only there', async () => {
+    // v0.1.4.16 FX4 (review 16b, finding 2): of the paused modes only night_shelter and item_collecting before the walk
+    test('finding 8: a night resume: night_shelter is paused before the walk to the spot; creeper_safety off only there', async () => {
         const s = scene({ pos: [0.5, 64, -5.5] });
         s.bot.time.timeOfDay = 18000; // a job resume at night (job/index.js resumes the farm with night: false)
         let walk = null;
@@ -660,7 +663,7 @@ describe('the fix round: the meal, the modes on the way, the bed and the chest, 
         const r = await s.run('1 minutes');
         assert.equal(r.ok, true, r.text);
         assert.ok(walk, 'the bot walked to the spot');
-        assert.deepEqual(walk.paused, [...L.PAUSED_MODES].sort(), 'night_shelter among them');
+        assert.deepEqual(walk.paused, [...L.WALK_PAUSED_MODES].sort(), 'night_shelter among them');
         assert.equal(walk.creeper, true, 'the creeper reflex keeps watch on the way');
         const firstPause = s.bot.modes.log.findIndex((e) => e[0] === 'pause');
         const creeperOff = s.bot.modes.log.findIndex((e) => e[0] === 'setOn' && e[1] === 'creeper_safety' && e[2] === false);
@@ -856,5 +859,167 @@ describe('the fix round: the meal, the modes on the way, the bed and the chest, 
         assert.equal(r.kills, 1);
         assert.ok(s.attacks.length >= 1 && s.attacks.every((a) => a.id === creeper.id), JSON.stringify(s.attacks.map((a) => a.name)));
         assert.ok(s.bot.entities[allay.id], 'the allay lives');
+    });
+});
+
+// ---- v0.1.4.16 FX4 (review 16b, findings 2, 3 and 6; each test fails on a96685c) ----
+
+describe('FX4 (review 16b): the modes on the way, the bag of the job\'s start, the store trip again, the sneak after a meal', () => {
+    const SPOT_MODES = ['cowardice', 'self_defense', 'self_preservation', 'hunger'];
+
+    test('finding 2: on the walk to the spot only night_shelter and item_collecting are paused; self_defense and the others at the spot', async () => {
+        const s = scene({ pos: [0.5, 64, -5.5] });
+        s.bot.time.timeOfDay = 18000; // a job resume at night
+        let walk = null;
+        let atHit = null;
+        s.bot.gotoImpl = async (goal) => {
+            if (!walk) walk = { paused: [...s.bot.modes.paused].sort(), logged: s.bot.modes.log.length };
+            await straightGoto(s.bot, goal);
+        };
+        const hit = s.bot.onAttack;
+        s.bot.onAttack = (entity) => {
+            atHit ??= [...s.bot.modes.paused].sort();
+            hit(entity);
+        };
+        const r = await s.run('1 minutes');
+        assert.equal(r.ok, true, r.text);
+        assert.deepEqual(walk.paused, ['item_collecting', 'night_shelter'], 'the walk: the fighting, fleeing and hunger reflexes keep watch');
+        assert.deepEqual(atHit, [...L.PAUSED_MODES].sort(), 'at the spot: all paused modes');
+        const spotPauses = s.bot.modes.log.filter((e) => e[0] === 'pause' && SPOT_MODES.includes(e[1]));
+        assert.deepEqual(spotPauses.map((e) => e[1]).sort(), [...SPOT_MODES].sort());
+        assert.ok(s.bot.modes.log.indexOf(spotPauses[0]) >= walk.logged, 'paused after the walk began, at the spot');
+        const creeperOff = s.bot.modes.log.findIndex((e) => e[0] === 'setOn' && e[1] === 'creeper_safety' && e[2] === false);
+        assert.ok(creeperOff > s.bot.modes.log.indexOf(spotPauses[0]), 'with creeper_safety, after the room check');
+        modesRestored(s.bot);
+    });
+
+    test('finding 2: the walk fails (no way to the spot): self_defense and the others were never paused; the two walk modes come back', async () => {
+        const s = scene({ pos: [0.5, 64, -5.5] });
+        s.bot.gotoImpl = async () => {
+            const err = new Error('No path to the goal!');
+            err.name = 'NoPath';
+            throw err;
+        };
+        const r = await s.run('');
+        assert.equal(r.reason, 'no_way', r.text);
+        assert.deepEqual(s.bot.modes.log.filter((e) => e[0] === 'pause').map((e) => e[1]).sort(), ['item_collecting', 'night_shelter']);
+        assert.ok(!s.bot.modes.log.some((e) => e[0] === 'setOn'), 'creeper_safety untouched');
+        assert.equal(s.bot.modes.paused.size, 0, 'every paused mode unpaused in the finally');
+    });
+
+    // A storage pack whose kill chest takes everything it is given: what it was given leaves the bag.
+    function takingStorage(s, calls) {
+        return {
+            storeItems: async (opts) => {
+                calls.push({ ...opts, t: s.clock.t });
+                const plan = SL.keepPlan(s.bot.inventory.items().map((i) => ({ name: i.name, count: i.count })), { only: opts.only, keep: opts.keep });
+                const stored = {};
+                for (const { name, count } of plan.store) {
+                    let left = count;
+                    for (const it of s.bot.inventory.list.filter((i) => i.name === name)) {
+                        const n = Math.min(it.count, left);
+                        it.count -= n;
+                        left -= n;
+                    }
+                    stored[name] = count;
+                }
+                return { ok: true, reason: null, stored, text: '' };
+            },
+        };
+    }
+
+    test('finding 3: a resume reads the bag of the job\'s start: the 300 gunpowder gained before the resume are stored, the bot\'s own string kept', async () => {
+        const calls = [];
+        const s = scene();
+        give(s.bot, 'string', 10); // the bot's own, at the order
+        give(s.bot, 'gunpowder', 300); // gained by the farm before the owner's errand
+        s.ctx.storage = takingStorage(s, calls);
+        s.ctx.job = { progress: (got) => (got === undefined ? { ok: true, reason: 'kill_farm', text: '', bagAtStart: { string: 10, stone_sword: 1 } } : { ok: false }) };
+        let free = 4;
+        s.bot.inventory.emptySlotCount = () => free;
+        s.stepHook = () => { if (calls.length > 0) free = 20; };
+        const r = await s.run('1 minutes');
+        assert.equal(r.ok, true, r.text);
+        assert.equal(calls.length, 1, 'one store trip');
+        assert.deepEqual(calls[0].keep, { gunpowder: 0 }, 'the start of the job held no gunpowder');
+        assert.ok(s.logs.includes('I stored 300 gunpowder.'), s.logs.join(' | '));
+        assert.equal(L.bagCounts(s.bot.inventory.items()).string, 10, 'the bot\'s own string stays');
+    });
+
+    test('finding 3: with the real job: the bag of the order is the job\'s, across the resume and a restart (the file)', async () => {
+        const J = await loadSrc('src/agent/job/index.js');
+        const { makeTmpDir, removeTmpDir } = await import('../helpers/tmp.js');
+        const path = await import('node:path');
+        const dir = makeTmpDir();
+        try {
+            const file = path.join(dir, 'job.json');
+            const s = scene();
+            const inventory = () => L.bagCounts(s.bot.inventory.items());
+            const job = J.createJob({}, new J.JobStore(file), { inventory, settings: { job_resume_seconds: 60, idle_jobs: [] } });
+            job.onCommand('!killFarm', ['1 minutes'], 'steve', '!killFarm("1 minutes")'); // the owner's order: the bag holds the sword
+            give(s.bot, 'gunpowder', 300); // the run before the errand
+            // the restart: a new job loads the file
+            const again = J.createJob({}, new J.JobStore(file), { inventory, settings: { job_resume_seconds: 60, idle_jobs: [] } });
+            assert.deepEqual(again.progress(), { ok: true, reason: 'kill_farm', text: '', bagAtStart: { stone_sword: 1 }, started: again.get().started });
+            const calls = [];
+            s.ctx.storage = takingStorage(s, calls);
+            s.ctx.job = { progress: (got) => again.progress(got) }; // as agent.packContext gives it
+            let free = 4;
+            s.bot.inventory.emptySlotCount = () => free;
+            s.stepHook = () => { if (calls.length > 0) free = 20; };
+            const r = await s.run('1 minutes');
+            assert.equal(r.ok, true, r.text);
+            assert.deepEqual(calls.map((c) => [c.only, c.keep]), [[['gunpowder'], { gunpowder: 0 }]]);
+            assert.ok(s.logs.includes('I stored 300 gunpowder.'), s.logs.join(' | '));
+        } finally {
+            removeTmpDir(dir);
+        }
+    });
+
+    test('finding 3: the kill chest full: with 0 free slots the trip is tried again after 10 minutes, not before', async () => {
+        const calls = [];
+        let t0 = null;
+        const s = scene();
+        s.ctx.storage = { storeItems: async (opts) => { calls.push({ ...opts, t: s.clock.t }); return { ok: false, reason: 'full', stored: {}, text: 'The chest is full.' }; } };
+        let free = 30;
+        s.bot.inventory.emptySlotCount = () => free;
+        s.stepHook = (sc) => {
+            t0 ??= sc.clock.t;
+            if (sc.kills() >= 1 && free === 30) {
+                give(sc.bot, 'gunpowder', 5);
+                free = 0; // the bag full
+            }
+        };
+        const r = await s.run('12 minutes');
+        assert.equal(r.ok, true, r.text);
+        assert.equal(calls.length, 2, JSON.stringify(calls.map((c) => (c.t - t0) / 1000)));
+        const gap = calls[1].t - calls[0].t;
+        assert.ok(gap >= L.STORE_RETRY_MS && gap < L.STORE_RETRY_MS + 5000, `the second trip ${gap / 1000} s after the first`);
+        assert.equal(s.logs.filter((l) => l === 'I stored nothing in the kill chest. The chest is full.').length, 2);
+    });
+
+    test('finding 6: a meal whose walk cleared the controls: the sneak is set again at once, every later hit is a sneaking one', async () => {
+        const s = scene();
+        s.bot.food = 14;
+        let mealAt = null;
+        const sneakAtHit = [];
+        const hit = s.bot.onAttack;
+        s.bot.onAttack = (entity) => {
+            if (mealAt !== null) sneakAtHit.push(s.bot.controls.sneak);
+            hit(entity);
+        };
+        const r = await s.run('1 minutes', { eat: async (bot) => {
+            // eatBestFood walked to food lying near and ate it: the stop of the walk released the controls (no setControlState)
+            bot.controls.sneak = false;
+            bot.calls.push(['clearControls']);
+            bot.food = 20;
+            mealAt = s.clock.t;
+            return { ok: true, ate: 1, reason: null, text: '' };
+        } });
+        assert.equal(r.ok, true, r.text);
+        assert.ok(mealAt !== null, 'the meal');
+        const after = s.controlLog.filter((c) => c.name === 'sneak' && c.t >= mealAt);
+        assert.equal(after[0]?.value, true, 'the sneak set right after the meal');
+        assert.ok(sneakAtHit.length > 0 && sneakAtHit.every(Boolean), `the hits after the meal sneaking: ${JSON.stringify(sneakAtHit)}`);
     });
 });

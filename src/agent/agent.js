@@ -1567,7 +1567,7 @@ export class Agent {
         const goalBy = this.self_prompter?.started_by;
         if (source === 'system' && typeof message === 'string' && message.startsWith('You are self-prompting with the goal:')
             && typeof goalBy === 'string' && goalBy !== '' && goalBy !== 'model')
-            chain = { by: goalBy, at: order_time.at };
+            chain = { by: goalBy, at: order_time.at, goal: true }; // review 16b, finding 4: the goal's mark (orderRefusal)
         this.order_chain = chain;
 
         if (!self_prompt && !from_other_bot) { // from user, check for forced commands

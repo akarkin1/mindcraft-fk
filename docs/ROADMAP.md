@@ -210,6 +210,7 @@ the plays keep hitting and that 0.1.4.16 fixes in its first round: Caves, Orders
 | Code that cannot be stopped | Generated code that ran `collectBlock` in a loop ended the process (`refused stop after 10 seconds`). About 0.5 day. |
 | The load of the laptop | Only if it remains in the play after the quiet supervisor of the fix of 0.1.4.13. |
 | The history race (0.1.4.14, P-21) | `history.add` awaits the memory summary at `max_messages` while a concurrent `handleMessage` pushes the assistant's command turn, so the turns can end with the bot's own line; the model class closes them with a user turn since 0.1.4.14, the race itself is to be removed (one add at a time, or the summary off the add path). About 0.5 day. |
+| The shaft out of ladders near the surface (0.1.4.16, B-15) | A shaft that runs out of ladders a few blocks under the grass goes on as a staircase whose column stands in the open air; the patch has nothing to hold on to and the stop says `Lava, water or caves block the way down at (x, y, z): air`. The staircase starts below the surface, or the stop says the ladders ran out. About 0.5 day. |
 
 Setting `routines` (off) belongs to 0.1.4.15 now.
 
