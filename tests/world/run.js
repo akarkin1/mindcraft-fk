@@ -208,6 +208,12 @@ const SCENARIOS = [
     ['mine_says_why', 'w131_mine_says_why.js', 1200, false, 'base'],
     ['night_orders', 'w132_night_orders.js', 900, false, 'base'],
     ['cave_in_the_way', 'w133_cave_in_the_way.js', 1200, false, 'base'],
+    // v0.1.4.16 round two (tester T5): the three packs of SPEC section 8 (breeding, enchanting, the AFK creeper kill), written from the
+    // spec before the packs; in no group. `the_kill_room` depends on monsters (creepers summoned on the hoppers, difficulty normal) and
+    // runs up to 3 times. The word `the` selects `the_base_by_the_village` too, by the substring rule.
+    ['the_pens', 'w134_breeding.js', 1200, false, 'base'],
+    ['the_table', 'w135_enchanting.js', 900, false, 'base'],
+    ['the_kill_room', 'w136_kill_room.js', 1200, true, 'base'],
 ];
 
 // Words that select a group of scenarios (spec v0.1.4.8, W30: the work scenarios of v0.1.4.7, which run

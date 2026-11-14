@@ -137,7 +137,8 @@ describe('P-20: the count is of the blocks that are gone', () => {
         };
         await skills.collectBlock(bot, 'granite', 1);
         assert.doesNotMatch(bot.output, /I broke \d+ granite/, bot.output);
-        assert.equal(bot.output, 'Failed to collect granite: Error: Timeout: Took to long to decide path to goal!.\nCollected 11 dirt.\n');
+        // the path search's timeout is never echoed raw (v0.1.4.16, the lead's decision on the cave drop)
+        assert.equal(bot.output, 'I found no way to the granite at (3, 64, 0).\nCollected 11 dirt.\n');
         assert.equal(world.get(3, 64, 0), 'granite');
         assert.match(cap.allText(), /Collect: the block updates show 1 more granite gone near the bot than it broke itself; not counted\./);
     });

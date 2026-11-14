@@ -675,6 +675,48 @@ export function caveCarefulText(blockType) {
     return `The ${blockType} is in a cave; I go carefully.`;
 }
 
+// v0.1.4.16 (T4's W133 rerun, the lead's decision in the spirit of the owner's "no refusal" and "I go carefully"): a target in
+// a cave may be reached with a fall of up to CAVE_DROP blocks (the path search's own measure; elsewhere its default of 4 holds)
+// while the bot's health is CAVE_DROP_HEALTH or more (a fall of 5 costs 2 of 20). Lower, or when the path search finds no way
+// even so, the command leaves the cave's blocks with caveLeaveText and goes on with the others. A path search that found no
+// way is never echoed raw (noWayToBlockText).
+const CAVE_DROP = 5;
+const CAVE_DROP_HEALTH = 12;
+
+// `The granite in the cave is too far down to reach safely; I leave it.`
+function caveLeaveText(blockType) {
+    return `The ${blockType} in the cave is too far down to reach safely; I leave it.`;
+}
+
+// `I found no way to the granite at (472, 49, 1).` (noWayText of way_logic.js is the long walk's)
+function noWayToBlockText(blockType, pos) {
+    return `I found no way to the ${blockType} at (${pos.x}, ${pos.y}, ${pos.z}).`;
+}
+
+// The path search found no way (mineflayer-pathfinder's goto: Timeout `Took to long to decide path to goal!`, NoPath).
+function isNoPathError(err) {
+    return err?.name === 'Timeout' || err?.name === 'NoPath' || /Took to long to decide path to goal|No path to the goal/.test(String(err?.message ?? err));
+}
+
+// True unless the bot's health is known and under CAVE_DROP_HEALTH.
+function healthAllowsCaveDrop(bot) {
+    const health = bot?.health;
+    return !(typeof health === 'number' && Number.isFinite(health) && health < CAVE_DROP_HEALTH);
+}
+
+// The collect plugin's movements (its path search) allow the fall of CAVE_DROP while one cave target is collected; returns the
+// function that puts the old value back. Nothing changes without those movements.
+function allowCaveDrop(bot) {
+    const movements = bot?.collectBlock?.movements;
+    if (!movements || typeof movements !== 'object')
+        return () => {};
+    const before = movements.maxDropDown;
+    movements.maxDropDown = Math.max(Number.isFinite(before) ? before : 0, CAVE_DROP);
+    return () => {
+        movements.maxDropDown = before;
+    };
+}
+
 async function collectBlocks(bot, blockType, num, exclude, blocktypes, breaks, target, ctx = null) {
     const isLiquid = blockType === 'lava' || blockType === 'water';
 
@@ -682,6 +724,20 @@ async function collectBlocks(bot, blockType, num, exclude, blocktypes, breaks, t
     const brokenNames = {}; // v0.1.4.8 (B1, F4): the broken blocks by name
     const invBefore = inventoryCounts(bot);
     let caveSaid = false; // F10: the cave line once per command
+    let caveLeft = false; // v0.1.4.16: the cave's blocks are left for this command (caveLeaveText, said once)
+    const leaveCave = (p) => {
+        if (caveLeft)
+            return;
+        caveLeft = true;
+        const line = caveLeaveText(blockType);
+        console.log(`Caves: the ${blockType} in a cave at (${p.x}, ${p.y}, ${p.z}) is left: ${line} (health ${bot.health})`);
+        log(bot, line);
+        try {
+            ctx?.say?.(line);
+        } catch (err) {
+            // the line is in the output all the same
+        }
+    };
 
     // v0.1.4.9 (C1): an ore is a candidate only when it is in sight (ore_sight_logic.js): with
     // ore_sense_range 0 a face in the open, with 3 an open cell within 3 blocks. A cell dug in this call
@@ -836,11 +892,20 @@ async function collectBlocks(bot, blockType, num, exclude, blocktypes, breaks, t
                 unsafe = { name: block.name, pos: block.position, why: unsafeWhy(bot, movements, block) };
             return false;
         }, range, CAVE_CANDIDATES);
-        // F10: the blocks outside caves first; the first block taken in a cave is said once (never refused, never skipped)
-        if (blocks.length > 1) {
+        // F10: the blocks outside caves first; the first block taken in a cave is said once (never refused). v0.1.4.16: once the
+        // cave's blocks are left (caveLeft) they are no candidates for the rest of the command
+        if (blocks.length > 1 || caveLeft) {
             const outside = blocks.filter(b => !b?.position || !inCave(bot, b.position, ctx));
-            if (outside.length > 0)
+            if (outside.length > 0 || caveLeft)
                 blocks = outside;
+        }
+        if (blocks.length === 0 && caveLeft)
+            break; // the line of the cave says why; no "No granite nearby"
+        // v0.1.4.16: with health under 12 the fall into the cave is too much: the cave's blocks are left, the others go on
+        if (blocks.length > 0 && blocks[0]?.position && !healthAllowsCaveDrop(bot) && inCave(bot, blocks[0].position, ctx)) {
+            leaveCave(blocks[0].position);
+            i--;
+            continue;
         }
         if (blocks.length > 0 && !caveSaid && blocks[0]?.position && inCave(bot, blocks[0].position, ctx)) {
             caveSaid = true;
@@ -927,6 +992,9 @@ async function collectBlocks(bot, blockType, num, exclude, blocktypes, breaks, t
             log(bot, `Don't have right tools to harvest ${blockType}.`);
             return false;
         }
+        // v0.1.4.16: a target in a cave: the path search may fall up to CAVE_DROP blocks for it (health is checked above)
+        const caveTarget = !isLiquid && inCave(bot, block.position, ctx);
+        const dropBack = caveTarget ? allowCaveDrop(bot) : () => {};
         try {
             let success = false;
             if (isLiquid) {
@@ -957,12 +1025,27 @@ async function collectBlocks(bot, blockType, num, exclude, blocktypes, breaks, t
                 log(bot, `Failed to collect ${blockType}: Inventory full, no place to deposit.`);
                 break;
             }
+            else if (isNoPathError(err) && !bot.interrupt_code) {
+                // v0.1.4.16: never the path search's raw text. A target in a cave with no way even with the fall allowed: the
+                // cave's blocks are left for this command and the others go on (the attempt is not counted)
+                console.log(`Collect: no way to the ${block.name} at (${block.position.x}, ${block.position.y}, ${block.position.z}): ${err}`);
+                if (caveTarget) {
+                    leaveCave(block.position);
+                    i--;
+                    continue;
+                }
+                log(bot, noWayToBlockText(blockType, block.position));
+                continue;
+            }
             else {
                 log(bot, `Failed to collect ${blockType}: ${err}.`);
                 if (bot.interrupt_code)
                     break; // v0.1.4.8 (B3): a stopped action does not go on with the next block
                 continue;
             }
+        }
+        finally {
+            dropBack();
         }
         
         if (bot.interrupt_code)

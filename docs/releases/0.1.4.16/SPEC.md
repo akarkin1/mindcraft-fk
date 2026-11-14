@@ -85,7 +85,9 @@ Rules:
 - The order of `orderBeds` (`sleep_logic.js`): first `my_bed` when it stands; then the beds inside an area of kind
   `home` or of a shelter type the owner saved (the AreaStore's `isShelterType`, `source !== 'survey'` for the owner's,
   the survey's `home` too); then the rest by distance. Excluded: a bed inside the box of a saved place or area of
-  kind `trading_hall`, a bed within 8 blocks of a job-site block (`SEED_NAMES.jobs` of `survey_logic.js`, read
+  kind `trading_hall` (for every bed); and, only for a bed that is not `my_bed` and lies in no `home` or
+  owner-saved shelter area (B-12: the owner's own base has its trading hall 9 blocks from the house), a bed within
+  8 blocks of a job-site block (`SEED_NAMES.jobs` of `survey_logic.js`, read
   through `bot.findBlocks` around the bed), a bed within 8 blocks of a villager entity.
 - Texts: `All beds nearby are taken.` only when a non-excluded bed was occupied; when every bed within 32 blocks
   is excluded: `The beds nearby are the villagers'; I found no bed of mine.` (new, `TEXTS.villagersBeds`); no bed

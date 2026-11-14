@@ -120,7 +120,10 @@ await scenarioMain({
         for (const l of verified.lines) note(`build: ${l}`);
         check(verified.ok, 'precondition: the small base of W126 is built as planned (every part read back from the server)', verified.lines.filter((l) => l.startsWith('WRONG')).join('; ') || 'all ok');
         // the animals again, with their AI: 5 cows, 4 pigs, each with an index tag for the love sampler
+        // a /kill drops the loot: the beef, the leather and the porkchops of the standing animals are cleared too
         await commands([`kill @e[tag=${COW_TAG}]`, `kill @e[tag=${PIG_TAG}]`]);
+        await sleep(300);
+        await commands([`kill @e[type=minecraft:item,x=${ox - 30},y=${g - 2},z=${oz - 30},dx=60,dy=12,dz=60]`, `kill @e[type=minecraft:experience_orb,x=${ox - 30},y=${g - 2},z=${oz - 30},dx=60,dy=12,dz=60]`]);
         const live = await commands([
             ...p.cowPen.spots.slice(0, 5).map((c, i) => summonLive('cow', c, [TAG, COW_TAG, `${COW_TAG}_${i}`])),
             ...p.pigPen.spots.slice(0, 4).map((c, i) => summonLive('pig', c, [TAG, PIG_TAG, `${PIG_TAG}_${i}`])),
@@ -284,7 +287,8 @@ await scenarioMain({
 
             const requestsAll = s.chat.requests.slice(requests0).map((q) => String(q?.turns?.[q.turns.length - 1]?.content ?? '').slice(0, 100));
             note(`the fake model got ${requestsAll.length} request(s) in all: ${JSON.stringify(requestsAll)}`);
-            check(requestsAll.length <= 2 && requestsAll.every((t) => /^w_player: yes\b/.test(t) || /allowTaking|I may take/.test(t)), 'zero model calls inside the pack: the only requests are the owner\'s "yes" and the result of the command the model chose (SPEC 8.0)', JSON.stringify(requestsAll));
+            // the result of the model's !allowTaking: its line is said by the bot, the model gets the short answer of F2
+            check(requestsAll.length <= 2 && requestsAll.every((t) => /^w_player: yes\b/.test(t) || /allowTaking|I may take|^Done; I said it in the chat\.$/.test(t)), 'zero model calls inside the pack: the only requests are the owner\'s "yes" and the result of the command the model chose (SPEC 8.0)', JSON.stringify(requestsAll));
             check(s.killed === null, 'the process lives', String(s.killed));
             check(s.realCalls.length === 0, 'no request reached a real model class', JSON.stringify(s.realCalls));
         } finally {

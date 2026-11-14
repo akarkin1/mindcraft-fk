@@ -53,7 +53,10 @@ const SUMMON_EVERY_MS = 10000;
 const MODE = 'mode:creeper_safety';
 
 // ---- SPEC 8.4, the texts word for word
-const START_LINE = "I farm creepers at the kill spot. Stay more than 128 blocks away or log out, so the farm's monsters get the cap.";
+const START_SPEC = "I farm creepers at the kill spot. Stay more than 128 blocks away or log out, so the farm's monsters get the cap.";
+// DECISIONS B-10 (E8's probe: the XP orbs reach the bot only with a one-block gap over the first hopper row): the start line asks for it
+const START_GAP = 'Leave a one-block gap above the first hopper row, or the XP stays behind the slab.';
+const START_LINE = `${START_SPEC} ${START_GAP}`;
 const STOP_LEVEL = /^I stop the farming: level 2 reached; (\d+) creepers?, (.+?); (\d+) gunpowder stored\.$/;
 const LEAVE_HEALTH = /^I leave the kill room: health (\d+)\.$/;
 const NO_SLAB = 'The kill room has no slab over the hoppers; I do not farm there.';
@@ -234,6 +237,7 @@ await scenarioMain({
             await commands([`xp set ${NAME} 0 levels`, `xp set ${NAME} 0 points`, 'difficulty normal', `gamemode survival ${NAME}`]);
             await waitFor(() => agent.bot.experience?.level === 0, { ms: 5000, every: 50 });
             const attacks1 = recordAttacks(agent.bot);
+            const tTrace1 = Date.now();
             const trace1 = sampler();
             const t1 = Date.now();
             const farm1 = orders.orderInfo('!killFarm("level 2")', 420000);
@@ -246,6 +250,8 @@ await scenarioMain({
             const info1 = await farm1;
             const n1 = await summoning1;
             const stopLine1 = textOf(s, t1, STOP_LEVEL, info1.reply);
+            // the farm's own time: from the order to the stop line (the finally may restore the modes before the walk out)
+            const stopAt1 = s.chats.find((x) => x.t >= t1 && STOP_LEVEL.test(x.text))?.t ?? (t1 + info1.ms);
             const back1 = await waitFor(async () => { const p = await entityPos(NAME); return aboveRoom(p) ? p : null; }, { ms: 90000, every: 400 });
             await sleep(2000);
             const rows1 = await trace1.stop();
@@ -256,23 +262,24 @@ await scenarioMain({
             const kills1 = n1 - alive1;
             const xp1 = await xpOf(NAME);
             const gp1 = await gunpowderOf(k);
-            const spotRows = rows1.filter((x) => atSpot(x.bot));
+            const farmRows = rows1.filter((x) => tTrace1 + x.t * 1000 < stopAt1);
+            const spotRows = farmRows.filter((x) => atSpot(x.bot));
             const columnDown = rows1.findIndex((x) => inColumn(x.bot));
             const firstSpot = rows1.findIndex((x) => atSpot(x.bot));
             const sneakRows = spotRows.filter((x) => x.sneak === true || x.crouch === true);
-            const farmRows = rows1.filter((x) => x.t <= (info1.ms / 1000));
             const modeRan = farmRows.filter((x) => String(x.action).startsWith(MODE));
             const csAtSpot = spotRows.map((x) => x.cs);
-            const creeperLines = said1.filter((l) => CREEPER_LINE.test(l) && l !== START_LINE && !STOP_LEVEL.test(l));
+            const creeperLines = said1.filter((l) => CREEPER_LINE.test(l) && !l.startsWith(START_SPEC) && !STOP_LEVEL.test(l));
             const stopM = stopLine1 ? STOP_LEVEL.exec(stopLine1) : null;
             const columnUp = rows1.slice(firstSpot >= 0 ? firstSpot : 0).some((x) => inColumn(x.bot));
             note(`1: !killFarm("level 2") answered after ${(info1.ms / 1000).toFixed(0)} s: ${JSON.stringify(String(info1.reply).slice(0, 200))}; the stop line ${stopped1.ok && stopped1.value !== 'ended' ? `came after ${(stopped1.ms / 1000).toFixed(0)} s` : 'was not said before the order ended'}; the bot said ${JSON.stringify(said1.slice(0, 10))}`);
             note(`1: ${n1} creepers summoned, ${alive1} alive, ${kills1} killed; ${hits1.length} hits (${JSON.stringify(hits1.map((h) => h.name).slice(0, 8))}); xp ${JSON.stringify(xp1)} (the bot's view: level ${agent.bot.experience?.level}, points ${agent.bot.experience?.points}); gunpowder ${JSON.stringify(gp1)}; ${spotRows.length} samples at the spot, ${sneakRows.length} of them sneaking (control/view); creeper_safety at the spot ${JSON.stringify([...new Set(csAtSpot)])}, now ${agent.bot.modes.isOn('creeper_safety')}; the mode ran in ${modeRan.length} samples; the bot ${back1.ok ? `is above the room after ${(back1.ms / 1000).toFixed(0)} s` : 'is NOT above the room within 90 s'} at ${fmt(back1.value ?? await entityPos(NAME))} (it stood at ${fmt(standBefore)} when the order came)`);
-            check(!NO_COMMAND.test(String(info1.reply)) && said1.filter((l) => l === START_LINE).length === 1, `1a: the start line is said once: \`${START_LINE}\``, JSON.stringify(said1.filter((l) => CREEPER_LINE.test(l)).slice(0, 3)));
+            check(!NO_COMMAND.test(String(info1.reply)) && said1.filter((l) => l === START_LINE).length === 1, `1a: the start line is said once: \`${START_SPEC}\` (SPEC 8.4) and \`${START_GAP}\` (DECISIONS B-10)`, JSON.stringify(said1.filter((l) => CREEPER_LINE.test(l)).slice(0, 3)));
             check(columnDown >= 0 && firstSpot > columnDown, '1b: the bot climbs down the ladder (the trace holds the ladder column, then the spot)', `column at sample ${columnDown}, the spot at sample ${firstSpot}`);
             check(sneakRows.length >= 1, '1c: the bot sneaks at the spot (its sneak control, or the player\'s view of its pose: crouching)', `${sneakRows.length} of ${spotRows.length} samples at the spot`);
             check(hits1.length >= 4 && hits1.every((h) => h.name === 'creeper') && kills1 >= 4, '1d: hits with bot.attack on creepers only, and the creepers are gone: 4 kills or more (summoned minus alive)', `${hits1.length} hits on ${JSON.stringify([...new Set(hits1.map((h) => h.name))])}, ${kills1} kills`);
-            check(xp1.level >= 2 && xp1.points >= 16 && (agent.bot.experience?.level ?? 0) >= 2, '1e: the XP of the kills reached the bot: level 2 or more (server `xp query`, and bot.experience)', `server ${JSON.stringify(xp1)}, bot level ${agent.bot.experience?.level}`);
+            // `xp query <bot> points` is the progress within the level, not the total: the level is the figure
+            check(xp1.level >= 2 && (agent.bot.experience?.level ?? 0) >= 2, '1e: the XP of the kills reached the bot: level 2 or more (server `xp query`, and bot.experience)', `server ${JSON.stringify(xp1)}, bot level ${agent.bot.experience?.level}`);
             check(gp1.total >= 1, '1f: gunpowder lies in the chests (through the hoppers), the hoppers or the bag (a creeper drops 0 to 2: four kills give none in about 1 run of 80)', JSON.stringify(gp1));
             check(info1.done && stopLine1 !== null && Number(stopM?.[1]) >= 4, '1g: the stop line `I stop the farming: level 2 reached; N creepers, <time>; M gunpowder stored.` with N the kills (4 or more)', JSON.stringify(stopLine1 ?? String(info1.reply).slice(0, 160)));
             if (stopM) note(`1g: the time slot of the stop line reads ${JSON.stringify(stopM[2])} and the gunpowder slot ${stopM[3]} (the chests hold ${gp1.chests}, the hoppers ${gp1.hoppers}, the bag ${gp1.bag})`);
@@ -335,7 +342,7 @@ await scenarioMain({
             const xp3 = await xpOf(NAME);
             note(`3: without the slab !killFarm("level 2") answered after ${(info3.ms / 1000).toFixed(0)} s: ${JSON.stringify(String(info3.reply).slice(0, 200))}; said ${JSON.stringify(saidLines(s, t3).slice(0, 6))}; a creeper summoned after the answer: ${alive3} alive 30 s later, ${hits3.length} hits, xp ${JSON.stringify(xp3)}; the bot at ${fmt(await entityPos(NAME))}`);
             check(info3.done && refused !== null, `3a: the room without a slab is refused within 120 s: \`${NO_SLAB}\``, JSON.stringify(String(info3.reply).slice(0, 160)));
-            check(hits3.length === 0 && alive3 === 1 && xp3.points === 0, '3b: no farming: no hit, the creeper summoned after the refusal is alive 30 s later, no XP', `${hits3.length} hits, ${alive3} alive, xp ${JSON.stringify(xp3)}`);
+            check(hits3.length === 0 && alive3 === 1 && xp3.level === 0 && xp3.points === 0, '3b: no farming: no hit, the creeper summoned after the refusal is alive 30 s later, no XP', `${hits3.length} hits, ${alive3} alive, xp ${JSON.stringify(xp3)}`);
             if (agent.actions.executing) note(`3: !stop answered ${JSON.stringify(await orders.order('!stop', 20000))}`);
 
             const requests = s.chat.requests.slice(requests0).map((q) => String(q?.turns?.[q.turns.length - 1]?.content ?? '').slice(0, 100));

@@ -177,6 +177,57 @@ describe('F6: sleepInBed on the fake bot', () => {
         assert.equal((await Z.sleepInBed(b.bot, b.ctx, QUICK)).text, VILLAGERS);
     });
 
+    // SPEC F6 corrected (T4's W126 run of 2026-11-14: at night `!goToBed` answered the villagers' text and the bot never slept:
+    // the house's bed, inside the survey's home "house", is 7.3 blocks from the trading hall's lectern). The box of a trading
+    // hall counts for every bed; the rules of nearness (a job site, a villager, a trading hall place within 8 blocks) only for a
+    // bed that is not my_bed and lies in no home and no shelter the owner saved.
+    const HALL = { name: 'trading_hall', type: 'building', kind: 'trading_hall', source: 'survey', dimension: 'overworld', min: { x: 0, y: 63, z: 9 }, max: { x: 8, y: 69, z: 15 }, entrances: [] };
+
+    test('the W126 layout: the home\'s bed 7.3 blocks from the hall\'s lectern is the bot\'s; it sleeps there', async () => {
+        const { bot, ctx, world, area } = scene({ house: true, botAt: [4.5, 64, 10.5] });
+        ctx.areas = [area, HALL];
+        world.bed(2, 64, 2, { facing: 'east' }); // inside the house (the area of type home), head (3, 64, 2)
+        world.set(5, 64, 9, 'lectern'); // in the trading hall, 7.3 blocks from the head
+        const { beds, excluded } = Z.candidateBeds(bot, ctx, 32);
+        assert.equal(excluded, 0, 'the home\'s bed is no villager\'s');
+        assert.deepEqual(beds.map(b => [b.x, b.z, b.home]), [[3, 2, true]]);
+        const res = await Z.sleepInBed(bot, ctx, QUICK);
+        assert.equal(res.ok, true, JSON.stringify(res));
+        assert.deepEqual(sleeps(bot)[0], [3, 64, 2]);
+    });
+
+    test('a stray bed and a village house\'s bed by the same lectern stay the villagers\'', async () => {
+        const village = { name: 'house_2', type: 'building', source: 'survey', dimension: 'overworld', min: { x: 9, y: 63, z: 14 }, max: { x: 14, y: 69, z: 19 }, entrances: [] };
+        const { bot, ctx, world, area } = scene({ house: true, botAt: [4.5, 64, 10.5] });
+        ctx.areas = [area, HALL, village];
+        world.bed(2, 64, 2, { facing: 'east' }); // the home's bed
+        world.bed(10, 64, 10, { facing: 'east' }); // a stray bed in the open, 6 blocks from the lectern
+        world.bed(9, 64, 14, { facing: 'east' }); // a bed of the village house, its head 7.1 blocks from the lectern
+        world.set(5, 64, 9, 'lectern');
+        const { beds, excluded } = Z.candidateBeds(bot, ctx, 32);
+        assert.deepEqual(beds.map(b => [b.x, b.z]), [[3, 2]], 'only the home\'s bed');
+        assert.equal(excluded, 2);
+        const alone = scene({ botAt: [4.5, 64, 10.5], areas: [HALL, village] });
+        alone.world.bed(10, 64, 10, { facing: 'east' });
+        alone.world.bed(9, 64, 14, { facing: 'east' });
+        alone.world.set(5, 64, 9, 'lectern');
+        assert.equal((await Z.sleepInBed(alone.bot, alone.ctx, QUICK)).text, VILLAGERS, 'without the home: the villagers\' text as before');
+    });
+
+    test('my_bed by a villager is the bot\'s: it sleeps there; inside a trading hall\'s box it stays the villagers\'', async () => {
+        const places = placeStore({ my_bed: { x: 8, y: 64, z: 10, dimension: 'overworld' } }); // the foot of the bed at 8..9
+        const { bot, ctx, world } = scene({ places });
+        world.bed(8, 64, 10, { facing: 'east' });
+        addMob(bot, 'villager', [12.5, 64, 12.5], { type: 'passive' });
+        const res = await Z.sleepInBed(bot, ctx, QUICK);
+        assert.equal(res.ok, true, JSON.stringify(res));
+        assert.deepEqual(sleeps(bot)[0], [9, 64, 10]);
+        const hall = { ...HALL, min: { x: 6, y: 63, z: 8 }, max: { x: 12, y: 69, z: 14 } };
+        const inHall = scene({ places, areas: [hall] });
+        inHall.world.bed(8, 64, 10, { facing: 'east' });
+        assert.equal((await Z.sleepInBed(inHall.bot, inHall.ctx, QUICK)).text, VILLAGERS, 'the box of the hall counts for my_bed too');
+    });
+
     test('the taken text only for a candidate bed', async () => {
         // an occupied bed by a lectern and nothing else: the villagers' text, not the taken text
         const a = scene();

@@ -48,11 +48,12 @@ const OFFERS = new RegExp(String.raw`^The table offers for your diamond_pickaxe:
 const OFFERS_NONE = (name) => new RegExp(String.raw`^The table offers for your diamond_pickaxe: 1\) ${OFFER}, 2\) ${OFFER}, 3\) ${OFFER}; none of them is ${name}\.$`);
 const ENCHANTED = /^I enchanted your diamond_pickaxe: (.+?) \((\d+) levels?, (\d+) lapis\)\.$/;
 const LEVEL_LINE = (level, n, need) => `Level ${level}, offer ${n} needs ${need}.`;
-const TOOK_BACK = 'I took the diamond_pickaxe back; say "enchant my pickaxe" again when you have chosen.';
 const NO_TABLE = 'No enchanting table within 32 blocks.';
 const NO_COMMAND = /does not exist/;
 
-const textOf = (s, t, re, reply) => saidLines(s, t).find((l) => re.test(l)) ?? (re.test(String(reply ?? '')) ? String(reply) : null);
+// The first said line since t that matches re, else the first of the replies that matches (the line may be the answer of `!enchant`
+// itself, whose action ends with it, or of `!enchantTake`).
+const textOf = (s, t, re, ...replies) => saidLines(s, t).find((l) => re.test(l)) ?? replies.map((r) => String(r ?? '')).find((r) => re.test(r)) ?? null;
 const exact = (text) => new RegExp(`^${text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`);
 // The offers of an offers line: [{ n, name, cost, lapis }].
 const offersOf = (line) => {
@@ -179,7 +180,7 @@ await scenarioMain({
             const took = e2.said.find((l) => TOOK_LAPIS.test(l)) ?? null;
             const tookAt = took ? TOOK_LAPIS.exec(took) : null;
             const chest2 = await chestItems(chest);
-            const enchantedLine = textOf(s, e2.t, ENCHANTED, e2.answer?.reply);
+            const enchantedLine = textOf(s, e2.t, ENCHANTED, e2.answer?.reply, e2.info.reply);
             const picks3 = await pickaxesOf(NAME);
             const xp3 = await xpOf(NAME);
             note(`2: !enchant("diamond_pickaxe") answered after ${(e2.info.ms / 1000).toFixed(0)} s: ${JSON.stringify(String(e2.info.reply).slice(0, 200))}; the bot said ${JSON.stringify(e2.said.slice(0, 8))}; the offers ${JSON.stringify(e2.offers)}; the chest holds ${JSON.stringify(chest2)}; lapis in the bag ${lapisInBag()}`);
@@ -199,17 +200,19 @@ await scenarioMain({
             await freshPickaxe();
             await commands([`xp set ${NAME} 12 levels`, `xp set ${NAME} 0 points`]);
             await waitFor(() => agent.bot.experience?.level === 12, { ms: 5000, every: 50 });
-            const lapis4 = lapisInBag();
-            const chest4 = await chestItems(chest);
+            // the lapis of the bag and the chest together: the pack may refill the bag to 3 from the chest before it opens the table
+            const lapisAll = async () => lapisInBag() + ((await chestItems(chest))?.lapis_lazuli ?? 0);
+            const lapis4 = await lapisAll();
             const e4 = await enchantAndTake((offers) => (offers.find((o) => o.cost > 12) ?? offers[2] ?? { n: 3 }).n, '4');
             const offer4 = e4.offers.find((o) => o.n === e4.n) ?? null;
-            const levelLine = offer4 ? textOf(s, e4.t, exact(LEVEL_LINE(12, offer4.n, offer4.cost)), e4.answer?.reply) : null;
+            const levelLine = offer4 ? textOf(s, e4.t, exact(LEVEL_LINE(12, offer4.n, offer4.cost)), e4.answer?.reply, e4.info.reply) : null;
             const picks4 = await pickaxesOf(NAME);
             const xp4 = await xpOf(NAME);
-            note(`4: at level 12 !enchant("diamond_pickaxe") answered after ${(e4.info.ms / 1000).toFixed(0)} s: ${JSON.stringify(String(e4.info.reply).slice(0, 200))}; the offers ${JSON.stringify(e4.offers)}; !enchantTake(${e4.n}) -> ${JSON.stringify(String(e4.answer?.reply ?? '(no answer)').slice(0, 160))}; the bot said ${JSON.stringify(e4.said.slice(0, 8))}; pickaxes ${JSON.stringify(picks4.map((x) => x.enchantments))}; xp ${JSON.stringify(xp4)}; lapis ${lapis4} -> ${lapisInBag()}; the chest ${JSON.stringify(await chestItems(chest))} (was ${JSON.stringify(chest4)})`);
+            const lapis4After = await lapisAll();
+            note(`4: at level 12 !enchant("diamond_pickaxe") answered after ${(e4.info.ms / 1000).toFixed(0)} s: ${JSON.stringify(String(e4.info.reply).slice(0, 200))}; the offers ${JSON.stringify(e4.offers)}; !enchantTake(${e4.n}) -> ${JSON.stringify(String(e4.answer?.reply ?? '(no answer)').slice(0, 160))}; the bot said ${JSON.stringify(e4.said.slice(0, 8))}; pickaxes ${JSON.stringify(picks4.map((x) => x.enchantments))}; xp ${JSON.stringify(xp4)}; lapis of the bag and the chest ${lapis4} -> ${lapis4After} (the bag ${lapisInBag()})`);
             check(e4.offersLine !== null && Boolean(offer4) && offer4.cost > 12, '4a: the offers line again; an offer costs more than 12 levels (the third costs 30 with 15 shelves)', JSON.stringify(e4.offers));
             check(e4.info.done && levelLine !== null, `4b: the owner's choice of that offer is refused with \`${offer4 ? LEVEL_LINE(12, offer4.n, offer4.cost) : 'Level 12, offer k needs <cost>.'}\` (SPEC 8.3, the levels)`, `${JSON.stringify(e4.answer?.reply ?? null)}; said ${JSON.stringify(e4.said.slice(0, 6))}`);
-            check(picks4.length === 1 && !picks4[0].enchanted && xp4.level === 12 && lapisInBag() === lapis4, '4c: nothing spent: the pickaxe is back in the bag unenchanted, the level is still 12, the lapis count is unchanged', `pickaxes ${JSON.stringify(picks4.map((x) => x.enchantments))}, xp ${JSON.stringify(xp4)}, lapis ${lapisInBag()}`);
+            check(picks4.length === 1 && !picks4[0].enchanted && xp4.level === 12 && lapis4After === lapis4, '4c: nothing spent: the pickaxe is back in the bag unenchanted, the level is still 12, no lapis spent (the bag and the chest together)', `pickaxes ${JSON.stringify(picks4.map((x) => x.enchantments))}, xp ${JSON.stringify(xp4)}, lapis ${lapis4} -> ${lapis4After}`);
             await idle();
 
             // ====================================================== 5. a name the table does not offer
@@ -224,9 +227,13 @@ await scenarioMain({
             check(picks5.length === 1 && !picks5[0].enchanted, '5b: the pickaxe is back in the bag unenchanted', JSON.stringify(picks5.map((x) => x.enchantments)));
             await idle();
 
-            // ====================================================== 6. the choice in the order: offer 2 by its name, no question
+            // ====================================================== 6. the choice in the order: an offer by its name, no question
+            // the latest offers (step 5 enchanted nothing, so the seed is the same); the name the owner says must pick one offer only:
+            // offer 2 when its name is unique among the three, else offer 3 or 1 when theirs is
             const offers6 = offersOf(none5).length === 3 ? offersOf(none5) : e4.offers;
-            const chosen = offers6[1] ?? null;
+            const clash = (a, b) => plainName(a.name).includes(plainName(b.name)) || plainName(b.name).includes(plainName(a.name));
+            const unique = (o) => offers6.filter((x) => clash(x, o)).length === 1;
+            const chosen = [offers6[1], offers6[2], offers6[0]].find((o) => o && unique(o)) ?? offers6[1] ?? null;
             const name6 = chosen ? plainName(chosen.name) : 'unbreaking';
             const lapis6 = lapisInBag();
             const t6 = Date.now();
@@ -237,8 +244,8 @@ await scenarioMain({
             const asked6 = said6.filter((l) => /Say "take 1"/.test(l));
             const picks6 = await pickaxesOf(NAME);
             const xp6 = await xpOf(NAME);
-            note(`6: !enchant("diamond_pickaxe", "${name6}") (offer 2 of ${JSON.stringify(offers6)}) answered after ${(e6.ms / 1000).toFixed(0)} s: ${JSON.stringify(String(e6.reply).slice(0, 200))}; said ${JSON.stringify(said6.slice(0, 6))}; pickaxes ${JSON.stringify(picks6.map((x) => x.enchantments))}; xp ${JSON.stringify(xp6)}; lapis ${lapis6} -> ${lapisInBag()}`);
-            check(e6.done && enchanted6 !== null && Boolean(chosen) && String(m6?.[1] ?? '').split(', ').includes(chosen.name) && Number(m6?.[3]) === 2, `6a: a choice in the order takes its offer without asking: \`I enchanted your diamond_pickaxe: <the enchantments, ${chosen?.name ?? '<Name>'} among them> (<n> levels, 2 lapis).\``, `${JSON.stringify(enchanted6)}; offer 2 ${JSON.stringify(chosen)}`);
+            note(`6: !enchant("diamond_pickaxe", "${name6}") (offer ${chosen?.n ?? '?'} of ${JSON.stringify(offers6)}) answered after ${(e6.ms / 1000).toFixed(0)} s: ${JSON.stringify(String(e6.reply).slice(0, 200))}; said ${JSON.stringify(said6.slice(0, 6))}; pickaxes ${JSON.stringify(picks6.map((x) => x.enchantments))}; xp ${JSON.stringify(xp6)}; lapis ${lapis6} -> ${lapisInBag()}`);
+            check(e6.done && enchanted6 !== null && Boolean(chosen) && String(m6?.[1] ?? '').split(', ').includes(chosen.name) && Number(m6?.[3]) === chosen.n, `6a: a choice in the order takes its offer without asking: \`I enchanted your diamond_pickaxe: <the enchantments, ${chosen?.name ?? '<Name>'} among them> (<n> levels, ${chosen?.n ?? 'k'} lapis).\``, `${JSON.stringify(enchanted6)}; offer ${chosen?.n ?? '?'} ${JSON.stringify(chosen)}`);
             check(asked6.length === 0, '6b: no offers question was said (the "Say \\"take 1\\" ..." line)', JSON.stringify(asked6));
             check(picks6.length === 1 && picks6[0].enchanted && Object.keys(picks6[0].enchantments).length >= 1 && xp6.level < 30, '6c: the pickaxe in the bag is enchanted (server) and levels were spent', `pickaxes ${JSON.stringify(picks6.map((x) => x.enchantments))}, xp ${JSON.stringify(xp6)}`);
             if (picks6[0]?.enchanted && !Object.keys(picks6[0].enchantments).some((k) => k.split('_').some((w) => name6.includes(w)))) note(`6: the component names ${JSON.stringify(Object.keys(picks6[0].enchantments))} while the owner said "${name6}": the display name and the id differ (a curse is "..._curse")`);

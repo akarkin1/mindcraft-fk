@@ -10,7 +10,7 @@ import { botPos, clockOf, dimensionOf, entitiesWhere, listAreas, logTo, noteProg
 import { blockReader, walkNear } from './motion.js';
 import { goToShelter } from './shelter.js';
 import { isBuildingArea, isInsideArea, withEdge } from './shelter_logic.js';
-import { BED_RULES, JOB_SITE_NAMES, MY_BED, bedFoot, isBedName, minutesUntilNight, orderBeds, sleepErrorKind, sleepTimeState } from './sleep_logic.js';
+import { BED_RULES, JOB_SITE_NAMES, MY_BED, bedFoot, isBedName, isMyBed, minutesUntilNight, orderBeds, sleepErrorKind, sleepTimeState } from './sleep_logic.js';
 import { TEXTS, couldNotSleepText, dayText } from './texts.js';
 import { wakeUp } from './wake.js';
 
@@ -121,10 +121,17 @@ function isHomeArea(area) {
 
 // Why a bed is a villager's (F6): 'hall' inside a trading hall area or within 8 blocks of a trading hall place, 'job' within
 // 8 blocks of a job-site block, 'villager' within 8 blocks of a villager; null for a bed the bot may use. Never throws.
-function bedExclusion(bot, bed, center, areas, places) {
+// v0.1.4.16 (SPEC F6 corrected, T4's W126 run: the house's bed 7.3 blocks from the trading hall's lectern was a villager's and
+// the bot never slept): the box of a trading hall area counts for every bed; the rules of nearness (a trading hall place, a job
+// site, a villager within 8 blocks) only for a bed that is not `my_bed` and lies in no home and no shelter the owner saved
+// (`own`). The houses of a village are buildings: their beds keep every rule.
+function bedExclusion(bot, bed, center, areas, places, own = false) {
     try {
         if (areas.some(a => isHallArea(a) && containsPos(a, center))) {
             return 'hall';
+        }
+        if (own) {
+            return null;
         }
         const near = (p, range) => Math.hypot(p.x + 0.5 - center.x, p.y - center.y, p.z + 0.5 - center.z) <= range;
         if (places.some(p => HALL_NAME.test(p.name) && near(p, BED_RULES.jobRange))) {
@@ -158,13 +165,15 @@ export function candidateBeds(bot, ctx, range = 32) {
         const dimension = dimensionOf(bot);
         const areas = listAreas(ctx, dimension);
         const places = listPlaces(ctx);
+        const myBed = recallMyBed(ctx);
         const all = findBeds(bot, range).map(bed => {
             const center = { x: bed.x + 0.5, y: bed.y, z: bed.z + 0.5 };
-            const excluded = bedExclusion(bot, bed, center, areas, places);
-            const home = excluded === null && areas.some(a => isHomeArea(a) && containsPos(a, center));
-            return { ...bed, home, excluded };
+            const inHome = areas.some(a => isHomeArea(a) && containsPos(a, center));
+            // the own bed and a home's bed keep only the trading hall's box (SPEC F6 corrected)
+            const excluded = bedExclusion(bot, bed, center, areas, places, inHome || isMyBed(bed, myBed, dimension));
+            return { ...bed, home: excluded === null && inHome, excluded };
         });
-        return { beds: orderBeds(all, botPos(bot), { myBed: recallMyBed(ctx), dimension }), excluded: all.filter(b => b.excluded).length };
+        return { beds: orderBeds(all, botPos(bot), { myBed, dimension }), excluded: all.filter(b => b.excluded).length };
     } catch (err) {
         console.warn('Home pack: could not choose a bed:', err?.message ?? err);
         return { beds: [], excluded: 0 };
