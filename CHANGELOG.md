@@ -6,6 +6,77 @@ This fork is based on [Mindcraft](https://github.com/mindcraft-bots/mindcraft) `
 
 Each release lists new settings and feature flags with their default value.
 
+## [0.1.4.16] - unreleased
+
+"Stability, and three packs": the fixes of your plays of 2026-11-10 and 2026-11-11 on your base, and three new
+packs behind switches, off by default: breeding, enchanting and the AFK creeper kill. Off, the prompt is byte for
+byte v0.1.4.15's.
+
+### Added
+
+- **Breeding** (`breeding`, false): `!breed(pen, count)` ("breed the cows") feeds the animals of a saved pen from
+  outside its fence, never through or at a gate: wheat for cows and sheep, carrots (or potatoes, beetroots) for pigs,
+  seeds for chickens; it skips the animals out of reach, waits for the game's cooldown from the last birth, and stops
+  at 12 animals in a pen. `I fed 4 cows in the cow pen; 2 calves.`
+- **Enchanting** (`enchanting`, false): `!enchant(item, choice)` at your table within 32 blocks reads the three offers
+  and says them (`The table offers for your diamond_pickaxe: 1) Unbreaking I (8 levels, 1 lapis), ...`); you answer
+  "take 2" or "none" (`!enchantTake`), or code gives the choice in the order. The bot never chooses by itself, never
+  crafts or places a table, and spends nothing when the level is too low (`Level 12, offer 3 needs 30.`).
+- **The AFK creeper kill** (`afk_kill`, false): `!killFarm(until)` at your saved place `kill_spot`: the bot checks
+  the hoppers and the slab, sneaks and steps under the slab as you do, switches `creeper_safety` and the other
+  reflexes off at the spot, hits every hostile within reach once per 600 ms until it is gone, stores the drops in
+  the kill chest, eats, sleeps in the bed by the room at night and goes back to the spot, and farms until you say
+  stop, or until "level 30" or "20 minutes" if you give one; it leaves at health 10. It runs as a job, so a reflex,
+  the night or a restart is followed by the way back to the spot; no routine round starts meanwhile. Never a diamond
+  or netherite weapon; a worn sword is replaced from the chests or crafted. Stay more than 128 blocks away or log
+  out while it farms (the monster cap is shared), and leave a one-block gap above the first hopper row so the XP
+  reaches the bot.
+- **Taking from the chests** (with any of the three packs): the bot asks once whether it may take wheat, carrots or
+  lapis from its chests (`May I take 8 wheat from the chest at (x, y, z) for the feeding? Say yes or no.`),
+  remembers your yes (`!allowTaking`, `permits.json`), and asks again only when the stock runs low. Only your word
+  sets a permit.
+- `!sealOpening(x, y, z)` (mining pack): closes an opening into a cave, up to 3 x 3, with stone from the bag.
+- `survey_cluster_gap` (48): two finds of a survey farther apart than this belong to different bases.
+
+### Fixed
+
+- **The creeper reflex** (your Q-2, R-1, M-5): it counted creepers in caves 12 blocks below through rock and fled
+  into a cave. A creeper counts only in sight and within 3 blocks of the bot's level; the flee never goes down more
+  than a block; the help line comes once in 2 minutes.
+- **The base survey** (R-2 to R-4): the base is the cluster of finds where you stand; a village 100 blocks off is
+  reported and left out (`I left out 3 places about 90 blocks south ...`); the base's door is your house's; only
+  your house is a home (a shelter), the village houses are buildings; your own areas belong to the base;
+  `!forgetArea` of a place removes it from the base; the report is the bot's own line in the chat; "rename pen to
+  horse_house" works.
+- **Routines** (R-5, K-7): every place and coordinate in your text becomes a walk step before the work there; a
+  failed step is said and skipped and the round goes on; the round number counts; no round starts while the
+  supervisor's command runs; the caps say the length; `!harvest("sugar_cane")` and `!farmCycle` cut the cane above
+  the bottom block.
+- **The farm from inside the house** (R-6): the bot leaves the building through its door first.
+- **Mining** (R-7, Q-6, Q-7): every stop says why and writes `Mining stop: ...` to the log; `new_mine` true starts a
+  new mine where the bot stands; a forgotten tunnel the bot stands in becomes a mine again; a block it cannot dig is
+  named (`I could not dig the bedrock at (x, y, z)`); a resumed order counts the ore of the earlier trips; the
+  unstuck reflex never breaks a craft; the mine chest gets only the mining's kinds; a full bag with an unreachable
+  chest says so.
+- **The bed** (R-8): the bot's own bed first, then your home's; never a villager's bed or one in a trading hall.
+- **Enchanted tools** (Q-5, R-10): `bot.dig` failed with `enchantments.concat is not a function` with an
+  enchanted pickaxe; the 26.1 enchantments are read in the mineflayer patch (no version change). Leaves are a way
+  out of a canopy.
+- **The clock and the orders** (Q-3, R-11): one clock for the prompt, `!stats` and the watch (Morning, Afternoon,
+  Evening, Night, Dawn); the model starts no work command on its own (`I do not start work without an order from
+  the player or the supervisor.`) and cannot stop yours or the supervisor's.
+- **The supervisor's `run`** (Q-4, Q-8, R-12): quiet in the game chat; the answer gives a run id, and the watch tool
+  `runs` lists the runs and their state.
+- **The caves** (R-13): `!collectBlocks` takes the blocks outside caves first and says once `The stone is in a cave;
+  I go carefully.` before the first one in a cave; it reaches a cave with a fall of up to 5 blocks only with health
+  12 or more; the mining walls off a cave one block beyond its tunnel; every walk keeps out of the cave mouths the
+  survey saved. No refusal of a block order underground (your word).
+- **Small ones** (Q-9): the axe never on leaves; a bee nest is no roof; the collect counts only what the bot broke.
+- **The history race** (P-21 of 0.1.4.14): the turns are added one at a time, and a command's result reaches the
+  model in the very next prompt.
+- **Errors in the chat** (K-1): connection errors go to the log only, never to the chats or the voice; after a
+  reconnect the bot says `The connection to the server was lost.` at most.
+
 ## [0.1.4.15] - 2026-11-12
 
 "The base survey and Routines": the bot finds every place of a base by itself and saves them all at once, and a
