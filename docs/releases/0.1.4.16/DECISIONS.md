@@ -53,3 +53,10 @@ Of 62bce43 against main 9a28d07; the report is the lead's `review16.md`. Twelve 
 | V-10 | The store trip stores the bot's own sticks and repeats every 2 minutes on a bag full of other things. | FX2: only what was gained since the start; no new trip after one that stored nothing. |
 | V-11 | An allay within reach is hit (type `mob` in the 26.1 data). | FX2: excluded, with the other non-hostile `mob` kinds; a pinned list. |
 | V-12 | Enchanting puts one lapis stack and never checks it covers the offer. | FX3: the slot holds the offer's lapis before the enchant, a second stack moved, the shortfall taken by the stock rule first. |
+| V-13 | FX1's note on V-1: with the order chain, a goal's self prompts (`!goal`) would count as the model's own and could no longer start work. | The lead: a goal is a standing order of whoever set it; the self prompter records the chain's `by` at its start and its prompts carry it (a goal loaded after a restart counts as a player's); a goal the model set from an AUTO MESSAGE stays the model's. `xz_goal_chain` (3). |
+
+## The gate (2026-11-14)
+
+| Id | Finding | Decision |
+|---|---|---|
+| G-1 | The fresh-clone gate of 62bce43 (before the review's fix round; stopped after 33 scenarios when the fix round landed, since its order chain touches every scenario): unit 9,577 of 9,577, end-to-end 19 of 19, the world scenarios passing but W85 `job_comes_back` (check 4: 4 raw iron where 8 were ordered). Rerun alone with logs: the resumed trip said `I mined 4 raw_iron.` and ended at once: F5's resume count took the 4 of the bag as mined, while the job's resume orders the remaining count (wanted - got = 4). | The lead: the earlier ore in the bag counts only for an order of the job's whole count (the owner's order given again, the play's "0 of 32"); a resume's remaining count starts from 0. A unit test of the resume; W85 and the gate rerun on 20fa20c. |
