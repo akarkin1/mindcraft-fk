@@ -30,10 +30,24 @@ What each finished part gives to the parts that follow. Where it differs from `S
 | Enchanting | `packs/enchanting/` (`enchant`, `enchantTake`, `questionWaits`; the window's own slots; the offers polled; no offer = cost 0, enchantment -1; one re-put) | The anvil is not built. |
 | The AFK kill | `packs/afk_kill/` (`killFarm`, `KILL_SPOT`, `KILL_CHEST`, `KILL_BED`, `KILL_EXIT`, `usesLeft` a pinned copy), `job/job_store.js` and `job/index.js` (the kind `kill_farm`: `KILL_FARM_KIND`, `killFarmJob`, `killFarmResume`) | A stop by anything but `!stop` resumes after 60 s; the kill check counts landed hits; plain block names (not the mining reader). |
 
+## The two reviews (2026-11-14): FX1 to FX4 and the lead
+
+| Part | Where | What the next engineer needs to know |
+|---|---|---|
+| The order chain | `commands/index.js` (`orderChainOf`, `orderRefusal`, `STOP_WORDS`), `agent.js` `handleMessage` (`chain`, `options.chain`), the running entry's `chain` | A message's chain is `{ by, at, stop }`; a goal's self prompts get `{ by, at, goal: true }`. The model's work is refused only in its own chain; its `!stop` of a typed command passes only for words that ask for a stop (G-2). |
+| The goal's setter | `self_prompter.js` (`start(prompt, by)`, `setPromptPaused(prompt, by)`), `actions.js` (`goalSetterOf`, `!goal`) | A resume keeps the setter; a goal loaded after a restart counts as a player's (V-13, V-18). |
+| The kill room places | `actions.js` (`KILL_ROOM_PLACES`, `orderPlayerNear`) | `!rememberHere` of the four kill places saves the ordering player's position within 8 blocks (V-2). |
+| Breeding | `breeding_logic.js` (`standableAt`, `ringCellStandable`), `breeding.js` (`ringOf`, `approachPen`, `nearRing`, `penInBuilding`) | Up to 6 walks to standable ring cells; the rounds use the same cells (V-6, V-14). |
+| The kill farm | `afk_logic.js` (`WALK_PAUSED_MODES`, `spotPausedModes`, `storeDue` with `STORE_RETRY_MS`), `afk_kill.js` (`startBag`, `markStore`), `job/index.js` (`bagAtStart`, `progress()` answers `kill_farm`), `job_store.js` (`cleanBag`) | Two modes paused for the walk, the rest at the spot; the start counts live in the job (V-15, V-16); the sneak after every meal (V-19). |
+| The resume count | `mining.js` (`jobGotOf(ctx, num)`) | The bag's earlier ore counts only for an order of the job's whole count (G-1). |
+
 ## Open for the next engineer
 
 - B-8: a mine made from a forgotten tunnel knows no way out; a bot in its own deep 1 x 1 hole cannot walk home from
   far away. Both older than this release, candidates for 0.1.4.17.
 - `route_joined` (W95) stalls once in a while for 117 s one cell from shaft 2's hole and passes alone.
+- `words` (W98) check 7 once left the bot underground on "get out" (y 41) and passed on the rerun (G-2).
+- B-15: a shaft out of ladders near the surface stops on the open air as "lava, water or caves" (ROADMAP 0.1.4.17).
+- `STOP_WORDS` is English only.
 - The breeding cooldown is covered by `xy_breed` only (W134 never waits 5 minutes).
 - The play of 2026-11-14 (ROADMAP M-1 to M-4, M-7, M-8) waits for the owner's word.

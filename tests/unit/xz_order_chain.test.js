@@ -287,3 +287,34 @@ describe('G-2: only words that ask for a stop let the model\'s !stop end a typed
         assert.equal(C.orderRefusal(makeAgent([], SUPERVISORS(), chain), '!setMode', 'model', chain), null);
     });
 });
+
+// Review 16c, finding 1: while the owner's typed job command runs, "come here" is answered by the model with !goToPlayer; the job
+// refuses it ("... Say !stop first."), and the model's !stop of the same loop goes through though the words hold no stop word.
+describe('16c: the job\'s "Say !stop first" lets the model\'s !stop of the same loop through', () => {
+    const MINING = () => [{ name: '!mineOre', args: ['iron', 8], text: '!mineOre("iron", 8)', typed: true, by: 'MartyByrde2' }];
+    const BUSY = 'The mining runs, 2 of 8 iron. Say !stop first.';
+    const busyJob = () => ({ refusal: (name, by) => (by === 'model' && name !== '!stop' ? BUSY : null), onCommand() {}, onResult() {} });
+
+    test('"come here": the job refuses !goToPlayer, then the !stop passes', async () => {
+        const chain = C.orderChainOf('MartyByrde2', 'come here', { self: 'andy' });
+        const agent = makeAgent([{ role: 'user', content: 'MartyByrde2: come here' }], MINING(), chain);
+        agent.job = busyJob();
+        assert.equal(await C.executeCommand(agent, '!goToPlayer("MartyByrde2", 3)', { typed: false, chain }), BUSY);
+        assert.equal(chain.jobAsked, true);
+        assert.equal(await C.executeCommand(agent, '!stop', { typed: false, chain }), STOPPED);
+        assert.deepEqual(agent.stopped, ['!stop']);
+    });
+
+    test('without the job\'s refusal in the loop the question\'s !stop stays refused; the model\'s own chain stays refused', async () => {
+        const chain = C.orderChainOf('MartyByrde2', 'how is it going?', { self: 'andy' });
+        const agent = makeAgent([], MINING(), chain);
+        agent.job = busyJob();
+        assert.equal(await C.executeCommand(agent, '!stop', { typed: false, chain }), C.ORDER_TEXTS.playersOrder);
+        const own = C.orderChainOf('system', AUTO, { self: 'andy' });
+        const auto = makeAgent([], MINING(), own);
+        auto.job = busyJob();
+        assert.equal(await C.executeCommand(auto, '!goToPlayer("MartyByrde2", 3)', { typed: false, chain: own }), BUSY);
+        assert.equal(await C.executeCommand(auto, '!stop', { typed: false, chain: own }), C.ORDER_TEXTS.playersOrder);
+        assert.deepEqual(auto.stopped, []);
+    });
+});

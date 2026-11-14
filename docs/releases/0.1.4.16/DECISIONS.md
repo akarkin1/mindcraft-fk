@@ -69,6 +69,16 @@ defects of the fix round, fixed by FX4 (the packs) and the lead (the goal's chai
 | V-18 | Who set a goal was read from the shared `agent.order_chain` when the self prompter started, also on a resume: a system line between the owner's words and the model's `!goal` made the owner's goal the model's, and a goal resumed after a conversation turned the same way. | The lead: `!goal` reads it from its own command (`goalSetterOf`: the player who typed it, else the chain on executeCommand's running entry); `start(prompt, by)` sets it only for a new goal, a resume and the conversation's pause keep it. `xz_goal_chain` (10). |
 | V-19 | After a meal the sneak could be off while the pack believed it on (a walk to food lying near clears the controls). | FX4: the sneak is set after every meal. |
 
+## The third review (2026-11-14, a reviewer on the Fable model, of 9355e92 against a96685c)
+
+The report is the lead's `review16c.md`: V-15 to V-19 fixed, V-14 in part; G-2 does what it was decided for. Two new
+defects, fixed by the lead.
+
+| Id | Finding | Decision |
+|---|---|---|
+| V-20 | G-2 against the job's refusal: while the owner's typed job command runs (`!mineOre`, `!killFarm`), "come here" is answered with a model action the job refuses (`... Say !stop first.`), and G-2 then refused the model's `!stop` (no stop word): the bot worked on. | The lead: a job refusal of a model command marks the loop's chain (`jobAsked`); the model's `!stop` of that loop passes. `xz_order_chain` (16c). Still open by the words: a question with a stop word ("do we have enough iron?") lets a model `!stop` through; noted. |
+| V-21 | `!breed` beside a pen that shares the fence: the ring cells inside the neighbour pass the stand test, and the six walks went there. | The lead: the stand cells leave out the inside of every other saved pen (its box over the fence box's height). `xy_breed` (16c). |
+
 ## The gate (2026-11-14)
 
 | Id | Finding | Decision |

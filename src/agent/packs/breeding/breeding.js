@@ -190,15 +190,18 @@ function standReader(bot) {
 // The stand ring of the pen as the blocks show it now: the fence box (a saved pen's box holds the fence, B-13), the ring one
 // block outside it without the gates and the cells before them, and the cells a walk may not end on (inside the fence box, on
 // a no-stand block); v0.1.4.16 FX4 (review 16b, finding 1): and the stand cells, the cells of the ring the bot can stand on
-// (ringCellStandable; the whole ring when the test leaves none), which the walk to the pen and the rounds walk to.
-function ringOf(bot, pen, box) {
+// (ringCellStandable; the whole ring when the test leaves none), which the walk to the pen and the rounds walk to; review 16c
+// (finding 2): never a cell inside another saved pen (a pen that shares the fence: its inside is no place to stand).
+function ringOf(bot, pen, box, otherPens = []) {
     const get = blockReader(bot);
     const read = standReader(bot);
     const fenceBox = fenceBoxOf(get, box);
     const inside = { min: { x: fenceBox.min.x + 1, y: box.min.y, z: fenceBox.min.z + 1 }, max: { x: fenceBox.max.x - 1, y: box.max.y, z: fenceBox.max.z - 1 } };
     const gates = [...gatesOf(pen), ...(isBox(inside) ? findGates(get, inside) : [])];
     const ring = withoutGateCells(standRing(fenceBox), gates);
-    const stand = ring.filter(cell => ringCellStandable(read, fenceBox, cell));
+    // the ring's cells carry x and z only: a pen counts when its box overlaps the fence box's height (one block more either way)
+    const inOtherPen = cell => otherPens.some(o => insideBoxXZ(o, cell) && o.min.y <= fenceBox.max.y + 1 && o.max.y >= fenceBox.min.y - 1);
+    const stand = ring.filter(cell => !inOtherPen(cell) && ringCellStandable(read, fenceBox, cell));
     return {
         fenceBox,
         ring,
@@ -517,7 +520,10 @@ export async function breed(bot, ctx, penName, count = BREED_RULES.defaultCount,
         : refuse(got.refusal[0], got.refusal[1], about(species)));
     // the ring one block outside the fence, without the gates and the cells before them
     const saved = speciesOf(pen.contents);
-    let w = ringOf(bot, pen, box);
+    // review 16c (finding 2): the other saved pens, whose inside the ring's stand cells leave out
+    const otherPens = listAreas(ctx, dimensionOf(bot))
+        .filter(a => a && (a.type === 'pen' || a.kind === 'pen') && isBox(a) && normalizeName(a.name) !== normalizeName(pen.name));
+    let w = ringOf(bot, pen, box, otherPens);
     if (w.ring.length === 0) {
         return refuse('no_way', noWayText(pen.name), about(saved));
     }
@@ -552,7 +558,7 @@ export async function breed(bot, ctx, penName, count = BREED_RULES.defaultCount,
         return away;
     }
     // at the ring: the ring as the blocks near it show it, and the animals of the pen as the bot sees them now
-    w = ringOf(bot, pen, box);
+    w = ringOf(bot, pen, box, otherPens);
     if (w.ring.length === 0) {
         return refuse('no_way', noWayText(pen.name), about(saved));
     }

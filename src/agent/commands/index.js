@@ -449,7 +449,8 @@ export function orderChainOf(source, message, options = {}) {
  * supervisor typed runs (agent.running_commands with typed) gets ORDER_TEXTS.playersOrder. The model's commands in a player's
  * or the supervisor's chain pass (the owner's spoken "stop" works), and so do the player's typed commands and the system orders
  * (a job's resume, a routine's round); only the model's !stop there is judged by the words (the gate of a96685c, G-2, W132 C):
- * while someone's typed command runs it passes when the words asked for a stop (chain.stop, STOP_WORDS), else it gets
+ * while someone's typed command runs it passes when the words asked for a stop (chain.stop, STOP_WORDS) or when the job
+ * refused the model's answer in the same loop with "Say !stop first" (chain.jobAsked, review 16c finding 1), else it gets
  * ORDER_TEXTS.playersOrder ("how is it going?" answered with !stop ends nothing). A self prompt of a player's goal (chain.goal
  * true, review 16b finding 4) may start work but gets the !stop and !setMode refusal like the model's own chain. A pack's line
  * in the history and a refusal change nothing: the chain is not read from the history. Without a chain (no handleMessage
@@ -474,8 +475,9 @@ export function orderRefusal(agent, name, by, chain = null) {
         // command the player or the supervisor typed meanwhile
         const goal = behind.goal === true;
         if (behind.by !== 'model' && !goal) {
-            // G-2 (W132 C): a player's or the supervisor's words that did not ask for a stop stop no typed command
-            return name === '!stop' && behind.stop !== true && typedRuns() ? ORDER_TEXTS.playersOrder : null;
+            // G-2 (W132 C): a player's or the supervisor's words that did not ask for a stop stop no typed command, unless the job
+            // refused the model's answer to them with "Say !stop first" in this loop (review 16c, finding 1: jobAsked)
+            return name === '!stop' && behind.stop !== true && behind.jobAsked !== true && typedRuns() ? ORDER_TEXTS.playersOrder : null;
         }
         if (STOP_COMMANDS.includes(name)) {
             return typedRuns() ? ORDER_TEXTS.playersOrder : null;
@@ -560,6 +562,11 @@ export async function executeCommand(agent, message, options = {}) {
             const refusal = jobRefusal(job, command.name, orderBy(agent, options, typed));
             if (refusal !== null) {
                 console.log('Job:', refusal);
+                // review 16c, finding 1: the job asked the model for a !stop first ("come here" while the owner's typed job runs):
+                // the !stop of this message's loop goes through (orderRefusal, jobAsked)
+                const chain = options?.chain;
+                if (chain && typeof chain === 'object' && orderBy(agent, options, typed) === 'model')
+                    chain.jobAsked = true;
                 return refusal;
             }
             // v0.1.4.16 (F8, "orders stay orders"): the model starts no work on its own and stops no command of the player

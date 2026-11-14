@@ -41,6 +41,7 @@ libraries' versions are unchanged.
 | 7 | At night by the trading hall, "go to sleep". | Its own bed or your house's, never a villager's. |
 | 8 | Give it an enchanted pickaxe and let it dig. | No `enchantments.concat is not a function`. |
 | 9 | A supervisor `run` of any command. | Nothing of it in the game chat; the answer has a run id, and the watch tool `runs` shows when it ended. |
+| 9a | While your typed command or the supervisor's run works, ask "how is it going?"; then say "stop". | The question is answered and the work goes on; "stop" (or cancel, enough, wait, hold on, never mind) stops it. A goal you set (`!goal`) starts work but never stops a command you typed. |
 | 10 | `!collectBlocks("stone", 10)` underground. | The stone outside caves first; `The stone is in a cave; I go carefully.` once before the first in a cave; never a refusal. |
 | 11 | Restart the game for a backup while the bot is on. | No `[LoginGuard]` line in the chats or the voice; after the reconnect at most `The connection to the server was lost.` |
 

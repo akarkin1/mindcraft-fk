@@ -507,3 +507,30 @@ describe('FX4 (review 16b, finding 1): the walk to the pen with blocked ring cel
         assert.deepEqual(t.gotos, [], 'no walk');
     });
 });
+
+// ---- review 16c, finding 2: a neighbouring pen that shares the fence; its inside is no ring cell to walk to ----
+describe('16c (finding 2): the ring leaves out the inside of another saved pen', () => {
+    test('a pig pen shares the east fence and the bot stands east of it: no walk into the pig pen, the cows fed', async () => {
+        const t = pen({ pos: [13.5, 64, 2.5] });
+        const pigPen = {
+            name: 'pig_pen', type: 'pen', kind: 'pen', dimension: 'overworld', source: 'survey',
+            min: { x: 5, y: 62, z: -1 }, max: { x: 11, y: 66, z: 5 }, entrances: [], contents: { animals: { pig: 2 } },
+        };
+        t.ctx.areas.push(pigPen);
+        const r = await t.run('cow_pen', 2);
+        assert.equal(r.ok, true, r.text);
+        assert.ok(r.fed >= 2, r.text);
+        const inPigPen = (g) => g.x >= pigPen.min.x && g.x <= pigPen.max.x && g.z >= pigPen.min.z && g.z <= pigPen.max.z;
+        assert.deepEqual(t.gotos.filter(inPigPen).map((g) => [g.x, g.z]), [], 'no walk ends inside the pig pen');
+        assertOutside(t);
+    });
+
+    test('another pen far from the fence leaves the ring as it was (the order from the south, as the other tests)', async () => {
+        const t = pen({});
+        t.ctx.areas.push({ name: 'pig_pen', type: 'pen', kind: 'pen', dimension: 'overworld', min: { x: 40, y: 62, z: -1 }, max: { x: 46, y: 66, z: 5 },
+            entrances: [], contents: { animals: { pig: 2 } } });
+        const r = await t.run('cow_pen', 2);
+        assert.deepEqual({ ok: r.ok, fed: r.fed, babies: r.babies }, { ok: true, fed: 4, babies: 2 }, r.text);
+        assert.ok(t.gotos.some((g) => g.z === 6), 'the south ring cells are walked to as before');
+    });
+});
