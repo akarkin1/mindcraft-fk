@@ -5,7 +5,8 @@
 import { botPos, logTo } from '../home/context.js';
 import { blockAt, freeSlots, inventoryList } from './dig.js';
 import { cellOf, roomPlan } from './mine_logic.js';
-import { BAG_RULES, CONTAINER_NAMES, PICKAXE_STONE, STONE_KEPT, bagAction, bagFullText, bagKeptText, isMineChestKind, storeKinds, storedText } from './bag_logic.js';
+import { BAG_RULES, CONTAINER_NAMES, PICKAXE_STONE, STONE_KEPT, bagAction, bagFullText, bagKeptText, bagUnreachableText, isMineChestKind, storeKinds,
+    storedText } from './bag_logic.js';
 
 const CONTAINERS = CONTAINER_NAMES; // chest, trapped_chest, barrel and, since v0.1.4.14, the eight copper chests
 
@@ -65,21 +66,32 @@ function anyLeft(left) {
  * blocks, nearest first (ctx.storage.storeItems with `only`); it says `I stored ... in the chest at (x, y, z) and go on.`
  * With nothing to store and a free slot the trip digs on (action `dig`). It stops (ok false, reason `inventory_full`)
  * with `My bag is full and no chest within 32 blocks has room. I stop the mining at 7 of 28 diamond.` when nothing could
- * be stored, and with bagKeptText when the bag holds only kept things and no slot is free.
+ * be stored, and with bagKeptText when the bag holds only kept things and no slot is free. v0.1.4.16 (F5, T4's W131
+ * diagnosis): when nothing could be stored and a chest could not be reached (the store's reason `unreachable`), it stops
+ * with bagUnreachableText (`My bag is full and I could not get to the chest at (x, y, z): <the walk's text>`) and does not
+ * say it (`said: false`): the trip's stop line carries it as its detail. Every other text is said here (`said: true`).
  * @param {object} bot
  * @param {object} ctx the pack context (storage, say, log)
  * @param {object|null} mine the mine of the trip
  * @param {{item: string, ore: string}} row the row of the ore
  * @param {{mined?: number, wanted?: number}} [count] for the stop text
  * @returns {Promise<{ok: boolean, reason: null|'inventory_full'|'interrupted', action: 'store'|'dig'|'stop', text: string,
- *   stored: Object<string, number>}>}
+ *   stored: Object<string, number>, said: boolean}>}
  */
 export async function storeFullBag(bot, ctx = {}, mine = null, row = {}, count = {}) {
     const stored = {};
-    const result = (ok, reason, action, text) => ({ ok, reason, action, text, stored });
+    const result = (ok, reason, action, text, said = text.length > 0) => ({ ok, reason, action, text, stored, said });
     const stop = (text) => {
         sayTo(ctx, text);
         return result(false, 'inventory_full', 'stop', text);
+    };
+    // F5: the first chest the store could not get to, with what the store said about it; the walk has no text of its own
+    let unreachable = null;
+    const noteUnreachable = (r, chest) => {
+        const at = cellOf(chest);
+        if (!unreachable && r?.reason === 'unreachable' && at) {
+            unreachable = { chest: at, text: typeof r.text === 'string' ? r.text : '' };
+        }
     };
     try {
         const kinds = storeKinds(inventoryList(bot), { ore: row?.item, foods: bot.registry?.foodsByName ?? {} });
@@ -114,6 +126,7 @@ export async function storeFullBag(bot, ctx = {}, mine = null, row = {}, count =
                 }
                 const r = await ctx.storage.storeItems(bot, ctx, { chest, only: names, keep });
                 addCounts(stored, r?.stored);
+                noteUnreachable(r, chest);
                 if (r && Object.keys(r.stored ?? {}).length > 0) {
                     first ??= chest;
                 }
@@ -125,6 +138,7 @@ export async function storeFullBag(bot, ctx = {}, mine = null, row = {}, count =
             if (names.length > 0 && !bot.interrupt_code) {
                 const r = await ctx.storage.storeItems(bot, ctx, { only: names, keep, range: BAG_RULES.chestRange });
                 addCounts(stored, r?.stored);
+                noteUnreachable(r, r?.failedAt); // the storage pack names the chest it could not get to (failedAt)
                 if (!first && Array.isArray(r?.chests) && r.chests.length > 0) {
                     first = cellOf(r.chests[0]);
                 }
@@ -137,6 +151,11 @@ export async function storeFullBag(bot, ctx = {}, mine = null, row = {}, count =
             return result(false, 'interrupted', 'store', '');
         }
         if (Object.keys(stored).length === 0) {
+            if (unreachable) {
+                // F5: not said here: the stop line of the trip says it as its detail, and its `Mining stop:` line logs it
+                // the head alone: the storage's own answer repeats the bag and the chest (DECISIONS B-7)
+                return result(false, 'inventory_full', 'stop', bagUnreachableText(unreachable.chest), false);
+            }
             return stop(bagFullText(count?.mined, count?.wanted, row?.ore ?? 'ore'));
         }
         const text = storedText(stored, first ?? cellOf(botPos(bot)));

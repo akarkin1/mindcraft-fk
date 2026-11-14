@@ -26,6 +26,13 @@
 //      `!sealOpening(x, y, z)` of its middle cell: `I sealed the opening at (x, y, z) with 9 cobblestone.` and the 9 cells hold
 //      cobblestone (server).
 // Throughout: the process lives, no request reached a real model.
+// T4 2026-11-14 (the first server run): A and B collect granite, not stone. collectBlock searches 64 blocks and F10 takes every block
+// outside a cave first, at any distance; the deep base world has natural stone within 64 blocks everywhere (y 56 and below, also
+// under the dirt), so "the only stone within 16 blocks lies in the cave" could not hold: B took the buried stone at x+17, 11 blocks
+// from the bot, and said no cave line. Granite is nowhere else in the base world: 4 on the grass, 6 in the cave, and the line is
+// `The granite is in a cave; I go carefully.` (`The <type> is in a cave; ...`). The walk back is two typed legs, the grass beside
+// the spot first (a short way, the digging fallback allowed): from 89 blocks the bot in its own 1 x 1 hole, torches in both its
+// cells, answered `I found no way to (400, 61, -13) without digging; ...` at once (P-19, a finding of its own).
 import {
     scenarioMain, check, note, exitSoon, stopRealAgent, env, entityPos, fmt, sleep, commands, waitFor, startTrace, printTrace,
 } from './helpers.js';
@@ -36,7 +43,8 @@ import { startJourney, partTeachMineInRoom, spots, saidLines, SUPERVISION_SETTIN
 
 const NAME = 'w_cave';
 const KIT = [['iron_pickaxe', 1], ['torch', 16], ['ladder', 8], ['bread', 4], ['cobblestone', 32]];
-const CAREFUL = 'The stone is in a cave; I go carefully.';
+const KIND = 'granite'; // T4: the kind of A and B, found nowhere else in the base world
+const CAREFUL = `The ${KIND} is in a cave; I go carefully.`;
 const FILLERS = ['cobblestone', 'cobbled_deepslate', 'stone', 'deepslate', 'andesite', 'diorite', 'granite', 'tuff', 'dirt'];
 const P = (p) => `${p.x} ${p.y} ${p.z}`;
 const cellText = (p) => `(${p.x}, ${p.y}, ${p.z})`;
@@ -70,7 +78,7 @@ await scenarioMain({
             { x: spot.x - 5, y: g - 9, z: spot.z - 1 }, { x: spot.x - 5, y: g - 9, z: spot.z + 1 },
         ];
         const surfaceStones = [3, 4, 5, 6].map((d) => ({ x: spot.x + d, y: g + 1, z: spot.z + 3 }));
-        await commands([`fill ${P(caveB.min)} ${P(caveB.max)} minecraft:air`, ...caveStones.map((c) => `setblock ${P(c)} minecraft:stone`), ...surfaceStones.map((c) => `setblock ${P(c)} minecraft:stone`)]);
+        await commands([`fill ${P(caveB.min)} ${P(caveB.max)} minecraft:air`, ...caveStones.map((c) => `setblock ${P(c)} minecraft:${KIND}`), ...surfaceStones.map((c) => `setblock ${P(c)} minecraft:${KIND}`)]);
         const column = [];
         for (let y = g - 6; y <= g; y++) column.push({ x: spot.x, y, z: spot.z });
         const stoneAround = await blockNames([{ x: spot.x, y: g - 4, z: spot.z }, { x: spot.x + 12, y: g - 5, z: spot.z + 12 }, { x: spot.x, y: g - 11, z: spot.z }, ...column], ['dirt', 'grass_block', 'stone']);
@@ -94,44 +102,50 @@ await scenarioMain({
             let deaths = 0;
             agent.bot.on('death', () => { deaths++; });
             const cobble = async () => (await inventoryOf(NAME)).cobblestone || 0;
+            const kindCount = async () => (await inventoryOf(NAME))[KIND] || 0;
 
             // ---------------------------------------------------------- A. the surface stones first
-            const cobbleA0 = await cobble();
+            const cobbleA0 = await kindCount();
             const traceA = startTrace(async () => ({ bot: await entityPos(NAME), action: agent.actions.currentActionLabel || '-' }), 250);
             const tA = Date.now();
-            const infoA = await orders.orderInfo('!collectBlocks("stone", 4)', 120000);
+            const infoA = await orders.orderInfo(`!collectBlocks("${KIND}", 4)`, 120000);
             await sleep(1500);
             const rowsA = await traceA.stop();
-            const surfaceA = await blockNames(surfaceStones, ['stone']);
-            const caveA = await blockNames(caveStones, ['stone']);
-            const cobbleA = await cobble();
+            const surfaceA = await blockNames(surfaceStones, [KIND]);
+            const caveA = await blockNames(caveStones, [KIND]);
+            const cobbleA = await kindCount();
             const lowestA = Math.min(...rowsA.filter((x) => x.bot).map((x) => x.bot.y));
-            printTrace('A: !collectBlocks("stone", 4) with stones on the grass and in the cave', rowsA, { bot: (x) => fmt(x.bot), action: (x) => x.action }, 40);
-            note(`A: the order ${infoA.done ? `answered after ${(infoA.ms / 1000).toFixed(0)} s` : 'did NOT end within 120 s'}: ${JSON.stringify(String(infoA.reply).slice(0, 200))}; the surface stones ${JSON.stringify(surfaceA)}, the cave stones ${JSON.stringify(caveA)}; cobblestone ${cobbleA0} -> ${cobbleA}; lowest feet y ${lowestA.toFixed(2)}; the bot said ${JSON.stringify(saidLines(s, tA).slice(0, 6))}`);
-            check(infoA.done && surfaceA.every((n) => n === null) && cobbleA - cobbleA0 >= 4, 'A1: the 4 stones on the grass are gone and the bag has 4 cobblestone more: the command ends with 4 collected (server)', `surface ${JSON.stringify(surfaceA)}, cobblestone ${cobbleA0} -> ${cobbleA}`);
-            check(caveA.every((n) => n === 'stone') && lowestA >= g + 0.5, 'A2: the surface stones were taken first: the cave\'s 6 stones still stand and the bot\'s feet never went below the grass', `cave ${caveA.filter(Boolean).length} of 6, lowest y ${lowestA.toFixed(2)}`);
+            printTrace(`A: !collectBlocks("${KIND}", 4) with ${KIND} on the grass and in the cave`, rowsA, { bot: (x) => fmt(x.bot), action: (x) => x.action }, 40);
+            note(`A: the order ${infoA.done ? `answered after ${(infoA.ms / 1000).toFixed(0)} s` : 'did NOT end within 120 s'}: ${JSON.stringify(String(infoA.reply).slice(0, 200))}; the surface ${KIND} ${JSON.stringify(surfaceA)}, the cave ${KIND} ${JSON.stringify(caveA)}; ${KIND} in the bag ${cobbleA0} -> ${cobbleA}; lowest feet y ${lowestA.toFixed(2)}; the bot said ${JSON.stringify(saidLines(s, tA).slice(0, 6))}`);
+            check(infoA.done && surfaceA.every((n) => n === null) && cobbleA - cobbleA0 >= 4, `A1: the 4 ${KIND} on the grass are gone and the bag has 4 ${KIND} more: the command ends with 4 collected (server)`, `surface ${JSON.stringify(surfaceA)}, ${KIND} ${cobbleA0} -> ${cobbleA}`);
+            check(caveA.every((n) => n === KIND) && lowestA >= g + 0.5, `A2: the surface ${KIND} was taken first: the cave's 6 ${KIND} still stand and the bot's feet never went below the grass`, `cave ${caveA.filter(Boolean).length} of 6, lowest y ${lowestA.toFixed(2)}`);
             if (!infoA.done && agent.actions.executing) note(`A: !stop answered ${JSON.stringify(await orders.order('!stop', 20000))}`);
             await waitFor(() => !agent.actions.executing, { ms: 20000, every: 200 });
 
             // ---------------------------------------------------------- B. the only stone within 16 blocks lies in the cave
-            const cobbleB0 = await cobble();
+            const cobbleB0 = await kindCount();
             const tB = Date.now();
-            const infoB = await orders.orderInfo('!collectBlocks("stone", 2)', 180000);
+            const infoB = await orders.orderInfo(`!collectBlocks("${KIND}", 2)`, 180000);
             await sleep(1500);
-            const caveB2 = await blockNames(caveStones, ['stone']);
-            const cobbleB = await cobble();
+            const caveB2 = await blockNames(caveStones, [KIND]);
+            const cobbleB = await kindCount();
             const saidB = saidLines(s, tB);
             const careful = saidB.filter((l) => l === CAREFUL).length;
             const atB = await entityPos(NAME);
             const health = await entityNumber(NAME, 'Health');
-            note(`B: the order ${infoB.done ? `answered after ${(infoB.ms / 1000).toFixed(0)} s` : 'did NOT end within 180 s'}: ${JSON.stringify(String(infoB.reply).slice(0, 200))}; the cave stones ${JSON.stringify(caveB2)}; cobblestone ${cobbleB0} -> ${cobbleB}; the bot at ${fmt(atB)}, health ${health}, deaths ${deaths}; the bot said ${JSON.stringify(saidB.slice(0, 8))}`);
+            note(`B: the order ${infoB.done ? `answered after ${(infoB.ms / 1000).toFixed(0)} s` : 'did NOT end within 180 s'}: ${JSON.stringify(String(infoB.reply).slice(0, 200))}; the cave ${KIND} ${JSON.stringify(caveB2)}; ${KIND} in the bag ${cobbleB0} -> ${cobbleB}; the bot at ${fmt(atB)}, health ${health}, deaths ${deaths}; the bot said ${JSON.stringify(saidB.slice(0, 8))}`);
             check(careful === 1, `B1: the bot said \`${CAREFUL}\` exactly once (F10 as the owner changed it: no refusal, one line)`, `${careful} time(s); said ${JSON.stringify(saidB.filter((l) => /cave/i.test(l)).slice(0, 3))}`);
-            check(infoB.done && caveB2.filter((n) => n === null).length >= 2 && cobbleB - cobbleB0 >= 2, 'B2: two of the cave\'s stones are air and the bag has 2 cobblestone more (server): the stone in the cave is collected', `cave stones left ${caveB2.filter(Boolean).length} of 6, cobblestone ${cobbleB0} -> ${cobbleB}`);
+            check(infoB.done && caveB2.filter((n) => n === null).length >= 2 && cobbleB - cobbleB0 >= 2, `B2: two of the cave's ${KIND} are air and the bag has 2 ${KIND} more (server): the ${KIND} in the cave is collected`, `cave ${KIND} left ${caveB2.filter(Boolean).length} of 6, ${KIND} ${cobbleB0} -> ${cobbleB}`);
             check(deaths === 0 && health > 0, 'B3: the bot lives (up again or alive underground, no death)', `deaths ${deaths}, health ${health}, at ${fmt(atB)}`);
             if (!infoB.done && agent.actions.executing) note(`B: !stop answered ${JSON.stringify(await orders.order('!stop', 20000))}`);
             await waitFor(() => !agent.actions.executing, { ms: 20000, every: 200 });
 
             // ---------------------------------------------------------- back to the house, the mine taught
+            // T4: first a short way out of the hole to the grass beside the spot (the digging fallback holds for 32 blocks or less)
+            const out = await orders.orderInfo(`!goToCoordinates(${spot.x}, ${g + 1}, ${spot.z - 6}, 1)`, 120000);
+            const atOut = await entityPos(NAME);
+            note(`back: the short way out of the hole to ${cellText({ x: spot.x, y: g + 1, z: spot.z - 6 })} answered after ${(out.ms / 1000).toFixed(0)} s: ${JSON.stringify(String(out.reply).slice(0, 160))}; the bot at ${fmt(atOut)} (${atOut && atOut.y >= g + 0.5 ? 'on the grass' : 'NOT on the grass'})`);
+            if (!out.done && agent.actions.executing) note(`back: !stop answered ${JSON.stringify(await orders.order('!stop', 20000))}`);
             const back = await orders.orderInfo(`!goToCoordinates(${sp.outside.x}, ${sp.outside.y}, ${sp.outside.z - 2}, 1)`, 240000);
             const atBack = await entityPos(NAME);
             const thereBack = Boolean(atBack) && hdist(atBack, { x: sp.outside.x + 0.5, z: sp.outside.z - 1.5 }) <= 3 && atBack.y >= g;

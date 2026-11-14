@@ -131,6 +131,7 @@ await scenarioMain({
             // the mining. I stop the mining at 0 of 2 iron.") and the job retried it every 25 s. C runs with the kit and A's yield.
             await commands([`clear ${NAME} minecraft:torch`]);
             await waitFor(() => !agent.bot.inventory.items().some((i) => i.name === 'torch'), { ms: 5000, every: 100 });
+            await giveItems(NAME, [['torch', 16]], agent.bot); // the kit's 16 torches again
 
             // ---------------------------------------------------------- C. the forgotten tunnel
             const forgot = await orders.order('!forgetMine("mine")', 20000);

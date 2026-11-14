@@ -206,6 +206,21 @@ export function bagFullText(mined, wanted, ore) {
 }
 
 /**
+ * v0.1.4.16 (F5, T4's W131 diagnosis): the store trip of a full bag could not get to a chest (the storage pack's reason
+ * `unreachable`: no way there, the walk blocked, or it did not open), word for word: `My bag is full and I could not get to
+ * the chest at (x, y, z): <the walk's text>`. The trip's stop line carries it as its detail (`I stopped because my inventory
+ * is full and I could not store my things: <this text>`). Without a text of the walk it ends after the position.
+ * @param {{x: number, y: number, z: number}} chest the chest it could not get to
+ * @param {string} [walkText] what the store said about the walk
+ * @returns {string}
+ */
+export function bagUnreachableText(chest, walkText) {
+    const head = `My bag is full and I could not get to the chest at ${cellText(chest)}`;
+    const text = typeof walkText === 'string' ? walkText.trim() : '';
+    return text.length > 0 ? `${head}: ${text}` : `${head}.`;
+}
+
+/**
  * Q4, beyond the spec: the bag is full of things the trip keeps (tools, food, torches, ladders, the ore) and no slot
  * is free: `My bag is full of things I keep for the mining. I stop the mining at 7 of 28 diamond.`
  * @param {number} mined

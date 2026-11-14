@@ -94,4 +94,68 @@ describe('F5: the trip says why and logs it', () => {
         assert.equal(r.ok, true, r.text);
         assert.ok(!s.ctx.logs.some(t => t.startsWith('Mining stop:')), s.ctx.logs.filter(t => t.startsWith('Mining stop')).join(' | '));
     });
+
+    // T4's diagnosis of W131 (2026-11-14): every stop writes its line, also a trip that reached its count and could not get out
+    test('a done trip whose way out fails: `Mining stop: way_out at (x, y, z), step climb: <the way-out text>`, the chat line as before', async () => {
+        const world = makeWorld().set(1, 56, -5, 'coal_ore').set(1, 57, -5, 'coal_ore').set(-1, 56, -8, 'coal_ore');
+        const s = await scene({ world });
+        // the store at the base of the mine comes before the way up: the shaft above the base is closed there
+        s.ctx.storage = {
+            async storeItems() {
+                for (let y = 57; y <= 63; y++) world.set(0, y, 0, 'bedrock');
+                return { ok: true, reason: null, stored: {}, left: {}, text: 'I stored nothing.' };
+            },
+        };
+        const r = await M.mineOre(s.bot, s.ctx, 'coal', 1, { ...s.opts, newMine: true });
+        assert.equal(r.ok, true, r.text);
+        const stops = s.ctx.logs.filter(t => t.startsWith('Mining stop:'));
+        assert.equal(stops.length, 1, stops.join(' | '));
+        const m = /^Mining stop: way_out at \((-?\d+), (-?\d+), (-?\d+)\), step climb: (I could not .+)$/.exec(stops[0]);
+        assert.ok(m, stops[0]);
+        assert.match(r.text, /^I mined \d+ coal\. /, 'a done trip: no stop sentence'); // the vein gives more than the 1 asked for
+        assert.ok(r.text.endsWith(m[4]), `the chat line carries the same way-out text: ${r.text}`);
+        assert.equal(m[4], 'I could not get to the way up at (0, 56, 0).');
+    });
+
+    test('a dig cut by !stop: the reason is interrupted, never dig_failed of plain stone', async () => {
+        const s = await scene();
+        // !stop as requestInterrupt of agent.js does it while the block is dug: the flag first, then stopDigging, which cancels
+        // the dig, in one tick; the race of dig.js then sees the dig's error, not the flag (the block stands: a plain failure)
+        s.bot.dig = () => new Promise((resolve, reject) => {
+            setImmediate(() => {
+                s.bot.interrupt_code = true;
+                reject(new Error('Digging aborted'));
+            });
+        });
+        const r = await M.mineOre(s.bot, s.ctx, 'coal', 3, { ...s.opts, newMine: true });
+        assert.equal(r.reason, 'interrupted', r.text);
+        assert.doesNotMatch(r.text, /could not dig/);
+        const stop = s.ctx.logs.find(t => t.startsWith('Mining stop:'));
+        assert.match(stop, /^Mining stop: interrupted at \(0, 64, 0\), step descend: /);
+        assert.doesNotMatch(stop, /dig_failed|could not dig/);
+    });
+
+    test('the full bag and a chest it cannot get to: the stop line carries `My bag is full and I could not get to the chest at (x, y, z): <text>` as its detail, said once', async () => {
+        const s = await scene();
+        for (let i = 0; i < 30; i++) give(s.bot, 'gravel', 64); // 36 stacks: no free slot, gravel to store
+        const WALK = 'I could not get to a chest nearby or open it. I still carry 1920 gravel.';
+        s.ctx.storage = {
+            async storeItems(b, c, options) {
+                return options.chest
+                    ? { ok: false, reason: 'unreachable', stored: {}, left: { gravel: 1920 }, chests: [], text: WALK }
+                    : { ok: false, reason: 'no_chest', stored: {}, left: { gravel: 1920 }, chests: [], text: 'I know no chest nearby.' };
+            },
+        };
+        const r = await M.mineOre(s.bot, s.ctx, 'coal', 3, { ...s.opts, newMine: true });
+        assert.equal(r.reason, 'inventory_full', r.text);
+        const chest = r.mine?.chest;
+        assert.ok(chest, 'the mine has its chest');
+        // the head alone, the storage's answer (WALK) not repeated (DECISIONS B-7)
+        const line = `My bag is full and I could not get to the chest at (${chest.x}, ${chest.y}, ${chest.z}).`;
+        assert.ok(r.text.startsWith(`I mined 0 coal of 3. I stopped because my inventory is full and I could not store my things: ${line}`), r.text);
+        assert.ok(!s.said.some(t => t.startsWith('My bag is full')), `not said apart from the stop line: ${JSON.stringify(s.said)}`);
+        const stop = s.ctx.logs.find(t => t.startsWith('Mining stop:'));
+        assert.match(stop, /^Mining stop: inventory_full at \(-?\d+, -?\d+, -?\d+\), step store: /);
+        assert.ok(stop.endsWith(line), stop);
+    });
 });

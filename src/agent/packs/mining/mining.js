@@ -816,8 +816,12 @@ const BOTTOM_LAYERS = 4;
 
 // F5 (v0.1.4.16): the result of a dig of the way down that failed: interrupted and worn as they are; lava or water `blocked`,
 // a protected block `area`, an unloaded one `unknown`, everything else (failed, timed out, unbreakable, falling) `dig_failed`;
-// each with the block's name and position for the texts.
+// each with the block's name and position for the texts. A dig cut by !stop (bot.interrupt_code set) is `interrupted`, whatever
+// the dig answered (T4's W131 diagnosis: a stopped dig of plain stone read as dig_failed).
 function digFailure(bot, r, p) {
+    if (bot?.interrupt_code) {
+        return { ok: false, reason: 'interrupted' };
+    }
     if (r.reason === 'interrupted' || r.reason === 'worn') {
         return { ok: false, reason: r.reason, worn: r.worn };
     }
@@ -2786,7 +2790,9 @@ export async function mineOre(bot, ctx = {}, ore = '', count = 8, options = {}) 
                 // only when no chest has room
                 const bag = await storeFullBag(bot, tripCtx, mine, row, { mined: mined(), wanted });
                 addCounts(stored, bag.stored);
-                note('store', bag, true); // F5: storeFullBag says its text itself
+                // F5: storeFullBag says its text itself, except the line of a chest it could not get to (said: false), which the
+                // stop line carries as its detail
+                note('store', bag, bag.said !== false);
                 if (!bag.ok) {
                     reason = bag.reason === 'interrupted' ? 'interrupted' : 'inventory_full';
                     break;
@@ -2837,6 +2843,10 @@ export async function mineOre(bot, ctx = {}, ore = '', count = 8, options = {}) 
         const up = await climbToSurface(bot, tripCtx, { ...pass, mine, toParent });
         const extra = up.ok ? '' : up.text;
         if (mined() >= wanted) {
+            if (!up.ok) {
+                // F5, every stop writes its line (T4's W131 diagnosis): the count is reached but the way out failed
+                logTo(ctx, `Mining stop: way_out at ${posText(feetOf(bot) ?? stopAt)}, step climb: ${up.text}`);
+            }
             return finish(true, null, extra);
         }
         return finish(false, reason ?? 'error', extra);
