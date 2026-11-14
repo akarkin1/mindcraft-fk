@@ -737,6 +737,8 @@ async function loop(s) {
             // the stop of the order: one more look into the kill chests for the stored figure
             const elapsed = s.clock.now() - s.started;
             const level = levelOf(bot);
+            // B-13 (T5): the last kill's drops pass through the hopper (one item per 8 ticks) before they reach the chest
+            await s.clock.wait(1500);
             await lookAtChests(s);
             return finish(s, true, null, why === 'level'
                 ? stopLevelText(level, s.kills, elapsed, storedNow(s))

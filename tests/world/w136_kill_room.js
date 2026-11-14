@@ -27,13 +27,15 @@
 //      and the player's view of the entity: crouching); 1d hits (`bot.attack`, recorded) and kills (summoned creepers gone, 4 or more);
 //      1e XP: level 2 or more (server `/xp query` and the bot's `bot.experience`); 1f gunpowder in the chests, the hoppers or the bag (a
 //      creeper drops 0 to 2: four kills give none in 1 of 80 runs, noted); 1g the stop line `I stop the farming: level 2 reached; N
-//      creepers, <time>; M gunpowder stored.`; 1h the bot leaves by the ladder to where it stood (the platform, y 179 or higher) within
+//      creepers, <time>; M gunpowder stored.`; 1g2 M is the gunpowder the kill chests took (DECISIONS B-13: the looks into the
+//      chests at the start and the stop); 1h the bot leaves by the ladder to where it stood (the platform, y 179 or higher) within
 //      90 s; 1i `creeper_safety` is off at the spot (bot.modes), silent (no mode run, no creeper line), and on again after the order.
 //   2. Creepers cleared, `/xp set 0`; typed `!killFarm()` (open-ended); creepers again; after the first kill at the spot `/damage <bot>
 //      12`: 2a `I leave the kill room: health N.` with N under 10 (20 - 12 = 8; the spec's example says 9: regeneration may add one
 //      before the loop reads it); 2b the bot above the room within 90 s; 2c `creeper_safety` on again; 2d the bot never died.
 //   3. The slab row taken away; typed `!killFarm("level 2")`: 3a `The kill room has no slab over the hoppers; I do not farm there.`
-//      within 120 s and the order ends; 3b no farming: a creeper summoned on a hopper after the refusal is alive 30 s later, no hit, no XP.
+//      within 120 s and the order ends; 3c the bot walks back to where the order found it, the platform, within 90 s (DECISIONS B-13);
+//      3b no farming: a creeper summoned on a hopper after the refusal is alive 30 s later, no hit, no XP.
 // Throughout: the process lives, zero model calls, no request reached a real model.
 import {
     scenarioMain, check, note, exitSoon, stopRealAgent, env, entityPos, fmt, sleep, commands, command, waitFor, readWorldFile, startTrace,
@@ -247,6 +249,8 @@ await scenarioMain({
             note(`1: the bot ${arrived1.ok && !done1 ? `reached the spot after ${(arrived1.ms / 1000).toFixed(1)} s` : done1 ? 'ended the order before reaching the spot' : 'did not reach the spot within 90 s'}: ${fmt(await entityPos(NAME))}; the creepers start now`);
             const summoning1 = summonLoop(() => !done1);
             const stopped1 = await waitFor(() => saidLines(s, t1).find((l) => STOP_LEVEL.test(l)) ?? (done1 ? 'ended' : null), { ms: 400000, every: 300 });
+            // the gunpowder of the room right when the stop line came (the pack's look into the kill chests was just before it)
+            const gpAtLine = stopped1.ok && stopped1.value !== 'ended' ? await gunpowderOf(k) : null;
             const info1 = await farm1;
             const n1 = await summoning1;
             const stopLine1 = textOf(s, t1, STOP_LEVEL, info1.reply);
@@ -282,7 +286,12 @@ await scenarioMain({
             check(xp1.level >= 2 && (agent.bot.experience?.level ?? 0) >= 2, '1e: the XP of the kills reached the bot: level 2 or more (server `xp query`, and bot.experience)', `server ${JSON.stringify(xp1)}, bot level ${agent.bot.experience?.level}`);
             check(gp1.total >= 1, '1f: gunpowder lies in the chests (through the hoppers), the hoppers or the bag (a creeper drops 0 to 2: four kills give none in about 1 run of 80)', JSON.stringify(gp1));
             check(info1.done && stopLine1 !== null && Number(stopM?.[1]) >= 4, '1g: the stop line `I stop the farming: level 2 reached; N creepers, <time>; M gunpowder stored.` with N the kills (4 or more)', JSON.stringify(stopLine1 ?? String(info1.reply).slice(0, 160)));
-            if (stopM) note(`1g: the time slot of the stop line reads ${JSON.stringify(stopM[2])} and the gunpowder slot ${stopM[3]} (the chests hold ${gp1.chests}, the hoppers ${gp1.hoppers}, the bag ${gp1.bag})`);
+            if (stopM) note(`1g: the time slot of the stop line reads ${JSON.stringify(stopM[2])} and the gunpowder slot ${stopM[3]} (when the line came the chests held ${gpAtLine?.chests ?? '?'}, the hoppers ${gpAtLine?.hoppers ?? '?'}, the bag ${gpAtLine?.bag ?? '?'}; at the end the chests ${gp1.chests}, the hoppers ${gp1.hoppers}, the bag ${gp1.bag})`);
+            // DECISIONS B-13: the figure is the kill chests' gunpowder at the stop look minus the look at the start, plus the bot's own stores
+            // (none here); the chests start empty, so it is what they hold, up to 2 still on their way through the hoppers
+            const storedM = stopM ? Number(stopM[3]) : null;
+            const atLine = gpAtLine?.chests ?? null;
+            check(storedM !== null && atLine !== null && (atLine === 0 ? storedM === 0 : storedM >= 1) && Math.abs(atLine - storedM) <= 2 && storedM <= gp1.chests, '1g2: the stop line\'s `M gunpowder stored` is the gunpowder the kill chests took (they started empty; read when the line came, up to 2 on their way through the hoppers; DECISIONS B-13)', `M ${storedM}; the chests ${atLine} when the line came (the hoppers ${gpAtLine?.hoppers ?? '?'}), ${gp1.chests} at the end`);
             check(back1.ok && columnUp, '1h: after the stop the bot leaves by the ladder to where it stood when the order came (above the room, y 179 or higher, within 90 s)', `${fmt(back1.value ?? null)}; the column on the way up: ${columnUp}`);
             check(spotRows.length > 0 && csAtSpot.every((v) => v === false) && modeRan.length === 0 && creeperLines.length === 0, '1i: creeper_safety is off at the spot (bot.modes) and silent: the mode never ran and no creeper line was said while the farm ran (SPEC 8.4, the modes; K-2)', `at the spot ${JSON.stringify([...new Set(csAtSpot)])}; the mode ran in ${modeRan.length} samples; said ${JSON.stringify(creeperLines.slice(0, 3))}`);
             check(agent.bot.modes.isOn('creeper_safety') === true, '1i: creeper_safety is on again after the order (restored in a finally)', String(agent.bot.modes.isOn('creeper_safety')));
@@ -332,9 +341,13 @@ await scenarioMain({
             check(slabNames.every((n) => n === 'air'), 'precondition: the slab row over the hoppers is gone', JSON.stringify(slabNames));
             summoned = 0;
             const attacks3 = recordAttacks(agent.bot);
+            const standBefore3 = await entityPos(NAME);
             const t3 = Date.now();
             const info3 = await orders.orderInfo('!killFarm("level 2")', 120000);
             const refused = textOf(s, t3, exact(NO_SLAB), info3.reply);
+            // DECISIONS B-13: after a refused room the bot walks back to where the order found it (the platform)
+            const back3 = await waitFor(async () => { const p = await entityPos(NAME); return aboveRoom(p) && hdist(p, standBefore3) <= 2 ? p : null; }, { ms: 90000, every: 400 });
+            note(`3: the order found the bot at ${fmt(standBefore3)}; after the refusal it is ${back3.ok ? `back there after ${(back3.ms / 1000).toFixed(0)} s` : 'NOT back there within 90 s'} at ${fmt(back3.value ?? await entityPos(NAME))}`);
             await summonOne();
             await sleep(30000);
             const hits3 = attacks3.stop();
@@ -342,6 +355,7 @@ await scenarioMain({
             const xp3 = await xpOf(NAME);
             note(`3: without the slab !killFarm("level 2") answered after ${(info3.ms / 1000).toFixed(0)} s: ${JSON.stringify(String(info3.reply).slice(0, 200))}; said ${JSON.stringify(saidLines(s, t3).slice(0, 6))}; a creeper summoned after the answer: ${alive3} alive 30 s later, ${hits3.length} hits, xp ${JSON.stringify(xp3)}; the bot at ${fmt(await entityPos(NAME))}`);
             check(info3.done && refused !== null, `3a: the room without a slab is refused within 120 s: \`${NO_SLAB}\``, JSON.stringify(String(info3.reply).slice(0, 160)));
+            check(back3.ok, '3c: after the refusal the bot walks back to where the order found it, on the platform above the room, within 90 s (DECISIONS B-13)', `${fmt(back3.value ?? null)}; it stood at ${fmt(standBefore3)}`);
             check(hits3.length === 0 && alive3 === 1 && xp3.level === 0 && xp3.points === 0, '3b: no farming: no hit, the creeper summoned after the refusal is alive 30 s later, no XP', `${hits3.length} hits, ${alive3} alive, xp ${JSON.stringify(xp3)}`);
             if (agent.actions.executing) note(`3: !stop answered ${JSON.stringify(await orders.order('!stop', 20000))}`);
 
