@@ -601,6 +601,25 @@ sneak and step forward under the slab so the creeper is within reach.
   cells: sneak set, hits with `attack`, the kill count, the stop at "level N" with a fake experience, the modes
   restored on exit, the store trip at 4 free slots).
 
+#### 8.4a Amendments of 2026-11-14 (the owner's play: ROADMAP M-5, M-6 and the method; E8's probe)
+
+- The step: forward for 700 ms (not 250) while sneaking and facing the hoppers, so the bot stands against the
+  chests under the slab (the owner's spot went from (-2274, 170, 869) to (-2273.46, 170, 869.70)); the probe showed
+  the chest's inset stops the step by itself.
+- The targets: every hostile mob (`isHostile`, never a villager, a player, a pet or an animal) whose centre is within
+  3.0 blocks of the bot's eyes, on the hoppers or anywhere in the kill room within that reach (a skeleton that
+  reached the room is hit too, M-6); the nearest first; one hit per 600 ms until it is gone (E8's probe: faster hits
+  are swallowed).
+- No reflex ends the farm (M-6): the paused modes stay paused while the action runs; when anything else interrupts
+  the action (a reflex the pack did not pause, the night's `!goToBed`, a restart of the process), the farm is a job
+  of the v0.1.4.10 store (a new kind `kill_farm` beside `ROUTINE_KIND`, accepted by the `JobStore` validator, whose
+  one step is the order `!killFarm(<until>)`), so the job resume brings the bot back to the spot and the loop goes on
+  with the same `until`; the owner's "stop" ends the job. At night the pack sleeps itself (8.4) and resumes without a job resume.
+- The weapons: never a diamond or netherite item (the owner's rule); the order of choice is iron, stone, copper,
+  golden, wooden swords, then the same axes; an iron sword lasts about 250 hits, a stone one about 130 (the owner's
+  numbers), so the pack fetches a spare when the bag has none and the held one has 30 uses or fewer.
+- The progress line counts hits too: `I killed 50 creepers with 61 hits; level 14; 62 gunpowder stored.`
+
 ### 8.5 Interfaces between the parts
 
 | From | To | What |

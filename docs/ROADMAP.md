@@ -294,6 +294,29 @@ round one (W130 proves it).
 | K-6 | The stone sword and the stone axe broke after about 30 minutes each and the bot went on with its fists. | the pack takes or crafts a replacement (from a chest, or asks the owner) and stops or asks when it has none |
 | K-7 | Still open from 2026-11-11: the routine's chopping step plans `!chopTrees(128, "spruce")` around where the bot stands and ends the round with "no spruce tree within 48 blocks" instead of walking to the forest chest named in the text (R-5). | fixed in round one (F3: a named place or coordinate is a walk step; a failed step is skipped); W130 proves it |
 
+### The play of 2026-11-14 on v0.1.4.15 (M-1 to M-8; the owner decides the release, but for the AFK kill pack's input)
+
+Reported by the owner's gameplay session on 2026-11-14 (main at 9a28d07), the unclear cases left out. The owner: do not
+start until he says so. M-5 and M-6 and the method below are input for the AFK kill pack being built in 0.1.4.16
+(SPEC 8.4); the rest wait for the owner's word.
+
+| Id | Finding | Where to look |
+|---|---|---|
+| M-1 | `!farmCycle` stores the harvest in the nearest chest, not the farm chest the owner set: farm_east put carrots into a chest in the trading hall at (-2280, 62, 817), farm_by_house potatoes into the house's food chest; the farm chest is at (-2307, 63, 811). | the farming pack's store step (`farming.js`: the chest of the farm, a saved place or the chest the owner named) |
+| M-2 | A full farm chest gets no new chest beside it: `!farmCycle` and `!putInChest` put nothing ("destination full"); the owner's rule: a full chest gets a new chest placed beside it (the supervisor placed one at (-2308, 63, 811)). | the storage pack (`storeItems`: place a chest beside a full one, as `depositAtBase` of the mining does) |
+| M-3 | Sugar cane: `!harvest("sugar_cane")` cuts nothing; `!farmCycle` does not handle cane; while the cane was a saved area of type farm the area guard refused every dig there ("I do not break or place blocks there"); a `!newAction` cut 37 tops twice, keeping the bottom blocks. | round one's F3 has the cane harvest in `!harvest` and `!farmCycle` (cut above the bottom block); the area guard's rule for a farm area (`AREA_RULES.farm`: breaking a crop or a cane top is the farm's work) is new: the owner's word |
+| M-4 | `!farmCycle` on farm_west, started outside the house next to an open field: "I could not reach 1 ripe plant", the next day 2. | the farming pack's reach of a cell (`walkToCell`, `standSpots`); not F4 (the bot was outside) |
+| M-5 | `creeper_safety` is on again after the owner's restart (K-2) and fled the phantom creepers under the pens before the supervisor switched it off. | round one's F1 (sight and the level) ends the phantom creepers; the kill pack switches it off at the spot (K-2) |
+| M-6 | The kill loop does not resume: a skeleton reached the kill room, `self_defense` fought it (health 20 to 18.4), which ended the supervisor's `!newAction` loop, and then the bot's own model ran `!stop`; at night `!goToBed` ended the loop too (the sleep is wanted). The pack should hit the other monsters on the hoppers as well and resume by itself after a reflex or a sleep. | the kill pack (SPEC 8.4 amended on 2026-11-14) |
+| M-7 | The unstuck reflex stopped `!goToCoordinates(-2274, 170, 869, 0)` on the tower ladder at y 84; a second call finished the climb. | `modes.js` `unstuck` on a ladder (the climb is progress: the y changes) |
+| M-8 | Lines meant for the supervisor are acted on by the bot: the owner's "Yes, get a new weapon and keep farming", meant for the supervisor but without its name in front, was taken by the bot's model (`!getTool("sword", "")`, the climb down from the kill room). A line that answers a question the supervisor just asked should go to the supervisor. | the routing of the owner's lines (`agent.js` handleMessage with the watch: the supervisor's last question within a minute claims the owner's next line) |
+
+The owner's method at the kill room (2026-11-14), which works: sneak, face the hoppers (+z), walk forward 0.7 s from
+(-2274, 170, 869) to (-2273.46, 170, 869.70), against the chests under the slab; hit only creepers whose centre is
+within 3.0 blocks of the eye (the nearest seen 1.74); XP 9 to 30 in about 55 minutes (a 3-minute test of 25 hits for
+65 points, then 179 hits for 535 points and 298 hits for 480 points); an iron sword lasts about 250 hits there, a
+stone sword about 130. The owner forbids diamond items for the bot's tools.
+
 ## The base survey (brief of 2026-11-09; built in 0.1.4.15)
 
 From the owner's gameplay session of 2026-11-09, relayed to the lead with the owner's decisions; the plan and the
