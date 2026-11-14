@@ -471,8 +471,8 @@ not allowed asks and a permit set during the wait takes; silence refuses; the lo
 - The feed: two per pair; the need for the order is `2 * ceil(count / 1)`... precisely: pairs needed = `count`
   (one baby per pair), feed needed = `2 * count`; from the bag, else `takeOrAsk` (8.1) with `low` = `4 * count`
   (two rounds). Without: `I have no wheat for the cows.`
-- The walk: the stand cells are the ring one block outside the fence ring (the area box grown by 2, minus the box
-  grown by 1), never a gate cell or the cell before a gate (`findGates`), reached with `makeMovements(bot, {dig:
+- The walk: the stand cells are the ring one block outside the fence ring (the fence box grown by 1, minus the fence
+  box; a saved pen's box holds the fence, B-13), never a gate cell or the cell before a gate (`findGates`), reached with `makeMovements(bot, {dig:
   false, doors: false, areas})` so the walk never crosses the pen; the bot never enters the box; nothing is placed.
   At a stand cell it equips the feed (`skills.equip`) and waits up to 10 s for animals to come within reach
   (`FEED_REACH` 3 blocks from the bot's eyes to the entity); it feeds the two nearest adults that are not `InLove`
@@ -508,8 +508,9 @@ not allowed asks and a permit set during the wait takes; silence refuses; the lo
 - The offers: `bot.openEnchantmentTable(block)`, `putTargetItem`, `putLapis`, wait for `'ready'` (up to 5 s), read
   `window.enchantments` (three `{ level, expected: { enchant, level } }`): the name through
   `bot.registry.enchantments[id].displayName` and the level as a roman numeral, the cost `level` and the lapis
-  `index + 1`: `The table offers for your diamond_pickaxe: 1) Efficiency IV (30 levels, 3 lapis), 2) Unbreaking II
-  (20 levels, 2 lapis), 3) Fortune I (12 levels, 1 lapis). Say "take 1", "take 2", "take 3" or "none".`
+  `index + 1`, in the table's order (the costs rise from offer 1 to 3): `The table offers for your diamond_pickaxe:
+  1) Unbreaking I (8 levels, 1 lapis), 2) Unbreaking II (13 levels, 2 lapis), 3) Efficiency IV (30 levels, 3 lapis).
+  Say "take 1", "take 2", "take 3" or "none".`
 - The choice: `choice` `''`: the line is said and the window stays open while the bot waits up to 60 s for
   `!enchantTake(n)` (the model maps "take 2" and "none"); `n` 1..3 → the offer; 0 or 60 s → `takeTargetItem` and
   `I took the diamond_pickaxe back; say "enchant my pickaxe" again when you have chosen.` A `choice` of a number or a

@@ -1622,7 +1622,8 @@ export class Agent {
             if (res.trim().length === 0) {
                 console.warn('no response')
                 // v0.1.4.8: the model said nothing (or a tab) after a work skill; with say_results its text goes to the chat
-                if (settings.say_results && pack_text !== null)
+                // v0.1.4.16 (B-13): never the short answer of a command that said its line itself (F2's SAID_TEXT)
+                if (settings.say_results && pack_text !== null && pack_text !== 'Done; I said it in the chat.')
                     this.routeResponse(source, pack_text);
                 break; // empty response ends loop
             }
