@@ -14,7 +14,9 @@
 // step is done (the round's done line), failed when a step failed after its runs (no plan: the routine counts the
 // failure). When no job runs, tick asks options.routines for a routine that is due and starts its round before the
 // standing list; the model is asked, once per routine, by the routines module, never here.
-import { isNight } from '../packs/home/night_logic.js';
+// v0.1.4.16 (B-4): the job's night is the shelter's (from sunset, 12000), so a job never resumes while the shelter
+// reflex wants the bot inside (F8 moved isNight to 13000 for the clock labels only)
+import { isShelterNight as isNight } from '../packs/home/night_logic.js';
 import { reflexOn } from '../packs/home/home_settings.js';
 import { commandText } from '../repeat_guard.js';
 import {

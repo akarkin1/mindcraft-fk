@@ -58,14 +58,12 @@ afterEach(() => { cap.restore(); });
 
 describe('F8: the lists and the texts', () => {
     test('WORK_COMMANDS and the two answers, word for word', () => {
-        assert.deepEqual([...C.WORK_COMMANDS], ['!collectBlocks', '!mineOre', '!chopTrees', '!farmCycle', '!harvest', '!plant', '!newAction', '!digDown', '!digTunnel', '!smeltItem', '!craftSupplies']);
+        assert.deepEqual([...C.WORK_COMMANDS], ['!collectBlocks', '!mineOre', '!chopTrees', '!farmCycle', '!harvest', '!plant', '!newAction', '!digDown', '!smeltItem', '!craftSupplies']);
         assert.deepEqual([...C.STOP_COMMANDS], ['!stop', '!setMode']);
         assert.equal(C.ORDER_TEXTS.noOrder, 'I do not start work without an order from the player or the supervisor.');
         assert.equal(C.ORDER_TEXTS.playersOrder, "That is the player's order; I do not stop it.");
-        // The list is the spec's word for word. !digTunnel is in it but is no command of actionsList (the tunnels are dug by
-        // !mineOre; the commands are !digDown and !mineOre): the entry is dead, never matched (a finding for the lead of
-        // v0.1.4.16). Every other name is a command.
-        for (const name of C.WORK_COMMANDS.filter(n => n !== '!digTunnel')) {
+        // Every name is a command (the spec's !digTunnel was none and is gone: DECISIONS B-4)
+        for (const name of C.WORK_COMMANDS) {
             assert.ok(C.commandExists(name), `${name} is a command`);
         }
     });

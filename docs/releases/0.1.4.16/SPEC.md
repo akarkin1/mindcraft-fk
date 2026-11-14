@@ -324,7 +324,7 @@ Rules:
   reflex keeps its own start as today, only the label changes). A unit test on the recorded `update_time` packets
   of 26.1 (`xl_time_runs` has them) checks the label at five times.
 - The model's own orders: `WORK_COMMANDS` (`commands/index.js`, exported) = `!collectBlocks`, `!mineOre`,
-  `!chopTrees`, `!farmCycle`, `!harvest`, `!plant`, `!newAction`, `!digDown`, `!digTunnel`, `!smeltItem`,
+  `!chopTrees`, `!farmCycle`, `!harvest`, `!plant`, `!newAction`, `!digDown`, `!smeltItem`,
   `!craftSupplies`. `executeCommand` refuses a work command whose `orderBy` is `'model'` (the last message is the
   bot's own or an AUTO MESSAGE of a mode) with the model-only text `I do not start work without an order from the
   player or the supervisor.` (returned, not said); a running job's resume and the routines' rounds are not
