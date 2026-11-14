@@ -16,9 +16,11 @@
 // (SUPERVISION_SETTINGS) with the switch of the pack, `afk_kill`, on; the modes of his profile, an empty memory; a stone sword and 8
 // bread in the bag. Difficulty normal while creepers are needed (peaceful removes them at once), peaceful again at the end. Console
 // names of 26.1.
-//   0. The bot starts AT the spot (the control places it there, as at every start) and the owner types `!rememberHere("kill_spot")`
-//      (the place is the bot's own position; SPEC 8.4 "the owner saves it standing at his spot"); then a typed `!goToCoordinates` to the
-//      platform: the bot climbs the ladder up by itself (checked; the farm starts from there as SPEC 8.6 says).
+//   0. The bot starts in the room two cells west of the spot (the control places it there, as at every start); the player is moved
+//      onto the spot and types `!rememberHere("kill_spot")`: the place is the player's position, not the bot's (SPEC 8.4 "the owner
+//      saves it standing at his spot"; the fix round of v0.1.4.16, the review's finding 2), the answer ends `where you stand.`; the
+//      player goes back to the platform; then a typed `!goToCoordinates` to the platform: the bot climbs the ladder up by itself
+//      (checked; the farm starts from there as SPEC 8.6 says).
 //   1. `/xp set 0`, difficulty normal; typed `!killFarm("level 2")`. Once the bot is within 3 blocks of the spot (or after 90 s) the
 //      control summons a creeper on a hopper every 10 s (`Health:4f`, `NoAI:1b`, persistent, tagged), alternating the two hoppers over the
 //      chests, 20 at most, until the order ends. Level 2 is 16 XP, a creeper gives 5: four kills. Within 7 minutes: 1a the start line
@@ -39,7 +41,7 @@
 // Throughout: the process lives, zero model calls, no request reached a real model.
 import {
     scenarioMain, check, note, exitSoon, stopRealAgent, env, entityPos, fmt, sleep, commands, command, waitFor, readWorldFile, startTrace,
-    printTrace, recordMoves,
+    printTrace, recordMoves, tp,
 } from './helpers.js';
 import { region, prepareRegion, releaseRegion, buildChest, chestItems, blockNames, inBox, hdist, itemsOnGround, inventoryOf } from './world.js';
 import { BASE_RADIUS } from './base_world.js';
@@ -94,6 +96,9 @@ function roomPlan(ox, oz) {
         floorY, spot, hoppers, chests, slabs, interior, outer, column, pillar, ladders, platform, exit, parapet,
         glow: [[-2, -1], [2, -1], [-2, 2], [2, 2]].map(([dx, dz]) => ({ x: ox + dx, y: floorY, z: oz + dz })),
         botStart: { x: ox + 6, y: platformY + 1, z: oz },
+        // the fix round (finding 2): the bot's first cell, in the room but never the spot (2 west, 1 south of it: a save at the bot's
+        // own cell misses the spot by 2)
+        botInRoom: { x: ox - 2, y: RY, z: oz + 2 },
         playerAt: { x: ox + 4, y: platformY + 1, z: oz + 2 },
         roomBox: { min: { x: ox - 3, y: floorY - 1, z: oz - 2 }, max: { x: ox + 3, y: RY + 4, z: oz + 3 } },
     };
@@ -207,7 +212,7 @@ await scenarioMain({
         };
         try {
             const j = await startJourney(NAME, null, {
-                botAt: k.spot, botYaw: 180, playerAt: k.playerAt, kit: [['stone_sword', 1], ['bread', 8]],
+                botAt: k.botInRoom, botYaw: 180, playerAt: k.playerAt, kit: [['stone_sword', 1], ['bread', 8]],
                 settings: SUPERVISION_SETTINGS({ afk_kill: true }),
             });
             agent = j.agent;
@@ -217,11 +222,21 @@ await scenarioMain({
             const idle = () => waitFor(() => !agent.actions.executing, { ms: 20000, every: 200 });
             check(agent.bot.modes?.exists?.('creeper_safety') === true && agent.bot.modes.isOn('creeper_safety') === true, 'precondition: the reflex creeper_safety exists and is on at the start (the home pack with its reflexes)', JSON.stringify(agent.bot.modes?.getJson?.() ?? null));
 
-            // ====================================================== 0. the spot saved, the climb up to the platform
+            // ====================================================== 0. the spot saved where the owner stands, the climb up to the platform
+            // the fix round of v0.1.4.16 (the review's finding 2): the player stands on the spot, the bot two cells beside it
+            await tp(orders.name, k.spot, 180, 0);
+            const onSpot = await waitFor(() => {
+                const e = agent.bot.players?.[orders.name]?.entity;
+                return Boolean(e) && hdist(e.position, spotCenter) < 0.4 && Math.abs(e.position.y - RY) < 0.5;
+            }, { ms: 10000, every: 100 });
+            const botAt0 = await entityPos(NAME);
+            check(onSpot.ok && Boolean(botAt0) && !atSpot(botAt0), 'precondition: the player stands on the spot and the bot sees him there; the bot stands beside it, not on it', `the player ${fmt(await entityPos(orders.name))}, the bot ${fmt(botAt0)}`);
             const saved = await orders.orderInfo('!rememberHere("kill_spot")', 30000);
             const place = readWorldFile(agent, 'places.json').json?.places?.kill_spot ?? null;
-            note(`0: !rememberHere("kill_spot") at ${fmt(await entityPos(NAME))} answered ${JSON.stringify(String(saved.reply).slice(0, 200))}; places.json kill_spot ${JSON.stringify(place)}`);
-            check(saved.done && Boolean(place) && Math.abs(Math.floor(place.x) - k.spot.x) <= 1 && Math.abs(Math.floor(place.z) - k.spot.z) <= 1 && Math.abs(Math.floor(place.y) - k.spot.y) <= 1, 'precondition: the owner saved the place `kill_spot` at the bot\'s cell (places.json)', `${JSON.stringify(place)}; the spot ${cellText(k.spot)}`);
+            note(`0: !rememberHere("kill_spot") with the player at ${fmt(await entityPos(orders.name))} and the bot at ${fmt(await entityPos(NAME))} answered ${JSON.stringify(String(saved.reply).slice(0, 200))}; places.json kill_spot ${JSON.stringify(place)}`);
+            check(saved.done && Boolean(place) && Math.floor(place.x) === k.spot.x && Math.floor(place.y) === k.spot.y && Math.floor(place.z) === k.spot.z && String(saved.reply).includes('Location saved as "kill_spot" where you stand.'), '0: the owner saved the place `kill_spot` where he stands (places.json: the spot\'s cell, not the bot\'s), the answer `Location saved as "kill_spot" where you stand.` (the review\'s finding 2)', `${JSON.stringify(place)}; the spot ${cellText(k.spot)}, the bot's cell ${cellText(k.botInRoom)}; ${JSON.stringify(String(saved.reply).slice(0, 120))}`);
+            await tp(orders.name, k.playerAt, 0, 0); // the player leaves the room before the farm
+            await waitFor(async () => { const p = await entityPos(orders.name); return Boolean(p) && hdist(p, { x: k.playerAt.x + 0.5, z: k.playerAt.z + 0.5 }) < 1 && Math.abs(p.y - k.playerAt.y) < 1; }, { ms: 5000, every: 100 });
             const moves0 = recordMoves(agent);
             const trace0 = startTrace(async () => ({ bot: await entityPos(NAME), action: agent.actions.currentActionLabel || '-' }), 400);
             const up = await orders.orderInfo(`!goToCoordinates(${k.botStart.x}, ${k.botStart.y}, ${k.botStart.z}, 1)`, 120000);

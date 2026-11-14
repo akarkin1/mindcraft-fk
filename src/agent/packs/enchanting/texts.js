@@ -108,6 +108,17 @@ export function levelText(level, index, cost) {
 }
 
 /**
+ * The pack's own (v0.1.4.16 fix round, V-12): the lapis slot of the table holds less than the chosen offer needs, after
+ * every stack of the bag was put: `Only 2 lapis are on the table; offer 3 needs 3.` (`is` for 1)
+ * @param {number} have the lapis in the lapis slot
+ * @param {number} index the offer, 0..2 (it needs index + 1)
+ * @returns {string}
+ */
+export function lapisShortText(have, index) {
+    return `Only ${count(have)} lapis ${count(have) === 1 ? 'is' : 'are'} on the table; offer ${count(index) + 1} needs ${count(index) + 1}.`;
+}
+
+/**
  * `I enchanted your diamond_pickaxe: Efficiency I, Unbreaking I (8 levels, 1 lapis).`: every enchantment the result carries,
  * in the order the item has them (the lead's rule of 2026-11-13: the game adds enchantments beside the offered one), the
  * chosen offer's requirement and lapis in the parentheses.

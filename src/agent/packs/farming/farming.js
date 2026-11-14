@@ -148,17 +148,25 @@ export function findFarm(bot, ctx = {}, areaName = '') {
         const areas = listAreas(ctx, dimension);
         const read = (x, y, z) => readBlock(bot, x, y, z);
         // v0.1.4.14 (P-18): an open farm (no fence) is worked on its farmland only, never on the ground around it;
-        // v0.1.4.16 (F3): a cane area (the survey's `cane`, or sugar cane standing in the box) is cut, not harvested
+        // v0.1.4.16 (F3): a cane area (the survey's `cane`, or sugar cane and no farmland in the box: review 16, finding 3) is
+        // cut, not harvested; a farm with crops and some cane is a crop farm
         const farmOf = (a) => ({ name: a.name, box: { min: { ...a.min }, max: { ...a.max } }, gates: gatesOf(a.entrances), source: 'area',
             open: a.border === 'open', cane: isCaneArea(read, a) });
         if (name !== '' && isCaneName(name)) {
-            // "sugar_cane" or "cane" names the nearest cane area of the dimension, at any distance
+            // "sugar_cane" or "cane" names the nearest cane area of the dimension, at any distance; failing that (review 16,
+            // finding 3) the cane columns of the nearest farm that has some: its cane is cut, its crops stay (crops: the
+            // field's cells guard the walks as in a harvest)
             const sameDimension = (a) => (typeof a?.dimension === 'string' && a.dimension.length > 0 ? a.dimension.replace(/^minecraft:/, '') : 'overworld') === dimension.replace(/^minecraft:/, '');
-            const canes = areas.filter(a => a?.type === 'farm' && isBox(a) && sameDimension(a) && isCaneArea(read, a));
+            const by = (a) => (pos ? distanceToBox(a, pos) : 0);
+            const nearest = (list) => list.sort((a, b) => by(a) - by(b) || String(a.name).localeCompare(String(b.name)))[0];
+            const farms = areas.filter(a => a?.type === 'farm' && isBox(a) && sameDimension(a));
+            const canes = farms.filter(a => isCaneArea(read, a));
             if (canes.length > 0) {
-                const by = (a) => (pos ? distanceToBox(a, pos) : 0);
-                canes.sort((a, b) => by(a) - by(b) || String(a.name).localeCompare(String(b.name)));
-                return outcome(true, null, '', { farm: farmOf(canes[0]) });
+                return outcome(true, null, '', { farm: farmOf(nearest(canes)) });
+            }
+            const withCane = farms.filter(a => caneColumns(read, a).length > 0);
+            if (withCane.length > 0) {
+                return outcome(true, null, '', { farm: { ...farmOf(nearest(withCane)), cane: true, crops: true } });
             }
         }
         const choice = chooseFarmArea(areas, { name, pos, dimension });
@@ -328,8 +336,10 @@ function readField(s) {
         s.cells = s.cells.filter(c => c.ground === 'farmland' || isCropBlock(c.above));
     }
     s.box = fieldBox(s.cells);
-    if (s.farm?.cane === true) {
-        // v0.1.4.16 (F3): a cane area has no field cells; its box is the area's, for the drops and the items left behind
+    if (s.farm?.cane === true && s.farm.crops !== true) {
+        // v0.1.4.16 (F3): a cane area has no field cells; its box is the area's, for the drops and the items left behind. The
+        // cane of a crop farm (crops, review 16 finding 3) keeps the field's cells and box: the walks to the cane never jump
+        // onto the farmland, and the cut cane's drops are picked up by the places of the work
         s.cells = [];
         s.box = { min: { ...s.farm.box.min }, max: { ...s.farm.box.max } };
     }

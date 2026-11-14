@@ -10,8 +10,9 @@
 // reader enchantsOf of the patched digging plugin, and the enchanted line names every one of them (the lead's rule).
 //
 // The lapis: 3 in the bag, else ctx.stock.takeOrAsk (8.1, exposed while the breeding pack is loaded), else this pack's own
-// copy of the asking rule with ctx.permits and the texts of 8.1. Zero model calls. Every refusal, question and stop writes
-// one ctx.log line with the reason, the position, the step and the text (SPEC rule 8).
+// copy of the asking rule with ctx.permits and the texts of 8.1. Before window.enchant the lapis slot holds the offer's lapis
+// (v0.1.4.16 fix round, V-12: more stacks of the bag put on it; never an enchant with too little). Zero model calls. Every
+// refusal, question and stop writes one ctx.log line with the reason, the position, the step and the text (SPEC rule 8).
 //
 // ctx (every field optional): { log, say, now, areas, chests, storage: { fetchItem }, permits, stock: { takeOrAsk } }.
 import diggingPlugin from 'mineflayer/lib/plugins/digging.js';
@@ -22,7 +23,7 @@ import {
     windowSlotOf,
 } from './enchant_logic.js';
 import {
-    LAPIS, PURPOSE, TEXTS, askLowText, askText, badChoiceText, enchantedText, failedText, levelText, logLine, noItemText, noOfferText,
+    LAPIS, PURPOSE, TEXTS, askLowText, askText, badChoiceText, enchantedText, failedText, lapisShortText, levelText, logLine, noItemText, noOfferText,
     noPermitText, noStockText, offersText, takeText, tookBackText, tookText, unreachableText,
 } from './texts.js';
 
@@ -266,7 +267,7 @@ async function putAndRead(s, win, target) {
         throw new Error(`the ${target.name} is not in the window`);
     }
     await win.putTargetItem(item);
-    // the largest stack of lapis (putLapis moves one stack; a stack of 1 would leave offer 2 and 3 without their lapis)
+    // the largest stack of lapis (putLapis moves one stack; fillLapis puts more before the enchant when the offer needs them)
     const lapis = windowItems(win).filter((i) => i?.name === LAPIS).sort((a, b) => (b.count ?? 0) - (a.count ?? 0))[0] ?? null;
     if (lapis) {
         await win.putLapis(lapis);
@@ -287,6 +288,35 @@ async function putAndRead(s, win, target) {
         }
     }
     return offers;
+}
+
+// The lapis in the lapis slot (slot 1) of the open window.
+function lapisOnTable(win) {
+    const there = win?.slots?.[1];
+    return there && there.name === LAPIS && isFiniteNumber(there.count) ? there.count : 0;
+}
+
+// v0.1.4.16 fix round (V-12): the lapis slot holds at least `need` lapis: while it holds fewer, the next stack of lapis of the
+// window's bag part (the largest first) is put on it (the game's click joins a stack to the lapis in the slot); a stack is
+// tried once, so a click the server does not take ends it. Returns the lapis in the slot after the puts. Never throws.
+async function fillLapis(s, win, need) {
+    const tried = new Set();
+    let have = lapisOnTable(win);
+    while (have < need && !s.bot?.interrupt_code) {
+        const stack = windowItems(win).filter((i) => i?.name === LAPIS && (i.count ?? 0) > 0 && !tried.has(i.slot))
+            .sort((a, b) => (b.count ?? 0) - (a.count ?? 0))[0] ?? null;
+        if (!stack) {
+            break;
+        }
+        tried.add(stack.slot);
+        try {
+            await win.putLapis(stack);
+        } catch (err) {
+            logTo(s.ctx, logLine('retry', botPos(s.bot), 'lapis', `the lapis of slot ${stack.slot} did not go on the table: ${errorText(err)}`));
+        }
+        have = lapisOnTable(win);
+    }
+    return have;
 }
 
 // The item and the lapis back into the bag. Never throws (closing the window gives them back as well).
@@ -372,8 +402,8 @@ async function enchantOffer(s, win, offer) {
  * !enchant(item, choice) (8.3): the item of the bag at the enchanting table within 32 blocks. Texts: `No enchanting table
  * within 32 blocks.`, `I have no diamond_pickaxe.`, `The table offers nothing for this diamond_pickaxe.`, the offers line
  * and its question, `I took the diamond_pickaxe back; say "enchant my pickaxe" again when you have chosen.`, the offers line
- * with `; none of them is <name>.`, `Level 12, offer 1 needs 30.`, `I enchanted your diamond_pickaxe: Efficiency I,
- * Unbreaking I (8 levels, 1 lapis).`, and the lapis texts of 8.1. Never throws.
+ * with `; none of them is <name>.`, `Level 12, offer 1 needs 30.`, `Only 2 lapis are on the table; offer 3 needs 3.`,
+ * `I enchanted your diamond_pickaxe: Efficiency I, Unbreaking I (8 levels, 1 lapis).`, and the lapis texts of 8.1. Never throws.
  * @param {object} bot
  * @param {object} [ctx]
  * @param {string} item the exact item name or a kind (`pickaxe` takes the best pickaxe of the bag)
@@ -465,6 +495,18 @@ export async function enchant(bot, ctx = {}, item = '', choice = '', options = {
             if (short) {
                 await takeBack(bot, win);
                 return stop('low_level', 'level', levelText(short.level, short.index, short.cost));
+            }
+            // v0.1.4.16 fix round (V-12): the lapis slot holds the offer's lapis (index + 1) before the enchant, a second stack
+            // (or more) of the bag put on it; the server ignores an enchant with too little, so it is never asked for one (the
+            // bag holds the 3 of the dearest offer since ensureLapis, before the window opened)
+            const onTable = await fillLapis(s, win, offer.lapis);
+            if (bot?.interrupt_code) {
+                await takeBack(bot, win);
+                return outcome(false, 'interrupted', tookBackText(itemName));
+            }
+            if (onTable < offer.lapis) {
+                await takeBack(bot, win);
+                return stop('no_lapis', 'lapis', lapisShortText(onTable, offer.index));
             }
             let enchanted;
             try {

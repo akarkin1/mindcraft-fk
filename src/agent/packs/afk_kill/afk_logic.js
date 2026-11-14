@@ -59,9 +59,13 @@ export const CREEPER_HEALTH = 20;
 /** The height of an entity whose height is not known (a creeper's). */
 export const DEFAULT_HEIGHT = 1.7;
 
-/** The drops the farm stores: gunpowder and the drops of the mobs that fall with the creepers (never food or tools). */
+/**
+ * The drops the farm stores: gunpowder and the drops of the mobs that fall with the creepers (never food or tools). The fix
+ * round of v0.1.4.16 (review finding 10): never the sticks, which the stone sword of the weapon rule is made from; and a
+ * store trip takes of these only what the bag gained since the farm started (gainedDrops).
+ */
 export const KILL_DROPS = Object.freeze(['gunpowder', 'bone', 'arrow', 'bow', 'rotten_flesh', 'string', 'spider_eye', 'glowstone_dust',
-    'redstone', 'sugar', 'glass_bottle', 'stick']);
+    'redstone', 'sugar', 'glass_bottle']);
 
 /** The modes paused while the farm runs (K-2, map16-packs 4.4); creeper_safety is switched off instead. */
 export const PAUSED_MODES = Object.freeze(['cowardice', 'self_defense', 'self_preservation', 'night_shelter', 'hunger', 'item_collecting']);
@@ -83,7 +87,20 @@ export const WEAPON_NAMES = Object.freeze(Object.keys(WEAPONS).sort((a, b) => WE
 /** The materials the bot never uses (the owner's rule of 2026-11-14). */
 export const FORBIDDEN_MATERIALS = Object.freeze(['diamond', 'netherite']);
 
-const GOLEMS = new Set(['iron_golem', 'snow_golem', 'copper_golem']);
+/**
+ * The mobs that mcdata.isHostile's rule (type `hostile` or `mob`) counts but that are no enemy in the game, never a target
+ * (the fix round of v0.1.4.16, review finding 11: the 26.1 data gives the allay the type `mob`): the golems, the allay and the
+ * neutral enderman and piglins. A copy of NOT_HOSTILE_FOR_SHELTER of the home pack's night_logic.js (this module imports
+ * nothing); xy_afk_logic pins the two to each other and to the passive mobs of type `mob` in the 26.1 data.
+ */
+export const NOT_KILL_TARGETS = Object.freeze(['iron_golem', 'snow_golem', 'copper_golem', 'allay', 'enderman', 'piglin', 'zombified_piglin']);
+
+/**
+ * The blocks that count as the kill chest (the fix round, review finding 9): the chest, the trapped chest and the copper chests
+ * of 26.1; never a barrel, an ender chest, a shulker box or another container.
+ */
+export const KILL_CHEST_NAMES = Object.freeze(['chest', 'trapped_chest', 'copper_chest', 'exposed_copper_chest', 'weathered_copper_chest',
+    'oxidized_copper_chest', 'waxed_copper_chest', 'waxed_exposed_copper_chest', 'waxed_weathered_copper_chest', 'waxed_oxidized_copper_chest']);
 
 function num(value) {
     return typeof value === 'number' && Number.isFinite(value) ? value : null;
@@ -262,8 +279,8 @@ export function checkRoom(getName, spot) {
 
 /**
  * The hostile rule of the kill room (8.4a): a creeper, or any other hostile of mcdata.isHostile's rule (type `hostile`
- * or `mob`, never a golem); never a player, a villager, a pet or an animal (their types are `player`, `passive`,
- * `animal`).
+ * or `mob`), never one of NOT_KILL_TARGETS (the golems, the allay, the neutral enderman and piglins); never a player, a
+ * villager, a pet or an animal (their types are `player`, `passive`, `animal`).
  * @param {object} entity
  * @returns {boolean}
  */
@@ -274,10 +291,44 @@ export function isHostileEntity(entity) {
     if (entity.name === 'creeper') {
         return true;
     }
-    if (entity.type === 'player' || entity.name === 'player' || entity.name === 'villager' || GOLEMS.has(entity.name)) {
+    if (entity.type === 'player' || entity.name === 'player' || entity.name === 'villager' || NOT_KILL_TARGETS.includes(entity.name)) {
         return false;
     }
     return entity.type === 'hostile' || entity.type === 'mob';
+}
+
+/**
+ * True for a block that counts as the kill chest (KILL_CHEST_NAMES); a barrel or any other container never.
+ * @param {string|null} name
+ * @returns {boolean}
+ */
+export function isKillChestName(name) {
+    return typeof name === 'string' && KILL_CHEST_NAMES.includes(name);
+}
+
+/**
+ * The cells within `range` blocks (block distance) of a point's cell, the point's own cell first, then by the straight
+ * distance between the cells (ties by y, z, x): where the bot looks for the block a saved place stands by (the kill chest, the
+ * kill bed). [] for a bad point. Never throws.
+ * @param {{x,y,z}} point
+ * @param {number} [range] 1
+ * @returns {{x: number, y: number, z: number}[]}
+ */
+export function cellsNear(point, range = 1) {
+    const c = cell(point);
+    if (!c) {
+        return [];
+    }
+    const r = Math.max(0, Math.min(4, Math.floor(num(range) ?? 1)));
+    const out = [];
+    for (let x = c.x - r; x <= c.x + r; x++) {
+        for (let y = c.y - r; y <= c.y + r; y++) {
+            for (let z = c.z - r; z <= c.z + r; z++) {
+                out.push({ x, y, z });
+            }
+        }
+    }
+    return out.sort((a, b) => distance(a, c) - distance(b, c) || a.y - b.y || a.z - b.z || a.x - b.x);
 }
 
 /**
@@ -610,4 +661,57 @@ export function storedFigure(first, last, outside = 0) {
         }
     }
     return Math.max(0, diff) + elsewhere;
+}
+
+// ---- the store trip (the fix round of v0.1.4.16, review finding 10) ----
+
+/**
+ * The count of each kind of the bag: the items `{ name, count }` (bot.inventory.items()) summed by name. Never throws.
+ * @param {object[]} list
+ * @returns {Object<string, number>}
+ */
+export function bagCounts(list) {
+    const out = {};
+    for (const item of Array.isArray(list) ? list : []) {
+        const n = num(item?.count);
+        if (typeof item?.name === 'string' && item.name !== '' && n !== null && n > 0) {
+            out[item.name] = (out[item.name] ?? 0) + n;
+        }
+    }
+    return out;
+}
+
+/**
+ * What the farm gained of the drops it stores: per kind of KILL_DROPS the count of the bag now over its count when the farm
+ * started (the bot's own string, arrows or bow stay); the bag's sticks, tools and food are never drops. {} when nothing was
+ * gained.
+ * @param {Object<string, number>|null} start bagCounts at the start of the farm
+ * @param {Object<string, number>|null} now bagCounts now
+ * @returns {Object<string, number>}
+ */
+export function gainedDrops(start, now) {
+    const out = {};
+    for (const name of KILL_DROPS) {
+        const gained = (num(now?.[name]) ?? 0) - (num(start?.[name]) ?? 0);
+        if (gained > 0) {
+            out[name] = gained;
+        }
+    }
+    return out;
+}
+
+/**
+ * True when a store trip is due: the bag has STORE_FREE_SLOTS free slots or fewer, and, after a trip that stored nothing (or
+ * found nothing gained to store), fewer free slots than then (`mark`, null when no such trip).
+ * @param {number} free the free slots of the bag now
+ * @param {number|null} mark the free slots after the last trip that stored nothing
+ * @returns {boolean}
+ */
+export function storeDue(free, mark = null) {
+    const f = num(free);
+    if (f === null || f > STORE_FREE_SLOTS) {
+        return false;
+    }
+    const m = num(mark);
+    return m === null || f < m;
 }

@@ -21,6 +21,9 @@ export class SelfPrompter {
         }
         this.state = ACTIVE;
         this.prompt = prompt;
+        // v0.1.4.16 (V-1): who set the goal: its self prompts carry that order (a player's goal may start work commands)
+        const chainBy = this.agent?.order_chain?.by;
+        this.started_by = typeof chainBy === 'string' && chainBy !== '' ? chainBy : (this.started_by ?? 'player');
         this.startLoop();
     }
 

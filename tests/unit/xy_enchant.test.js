@@ -49,7 +49,7 @@ function makeItem(name, count, slot, enchantments = null) {
 
 // The fake bot: a bag of slots 9..44, the table at TABLE within reach, the window of the probe.
 function makeBot({ level = 30, items = [['diamond_pickaxe', 1], ['lapis_lazuli', 16]], table = true, offers = PROBE_OFFERS,
-    results = PROBE_RESULTS, noOffer = () => false, loseFirst = false, enchantHangs = false } = {}) {
+    results = PROBE_RESULTS, noOffer = () => false, loseFirst = false, enchantHangs = false, lapisMoves = Infinity } = {}) {
     const bag = new Map(); // bag slot -> item
     let next = 36;
     for (const [name, count, enchantments] of items) bag.set(next++, makeItem(name, count, next - 1, enchantments ?? null));
@@ -122,10 +122,21 @@ function makeBot({ level = 30, items = [['diamond_pickaxe', 1], ['lapis_lazuli',
                     win.enchantments = noOffer(inBag) ? ZERO() : offers.map((o) => ({ level: o.level, expected: { ...o.expected } }));
                 });
             },
+            // as bot.moveSlotItem(item.slot, 1): a stack put on lapis in the slot joins it (the game's left click), up to 64;
+            // `lapisMoves`: the clicks the server takes (one that does not move anything after them)
             async putLapis(item) {
                 calls.push(['putLapis', item.name, item.slot]);
                 const inBag = bag.get(item.slot + 7);
-                if (!inBag) return;
+                if (!inBag || lapisMoves <= 0) return;
+                lapisMoves--;
+                const there = win.slots[1];
+                if (there && there.name === inBag.name) {
+                    const moved = Math.min(inBag.count, 64 - there.count);
+                    there.count += moved;
+                    inBag.count -= moved;
+                    if (inBag.count === 0) bag.delete(item.slot + 7);
+                    return;
+                }
                 bag.delete(item.slot + 7);
                 win.slots[1] = inBag;
             },
@@ -326,6 +337,35 @@ describe('!enchant with the choice in the order (the code\'s choice): no questio
         assert.deepEqual(bot.calls.find((c) => c[0] === 'putLapis'), ['putLapis', 'lapis_lazuli', 30], 'the stack of 15 in bag slot 37');
         assert.equal(r.ok, true, r.text);
         assert.equal(countIn(bot, 'lapis_lazuli'), 13);
+    });
+
+    // v0.1.4.16 fix round (review 12, DECISIONS V-12): the lapis slot holds the offer's lapis before window.enchant
+    test('3 lapis split as 1 + 2 and offer 3: both stacks go into the lapis slot, the enchant is made', async () => {
+        const bot = makeBot({ items: [['lapis_lazuli', 1], ['lapis_lazuli', 2], ['diamond_pickaxe', 1]] });
+        const r = await enchant(bot, makeCtx(), 'diamond_pickaxe', '3', fakeClock());
+        assert.deepEqual(bot.calls.filter((c) => c[0] === 'putLapis'), [['putLapis', 'lapis_lazuli', 30], ['putLapis', 'lapis_lazuli', 29]],
+            'the stack of 2 (bag slot 37) first, then the stack of 1 (bag slot 36)');
+        const putAt = bot.calls.findLastIndex((c) => c[0] === 'putLapis');
+        assert.ok(putAt < bot.calls.findIndex((c) => c[0] === 'enchant'), 'both stacks are in before the enchant');
+        assert.deepEqual(bot.calls.filter((c) => c[0] === 'enchant'), [['enchant', 2]]);
+        assert.equal(r.ok, true, r.text);
+        assert.equal(r.text, 'I enchanted your diamond_pickaxe: Efficiency IV, Unbreaking I (30 levels, 3 lapis).');
+        assert.equal(countIn(bot, 'lapis_lazuli'), 0, 'the 3 lapis spent');
+        assert.equal(bot.experience.level, 27);
+    });
+
+    test('a lapis slot that stays short of the offer: no enchant, the lapis line, the item and the lapis back', async () => {
+        const bot = makeBot({ items: [['lapis_lazuli', 1], ['lapis_lazuli', 2], ['diamond_pickaxe', 1]], lapisMoves: 1 });
+        const ctx = makeCtx();
+        const r = await enchant(bot, ctx, 'diamond_pickaxe', '3', fakeClock());
+        assert.ok(!bot.calls.some((c) => c[0] === 'enchant'), 'window.enchant is never called with too little lapis');
+        assert.deepEqual([r.ok, r.reason, r.text], [false, 'no_lapis', 'Only 2 lapis are on the table; offer 3 needs 3.']);
+        assert.ok(ctx.logs.includes(`Enchanting no_lapis at (1, 64, 0), step lapis: ${r.text}`), ctx.logs.join('\n'));
+        assert.equal(pickaxes(bot).length, 1);
+        assert.equal(pickaxes(bot)[0].enchantments, null);
+        assert.equal(countIn(bot, 'lapis_lazuli'), 3, 'nothing spent');
+        assert.equal(bot.experience.level, 30);
+        assert.equal(bot.currentWindow, null);
     });
 
     test('a number that is no offer number: refused before anything moves', async () => {

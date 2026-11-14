@@ -9,5 +9,5 @@
 export { ENCHANT_RULES, ITEM_KINDS, MATERIAL_ORDER, roman, cleanItemRequest, kindOf, isOfKind, materialRank, chooseItem, parseChoice, parseTake,
     hasData, offersFrom, matchOffer, levelShort, enchantsOfItem, enchantmentWords, windowSlotOf } from './enchant_logic.js';
 export { TEXTS, LAPIS, PURPOSE, whereText, itemWords, noItemText, noOfferText, offerWords, offersText, tookBackText, levelText, enchantedText,
-    badChoiceText, unreachableText, failedText, takeText, logLine, tookText, askText, askLowText, noPermitText, noStockText } from './texts.js';
+    badChoiceText, unreachableText, failedText, takeText, logLine, tookText, askText, askLowText, noPermitText, noStockText, lapisShortText } from './texts.js';
 export { enchant, enchantTake, questionWaits } from './enchanting.js';

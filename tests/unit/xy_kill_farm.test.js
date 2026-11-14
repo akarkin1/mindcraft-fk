@@ -12,11 +12,13 @@
 import { describe, test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { loadSrc } from '../helpers/load.js';
-import { addMob, give, makeFakeBot, makeWorld, removeEntity, v } from './home_fake_bot.test.js';
+import { addMob, give, makeFakeBot, makeWorld, removeEntity, straightGoto, v } from './home_fake_bot.test.js';
 
 const K = await loadSrc('src/agent/packs/afk_kill/afk_kill.js');
 const L = await loadSrc('src/agent/packs/afk_kill/afk_logic.js');
 const T = await loadSrc('src/agent/packs/afk_kill/texts.js');
+const SLEEP = await loadSrc('src/agent/packs/home/sleep.js');
+const SL = await loadSrc('src/agent/packs/storage/storage_logic.js');
 
 let warn;
 before(() => {
@@ -162,6 +164,18 @@ const modesRestored = (bot) => {
     for (const n of L.PAUSED_MODES) assert.ok(!bot.modes.paused.has(n), `${n} unpaused`);
 };
 
+// The fix round (finding 10): a store trip takes only the drops gained since the start; the scene's hook gives them on the
+// first step of the clock (after killFarm counted the bag).
+const gainOnce = (items) => {
+    let given = false;
+    return (sc) => {
+        if (!given) {
+            given = true;
+            for (const [name, n] of Object.entries(items)) give(sc.bot, name, n);
+        }
+    };
+};
+
 describe('the farm at the kill spot', () => {
     test('"level 2": the sneak, the 700 ms step under the slab, one hit per 600 ms, 4 creepers, the stop line, the modes', async () => {
         let during = null;
@@ -238,15 +252,16 @@ describe('the farm at the kill spot', () => {
         assert.ok(Math.hypot(p.x - 0.5, p.z + 5.5) <= 1.5, `back where it stood: ${p}`);
     });
 
-    test('the store trip at 4 free slots: storeItems({ only: KILL_DROPS, chest }) into the nearest chest, the quiet line, the sneak again', async () => {
+    test('the store trip at 4 free slots: storeItems({ only: the drops gained, keep: the start\'s counts, chest }) into the nearest chest, the quiet line, the sneak again', async () => {
         const calls = [];
         let free = 4;
         const storage = { storeItems: async (opts) => { calls.push(opts); free = 20; return { ok: true, reason: null, stored: { gunpowder: 64 }, text: '' }; } };
-        const s = scene({ storage });
+        const s = scene({ storage, hook: gainOnce({ gunpowder: 64 }) });
         s.bot.inventory.emptySlotCount = () => free;
         const r = await s.run('1 minutes');
         assert.equal(calls.length, 1);
-        assert.deepEqual(calls[0].only, [...L.KILL_DROPS]);
+        assert.deepEqual(calls[0].only, ['gunpowder']);
+        assert.deepEqual(calls[0].keep, { gunpowder: 0 });
         assert.deepEqual(calls[0].chest, { x: 0, y: 64, z: 1 });
         assert.ok(s.logs.includes('I stored 64 gunpowder.'));
         assert.match(r.text, /; 64 gunpowder stored\.$/);
@@ -285,7 +300,7 @@ describe('the farm at the kill spot', () => {
         const calls = [];
         const looks = [];
         let stored = 0;
-        const s = scene({ places: { kill_chest: { x: 0, y: 64, z: 1 } } });
+        const s = scene({ places: { kill_chest: { x: 0, y: 64, z: 1 } }, hook: gainOnce({ gunpowder: 10 }) });
         const look = hopperChests(s, looks);
         s.ctx.storage = {
             storeItems: async (opts) => { calls.push(opts); stored += 10; return { ok: true, stored: { gunpowder: 10 } }; },
@@ -302,7 +317,8 @@ describe('the farm at the kill spot', () => {
 
     test('a store into a chest the looks do not cover counts as it is', async () => {
         const looks = [];
-        const s = scene({ places: { kill_chest: { x: 30, y: 64, z: 30 } } });
+        const s = scene({ places: { kill_chest: { x: 30, y: 64, z: 30 } }, hook: gainOnce({ gunpowder: 20 }) });
+        s.world.set(30, 64, 30, 'chest'); // the fix round (finding 9): a saved kill chest is a real chest block
         const look = hopperChests(s, looks);
         s.ctx.storage = {
             storeItems: async () => ({ ok: true, stored: { gunpowder: 20 } }),
@@ -321,7 +337,10 @@ describe('the farm at the kill spot', () => {
         s.bot.inventory.emptySlotCount = () => free;
         s.ctx.storage = { lookIntoChests: hopperChests(s, looks), storeItems: async () => { free = 30; return { ok: true, stored: { gunpowder: 0, bone: 4 } }; } };
         s.stepHook = (sc) => {
-            if (sc.kills() === 10 && free === 36) free = 4; // a store trip after 10 kills: the look there gives the figure
+            if (sc.kills() === 10 && free === 36) {
+                give(sc.bot, 'bone', 4); // the fix round (finding 10): a trip only for what the farm gained
+                free = 4; // a store trip after 10 kills: the look there gives the figure
+            }
             if (sc.kills() >= 50 && sc.said.length >= 2) sc.bot.interrupt_code = true;
         };
         const r = await s.run('');
@@ -371,8 +390,17 @@ describe('the farm at the kill spot', () => {
 });
 
 describe('the refusals: nothing moves, the modes untouched', () => {
-    const untouched = (bot) => {
-        assert.equal(bot.modes.log.length, 0, JSON.stringify(bot.modes.log));
+    // walked: the room was refused after the walk to the spot; the fix round (finding 8) pauses the paused modes from the start of
+    // the walk, so they were paused and are unpaused again, and creeper_safety was never switched
+    const untouched = (bot, { walked = false } = {}) => {
+        if (walked) {
+            assert.ok(!bot.modes.log.some((e) => e[0] === 'setOn'), JSON.stringify(bot.modes.log));
+            assert.deepEqual(bot.modes.log.filter((e) => e[0] === 'pause').map((e) => e[1]).sort(), [...L.PAUSED_MODES].sort());
+            assert.equal(bot.modes.paused.size, 0, 'every paused mode unpaused');
+            assert.equal(bot.modes.on.creeper_safety, true);
+        } else {
+            assert.equal(bot.modes.log.length, 0, JSON.stringify(bot.modes.log));
+        }
         assert.equal(bot.calls.filter((c) => c[0] === 'attack').length, 0);
     };
 
@@ -390,7 +418,7 @@ describe('the refusals: nothing moves, the modes untouched', () => {
         const s = scene({ slab: false });
         const r = await s.run('level 2');
         assert.deepEqual([r.ok, r.reason, r.text], [false, 'no_slab', 'The kill room has no slab over the hoppers; I do not farm there.']);
-        untouched(s.bot);
+        untouched(s.bot, { walked: true });
         assert.equal(s.bot.modes.on.creeper_safety, true);
     });
 
@@ -410,7 +438,7 @@ describe('the refusals: nothing moves, the modes untouched', () => {
             assert.ok(Math.hypot(p.x - 0.5, p.z + 5.5) <= 1.5, `back where it stood: ${p}`);
             const opened = s.bot.calls.filter((c) => c[0] === 'pf_open');
             assert.equal(opened.length, 2, 'the door opened on the way there and on the way back (doors on)');
-            untouched(s.bot);
+            untouched(s.bot, { walked: true });
         }
     });
 
@@ -419,7 +447,7 @@ describe('the refusals: nothing moves, the modes untouched', () => {
         for (let x = -1; x <= 1; x++) for (let z = 1; z <= 3; z++) s.world.set(x, 65, z, 'stone');
         const r = await s.run('');
         assert.deepEqual([r.reason, r.text], ['no_hopper', 'I see no hopper within 3 blocks of the kill spot; is this the right spot?']);
-        untouched(s.bot);
+        untouched(s.bot, { walked: true });
     });
 
     test('an until it does not understand', async () => {
@@ -580,5 +608,253 @@ describe('the night and the food', () => {
         assert.ok(eats.length >= 2, `${eats.length} tries`);
         assert.equal(s.said.filter((t) => t === T.TEXTS.noFood).length, 1);
         assert.ok(r.kills > 0);
+    });
+});
+
+// ---- the fix round of v0.1.4.16 (the review's findings 4, 8, 9, 10, 11; each test fails on 62bce43) ----
+
+describe('the fix round: the meal, the modes on the way, the bed and the chest, the store trip, the allay', () => {
+    const sneaks = (s) => s.controlLog.filter((c) => c.name === 'sneak').map((c) => c.value);
+    // the night passes on the virtual clock: a bot in bed wakes in the morning at the next step (the fake bot's own wake runs
+    // on a real timer, which the virtual clock outruns)
+    const wakeAtMorning = (sc) => {
+        if (sc.bot.isSleeping) {
+            sc.bot.isSleeping = false;
+            sc.bot.time.timeOfDay = 1000;
+        }
+    };
+    // bot.sleep of the fake without its real timer: the bot lies down at once, wakeAtMorning gets it up
+    const sleepVirtually = (bot) => {
+        bot.sleep = async (block) => {
+            bot.calls.push(['sleep', block.position.x, block.position.y, block.position.z]);
+            const t = bot.time.timeOfDay;
+            if (!(t >= 12541 && t <= 23458)) throw new Error("it's not night and it's not a thunderstorm");
+            if (block.getProperties().occupied) throw new Error('the bed is occupied');
+            bot.isSleeping = true;
+        };
+    };
+
+    test('finding 4: food at 14: the bot eats sneaking at the spot; the sneak ends only at the end of the farm', async () => {
+        const meals = [];
+        const s = scene();
+        s.bot.food = 14;
+        const r = await s.run('1 minutes', { eat: async (bot) => {
+            meals.push({ sneak: bot.controls.sneak });
+            bot.food = 20;
+            return { ok: true, ate: 1, reason: null, text: '' };
+        } });
+        assert.equal(r.ok, true, r.text);
+        assert.deepEqual(meals, [{ sneak: true }], 'one meal, eaten sneaking');
+        assert.deepEqual(sneaks(s), [true, false], 'on at the stance, off only in the finally');
+        assert.ok(r.kills > 0);
+    });
+
+    test('finding 8: a night resume: night_shelter and the other paused modes are paused before the walk to the spot; creeper_safety off only there', async () => {
+        const s = scene({ pos: [0.5, 64, -5.5] });
+        s.bot.time.timeOfDay = 18000; // a job resume at night (job/index.js resumes the farm with night: false)
+        let walk = null;
+        s.bot.gotoImpl = async (goal) => {
+            if (!walk) walk = { paused: [...s.bot.modes.paused].sort(), creeper: s.bot.modes.on.creeper_safety };
+            await straightGoto(s.bot, goal);
+        };
+        const r = await s.run('1 minutes');
+        assert.equal(r.ok, true, r.text);
+        assert.ok(walk, 'the bot walked to the spot');
+        assert.deepEqual(walk.paused, [...L.PAUSED_MODES].sort(), 'night_shelter among them');
+        assert.equal(walk.creeper, true, 'the creeper reflex keeps watch on the way');
+        const firstPause = s.bot.modes.log.findIndex((e) => e[0] === 'pause');
+        const creeperOff = s.bot.modes.log.findIndex((e) => e[0] === 'setOn' && e[1] === 'creeper_safety' && e[2] === false);
+        assert.ok(firstPause >= 0 && creeperOff > firstPause, JSON.stringify(s.bot.modes.log));
+        modesRestored(s.bot);
+    });
+
+    test('finding 8: the walk interrupted (the owner\'s stop on the way): the paused modes are unpaused again', async () => {
+        const s = scene({ pos: [0.5, 64, -5.5] });
+        s.bot.gotoImpl = async () => {
+            s.bot.interrupt_code = true;
+            const err = new Error('interrupted');
+            err.name = 'GoalChanged';
+            throw err;
+        };
+        const r = await s.run('');
+        assert.equal(r.reason, 'interrupted');
+        assert.ok(s.bot.modes.log.some((e) => e[0] === 'pause' && e[1] === 'night_shelter'), 'paused from the start');
+        modesRestored(s.bot);
+    });
+
+    test('finding 9: a kill_bed saved one block beside the bed: the bed\'s foot is the only candidate of sleepInBed and my_bed', async () => {
+        const sleeps = [];
+        const s = scene({ places: { kill_bed: { x: 4, y: 64, z: -1 } } });
+        s.world.bed(4, 64, -2, { facing: 'east' }); // the foot (4, 64, -2), the head (5, 64, -2)
+        s.bot.time.timeOfDay = 18000;
+        const r = await s.run('1 minutes', { sleep: async (bot, ctx, opts) => {
+            sleeps.push({ only: opts?.only ?? null, myBed: ctx.places.recall('my_bed') });
+            bot.time.timeOfDay = 1000;
+            return { ok: true, reason: null, text: 'I slept. It is morning.' };
+        } });
+        assert.equal(r.ok, true, r.text);
+        assert.deepEqual(sleeps, [{ only: { x: 4, y: 64, z: -2 }, myBed: { x: 4, y: 64, z: -2, dimension: 'overworld' } }], s.logs.join(' | '));
+        assert.ok(s.logs.some((l) => /the bed at \(4, 64, -2\)\.$/.test(l)), s.logs.join(' | '));
+    });
+
+    test('finding 9: the nearest bed found by its head, a barrel by it, the owner\'s bed 20 blocks off: the bot sleeps in the kill bed (the real sleepInBed)', async () => {
+        const s = scene();
+        s.world.bed(3, 64, -1, { facing: 'west' }); // the foot (3, 64, -1); the head (2, 64, -1) is the bed block nearest the spot
+        s.world.set(3, 64, -3, 'barrel'); // a job site within 8 blocks of the kill bed
+        s.world.bed(20, 64, 0, { facing: 'east' }); // the owner's bed, within 32 blocks of the bot, 20 from the spot
+        s.bot.time.timeOfDay = 18000;
+        sleepVirtually(s.bot);
+        s.stepHook = wakeAtMorning;
+        const r = await s.run('1 minutes');
+        assert.equal(r.ok, true, r.text);
+        const slept = s.bot.calls.filter((c) => c[0] === 'sleep').map((c) => c.slice(1));
+        assert.ok(slept.length >= 1, `a sleep: ${s.logs.join(' | ')}`);
+        assert.ok(slept.every(([x, y, z]) => y === 64 && z === -1 && (x === 2 || x === 3)), `the kill bed only: ${JSON.stringify(slept)}`);
+        assert.ok(s.logs.some((l) => /the bed at \(3, 64, -1\)\.$/.test(l)), s.logs.join(' | '));
+        assert.ok(s.logs.includes('I slept. It is morning.'), s.logs.join(' | '));
+    });
+
+    test('finding 9: sleepInBed with `only`: no other bed, though the way to the only one fails and another is free', async () => {
+        const world = makeWorld({ groundY: 63 });
+        world.bed(6, 64, 0, { facing: 'east' }); // the only bed: the foot (6, 64, 0)
+        world.bed(-3, 64, 0, { facing: 'west' }); // another bed nearer the bot
+        const bot = makeFakeBot({ world, pos: [0.5, 64, 0.5] });
+        bot.time.timeOfDay = 18000;
+        sleepVirtually(bot);
+        for (let x = 1; x <= 8; x++) for (let z = -2; z <= 2; z++) bot.blocked.add(`${x},64,${z}`); // no way east
+        const clock = { t: 0 };
+        const opts = { now: () => clock.t, wait: async (ms) => { clock.t += ms; wakeAtMorning({ bot }); await new Promise((r) => setImmediate(r)); } };
+        const free = await SLEEP.sleepInBed(bot, {}, opts);
+        assert.equal(free.ok, true, `without "only" the bot takes the other bed: ${JSON.stringify(free)}`);
+        bot.calls.length = 0;
+        bot.time.timeOfDay = 18000;
+        const res = await SLEEP.sleepInBed(bot, {}, { ...opts, only: { x: 6, y: 64, z: 0 } });
+        assert.equal(res.ok, false, res.text);
+        assert.equal(bot.calls.filter((c) => c[0] === 'sleep').length, 0, JSON.stringify(bot.calls.filter((c) => c[0] === 'sleep')));
+        const only = SLEEP.candidateBeds(bot, {}, 32, { only: { x: 6, y: 64, z: 0 } });
+        assert.deepEqual(only.beds.map((b) => [b.x, b.y, b.z]), [[6, 64, 0]]);
+        assert.deepEqual(SLEEP.candidateBeds(bot, {}, 32, { only: { x: 0, y: 64, z: 9 } }).beds, [], 'no bed at the point: none');
+    });
+
+    test('finding 9: a kill_chest saved one block off the chest: the chest block takes the drops', async () => {
+        const calls = [];
+        const storage = { storeItems: async (opts) => { calls.push(opts); return { ok: true, stored: { gunpowder: 3 } }; } };
+        const s = scene({ storage, places: { kill_chest: { x: 2, y: 64, z: 0 } }, hook: gainOnce({ gunpowder: 3 }) });
+        let free = 4;
+        s.bot.inventory.emptySlotCount = () => { const f = free; free = 30; return f; };
+        await s.run('1 minutes');
+        assert.ok(s.logs.some((l) => /the chest at \(1, 64, 1\), the bed unknown\.$/.test(l)), s.logs.join(' | '));
+        assert.deepEqual(calls.map((c) => c.chest), [{ x: 1, y: 64, z: 1 }]);
+    });
+
+    test('finding 9: a barrel never counts as the kill chest: saved (no chest by it), or the nearest of the chest index', async () => {
+        // saved at a barrel with no chest within 1 block: no kill chest, a log line, no store trip
+        const calls = [];
+        const storage = { storeItems: async (opts) => { calls.push(opts); return { ok: true, stored: { gunpowder: 3 } }; } };
+        const s = scene({ storage, places: { kill_chest: { x: 3, y: 64, z: -3 } }, hook: gainOnce({ gunpowder: 3 }) });
+        s.world.set(3, 64, -3, 'barrel');
+        s.bot.inventory.emptySlotCount = () => 4;
+        await s.run('1 minutes');
+        assert.ok(s.logs.includes('The kill chest at (3, 64, -3) is no chest; I keep the drops in the bag.'), s.logs.join(' | '));
+        assert.ok(s.logs.some((l) => /the chest unknown, the bed unknown\.$/.test(l)), s.logs.join(' | '));
+        assert.equal(calls.length, 0);
+        // the chest index's nearest container is a barrel: the real chest by the spot instead
+        const barrel = { x: 0, y: 64, z: -1, items: {} };
+        const chests = { nearest: (pos, dim, test) => ([barrel].find((c) => test(c)) ?? null), find: () => [] };
+        const t = scene({ chests });
+        t.world.set(0, 64, -1, 'barrel');
+        await t.run('level 1');
+        assert.ok(t.logs.some((l) => /the chest at \(0, 64, 1\), the bed unknown\.$/.test(l)), t.logs.join(' | '));
+    });
+
+    // A storage pack that stores by the real keep plan of the storage pack: what the options let go leaves the bag.
+    function planStorage(s, calls, { full = false } = {}) {
+        return {
+            storeItems: async (opts) => {
+                calls.push({ ...opts, t: s.clock.t });
+                if (full) return { ok: false, reason: 'full', stored: {}, text: 'The chest is full.' };
+                const plan = SL.keepPlan(s.bot.inventory.items().map((i) => ({ name: i.name, count: i.count })), { only: opts.only, keep: opts.keep });
+                const stored = {};
+                for (const { name, count } of plan.store) {
+                    let left = count;
+                    for (const it of s.bot.inventory.list.filter((i) => i.name === name)) {
+                        const n = Math.min(it.count, left);
+                        it.count -= n;
+                        left -= n;
+                    }
+                    stored[name] = count;
+                }
+                return { ok: true, reason: null, stored, text: '' };
+            },
+        };
+    }
+    const bagOf = (bot) => L.bagCounts(bot.inventory.items());
+
+    test('finding 10: the store trip takes what the farm gained only: never the bag\'s sticks, its food, its own string', async () => {
+        const calls = [];
+        let free = 30;
+        const s = scene();
+        give(s.bot, 'stick', 3);
+        give(s.bot, 'bread', 8);
+        give(s.bot, 'string', 10);
+        s.ctx.storage = planStorage(s, calls);
+        s.bot.inventory.emptySlotCount = () => free;
+        s.stepHook = (sc) => {
+            if (sc.kills() >= 1 && free === 30) {
+                give(sc.bot, 'gunpowder', 5);
+                give(sc.bot, 'string', 2);
+                give(sc.bot, 'stick', 1); // a witch's stick
+                free = 4;
+            }
+            if (calls.length > 0) free = 20;
+        };
+        await s.run('1 minutes');
+        assert.equal(calls.length, 1);
+        assert.ok(s.logs.includes('I stored 5 gunpowder, 2 string.'), s.logs.join(' | '));
+        const bag = bagOf(s.bot);
+        assert.deepEqual([bag.stick, bag.bread, bag.string, bag.stone_sword, bag.gunpowder ?? 0], [4, 8, 10, 1, 0]);
+    });
+
+    test('finding 10: a bag full of the bot\'s own things: no store trip at all, the sneak never ends', async () => {
+        const calls = [];
+        const s = scene();
+        give(s.bot, 'cobblestone', 64);
+        s.ctx.storage = planStorage(s, calls);
+        s.bot.inventory.emptySlotCount = () => 4;
+        const r = await s.run('5 minutes');
+        assert.equal(r.ok, true, r.text);
+        assert.equal(calls.length, 0, JSON.stringify(calls.map((c) => c.t)));
+        assert.deepEqual(sneaks(s), [true, false]);
+    });
+
+    test('finding 10: after a trip that stored nothing (the chest full), no trip until the bag\'s free slots drop again', async () => {
+        const calls = [];
+        let free = 30;
+        let t0 = null;
+        const s = scene();
+        s.ctx.storage = planStorage(s, calls, { full: true });
+        s.bot.inventory.emptySlotCount = () => free;
+        s.stepHook = (sc) => {
+            t0 ??= sc.clock.t;
+            if (sc.kills() >= 1 && free === 30) {
+                give(sc.bot, 'gunpowder', 5);
+                free = 4;
+            }
+            if (sc.clock.t - t0 >= 3.5 * 60000 && free === 4) free = 3; // one more slot taken
+        };
+        const r = await s.run('5 minutes');
+        assert.equal(r.ok, true, r.text);
+        assert.equal(calls.length, 2, JSON.stringify(calls.map((c) => (c.t - t0) / 1000)));
+        assert.ok(calls[1].t - t0 >= 3.5 * 60000, `the second trip after the drop: ${(calls[1].t - t0) / 1000} s`);
+    });
+
+    test('finding 11: an allay within reach on the hopper is never hit; the creeper beside it is', async () => {
+        const s = scene({ spawn: null, hook: (sc) => { if (sc.kills() >= 1 || sc.clock.t > 1_000_000 + 20000) sc.bot.interrupt_code = true; } });
+        const allay = s.summon('allay', FIRST_ROW, { type: 'mob', height: 0.6, health: 20 });
+        const creeper = s.summon('creeper', { x: -0.5, y: 66, z: 2.5 });
+        const r = await s.run('');
+        assert.equal(r.kills, 1);
+        assert.ok(s.attacks.length >= 1 && s.attacks.every((a) => a.id === creeper.id), JSON.stringify(s.attacks.map((a) => a.name)));
+        assert.ok(s.bot.entities[allay.id], 'the allay lives');
     });
 });

@@ -642,6 +642,27 @@ function collectWork(agent, type) {
 // M5: !goToMine goes down into the mine of the ore, without an ore into the nearest mine of the store,
 // with descendToLevel of the mining pack.
 
+// v0.1.4.16 fix round (review finding 2; SPEC 8.4 "the owner saves it standing at his spot"): the places of the AFK kill pack's
+// room (the names of packs/afk_kill/afk_kill.js, which this file does not import) that !rememberHere saves where the player who
+// gave the order stands.
+const KILL_ROOM_PLACES = Object.freeze(['kill_spot', 'kill_chest', 'kill_bed', 'kill_exit']);
+const ORDER_PLAYER_RANGE = 8;
+
+// The position of the player who gave the order that runs (agent.last_order), when the bot sees that player (bot.players[name]
+// has an entity) within 8 blocks; else null. Never throws.
+function orderPlayerNear(agent) {
+    try {
+        const by = agent?.last_order?.by;
+        const p = typeof by === 'string' && by !== '' ? agent.bot?.players?.[by]?.entity?.position : null;
+        const me = agent.bot?.entity?.position;
+        if (!p || !me || ![p.x, p.y, p.z, me.x, me.y, me.z].every(Number.isFinite))
+            return null;
+        return Math.hypot(p.x - me.x, p.y - me.y, p.z - me.z) <= ORDER_PLAYER_RANGE ? { x: p.x, y: p.y, z: p.z } : null;
+    } catch (error) {
+        return null;
+    }
+}
+
 // v0.1.4.9 (B3, I10): the yaw of the player who gave the order that runs (agent.last_order), in radians as
 // mineflayer gives it, when that player is in bot.players and has an entity; else undefined. Never throws.
 function orderPlayerYaw(agent) {
@@ -1095,16 +1116,19 @@ export const actionsList = [
         description: 'Save the current location with a given name.',
         params: {'name': { type: 'string', description: 'The name to remember the location as.' }},
         perform: async function (agent, name) {
-            const pos = agent.bot.entity.position;
+            // v0.1.4.16 fix round (review finding 2): the places of the kill room are saved where the owner stands
+            const player = typeof name === 'string' && KILL_ROOM_PLACES.includes(name.trim()) ? orderPlayerNear(agent) : null;
+            const pos = player ?? agent.bot.entity.position;
             const saved = agent.memory_bank.rememberPlace(name, pos.x, pos.y, pos.z, agent.bot.game?.dimension);
             if (saved === false)
                 return `Could not save the location "${name}".`;
+            const reply = player ? `Location saved as "${name}" where you stand.` : `Location saved as "${name}".`;
             if (agent.area_store) {
                 const building = saveBuildingAround(agent, name);
                 if (building)
-                    return `Location saved as "${name}". ${building}`;
+                    return `${reply} ${building}`;
             }
-            return `Location saved as "${name}".`;
+            return reply;
         }
     },
     {

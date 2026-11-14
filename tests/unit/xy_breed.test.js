@@ -12,6 +12,7 @@ import { captureConsole } from '../helpers/console_capture.js';
 
 const B = await loadSrc('src/agent/packs/breeding/breeding.js');
 const P = await loadSrc('src/agent/world/stock_permits.js');
+const S = await loadSrc('src/agent/packs/home/shelter.js'); // leaveBuilding, as the pack context hands it on (ctx.home)
 
 // The fence ring at y 64 on x -1..5, z -1..5 (the ground of the pen x 0..4, z 0..4), the gate at (2, 64, -1); the saved box
 // holds the fence, as the survey and scanPen save a pen.
@@ -26,15 +27,40 @@ beforeEach(() => {
 });
 afterEach(() => cap.restore());
 
+// v0.1.4.16 fix round (V-6): a closed house south of the pen, the house of home_fake_bot moved 14 blocks south: walls of
+// planks x, z 1..7 (+14), its door in the north wall at (4, 64, 15), shut; the wall cells of the feet block every walk
+// (the fake path search knows no walls but bot.blocked). The bot stands inside at (4.5, 64, 18.5).
+const HOUSE_DOOR = { x: 4, y: 64, z: 15 };
+function closedHouse(world, bot) {
+    world.fill(1, 63, 15, 7, 63, 21, 'oak_planks');
+    world.fill(1, 68, 15, 7, 68, 21, 'oak_planks');
+    for (let y = 64; y <= 67; y++) {
+        for (let i = 1; i <= 7; i++) {
+            for (const [x, z] of [[i, 15], [i, 21], [1, 14 + i], [7, 14 + i]]) {
+                world.set(x, y, z, 'oak_planks');
+                if (y === 64) bot.blocked.add(`${x},64,${z}`);
+            }
+        }
+    }
+    world.door(HOUSE_DOOR.x, HOUSE_DOOR.y, HOUSE_DOOR.z, { facing: 'north', open: false });
+    bot.blocked.delete(`${HOUSE_DOOR.x},64,${HOUSE_DOOR.z}`);
+    return { name: 'house', type: 'home', dimension: 'overworld', source: 'scan', min: { x: 0, y: 63, z: 14 }, max: { x: 8, y: 69, z: 22 }, entrances: [{ ...HOUSE_DOOR, kind: 'door' }] };
+}
+
 /**
  * A pen with animals of a kind at the given cells, the bot south of it with the items of `bag`. Options: frozen (indices
  * of animals that never move), species, the name of the pen, babies (cells of babies at the start), chests and permits
- * (the chest index, fetchItem and the permits for takeOrAsk), stopAfterFeeds (the owner's stop after that many feeds).
+ * (the chest index, fetchItem and the permits for takeOrAsk), stopAfterFeeds (the owner's stop after that many feeds);
+ * v0.1.4.16 fix round (V-6): pos (where the order finds the bot), range (the animals of the pen are among bot.entities only
+ * while the bot is within that many blocks of the pen, as the server sends the entities near a player), house (the bot in a
+ * closed house south of the pen, the house saved as an area), home (ctx.home of the pack context).
  */
 function pen({ species = 'cow', cells = [[0.5, 0.5], [1.5, 2.5], [3.5, 1.5], [2.5, 3.5]], babies = [], bag = { wheat: 8 }, frozen = [], name = 'cow_pen',
-    type = 'pen', feed = 'wheat', chests = null, stopAfterFeeds = null, answerAt = null } = {}) {
+    type = 'pen', feed = 'wheat', chests = null, stopAfterFeeds = null, answerAt = null, pos = null, range = null, house = false, home = null,
+    savedAnimals = true, fetchWalks = false } = {}) {
     const world = makeWorld();
-    const bot = makeFakeBot({ world, pos: [2.5, 64, 9.5] });
+    const bot = makeFakeBot({ world, pos: pos ?? (house ? [4.5, 64, 18.5] : [2.5, 64, 9.5]) });
+    const houseArea = house ? closedHouse(world, bot) : null;
     for (let x = -1; x <= 5; x++) {
         for (let z = -1; z <= 5; z++) {
             if (x !== -1 && x !== 5 && z !== -1 && z !== 5) continue;
@@ -48,17 +74,33 @@ function pen({ species = 'cow', cells = [[0.5, 0.5], [1.5, 2.5], [3.5, 1.5], [2.
     }
     for (const [item, n] of Object.entries(bag)) give(bot, item, n);
     const animals = cells.map(([x, z], i) => Object.assign(addMob(bot, species, [x, 64, z], { type: 'animal' }), { frozen: frozen.includes(i) }));
-    for (const [x, z] of babies) addMob(bot, species, [x, 64, z], { type: 'animal', metadata: { 16: true } });
+    const young = babies.map(([x, z]) => addMob(bot, species, [x, 64, z], { type: 'animal', metadata: { 16: true } }));
     const t = {
-        world, bot, animals, said: [], logs: [], feeds: [], violations: [], positions: [], walkLines: [], maxWait: 0, fedCount: 0,
+        world, bot, animals, said: [], logs: [], feeds: [], violations: [], positions: [], walkLines: [], maxWait: 0, fedCount: 0, gotos: [], houseArea,
     };
-    // the walk: the straight line of the fake path search, every sample recorded
+    // the entities the server sends: the animals of the pen only while the bot is within `range` of the pen's middle (2.5, 2.5)
+    t.track = () => {
+        if (range === null) return;
+        const near = Math.hypot(bot.entity.position.x - 2.5, bot.entity.position.z - 2.5) <= range;
+        for (const e of [...animals, ...young]) {
+            if (near) bot.entities[e.id] = e;
+            else delete bot.entities[e.id];
+        }
+    };
+    t.track();
+    // the walk: the straight line of the fake path search, every sample recorded; each walk with its goal and whether the
+    // path search may open doors
     bot.gotoImpl = async (goal) => {
         const from = bot.entity.position.clone();
+        t.gotos.push({ x: goal.x, z: goal.z, doors: bot.pathfinder.movements?.canOpenDoors === true, fed: t.feeds.length, from });
         const target = v(goal.x + 0.5, from.y, goal.z + 0.5);
         const steps = Math.max(1, Math.ceil(from.distanceTo(target) / 0.25));
         for (let i = 0; i <= steps; i++) t.walkLines.push(v(from.x + (target.x - from.x) * i / steps, from.y, from.z + (target.z - from.z) * i / steps));
-        return straightGoto(bot, goal);
+        try {
+            return await straightGoto(bot, goal);
+        } finally {
+            t.track();
+        }
     };
     // the game: a feed within 3 blocks of the eyes puts an adult that is not in love or in its cooldown in love
     bot.activateEntity = async (entity) => {
@@ -121,9 +163,10 @@ function pen({ species = 'cow', cells = [[0.5, 0.5], [1.5, 2.5], [3.5, 1.5], [2.
     const area = {
         name, type, kind: type, dimension: 'overworld', source: 'survey',
         min: { x: -1, y: 62, z: -1 }, max: { x: 5, y: 66, z: 5 }, entrances: [{ ...GATE, kind: 'gate' }],
-        contents: { animals: { [species]: cells.length } },
+        contents: savedAnimals ? { animals: { [species]: cells.length } } : { animals: {} },
     };
-    t.ctx = { areas: [area], say: (text) => t.said.push(text), log: (text) => t.logs.push(text), now: t.sim.now };
+    t.ctx = { areas: houseArea ? [area, houseArea] : [area], say: (text) => t.said.push(text), log: (text) => t.logs.push(text), now: t.sim.now };
+    if (home) t.ctx.home = home;
     if (chests) {
         t.permits = new P.StockPermits(null, { now: t.sim.now });
         t.fetches = [];
@@ -137,6 +180,7 @@ function pen({ species = 'cow', cells = [[0.5, 0.5], [1.5, 2.5], [3.5, 1.5], [2.
                     if (!c) return { ok: false, reason: 'no_more', taken: 0, chests: [], text: 'none' };
                     c.items[item] -= count;
                     give(bot, item, count);
+                    if (fetchWalks) bot.entity.position = v(c.x + 0.5, 64, c.z - 0.5); // the storage pack walked to the chest
                     return { ok: true, reason: null, taken: count, chests: [{ x: c.x, y: c.y, z: c.z }], text: 'fetched' };
                 },
             },
@@ -149,7 +193,9 @@ function pen({ species = 'cow', cells = [[0.5, 0.5], [1.5, 2.5], [3.5, 1.5], [2.
 
 function assertOutside(t) {
     for (const p of [...t.positions, ...t.walkLines]) assert.ok(!insideFence(p), `the bot at (${p.x.toFixed(2)}, ${p.z.toFixed(2)}) is inside the pen`);
-    assert.ok(!t.bot.calls.some((c) => c[0] === 'activate'), 'no block was clicked (the gate)');
+    // no block was clicked or opened but the door of the closed house (V-6), never the gate
+    const atDoor = (c) => t.houseArea !== null && c[1] === HOUSE_DOOR.x && (c[2] === HOUSE_DOOR.y || c[2] === HOUSE_DOOR.y + 1) && c[3] === HOUSE_DOOR.z;
+    assert.deepEqual(t.bot.calls.filter((c) => (c[0] === 'activate' || c[0] === 'pf_open') && !atDoor(c)), [], 'no block was clicked (the gate)');
     assert.notEqual(t.world.propsAt(GATE.x, GATE.y, GATE.z).open, true, 'the gate stays closed');
     assert.ok(!t.bot.calls.some((c) => c[0] === 'place' || c[0] === 'dig'), 'nothing placed or dug');
     assert.equal(t.bot.pathfinder.movements?.canOpenDoors, false, 'the walk may not open gates');
@@ -192,15 +238,80 @@ describe('!breed: the pen of 4 cows (8.2)', () => {
     });
 });
 
+// v0.1.4.16 fix round (review 6, DECISIONS V-6): to the pen first, out of a closed house through its door; the animals read
+// at the ring
+describe('!breed: the walk to the pen before the animals are read (V-6)', () => {
+    test('ordered 60 blocks away, the cows out of the bot\'s sight: the walk to the ring (doors allowed), then the cows read and fed', async () => {
+        const t = pen({ pos: [2.5, 64, 65.5], range: 32 });
+        assert.ok(!t.animals.some((a) => t.bot.entities[a.id]), 'the cows are not among the entities at the order');
+        const r = await t.run('cow_pen', 2);
+        assert.deepEqual({ ok: r.ok, reason: r.reason, fed: r.fed, babies: r.babies }, { ok: true, reason: null, fed: 4, babies: 2 }, r.text);
+        assert.equal(r.text, 'I fed 4 cows in the cow pen; 2 calves.');
+        const [first, ...rest] = t.gotos;
+        assert.deepEqual([first.x, first.z, first.doors, first.fed], [2, 6, true, 0], 'first the walk to the ring cell nearest the bot, the doors allowed, before any feed');
+        assert.ok(first.from.z > 60, 'from where the order found the bot');
+        assert.ok(rest.length > 0 && rest.every((g) => g.doors === false), 'the walks along the ring keep doors off');
+        assert.ok(onOuterRing(t.bot.entity.position));
+        assertOutside(t);
+    });
+
+    test('ordered inside a closed house: out through its door first (leaveBuilding of the home pack), then the ring and the feed', async () => {
+        const t = pen({ house: true, home: { leaveBuilding: S.leaveBuilding } });
+        const r = await t.run('cow_pen', 2);
+        assert.deepEqual({ ok: r.ok, reason: r.reason, fed: r.fed, babies: r.babies }, { ok: true, reason: null, fed: 4, babies: 2 }, r.text);
+        const doorClicks = t.bot.calls.map((c, i) => [c, i]).filter(([c]) => c[0] === 'activate' && c[1] === HOUSE_DOOR.x && c[3] === HOUSE_DOOR.z);
+        assert.ok(doorClicks.length >= 2, 'the door opened and closed again');
+        assert.equal(t.world.propsAt(HOUSE_DOOR.x, HOUSE_DOOR.y, HOUSE_DOOR.z).open, false, 'the door is shut behind the bot');
+        const ringWalk = t.bot.calls.findIndex((c) => c[0] === 'goto' && c[1].z <= 6);
+        assert.ok(doorClicks[0][1] < ringWalk, 'the house is left before the walk to the ring');
+        assert.ok(t.logs.includes('I left "house" through the door at (4, 64, 15).'), t.logs.join(' | '));
+        assert.ok(!t.bot.calls.some((c) => c[0] === 'dig'), 'never digs out');
+        assertOutside(t);
+    });
+
+    test('the house cannot be left: "I could not get to the cow pen.", nothing fed', async () => {
+        const left = [];
+        const t = pen({ house: true, home: { leaveBuilding: async (b) => { left.push(b.entity.position.clone()); return { ok: false, area: null, reason: 'no_path', text: 'I cannot get out of "house".' }; } } });
+        const r = await t.run('cow_pen', 2);
+        assert.deepEqual({ ok: r.ok, reason: r.reason, text: r.text }, { ok: false, reason: 'unreached', text: 'I could not get to the cow pen.' });
+        assert.equal(left.length, 1);
+        assert.deepEqual(t.feeds, []);
+        assert.ok(t.logs.includes(r.text));
+    });
+
+    test('a pen saved without its animals: the cows read at the ring, the wheat asked for there, the walk back from the chest to the ring', async () => {
+        const chests = [{ x: 4, y: 64, z: 12, items: { wheat: 16 } }];
+        const t = pen({ savedAnimals: false, bag: {}, chests, answerAt: 1000, fetchWalks: true });
+        const r = await t.run('cow_pen', 2);
+        assert.equal(r.text, 'I fed 4 cows in the cow pen; 2 calves.');
+        assert.deepEqual(t.said.slice(0, 2), ['May I take 4 wheat from the chest at (4, 64, 12) for the feeding? Say yes or no.', 'I took 4 wheat from the chest at (4, 64, 12).']);
+        const [toRing, back, ...along] = t.gotos;
+        assert.deepEqual([toRing.x, toRing.z, toRing.doors], [2, 6, true], 'first to the ring, where the cows are read');
+        assert.deepEqual([back.z, back.doors, Math.floor(back.from.z)], [6, true, 11], 'from the chest back to the ring');
+        assert.ok(along.every((g) => g.doors === false));
+        assertOutside(t);
+    });
+
+    test('no way to the pen (a river the fake path search cannot cross): "I could not get to the cow pen.", ok false, nothing fed', async () => {
+        const t = pen({ pos: [2.5, 64, 65.5], range: 32 });
+        for (let x = -60; x <= 60; x++) t.bot.blocked.add(`${x},64,30`);
+        const r = await t.run('cow_pen', 2);
+        assert.deepEqual({ ok: r.ok, reason: r.reason, text: r.text }, { ok: false, reason: 'unreached', text: 'I could not get to the cow pen.' });
+        assert.deepEqual(t.feeds, []);
+        assert.ok(t.gotos.length >= 1 && t.gotos.every((g) => g.doors === true && g.z === 6), 'only walks to the ring were tried');
+        assert.deepEqual(t.logs, [r.text]);
+    });
+});
+
 describe('!breed: the refusals (8.2)', () => {
-    test('the full pen: 12 animals with the babies, the line, nothing walked or fed, one log line', async () => {
+    test('the full pen: 12 animals with the babies, the line, nothing fed, one log line; the only walk is to the ring, where they are counted', async () => {
         const cells = Array.from({ length: 10 }, (_, i) => [0.5 + (i % 5), 0.5 + Math.floor(i / 5)]);
         const t = pen({ cells, babies: [[2.5, 3.5], [3.5, 3.5]] });
         const r = await t.run('cow_pen', 2);
         assert.deepEqual({ ok: r.ok, reason: r.reason }, { ok: false, reason: 'full' });
         assert.equal(r.text, 'The cow pen is full: 12 animals; I breed no more there.');
         assert.deepEqual(t.feeds, []);
-        assert.ok(!t.bot.calls.some((c) => c[0] === 'goto'));
+        assert.deepEqual(t.gotos.map((g) => [g.x, g.z]), [[2, 6]], 'one walk (V-6): to the ring cell nearest the bot');
         assert.equal(t.bagOf('wheat'), 8);
         assert.deepEqual(t.logs, [r.text]);
     });

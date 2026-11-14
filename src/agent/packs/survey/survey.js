@@ -718,13 +718,17 @@ export async function surveyBase(bot, ctx, name = '', options = {}) {
         // 4. the saves: everything at once
         const before = former ? [...(ctx.areas.ofBase?.(baseName) ?? areas.filter(a => a.source === 'survey' && a.base === baseName)),
             ...savedPlaces.filter(p => p.base === baseName).map(p => ({ ...p, at: { x: p.x, y: p.y, z: p.z } }))] : [];
-        // F2: a former place of this base that lies in another cluster now (the village of a first survey) is forgotten
-        const leftBehind = former ? [...new Set(leftOutFinds.map(p => p.name).filter(n => before.some(b => b.name === n)))] : [];
-        for (const name of leftBehind) {
-            if (!removeArea(ctx, name)) {
-                removePoint(ctx, name);
-            }
-        }
+        // F2; review 16, finding 7: a former place of this base that lies in another cluster now is never deleted from the stores
+        // (its rename and its flags, such as no_enter on a cave mouth, stay with it): it only leaves this base's `places`. It lies
+        // there when the survey found it there (the village of a first survey), or when the survey did not find it again and it
+        // is farther than the gap from every find of the start's cluster (the cave mouth or the mine entrance under a house of an
+        // outlying part: the underground is read in the start's cluster only). It is no part of the difference either: the report
+        // says nothing more of it.
+        const leftOutNames = new Set(leftOutFinds.map(p => p?.name));
+        const foundHere = new Set(places.map(p => p.name));
+        const startFinds = [...here, ...places];
+        const elsewhere = (b) => leftOutNames.has(b.name) || (startFinds.length > 0 && startFinds.every(m => xzDistance(b, m) > gap));
+        const leftBehind = former ? [...new Set(before.filter(b => !foundHere.has(b.name) && elsewhere(b)).map(b => b.name))] : [];
         const saved = [];
         for (const place of places) {
             if (boxOfArea(place)) {
@@ -741,7 +745,7 @@ export async function surveyBase(bot, ctx, name = '', options = {}) {
         }
         let changed = null;
         if (former) {
-            changed = differenceOf(before, saved, read);
+            changed = differenceOf(before.filter(b => !leftBehind.includes(b.name)), saved, read);
             for (const gone of changed.gone) {
                 if (!removeArea(ctx, gone)) {
                     removePoint(ctx, gone);

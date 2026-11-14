@@ -4,7 +4,7 @@ import { VisionInterpreter } from './vision/vision_interpreter.js';
 import { Prompter } from '../models/prompter.js';
 import { initModes } from './modes.js';
 import { initBot } from '../utils/mcdata.js';
-import { containsCommand, commandExists, executeCommand, truncCommandMessage, isAction, blacklistCommands, commandCallText } from './commands/index.js';
+import { containsCommand, commandExists, executeCommand, truncCommandMessage, isAction, blacklistCommands, commandCallText, orderChainOf } from './commands/index.js';
 import { mineRoutesOn } from './commands/actions.js'; // v0.1.4.9: after index.js, which loads actions.js first
 import { ActionManager } from './action_manager.js';
 import { NPCContoller } from './npc/controller.js';
@@ -155,6 +155,7 @@ export class Agent {
         initSandbox(settings);
         this.last_sender = null;
         this.last_order = null; // the command that a player ordered and that still runs (v0.1.4.6, G3)
+        this.order_chain = null; // v0.1.4.16 (review 16): { by, at }, the order behind the last message's chain (orderChainOf)
         this.running_commands = []; // v0.1.4.8: the commands that run now, see executeCommand
         this.last_pack_text = null; // v0.1.4.8: the text of the last pack command, for say_results
         this.count_id = count_id;
@@ -1558,6 +1559,16 @@ export class Agent {
         // v0.1.4.6, G3: a command that a player types or that answers a player is an order, from the time of the message
         const from_player = !self_prompt && !from_other_bot;
         const order_time = { at: Date.now(), atTimeOfDay: this.bot?.time?.timeOfDay ?? null };
+        // v0.1.4.16 (review 16, findings 1 and 5): the order behind this message's chain (a player's or the supervisor's, or the
+        // model's own for an AUTO MESSAGE, a self prompt and the other system lines); the model's commands of the loop below
+        // get it in their options. A pack's line (sayText) and a refusal added to the history change nothing of it.
+        let chain = orderChainOf(source, message, { quiet, self: this.name, at: order_time.at });
+        // a goal (!goal) is a standing order of whoever set it: its self prompts carry that order (V-1, the lead)
+        const goalBy = this.self_prompter?.started_by;
+        if (source === 'system' && typeof message === 'string' && message.startsWith('You are self-prompting with the goal:')
+            && typeof goalBy === 'string' && goalBy !== '' && goalBy !== 'model')
+            chain = { by: goalBy, at: order_time.at };
+        this.order_chain = chain;
 
         if (!self_prompt && !from_other_bot) { // from user, check for forced commands
             const user_command_name = containsCommand(message);
@@ -1672,7 +1683,7 @@ export class Agent {
                 if (order)
                     this.last_order = order;
                 this.last_pack_text = null;
-                let execute_res = await executeCommand(this, res, { typed: false, quiet });
+                let execute_res = await executeCommand(this, res, { typed: false, quiet, chain });
                 if (order && this.last_order === order)
                     this.last_order = null; // the ordered command ended
                 if (typeof execute_res === 'string' && execute_res !== '' && execute_res === this.last_pack_text)

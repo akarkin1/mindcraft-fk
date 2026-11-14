@@ -215,6 +215,7 @@ describe('the texts (8.1, 8.2), word for word', () => {
         assert.equal(X.noFeedText('wheat', 'sheep'), 'I have no wheat for the sheep.');
         assert.equal(X.noAnimalsText('cow_pen'), 'I see no animals in the cow pen.');
         assert.equal(X.noWayText('cow_pen'), 'I found no way around the cow pen.');
+        assert.equal(X.unreachedText('cow_pen'), 'I could not get to the cow pen.', 'v0.1.4.16 fix round (V-6): the walk to the pen failed');
     });
 
     test('the pair line, the end line, the stop line; the young of each species', () => {
@@ -254,6 +255,7 @@ describe('the index of the pack', () => {
         assert.equal(I.FEED, L.FEED);
         assert.equal(I.standRing, L.standRing);
         assert.equal(I.endText, X.endText);
+        assert.equal(I.unreachedText, X.unreachedText);
         assert.equal(typeof I.takeOrAsk, 'function');
         assert.equal(typeof I.breed, 'function');
         assert.equal(typeof I.StockPermits, 'function');

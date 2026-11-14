@@ -1,10 +1,16 @@
 // The work of the breeding pack (spec v0.1.4.16, 8.2, E6): !breed(pen, count). The decisions come from breeding_logic.js;
 // this module reads the pen and its animals, gets the feed (the bag, else takeOrAsk of 8.1), walks the ring one block
 // outside the fence, equips the feed, clicks the animals (bot.activateEntity, which the pen guard does not wrap: feeding
-// over the fence is allowed by construction) and counts the young. The bot never enters the pen's box (the walk cannot
-// open doors or gates, the pen's cells cost the path search the keep-out price, a goal inside the fence box is refused, and
-// no stand cell lies inside), never clicks a gate, and places nothing. The pack runs as an action, so the item reflex is off
-// meanwhile.
+// over the fence is allowed by construction) and counts the young. The bot never enters the pen's box (the walks along the
+// ring cannot open doors or gates, the pen's cells cost the path search the keep-out price, a goal inside the fence box is
+// refused, and no stand cell lies inside), never clicks a gate, and places nothing. The pack runs as an action, so the item
+// reflex is off meanwhile.
+//
+// v0.1.4.16 fix round (V-6, review 6): the bot goes to the pen before it reads the animals. The feed is made ready where the
+// order finds it (the chests of 8.1 are those within 48 blocks of the bot), for the animals the pen was saved with; then the
+// bot leaves the building it stands in through its door (ctx.home.leaveBuilding, as the farming pack since F4) and walks to
+// the ring cell nearest it, the path search allowed to open doors (a door is no pen gate; the pen guard keeps every gate of
+// a pen shut by itself); only there it reads the animals of the pen (the species, the cap, the adults it may feed).
 //
 // A round: the stand cell is the ring cell nearest to the nearest adult that may be fed; there the bot holds the feed and
 // waits up to 10 s for two adults within reach, feeds them (a pair), and goes on while pairs come; an adult that did not come
@@ -24,10 +30,12 @@ import {
 } from './breeding_logic.js';
 import { bagCount, chestsWith, takeOrAsk } from './stock_logic.js';
 import {
-    PURPOSES, endText, fedText, noAnimalsText, noFeedText, noWayText, penFullText, stoppedText, unknownPenText, unknownSpeciesText,
+    PURPOSES, endText, fedText, noAnimalsText, noFeedText, noWayText, penFullText, stoppedText, unknownPenText, unknownSpeciesText, unreachedText,
 } from './texts.js';
 
-/** The rules of the feeding: the cap, the reach, the cooldown and its checks, the waits, the rounds, the walks. */
+/** The rules of the feeding: the cap, the reach, the cooldown and its checks, the waits, the rounds, the walks; v0.1.4.16 fix
+ *  round (V-6): the walk to the pen (its time limit per block of the way, at least walkMs; the ring cells tried, the nearest
+ *  first). */
 export const BREED_RULES = Object.freeze({
     cap: PEN_CAP,
     reach: FEED_REACH,
@@ -39,6 +47,8 @@ export const BREED_RULES = Object.freeze({
     babyWaitMs: BABY_WAIT_MS,
     extraRounds: EXTRA_ROUNDS,
     walkMs: 20000,
+    approachMsPerBlock: 1000,
+    approachTries: 3,
     feedMs: 1500,
     pollMs: 250,
     defaultCount: 2,
@@ -117,6 +127,125 @@ function liveCount(bot, box) {
     }
 }
 
+// The clock of the options for the home pack's functions (tests), nothing in the game.
+function clockOptions(options) {
+    const out = {};
+    if (typeof options?.now === 'function') out.now = options.now;
+    if (typeof options?.wait === 'function') out.wait = options.wait;
+    return out;
+}
+
+// The feed of a species for `target` young, two per pair: the feed of the species the bag holds the most of (else the one the
+// known chests hold the most of); when the bag holds too little, the shortfall through the asking rule of 8.1 (the chests
+// within 48 blocks of the bot). { feed } or { feed, refusal: [reason, text] } (reasons interrupted, no_permit, no_feed); a bag
+// that feeds fewer pairs than ordered goes on, with the line of takeOrAsk in the log.
+async function getFeed(bot, ctx, species, target, options) {
+    const feed = chooseFeed(bot, ctx, feedOf(species));
+    if (bagCount(bot, feed) >= feedNeeded(target)) {
+        return { feed };
+    }
+    const r = await takeOrAsk(bot, ctx, feed, feedNeeded(target), { low: lowMark(target), purpose: PURPOSES.feeding, now: options?.now, wait: options?.wait, askMs: options?.askMs });
+    if (!r.ok) {
+        if (r.reason === 'interrupted') {
+            return { feed, refusal: ['interrupted', ''] };
+        }
+        if (r.reason === 'no_permit') {
+            return { feed, refusal: ['no_permit', r.text] };
+        }
+        if (bagCount(bot, feed) < 2) {
+            return { feed, refusal: ['no_feed', noFeedText(feed, species)] };
+        }
+        logTo(ctx, r.text); // the bag feeds fewer pairs than ordered
+    }
+    return { feed };
+}
+
+// The stand ring of the pen as the blocks show it now: the fence box (a saved pen's box holds the fence, B-13), the ring one
+// block outside it without the gates and the cells before them, and the cells a walk may not end on (inside the fence box, on
+// a no-stand block).
+function ringOf(bot, pen, box) {
+    const get = blockReader(bot);
+    const fenceBox = fenceBoxOf(get, box);
+    const inside = { min: { x: fenceBox.min.x + 1, y: box.min.y, z: fenceBox.min.z + 1 }, max: { x: fenceBox.max.x - 1, y: box.max.y, z: fenceBox.max.z - 1 } };
+    const gates = [...gatesOf(pen), ...(isBox(inside) ? findGates(get, inside) : [])];
+    return {
+        fenceBox,
+        ring: withoutGateCells(standRing(fenceBox), gates),
+        forbidden: node => insideBoxXZ(fenceBox, node) || isNoStandCell(get, node),
+    };
+}
+
+// True when the bot stands on a cell of the ring.
+function onRing(bot, w) {
+    const p = botPos(bot);
+    if (!p || insideBoxXZ(w.fenceBox, p)) {
+        return false;
+    }
+    const x = Math.floor(p.x);
+    const z = Math.floor(p.z);
+    return w.ring.some(c => c.x === x && c.z === z);
+}
+
+// Walks to a stand cell of the ring (w: ringOf): never into the pen, never onto the fence. { at: true } when the bot stands
+// on the cell; { interrupted: true } on the owner's stop.
+async function walkToCell(bot, cell, w, movements, timeoutMs, clock) {
+    const goal = goalAvoiding(new goals.GoalXZ(cell.x, cell.z), w.forbidden);
+    const r = await gotoGoal(bot, goal, { movements, timeoutMs, clock });
+    if (r.reason === 'interrupted' || bot.interrupt_code) {
+        return { at: false, interrupted: true };
+    }
+    const p = botPos(bot);
+    return { at: Boolean(p) && Math.floor(p.x) === cell.x && Math.floor(p.z) === cell.z && !insideBoxXZ(w.fenceBox, p), interrupted: false };
+}
+
+// v0.1.4.16 fix round (V-6): to the pen, before its animals are read. Out of the building the bot stands in first, through its
+// door (ctx.home.leaveBuilding of the home pack, which does nothing outside every building: the farming pack's prepare since
+// F4); then to the ring cell nearest the bot (the next nearest when it cannot be reached, approachTries in all), the path search
+// allowed to open doors (a door is no pen gate: the pen guard keeps every gate of a pen shut by itself, and the pen costs the
+// keep-out price) and never into the pen's box (the goal refuses the fence box). { ok, reason }: reasons interrupted, unreached.
+async function approachPen(bot, ctx, w, areas, clock, options) {
+    const leave = ctx?.home?.leaveBuilding;
+    if (typeof leave === 'function') {
+        let out = null;
+        try {
+            out = await leave(bot, ctx, clockOptions(options));
+        } catch (err) {
+            console.warn('Breeding pack: could not leave the building:', err?.message ?? err);
+            out = { ok: false, reason: 'error' };
+        }
+        if (bot.interrupt_code || out?.reason === 'interrupted') {
+            return { ok: false, reason: 'interrupted' };
+        }
+        if (out && typeof out === 'object' && out.ok !== true) {
+            return { ok: false, reason: 'unreached' };
+        }
+    }
+    if (onRing(bot, w)) {
+        return { ok: true, reason: null };
+    }
+    let movements = null;
+    try {
+        movements = makeMovements(bot, { dig: false, doors: true, areas });
+    } catch (err) {
+        console.warn('Breeding pack: could not make the movements:', err?.message ?? err);
+    }
+    const me = botPos(bot);
+    const cells = w.ring.map(c => ({ c, d: me ? Math.hypot(c.x + 0.5 - me.x, c.z + 0.5 - me.z) : 0 }))
+        .sort((a, b) => a.d - b.d)
+        .slice(0, BREED_RULES.approachTries);
+    for (const { c, d } of cells) {
+        const timeoutMs = Math.max(BREED_RULES.walkMs, Math.ceil(d) * BREED_RULES.approachMsPerBlock);
+        const r = await walkToCell(bot, c, w, movements, timeoutMs, clock);
+        if (r.interrupted) {
+            return { ok: false, reason: 'interrupted' };
+        }
+        if (r.at) {
+            return { ok: true, reason: null };
+        }
+    }
+    return { ok: false, reason: 'unreached' };
+}
+
 // --- the session of one order ---
 
 function stopped(s) {
@@ -151,16 +280,14 @@ async function pause(s, ms) {
     }
 }
 
-// Walks to a stand cell of the ring: never into the pen, never onto the fence. True when the bot stands on the cell.
+// Walks along the ring to a stand cell, doors off: never into the pen, never onto the fence. True when the bot stands on the cell.
 async function walkTo(s, cell) {
-    const goal = goalAvoiding(new goals.GoalXZ(cell.x, cell.z), s.forbidden);
-    const r = await gotoGoal(s.bot, goal, { movements: s.movements, timeoutMs: BREED_RULES.walkMs, clock: s.clock });
-    if (r.reason === 'interrupted' || s.bot.interrupt_code) {
+    const r = await walkToCell(s.bot, cell, s, s.movements, BREED_RULES.walkMs, s.clock);
+    if (r.interrupted) {
         s.stop = 'interrupted';
         return false;
     }
-    const p = botPos(s.bot);
-    return Boolean(p) && Math.floor(p.x) === cell.x && Math.floor(p.z) === cell.z && !insideBoxXZ(s.fenceBox, p);
+    return r.at;
 }
 
 // Waits up to comeMs for `n` adults within reach that may be fed; the nearest first (fewer when they did not come).
@@ -304,7 +431,7 @@ async function waitCooldown(s) {
  * @param {number} [count] the new animals wanted, 2 without one
  * @param {{now?: Function, wait?: Function, askMs?: number}} [options] for tests
  * @returns {Promise<{ok: boolean, reason: string|null, text: string, fed: number, babies: number, species?: string, pen?: string}>}
- *   reasons: null, unknown_pen, no_animals, unknown_species, full, no_permit, no_feed, no_way, interrupted
+ *   reasons: null, unknown_pen, no_animals, unknown_species, full, no_permit, no_feed, no_way, unreached, interrupted
  */
 export async function breed(bot, ctx, penName, count = BREED_RULES.defaultCount, options = {}) {
     const clock = clockOf(ctx, options);
@@ -317,8 +444,52 @@ export async function breed(bot, ctx, penName, count = BREED_RULES.defaultCount,
         return refuse('unknown_pen', unknownPenText(penName));
     }
     const box = { min: { ...pen.min }, max: { ...pen.max } };
+    const about = species => (species ? { species, pen: pen.name } : { pen: pen.name });
+    const feedRefused = (got, species) => (got.refusal[0] === 'interrupted'
+        ? refuse('interrupted', stoppedText(pen.name, 0, species, 0), about(species))
+        : refuse(got.refusal[0], got.refusal[1], about(species)));
+    // the ring one block outside the fence, without the gates and the cells before them
+    const saved = speciesOf(pen.contents);
+    let w = ringOf(bot, pen, box);
+    if (w.ring.length === 0) {
+        return refuse('no_way', noWayText(pen.name), about(saved));
+    }
+    // v0.1.4.16 fix round (V-6): the feed made ready here, where the order finds the bot (8.1 asks the chests within 48 blocks
+    // of it), for the animals the pen was saved with: two per pair, from the bag, else the chests with the owner's permit, the
+    // low mark two rounds. The animals themselves are read at the ring.
+    let feed = null;
+    const savedRoom = BREED_RULES.cap - animalCount(pen.contents);
+    if (saved && feedOf(saved) && savedRoom > 0) {
+        const got = await getFeed(bot, ctx, saved, Math.min(cleanCount(count), savedRoom), options);
+        if (got.refusal) {
+            return feedRefused(got, saved);
+        }
+        feed = got.feed;
+    }
+    // to the pen: out of the building through its door, to the ring cell nearest the bot with doors allowed; the walks along
+    // the ring keep doors off. The no_enter areas of the world count (F10); the pen itself is one.
+    const areas = [...listAreas(ctx, dimensionOf(bot)).filter(a => normalizeName(a.name) !== normalizeName(pen.name)),
+        { ...pen, flags: { ...(pen.flags ?? {}), no_enter: true } }];
+    const toPen = async (species) => {
+        const r = await approachPen(bot, ctx, w, areas, clock, options);
+        if (r.ok) {
+            return null;
+        }
+        return r.reason === 'interrupted'
+            ? refuse('interrupted', stoppedText(pen.name, 0, species ?? 'animal', 0), about(species))
+            : refuse('unreached', unreachedText(pen.name), about(species));
+    };
+    const away = await toPen(saved);
+    if (away) {
+        return away;
+    }
+    // at the ring: the ring as the blocks near it show it, and the animals of the pen as the bot sees them now
+    w = ringOf(bot, pen, box);
+    if (w.ring.length === 0) {
+        return refuse('no_way', noWayText(pen.name), about(saved));
+    }
     const live = liveCount(bot, box);
-    const species = speciesOf(live) ?? speciesOf(pen.contents);
+    const species = speciesOf(live) ?? saved;
     if (!species) {
         return refuse('no_animals', noAnimalsText(pen.name), { pen: pen.name });
     }
@@ -331,41 +502,29 @@ export async function breed(bot, ctx, penName, count = BREED_RULES.defaultCount,
         return refuse('full', penFullText(pen.name, animals), { species, pen: pen.name });
     }
     const target = Math.min(cleanCount(count), BREED_RULES.cap - animals);
-    // the feed: two per pair; from the bag, else the chests with the owner's permit (8.1), the low mark two rounds
-    const feed = chooseFeed(bot, ctx, feeds);
-    if (bagCount(bot, feed) < feedNeeded(target)) {
-        const r = await takeOrAsk(bot, ctx, feed, feedNeeded(target), { low: lowMark(target), purpose: PURPOSES.feeding, now: options?.now, wait: options?.wait, askMs: options?.askMs });
-        if (!r.ok) {
-            if (r.reason === 'interrupted') {
-                return refuse('interrupted', stoppedText(pen.name, 0, species, 0), { species, pen: pen.name });
-            }
-            if (r.reason === 'no_permit') {
-                return refuse('no_permit', r.text, { species, pen: pen.name });
-            }
-            if (bagCount(bot, feed) < 2) {
-                return refuse('no_feed', noFeedText(feed, species), { species, pen: pen.name });
-            }
-            logTo(ctx, r.text); // the bag feeds fewer pairs than ordered
+    // no feed made ready, or not the feed of the animals found: from the bag, else the chests near the pen; after a walk to a
+    // chest, back to the ring
+    if (feed === null || !feeds.includes(feed)) {
+        const got = await getFeed(bot, ctx, species, target, options);
+        if (got.refusal) {
+            return feedRefused(got, species);
         }
-    }
-    // the ring one block outside the fence, without the gates and the cells before them
-    const get = blockReader(bot);
-    const fenceBox = fenceBoxOf(get, box);
-    const inside = { min: { x: fenceBox.min.x + 1, y: box.min.y, z: fenceBox.min.z + 1 }, max: { x: fenceBox.max.x - 1, y: box.max.y, z: fenceBox.max.z - 1 } };
-    const gates = [...gatesOf(pen), ...(isBox(inside) ? findGates(get, inside) : [])];
-    const ring = withoutGateCells(standRing(fenceBox), gates);
-    if (ring.length === 0) {
-        return refuse('no_way', noWayText(pen.name), { species, pen: pen.name });
+        feed = got.feed;
+        if (!onRing(bot, w)) {
+            const back = await toPen(species);
+            if (back) {
+                return back;
+            }
+        }
     }
     let movements = null;
     try {
-        movements = makeMovements(bot, { dig: false, doors: false, areas: [{ ...pen, flags: { ...(pen.flags ?? {}), no_enter: true } }] });
+        movements = makeMovements(bot, { dig: false, doors: false, areas });
     } catch (err) {
         console.warn('Breeding pack: could not make the movements:', err?.message ?? err);
     }
     const s = {
-        bot, ctx, clock, pen, box, fenceBox, species, feed, target, ring, movements,
-        forbidden: node => insideBoxXZ(fenceBox, node) || isNoStandCell(get, node),
+        bot, ctx, clock, pen, box, fenceBox: w.fenceBox, species, feed, target, ring: w.ring, movements, forbidden: w.forbidden,
         fed: 0, fedAt: new Map(), lastFeedAt: null, lastBirthAt: null, known: new Set(animalsIn(bot.entities, box, species).map(e => e.id)), babyIds: new Set(),
         stop: null, reached: 0, walkFailed: 0,
     };

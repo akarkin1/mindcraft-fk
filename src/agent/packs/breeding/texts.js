@@ -164,6 +164,16 @@ export function noWayText(penName) {
     return `I found no way around ${penWords(penName)}.`;
 }
 
+/**
+ * v0.1.4.16 fix round (V-6): the walk to the pen failed, out of the building the bot stood in or to the ring outside the
+ * fence: `I could not get to the cow pen.`
+ * @param {string} penName
+ * @returns {string}
+ */
+export function unreachedText(penName) {
+    return `I could not get to ${penWords(penName)}.`;
+}
+
 // --- the asking rule of the stock permits (8.1) ---
 
 /**

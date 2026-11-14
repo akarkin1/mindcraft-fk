@@ -15,7 +15,7 @@ import {
     materialRank, offersFrom, parseChoice, parseTake, roman, windowSlotOf,
 } from '../../src/agent/packs/enchanting/enchant_logic.js';
 import {
-    LAPIS, PURPOSE, TEXTS, askLowText, askText, badChoiceText, enchantedText, failedText, itemWords, levelText, logLine, noItemText, noOfferText,
+    LAPIS, PURPOSE, TEXTS, askLowText, askText, badChoiceText, enchantedText, failedText, itemWords, lapisShortText, levelText, logLine, noItemText, noOfferText,
     noPermitText, noStockText, offerWords, offersText, takeText, tookBackText, tookText, unreachableText, whereText,
 } from '../../src/agent/packs/enchanting/texts.js';
 import * as PACK from '../../src/agent/packs/enchanting/index.js';
@@ -262,6 +262,10 @@ describe('the texts, word for word', () => {
         assert.equal(whereText({ x: -14.5, y: 63, z: 28.9 }), '(-15, 63, 28)');
         assert.equal(logLine('no_table', { x: 1.2, y: 64, z: 2 }, 'table', TEXTS.noTable), 'Enchanting no_table at (1, 64, 2), step table: No enchanting table within 32 blocks.');
         assert.equal(logLine('no_table', null, 'table', TEXTS.noTable), 'Enchanting no_table, step table: No enchanting table within 32 blocks.');
+        // v0.1.4.16 fix round (V-12): the lapis slot short of the chosen offer
+        assert.equal(lapisShortText(2, 2), 'Only 2 lapis are on the table; offer 3 needs 3.');
+        assert.equal(lapisShortText(1, 1), 'Only 1 lapis is on the table; offer 2 needs 2.');
+        assert.equal(PACK.lapisShortText, lapisShortText);
     });
     test('the asking texts of 8.1 are the breeding pack\'s, word for word and argument for argument', () => {
         const chest = { x: 11, y: 67, z: 53 };

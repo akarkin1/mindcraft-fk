@@ -151,26 +151,47 @@ function bedExclusion(bot, bed, center, areas, places, own = false) {
     return null;
 }
 
+// The bed whose block stands at the point, as an entry of findBeds, in a list; [] when no bed stands there. Never throws.
+function bedAt(bot, point) {
+    try {
+        const p = new Vec3(Math.floor(point.x), Math.floor(point.y), Math.floor(point.z));
+        const block = bot.blockAt(p);
+        if (!block || !isBedName(block.name)) {
+            return [];
+        }
+        const props = typeof block.getProperties === 'function' ? block.getProperties() : (block._properties ?? {});
+        return [{ x: p.x, y: p.y, z: p.z, name: block.name, part: props.part, facing: props.facing, occupied: props.occupied === true }];
+    } catch {
+        return [];
+    }
+}
+
 /**
  * The beds the bot may sleep in (v0.1.4.16, F6), in the order of orderBeds: its own bed (the place `my_bed`) first,
  * then the beds in a home or a shelter the owner saved, then the rest by distance; the villagers' beds (bedExclusion)
  * are left out and counted in `excluded`. Never throws.
+ * v0.1.4.16 fix round (the review's finding 9, the AFK kill pack's kill bed): `options.only` ({x, y, z}) makes the bed
+ * standing there the only candidate, whatever its distance, and the caller's own (only the trading hall's box excludes it);
+ * no other bed is looked for.
  * @param {object} bot
  * @param {object} ctx
  * @param {number} [range]
+ * @param {{only?: {x: number, y: number, z: number}}} [options]
  * @returns {{beds: object[], excluded: number}}
  */
-export function candidateBeds(bot, ctx, range = 32) {
+export function candidateBeds(bot, ctx, range = 32, options = {}) {
     try {
         const dimension = dimensionOf(bot);
         const areas = listAreas(ctx, dimension);
         const places = listPlaces(ctx);
         const myBed = recallMyBed(ctx);
-        const all = findBeds(bot, range).map(bed => {
+        const only = options?.only;
+        const onlyGiven = only !== null && typeof only === 'object' && [only.x, only.y, only.z].every(Number.isFinite);
+        const all = (onlyGiven ? bedAt(bot, only) : findBeds(bot, range)).map(bed => {
             const center = { x: bed.x + 0.5, y: bed.y, z: bed.z + 0.5 };
             const inHome = areas.some(a => isHomeArea(a) && containsPos(a, center));
-            // the own bed and a home's bed keep only the trading hall's box (SPEC F6 corrected)
-            const excluded = bedExclusion(bot, bed, center, areas, places, inHome || isMyBed(bed, myBed, dimension));
+            // the own bed and a home's bed keep only the trading hall's box (SPEC F6 corrected); so does the only one
+            const excluded = bedExclusion(bot, bed, center, areas, places, onlyGiven || inHome || isMyBed(bed, myBed, dimension));
             return { ...bed, home: excluded === null && inHome, excluded };
         });
         return { beds: orderBeds(all, botPos(bot), { myBed, dimension }), excluded: all.filter(b => b.excluded).length };
@@ -222,9 +243,11 @@ function isMorning(timeOfDay) {
  * beds left out). When every bed within 32 blocks is a villager's: `The beds nearby are the villagers'; I found no bed
  * of mine.`; `All beds nearby are taken.` only when a candidate bed was occupied. Once the bot lies in a bed, its foot
  * is saved as the place `my_bed` through ctx.places; a later sleep in another bed moves it.
+ * v0.1.4.16 fix round (finding 9): `options.only` ({x, y, z}): the bed there is the only candidate (candidateBeds); when it
+ * is taken or out of reach, the bot sleeps in no other bed.
  * @param {object} bot
  * @param {object} ctx
- * @param {{maxSleepMs?: number, now?: Function, wait?: Function}} [options]
+ * @param {{maxSleepMs?: number, now?: Function, wait?: Function, only?: {x: number, y: number, z: number}}} [options]
  * @returns {Promise<{ok: boolean, reason: string|null, text: string}>}
  */
 export async function sleepInBed(bot, ctx = {}, options = {}) {
@@ -236,7 +259,7 @@ export async function sleepInBed(bot, ctx = {}, options = {}) {
             const minutes = minutesUntilNight(bot.time?.timeOfDay);
             return { ok: false, reason: 'not_night', text: minutes === null ? TEXTS.notNight : dayText(minutes) };
         }
-        const { beds, excluded } = candidateBeds(bot, ctx, 32);
+        const { beds, excluded } = candidateBeds(bot, ctx, 32, { only: options?.only });
         if (beds.length === 0) {
             // F6: every bed within 32 blocks is a villager's, or there is none
             return excluded > 0 ? { ok: false, reason: 'villagers', text: TEXTS.villagersBeds } : { ok: false, reason: 'no_bed', text: TEXTS.noBed };

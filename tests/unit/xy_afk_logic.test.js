@@ -17,10 +17,12 @@ const L = await loadSrc('src/agent/packs/afk_kill/afk_logic.js');
 const T = await loadSrc('src/agent/packs/afk_kill/texts.js');
 const P = await loadSrc('src/agent/packs/afk_kill/index.js');
 const D = await loadSrc('src/agent/packs/mining/dig.js');
+const NIGHT = await loadSrc('src/agent/packs/home/night_logic.js');
 
 const require = createRequire(import.meta.url);
 const Item = require('prismarine-item')(TEST_MC_VERSION);
 const registry = require('prismarine-registry')(TEST_MC_VERSION);
+const mcData = require('minecraft-data')(TEST_MC_VERSION);
 
 // A grid of block names: a map "x,y,z" -> name; air elsewhere.
 function grid(cells = {}) {
@@ -149,6 +151,29 @@ describe('the target rule (8.4a)', () => {
         assert.equal(L.isHostileEntity({ name: 'villager', type: 'hostile' }), false, 'a villager never, whatever its type');
         assert.equal(L.isKillTarget(null, EYE), false);
         assert.equal(L.isKillTarget(mob('creeper', 'hostile', null), EYE), false);
+    });
+
+    // v0.1.4.16 fix round (review finding 11): the 26.1 data gives the allay the type `mob`, so the rule of mcdata.isHostile hit it;
+    // the targets leave out the shelter's list of mobs that are no enemy (the golems, the allay, the neutral enderman and piglins)
+    test('never an allay, nor any other mob that is no enemy in the game: the shelter\'s list, pinned (finding 11)', () => {
+        const at = { x: 0.5, y: 2, z: 2.5 };
+        assert.equal(L.isKillTarget(mob('allay', 'mob', at, { height: 0.6 }), EYE), false, 'an allay within reach');
+        assert.deepEqual([...L.NOT_KILL_TARGETS], [...NIGHT.NOT_HOSTILE_FOR_SHELTER], 'the copy of the home pack\'s list (afk_logic stays pure)');
+        assert.ok(Object.isFrozen(L.NOT_KILL_TARGETS));
+        for (const name of L.NOT_KILL_TARGETS) {
+            const type = mcData.entitiesByName[name]?.type;
+            assert.ok(type === 'mob' || type === 'hostile', `${name} is of a type the rule counts (${type})`);
+            assert.equal(L.isHostileEntity({ name, type }), false, name);
+        }
+        // every mob of the 26.1 data whose type is `mob`: the passive ones never, the hostile ones always
+        const mobs = mcData.entitiesArray.filter((e) => e.type === 'mob');
+        assert.deepEqual(mobs.filter((e) => e.category !== 'Hostile mobs').map((e) => e.name).sort(), ['allay', 'copper_golem', 'iron_golem', 'snow_golem']);
+        for (const e of mobs) {
+            assert.equal(L.isHostileEntity({ name: e.name, type: e.type }), e.category === 'Hostile mobs', `${e.name} (${e.category})`);
+        }
+        for (const name of ['creeper', 'skeleton', 'spider', 'witch', 'zombie', 'slime', 'phantom']) {
+            assert.equal(L.isHostileEntity({ name, type: mcData.entitiesByName[name].type }), true, name);
+        }
     });
 
     test('the centre: the feet plus half the height, 1.7 when the height is not known', () => {
@@ -296,6 +321,62 @@ describe('the stored figure (the lead\'s rule of 2026-11-14: the bot looks into 
     });
 });
 
+// v0.1.4.16 fix round (review finding 9): the kill chest is a real chest block, the kill bed its foot, both near the saved point
+describe('the places of the room: a real chest, the cells near a saved point (finding 9)', () => {
+    test('isKillChestName: chest, trapped_chest and the copper chests of 26.1; never a barrel, an ender chest or a shulker box', () => {
+        const chests = mcData.blocksArray.map((b) => b.name).filter((n) => n.endsWith('chest') && n !== 'ender_chest').sort();
+        assert.deepEqual([...L.KILL_CHEST_NAMES].sort(), chests, 'every chest block of the 26.1 data');
+        for (const name of chests) assert.equal(L.isKillChestName(name), true, name);
+        for (const name of ['barrel', 'ender_chest', 'shulker_box', 'red_shulker_box', 'hopper', 'dispenser', 'chest_minecart', '', null, undefined]) {
+            assert.equal(L.isKillChestName(name), false, String(name));
+        }
+    });
+
+    test('cellsNear: the cells within 1 block of a point (27), the point\'s own cell first, then the nearest', () => {
+        const cells = L.cellsNear({ x: 2.7, y: 64, z: -0.2 }, 1);
+        assert.equal(cells.length, 27);
+        assert.deepEqual(cells[0], { x: 2, y: 64, z: -1 });
+        const d = (c) => Math.hypot(c.x - 2, c.y - 64, c.z + 1);
+        for (let i = 1; i < cells.length; i++) assert.ok(d(cells[i]) >= d(cells[i - 1]), `nearest first at ${i}`);
+        assert.ok(cells.every((c) => Math.abs(c.x - 2) <= 1 && Math.abs(c.y - 64) <= 1 && Math.abs(c.z + 1) <= 1));
+        assert.deepEqual(L.cellsNear({ x: 0, y: 0, z: 0 }, 0), [{ x: 0, y: 0, z: 0 }]);
+        assert.deepEqual(L.cellsNear(null, 1), []);
+    });
+});
+
+// v0.1.4.16 fix round (review finding 10): only what the farm gained goes to the chest, never the sticks; after a trip that
+// stored nothing, the next one waits until the bag's free slots drop again
+describe('the store trip: what was gained since the start (finding 10)', () => {
+    test('KILL_DROPS never holds the bag\'s sticks (the stone sword is made from them)', () => {
+        assert.equal(L.KILL_DROPS.includes('stick'), false);
+        assert.ok(Object.isFrozen(L.KILL_DROPS));
+    });
+
+    test('bagCounts: the count of each kind of the bag', () => {
+        assert.deepEqual(L.bagCounts([{ name: 'string', count: 3 }, { name: 'stick', count: 2 }, { name: 'string', count: 5 }, null, { name: 'x' }]),
+            { string: 8, stick: 2 });
+        assert.deepEqual(L.bagCounts(null), {});
+    });
+
+    test('gainedDrops: per kind of KILL_DROPS what the bag holds over the count at the start; the sticks, tools and food never', () => {
+        const start = { stick: 3, stone_sword: 1, bread: 8, string: 10, arrow: 4 };
+        const now = { stick: 9, stone_sword: 1, iron_sword: 1, bread: 12, rotten_flesh: 2, string: 12, arrow: 4, gunpowder: 5, cobblestone: 7 };
+        assert.deepEqual(L.gainedDrops(start, now), { gunpowder: 5, rotten_flesh: 2, string: 2 });
+        assert.deepEqual(L.gainedDrops(start, start), {});
+        assert.deepEqual(L.gainedDrops({ string: 10 }, { string: 4 }), {}, 'fewer than at the start: nothing');
+        assert.deepEqual(L.gainedDrops(null, { gunpowder: 2 }), { gunpowder: 2 });
+    });
+
+    test('storeDue: at 4 free slots or fewer; after a trip that stored nothing (the mark) only once the free slots drop under it', () => {
+        assert.equal(L.storeDue(5, null), false);
+        assert.equal(L.storeDue(4, null), true);
+        assert.equal(L.storeDue(0, null), true);
+        assert.equal(L.storeDue(4, 4), false, 'the bag as full as after the empty trip');
+        assert.equal(L.storeDue(3, 4), true, 'one slot less: a new trip');
+        assert.equal(L.storeDue(2, 2), false);
+    });
+});
+
 describe('the lines without a stored figure', () => {
     test('the part is left out', () => {
         assert.equal(T.progressText(50, 61, 14, null), 'I killed 50 creepers with 61 hits; level 14.');
@@ -322,7 +403,7 @@ describe('the constants of the spec', () => {
         assert.deepEqual([...L.PAUSED_MODES], ['cowardice', 'self_defense', 'self_preservation', 'night_shelter', 'hunger', 'item_collecting']);
         assert.equal(L.CREEPER_MODE, 'creeper_safety');
         for (const drop of ['gunpowder', 'bone', 'arrow', 'rotten_flesh', 'string', 'spider_eye']) assert.ok(L.KILL_DROPS.includes(drop), drop);
-        for (const keep of ['bread', 'iron_sword', 'stone_sword', 'cobblestone', 'torch']) assert.ok(!L.KILL_DROPS.includes(keep), keep);
+        for (const keep of ['bread', 'iron_sword', 'stone_sword', 'cobblestone', 'torch', 'stick']) assert.ok(!L.KILL_DROPS.includes(keep), keep);
     });
 });
 

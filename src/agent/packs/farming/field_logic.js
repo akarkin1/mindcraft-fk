@@ -212,8 +212,20 @@ export function caneColumns(getBlock, box) {
 }
 
 /**
- * True for a cane area (v0.1.4.16, F3): a farm area the survey named `cane` (`cane_2` ...), one whose detail says
- * `what: 'cane'`, or one with sugar cane standing in its box.
+ * True when a cell of the box has farmland or a crop, as fieldCells reads the field (v0.1.4.16, review 16 finding 3: the
+ * test of a crop farm). Columns that are not loaded count as nothing. Never throws.
+ * @param {(x: number, y: number, z: number) => ({name: string}|null)} getBlock
+ * @param {{min: {x,y,z}, max: {x,y,z}}} box
+ * @returns {boolean}
+ */
+export function hasFarmland(getBlock, box) {
+    return fieldCells(getBlock, box).some(isFieldGround);
+}
+
+/**
+ * True for a cane area (v0.1.4.16, F3; review 16 finding 3): a farm area marked so, its name `cane` or `cane_2` ... (the
+ * survey's) or its detail `what: 'cane'` (where a store keeps it), or one with sugar cane standing in its box and no farmland
+ * at all. A farm with crops and some cane is a crop farm (one cane by the water made the whole field a cane area before).
  * @param {(x: number, y: number, z: number) => ({name: string}|null)} getBlock
  * @param {object} area as the AreaStore lists it
  * @returns {boolean}
@@ -225,7 +237,7 @@ export function isCaneArea(getBlock, area) {
     if (/^cane(_\d+)?$/.test(lower(area.name)) || area.detail?.what === 'cane') {
         return true;
     }
-    return isBox(area) && caneColumns(getBlock, area).length > 0;
+    return isBox(area) && caneColumns(getBlock, area).length > 0 && !hasFarmland(getBlock, area);
 }
 
 function readColumn(getBlock, x, z, top, bottom) {

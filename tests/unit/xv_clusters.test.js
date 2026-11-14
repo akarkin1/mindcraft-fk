@@ -245,7 +245,8 @@ describe('surveyBase with two clusters (F2)', () => {
         assert.deepEqual(r.leftOut, []);
     });
 
-    test('a re-survey: a former place of this base that lies in another cluster now is forgotten and left out', async () => {
+    // review 16, finding 7 (FX1): such a place is no longer deleted from the store; it only leaves the base's list (xz_survey_left_behind)
+    test('a re-survey: a former place of this base that lies in another cluster now leaves the base\'s list (the store keeps it) and is left out', async () => {
         const { ctx, areas, bases, said } = stores({ survey_cluster_gap: 120 });
         const bot = fakeBot(world());
         await S.surveyBase(bot, ctx, 'east', clock);
@@ -253,7 +254,7 @@ describe('surveyBase with two clusters (F2)', () => {
         ctx.settings.survey_cluster_gap = 48;
         const again = await S.surveyBase(bot, ctx, 'east', clock);
         assert.equal(again.ok, true, again.text);
-        assert.deepEqual(areas.list().map(a => a.name), ['house', 'potato_farm'], 'the village houses are forgotten');
+        assert.deepEqual(areas.list().map(a => a.name), ['house', 'house_2', 'house_3', 'potato_farm'], 'the village houses stay in the store');
         assert.deepEqual([...bases.get('east').places].sort(), ['house', 'potato_farm']);
         assert.equal(said[1], 'I surveyed "east" again: nothing changed. I left out 2 places about 100 blocks south (another base or a village): not saved; survey it from there for its own name.');
     });

@@ -14,7 +14,7 @@ export { FEED, PEN_CAP, FEED_REACH, BREED_COOLDOWN_MS, COOLDOWN_CHECK_MS, STOP_C
     FENCE_ENDINGS, feedOf, speciesOf, animalCount, cleanCount, feedNeeded, lowMark, isBaby, eyesOf, insideBox, insideBoxXZ, isFenceName, fenceBoxOf,
     standRing, withoutGateCells, ringFrom, nearestRingCell, findGates, gatesOf, animalsIn, feedableAdults, adultsInReach, newBabies } from './breeding_logic.js';
 export { PURPOSES, BRED_SPECIES, whereText, speciesWords, youngWords, penWords, unknownPenText, unknownSpeciesText, noAnimalsText, penFullText,
-    noFeedText, fedText, endText, stoppedText, noWayText, tookText, askText, askLowText, noPermitText, noStockText } from './texts.js';
+    noFeedText, fedText, endText, stoppedText, noWayText, unreachedText, tookText, askText, askLowText, noPermitText, noStockText } from './texts.js';
 export { STOCK_RULES, bagCount, chestsWith, takeOrAsk } from './stock_logic.js';
 export { BREED_RULES, breed } from './breeding.js';
 export { PERMITS_FILE, ALLOW_SAID_TEXT, StockPermits, normalizeItemName, allowTakingText, noWordText } from '../../world/stock_permits.js';

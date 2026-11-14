@@ -403,54 +403,63 @@ function jobRefusal(job, name, by) {
     }
 }
 
-// F8 (v0.1.4.16): the turn the model answered: the last turn of the history, or the one before it when the last is the
-// model's own line (handleMessage adds the response before the command runs; with the serialised add of F12 it may not be
-// there yet). null without a history.
-function promptingTurn(agent, message) {
-    const turns = agent?.history?.turns;
-    if (!Array.isArray(turns) || turns.length === 0)
-        return null;
-    let i = turns.length - 1;
-    if (turns[i]?.role === 'assistant' && typeof message === 'string' && turns[i].content === message)
-        i--;
-    return i >= 0 ? turns[i] ?? null : null;
-}
-
-// F8: true when the model acts on its own: the message it answered was the bot's own line or an AUTO MESSAGE of a mode
-// (which comes as a system line, or as the last sender's line in a conversation). A player's message, an "Action output"
-// line and the other system lines are an order's chain.
-function modelOnItsOwn(agent, message) {
-    const turn = promptingTurn(agent, message);
-    if (!turn)
-        return false;
-    if (turn.role === 'assistant')
-        return true;
-    return typeof turn.content === 'string' && turn.content.includes('(AUTO MESSAGE)');
+/**
+ * v0.1.4.16 (review 16, findings 1 and 5, the lead's decision): the order behind the chain of one message, `{ by, at }`, which
+ * handleMessage keeps as agent.order_chain and hands to the model's commands of its loop (options.chain of executeCommand).
+ * by: the source for a player's message (any source but the bot itself and 'system'; another bot's too, whose line was a
+ * player's turn before) and for a quiet message of the watch queue (the supervisor's; 'supervisor' when it carries no player's
+ * name); 'model' for an AUTO MESSAGE of a mode (also when it comes in the last sender's name), a self prompt (the self
+ * prompter's system line, the bot's own name) and every other system message (the death, the init message, a conversation's
+ * timeout). The orders of a job and of a routine never come through handleMessage: they are system orders of executeCommand
+ * (by 'system') and need no chain. at: the time of the message in ms. Never throws.
+ * @param {string} source the source of handleMessage
+ * @param {string} message
+ * @param {{quiet?: boolean, self?: string, at?: number}} [options] quiet: a message of the watch queue; self: the bot's name
+ * @returns {{by: string, at: number}}
+ */
+export function orderChainOf(source, message, options = {}) {
+    const opts = options !== null && typeof options === 'object' ? options : {};
+    const at = typeof opts.at === 'number' && Number.isFinite(opts.at) ? opts.at : Date.now();
+    try {
+        const name = typeof source === 'string' ? source : '';
+        const own = name === '' || name === 'system' || (typeof opts.self === 'string' && opts.self !== '' && name === opts.self);
+        if (typeof message === 'string' && message.trimStart().startsWith('(AUTO MESSAGE)'))
+            return { by: 'model', at };
+        if (opts.quiet === true)
+            return { by: own ? 'supervisor' : name, at };
+        return { by: own ? 'model' : name, at };
+    } catch (error) {
+        console.warn('The order of the message could not be judged:', error);
+        return { by: 'model', at };
+    }
 }
 
 /**
- * v0.1.4.16 (F8): the answer to the model for a command it may not give, or null. A work command (WORK_COMMANDS) that the
- * model picked on its own (the last message is the bot's own or an AUTO MESSAGE of a mode): ORDER_TEXTS.noOrder. !stop or
- * !setMode by the model while a command the player or the supervisor typed runs (agent.running_commands with typed):
- * ORDER_TEXTS.playersOrder. The player's typed commands, the system orders (a job's resume, a routine's round) and the
- * model's commands in answer to a player pass. Never throws.
+ * v0.1.4.16 (F8; review 16, findings 1 and 5): the answer to the model for a command it may not give, or null. Only a command
+ * of the model whose chain is the model's own (orderChainOf: an AUTO MESSAGE of a mode, a self prompt, a system message) is
+ * judged: a work command (WORK_COMMANDS) gets ORDER_TEXTS.noOrder; !stop or !setMode while a command the player or the
+ * supervisor typed runs (agent.running_commands with typed) gets ORDER_TEXTS.playersOrder. The model's commands in a player's
+ * or the supervisor's chain pass (the owner's spoken "stop" works), and so do the player's typed commands and the system orders
+ * (a job's resume, a routine's round). A pack's line in the history and a refusal change nothing: the chain is not read from
+ * the history. Without a chain (no handleMessage behind the call) nothing is refused. Never throws.
  * @param {object} agent
  * @param {string} name the command
  * @param {string} by orderBy: 'model', 'system' or the player
- * @param {string} [message] the model's whole line, as handleMessage added it to the history
+ * @param {{by: string, at: number}|null} [chain] the chain of the loop (options.chain); else agent.order_chain
  * @returns {string|null}
  */
-export function orderRefusal(agent, name, by, message = '') {
+export function orderRefusal(agent, name, by, chain = null) {
     try {
         if (by !== 'model')
+            return null;
+        const behind = chain !== null && typeof chain === 'object' ? chain : agent?.order_chain;
+        if (behind === null || typeof behind !== 'object' || behind.by !== 'model')
             return null;
         if (STOP_COMMANDS.includes(name)) {
             const list = Array.isArray(agent?.running_commands) ? agent.running_commands : [];
             return list.some(r => r && r.typed === true && r.name !== name) ? ORDER_TEXTS.playersOrder : null;
         }
-        if (WORK_COMMANDS.includes(name) && modelOnItsOwn(agent, message))
-            return ORDER_TEXTS.noOrder;
-        return null;
+        return WORK_COMMANDS.includes(name) ? ORDER_TEXTS.noOrder : null;
     } catch (error) {
         console.warn('The order of the command could not be judged:', error);
         return null;
@@ -488,9 +497,10 @@ function jobAfter(agent, running, result, before) {
  * v0.1.4.10 (I4): with agent.job (job_memory) its onCommand runs before the command and its onResult after it.
  * @param {object} agent
  * @param {string} message
- * @param {{typed?: boolean, by?: string}} [options] typed: the player typed the command in the chat; without it
- *   agent.last_order decides (an order with typed: true and the same command). by 'system' (v0.1.4.10): an
- *   order of the job, never typed
+ * @param {{typed?: boolean, by?: string, quiet?: boolean, chain?: {by: string, at: number}}} [options] typed: the player typed the
+ *   command in the chat; without it agent.last_order decides (an order with typed: true and the same command). by 'system'
+ *   (v0.1.4.10): an order of the job, never typed. chain (review 16): the order behind handleMessage's loop (orderChainOf),
+ *   for the model's commands; without it agent.order_chain
  * @returns {Promise<string|undefined>}
  */
 export async function executeCommand(agent, message, options = {}) {
@@ -530,8 +540,9 @@ export async function executeCommand(agent, message, options = {}) {
                 return refusal;
             }
             // v0.1.4.16 (F8, "orders stay orders"): the model starts no work on its own and stops no command of the player
-            // or the supervisor; the answer goes to the model as a system line (the caller adds it to the history)
-            const order = orderRefusal(agent, command.name, orderBy(agent, options, typed), message);
+            // or the supervisor; the answer goes to the model as a system line (the caller adds it to the history). Review 16
+            // (findings 1 and 5): judged by the chain of handleMessage's loop (options.chain, else agent.order_chain)
+            const order = orderRefusal(agent, command.name, orderBy(agent, options, typed), options?.chain ?? null);
             if (order !== null) {
                 console.log('Order:', order);
                 return order;
