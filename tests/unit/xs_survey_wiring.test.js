@@ -125,14 +125,18 @@ function stores(options = {}) {
     const bases = new BS.BaseStore(path.join(dir, 'bases.json'), { now: () => new Date(T0) });
     bases.load();
     const logs = [];
+    const said = []; // v0.1.4.16 (F2): the lines the bot says itself through ctx.say
     const ctx = {
-        areas, places, bases, settings: { survey_radius: 64, ...(options.settings ?? {}) }, now: () => T0, log: (t) => logs.push(t), say: () => {},
+        areas, places, bases, settings: { survey_radius: 64, ...(options.settings ?? {}) }, now: () => T0, log: (t) => logs.push(t), say: (t) => said.push(t),
         world: { getVillagerProfession: () => 'Farmer L2' },
         routes: { store: routeStore, walkTo: options.walkTo ?? (async () => ({ ok: false, reason: 'no_route', text: '' })) },
-        logs,
+        logs, said,
     };
-    return { ctx, areas, placeStore, places, routeStore, bases };
+    return { ctx, areas, placeStore, places, routeStore, bases, said };
 }
+
+// v0.1.4.16 (F2): the result of a command the bot says itself: the line is said once and the model gets the short answer.
+const SAID = 'Done; I said it in the chat.';
 
 const clock = () => {
     const c = { waits: 0, now: () => T0, wait: async () => { c.waits++; } };
@@ -185,9 +189,13 @@ describe('surveyBase: the saves and the report (2.4, 2.5)', () => {
     test('the report word for word, and every place saved at once with source survey and the base', async () => {
         const w = base();
         const bot = fakeBot(w);
-        const { ctx, areas, places, routeStore, bases } = stores();
+        const { ctx, areas, places, routeStore, bases, said } = stores();
         const r = await S.surveyBase(bot, ctx, 'east', clock());
-        assert.equal(r.text, REPORT);
+        // v0.1.4.16 (F2): the report is the bot's own line (ctx.say), the answer to the model the short one
+        assert.equal(r.said, REPORT);
+        assert.deepEqual(said, [REPORT]);
+        assert.equal(r.text, SAID);
+        assert.equal(S.SAID_TEXT, SAID);
         assert.equal(r.ok, true);
         assert.deepEqual(areas.list().map(a => a.name), ['basement', 'cave_mouth', 'cow_pen', 'house', 'potato_farm']);
         for (const a of areas.list()) {
@@ -227,6 +235,8 @@ describe('surveyBase: the saves and the report (2.4, 2.5)', () => {
         assert.deepEqual(east.door, { x: 4, y: 61, z: 0 });
         assert.equal(east.dimension, 'overworld');
         assert.deepEqual([...east.places].sort(), ['basement', 'cave_mouth', 'cow_pen', 'house', 'mine_entrance', 'potato_farm']);
+        assert.deepEqual(east.kept, [], 'v0.1.4.16 (F2): no area of the owner in the base');
+        assert.deepEqual(r.leftOut, [], 'one cluster');
         assert.equal(east.surveyed, new Date(T0).toISOString());
         assert.deepEqual(JSON.parse(fs.readFileSync(path.join(dir, 'bases.json'), 'utf8')).bases.east.name, 'east');
         assert.deepEqual(r.places.map(p => p.name).sort(), east.places.slice().sort());
@@ -260,18 +270,20 @@ describe('surveyBase: the saves and the report (2.4, 2.5)', () => {
             91: { id: 91, name: 'happy_ghast', type: 'mob', position: vec(31.5, 63, 12.5) } };
         const { ctx, places } = stores();
         const r = await S.surveyBase(fakeBot(w, { entities }), ctx, 'east', clock());
-        assert.ok(r.text.includes(', a tied happy ghast at (30, 61, 10), a mine entrance at (8, 54, 3)'), r.text);
-        assert.ok(r.text.endsWith(' to correct. Never untie, never break that post.'), r.text);
-        assert.equal(r.text.startsWith('I found 7 places: '), true);
+        assert.ok(r.said.includes(', a tied happy ghast at (30, 61, 10), a mine entrance at (8, 54, 3)'), r.said);
+        assert.ok(r.said.endsWith(' to correct. Never untie, never break that post.'), r.said);
+        assert.equal(r.said.startsWith('I found 7 places: '), true);
         assert.deepEqual(places.recallPlaceInfo('tied_happy_ghast'), { x: 30, y: 61, z: 10, dimension: 'overworld', base: 'east' });
     });
 
     test('nothing found: the text with the radius, nothing saved, no base', async () => {
         const w = createBlockWorld().flatGround(59);
-        const { ctx, areas, bases } = stores({ settings: { survey_radius: 32 } });
+        const { ctx, areas, bases, said } = stores({ settings: { survey_radius: 32 } });
         const r = await S.surveyBase(fakeBot(w, { entities: {} }), ctx, 'east', clock());
         assert.equal(r.ok, true);
-        assert.equal(r.text, 'I found no place of a base within 32 blocks. Stand in the base and say it again.');
+        assert.equal(r.said, 'I found no place of a base within 32 blocks. Stand in the base and say it again.');
+        assert.deepEqual(said, [r.said]);
+        assert.equal(r.text, SAID);
         assert.equal(areas.size, 0);
         assert.equal(bases.get('east'), null);
     });
@@ -283,12 +295,13 @@ describe('surveyBase: the owner\'s words (2.2, 2.4, PLAN 4 decision 6)', () => {
         const { ctx, areas } = stores();
         const wheat = areas.set({ name: 'wheat_farm', type: 'farm', kind: 'farm', min: { x: 10, y: 58, z: 0 }, max: { x: 16, y: 62, z: 8 }, source: 'manual' });
         const r = await S.surveyBase(fakeBot(w), ctx, 'east', clock());
-        assert.ok(r.text.includes('cow pen (5 cows)'), r.text);
-        assert.ok(r.text.includes(' inside your "wheat farm" (kept as yours), cow pen (5 cows)'), r.text);
-        assert.ok(!r.text.includes('potato farm'), r.text);
+        assert.ok(r.said.includes('cow pen (5 cows)'), r.said);
+        assert.ok(r.said.includes(' inside your "wheat farm" (kept as yours), cow pen (5 cows)'), r.said);
+        assert.ok(!r.said.includes('potato farm'), r.said);
         assert.equal(areas.get('potato_farm'), undefined);
         assert.deepEqual(areas.get('wheat_farm'), wheat);
         assert.equal(r.kept.length, 1);
+        assert.deepEqual(ctx.bases.get('east').kept, ['wheat_farm'], 'v0.1.4.16 (F2): the owner\'s area is in the base as kept');
     });
 
     test('W126 C: the owner saves a farm over half the field before a re-survey: the again-line names the kept field, the owner\'s area is unchanged', async () => {
@@ -299,7 +312,8 @@ describe('surveyBase: the owner\'s words (2.2, 2.4, PLAN 4 decision 6)', () => {
         assert.equal(areas.get('potato_farm').source, 'survey');
         const wheat = areas.set({ name: 'wheat_farm', type: 'farm', kind: 'farm', min: { x: 10, y: 58, z: 0 }, max: { x: 16, y: 62, z: 8 }, source: 'manual' });
         const again = await S.surveyBase(bot, ctx, 'east', clock());
-        assert.match(again.text, /^I surveyed "east" again: a field at \(\d+, \d+, \d+\) inside your "wheat farm" \(kept as yours\)\. The rest as saved\.$/);
+        assert.match(again.said, /^I surveyed "east" again: a field at \(\d+, \d+, \d+\) inside your "wheat farm" \(kept as yours\)\. The rest as saved\.$/);
+        assert.equal(again.text, SAID);
         assert.deepEqual(areas.get('wheat_farm'), wheat, 'the owner\'s words stand');
         assert.equal(areas.get('potato_farm').source, 'survey', 'the survey\'s farm stays: its farmland still stands');
     });
@@ -312,20 +326,21 @@ describe('surveyBase again: the difference line (2.4)', () => {
         const bot = fakeBot(w);
         await S.surveyBase(bot, ctx, 'east', clock());
         const again = await S.surveyBase(bot, ctx, 'east', clock());
-        assert.equal(again.text, 'I surveyed "east" again: nothing changed.');
+        assert.equal(again.said, 'I surveyed "east" again: nothing changed.');
+        assert.equal(again.text, SAID);
         assert.equal(areas.size, 5, 'the places are saved again under their names');
         areas.remove('cow_pen');
         const third = await S.surveyBase(bot, ctx, 'east', clock());
-        assert.equal(third.text, 'I surveyed "east" again: the cow pen is new. The rest as saved.');
+        assert.equal(third.said, 'I surveyed "east" again: the cow pen is new. The rest as saved.');
         assert.equal(areas.get('cow_pen').type, 'pen');
         Object.assign(bot.entities, cows(2, 70));
         const fourth = await S.surveyBase(bot, ctx, 'east', clock());
-        assert.equal(fourth.text, 'I surveyed "east" again: 2 more cows in the cow pen. The rest as saved.');
+        assert.equal(fourth.said, 'I surveyed "east" again: 2 more cows in the cow pen. The rest as saved.');
         assert.equal(areas.get('cow_pen').contents.animals.cow, 7);
         w.fill(12, 59, 2, 20, 59, 6, 'grass_block');
         w.fill(12, 60, 2, 20, 60, 6, 'air');
         const fifth = await S.surveyBase(bot, ctx, 'east', clock());
-        assert.equal(fifth.text, 'I surveyed "east" again: the potato farm is gone. The rest as saved.');
+        assert.equal(fifth.said, 'I surveyed "east" again: the potato farm is gone. The rest as saved.');
         assert.equal(areas.get('potato_farm'), undefined, 'a place of the survey whose seeds are gone is forgotten');
         assert.ok(!ctx.bases.get('east').places.includes('potato_farm'));
     });
@@ -340,14 +355,18 @@ describe('renameArea, forgetSurveyed, goToBase (2.5)', () => {
     }
 
     test('renameArea: an area, then a place; the texts word for word', async () => {
-        const { ctx, areas, places } = await surveyed();
-        assert.deepEqual(S.renameArea(ctx, 'potato_farm', 'Spuds'), { ok: true, reason: null, text: 'I renamed "potato_farm" to "spuds".', kind: 'area' });
+        const { ctx, areas, places, said } = await surveyed();
+        said.length = 0;
+        // v0.1.4.16 (F2): a success is said by the bot, the model gets the short answer; a failure is the answer as before
+        assert.deepEqual(S.renameArea(ctx, 'potato_farm', 'Spuds'), { ok: true, reason: null, text: SAID, said: 'I renamed "potato_farm" to "spuds".', kind: 'area' });
+        assert.deepEqual(said, ['I renamed "potato_farm" to "spuds".']);
         assert.equal(areas.get('potato_farm'), undefined);
         assert.equal(areas.get('spuds').type, 'farm');
         assert.equal(S.renameArea(ctx, 'carrot_farm', 'wheat_farm').text, 'I know no place "carrot_farm".');
         assert.equal(S.renameArea(ctx, 'spuds', 'cow_pen').text, 'There is a place "cow_pen" already.');
         assert.equal(S.renameArea(ctx, 'spuds', 'mine_entrance').text, 'There is a place "mine_entrance" already.', 'a place of the new name counts too');
-        assert.deepEqual(S.renameArea(ctx, 'mine_entrance', 'mine'), { ok: true, reason: null, text: 'I renamed "mine_entrance" to "mine".', kind: 'place' });
+        assert.equal(said.length, 1, 'a failure is not said');
+        assert.deepEqual(S.renameArea(ctx, 'mine_entrance', 'mine'), { ok: true, reason: null, text: SAID, said: 'I renamed "mine_entrance" to "mine".', kind: 'place' });
         assert.equal(places.recallPlaceInfo('mine_entrance'), undefined);
         assert.equal(places.recallPlaceInfo('mine').base, 'east');
         assert.equal(S.renameArea(ctx, 'mine', 'house').text, 'There is a place "house" already.');
@@ -358,30 +377,38 @@ describe('renameArea, forgetSurveyed, goToBase (2.5)', () => {
     });
 
     test('forgetSurveyed: a base with its places and its routes; a place; nothing', async () => {
-        const { ctx, areas, places, routeStore, bases } = await surveyed();
+        const { ctx, areas, places, routeStore, bases, said } = await surveyed();
+        said.length = 0;
         areas.set({ name: 'shed', type: 'building', kind: 'building', min: { x: 40, y: 60, z: 40 }, max: { x: 44, y: 63, z: 44 }, source: 'scan' });
         const r = S.forgetSurveyed(ctx, 'East');
-        assert.deepEqual(r, { ok: true, reason: null, text: 'I forgot the base "east" and its 6 places.', kind: 'base', count: 6 });
+        // v0.1.4.16 (F2): said by the bot, the short answer to the model
+        assert.deepEqual(r, { ok: true, reason: null, text: SAID, said: 'I forgot the base "east" and its 6 places.', kind: 'base', count: 6 });
+        assert.deepEqual(said, ['I forgot the base "east" and its 6 places.']);
         assert.deepEqual(areas.list().map(a => a.name), ['shed'], 'the owner\'s area stays');
         assert.equal(places.recallPlaceInfo('mine_entrance'), undefined);
         assert.equal(routeStore.size, 0, 'the survey\'s routes to the places of the base');
         assert.equal(bases.get('east'), null);
         places.rememberPlace('bed', 1, 2, 3, 'overworld');
-        assert.deepEqual(S.forgetSurveyed(ctx, 'bed'), { ok: true, reason: null, text: 'Forgot the place "bed".', kind: 'place', count: 1 });
+        assert.deepEqual(S.forgetSurveyed(ctx, 'bed'), { ok: true, reason: null, text: SAID, said: 'Forgot the place "bed".', kind: 'place', count: 1 });
         assert.deepEqual(S.forgetSurveyed(ctx, 'nothing'), { ok: false, reason: 'unknown', text: '', kind: null, count: 0 });
+        assert.equal(said.length, 2, 'nothing to forget is not said');
     });
 
     test('goToBase: no base; by a route; by the path search when no route serves; the failure', async () => {
         const walks = [];
-        const { ctx, w } = await surveyed({ walkTo: async (bot, target) => { walks.push(['route', target]); return { ok: true, reason: null, text: 'walked' }; } });
+        const { ctx, w, said } = await surveyed({ walkTo: async (bot, target) => { walks.push(['route', target]); return { ok: true, reason: null, text: 'walked' }; } });
+        said.length = 0;
         const bot = fakeBot(w);
         assert.deepEqual(await S.goToBase(bot, ctx, 'west'), { ok: false, reason: 'unknown', text: 'I know no base "west".', base: null });
         const byRoute = await S.goToBase(bot, ctx, 'east');
-        assert.equal(byRoute.text, 'I am at the base "east".');
+        // v0.1.4.16 (F2): the arrival is the bot's own line
+        assert.equal(byRoute.said, 'I am at the base "east".');
+        assert.equal(byRoute.text, SAID);
+        assert.deepEqual(said, ['I am at the base "east".']);
         assert.deepEqual(walks, [['route', { x: 4, y: 61, z: 0 }]], 'the door of the home');
         ctx.routes.walkTo = async () => ({ ok: false, reason: 'no_route', text: '' });
         const direct = await S.goToBase(bot, ctx, 'east', { walk: async (b, target, range) => { walks.push(['walk', target, range]); return { ok: true, reason: null }; } });
-        assert.equal(direct.text, 'I am at the base "east".');
+        assert.equal(direct.said, 'I am at the base "east".');
         assert.deepEqual(walks[1], ['walk', { x: 4, y: 61, z: 0 }, 2]);
         const failed = await S.goToBase(bot, ctx, 'east', { walk: async () => ({ ok: false, reason: 'no_path' }) });
         assert.deepEqual({ ok: failed.ok, reason: failed.reason, text: failed.text }, { ok: false, reason: 'no_path', text: 'I found no way to the base "east".' });
@@ -396,7 +423,7 @@ describe('the ore guard (PLAN 9, SPEC 0 rule 28)', () => {
         const w = base({ ore: true });
         const { ctx } = stores();
         const r = await S.surveyBase(fakeBot(w), ctx, 'east', clock());
-        assert.equal(r.text, REPORT);
+        assert.equal(r.said, REPORT);
         const everything = ['areas.json', 'places.json', 'routes.json', 'bases.json'].map(f => fs.readFileSync(path.join(dir, f), 'utf8')).join('');
         assert.ok(!everything.includes('_ore'));
         assert.ok(!JSON.stringify(r).includes('_ore'));

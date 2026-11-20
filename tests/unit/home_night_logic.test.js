@@ -9,20 +9,27 @@ const require = createRequire(import.meta.url);
 const ENTITIES = require('minecraft-data')(TEST_MC_VERSION).entitiesArray;
 
 describe('isNight', () => {
-    test('true from 12000 up to 23000', () => {
+    test('true from 13000 up to 23000 (v0.1.4.16, F8: the night of the one clock; before, from 12000); the shelter keeps 12000', () => {
         assert.equal(N.isNight(0), false);
         assert.equal(N.isNight(6000), false);
         assert.equal(N.isNight(11999), false);
-        assert.equal(N.isNight(12000), true);
+        assert.equal(N.isNight(12000), false, 'F8: 12000 to 12999 is the evening');
+        assert.equal(N.isNight(12999), false);
         assert.equal(N.isNight(13000), true);
         assert.equal(N.isNight(18000), true);
         assert.equal(N.isNight(22999), true);
         assert.equal(N.isNight(23000), false);
         assert.equal(N.isNight(23999), false);
+        assert.equal(N.PHASE_NIGHT_START, 13000);
+        assert.equal(N.isShelterNight(12000), true, 'the shelter reflex starts at sunset as before');
+        assert.equal(N.isShelterNight(11999), false);
+        assert.equal(N.isShelterNight(22999), true);
+        assert.equal(N.isShelterNight(23000), false);
     });
 
     test('values outside one day are taken modulo 24000', () => {
-        assert.equal(N.isNight(24000 + 12500), true);
+        assert.equal(N.isNight(24000 + 13500), true);
+        assert.equal(N.isNight(24000 + 12500), false, 'F8: the evening');
         assert.equal(N.isNight(-1000), false, '-1000 is 23000');
         assert.equal(N.isNight(-6000), true, '-6000 is 18000');
     });

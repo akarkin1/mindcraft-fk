@@ -866,3 +866,140 @@ export function findPlaces(read, seeds, saved, options = {}) {
     }
     return { places, kept, skipped };
 }
+
+// --- the clusters of a base (v0.1.4.16, F2) -------------------------------------------------------------------------------
+//
+// A base is the finds within reach of each other from where the bot stands (PLAN 4, F2): two finds farther apart than the
+// gap (`survey_cluster_gap`, 48) belong to different bases. The survey saves the cluster the bot stands in and reports the
+// others ("another base or a village"). Everything here is pure and never throws.
+
+/** The gap of the clusters without a setting (SPEC 0.1.4.16, section 1). */
+export const CLUSTER_GAP = 48;
+
+/** The eight directions of the left-out sentence, clockwise from north (north is -z, east is +x in Minecraft). */
+export const DIRECTIONS = Object.freeze(['north', 'north-east', 'east', 'south-east', 'south', 'south-west', 'west', 'north-west']);
+
+// The footprint of a find in x and z as { min: { x, z }, max: { x, z } }: a box (a place of findPlaces, a saved area, a kept
+// entry's place), else its point (`at`, or the x/z of the object itself); null for nothing readable.
+function footprintOf(find) {
+    if (find === null || typeof find !== 'object') {
+        return null;
+    }
+    const box = find.box && isBox(find.box) ? find.box : isBox(find) ? find : find.place?.box && isBox(find.place.box) ? find.place.box : null;
+    if (box) {
+        return { min: { x: Math.min(box.min.x, box.max.x), z: Math.min(box.min.z, box.max.z) }, max: { x: Math.max(box.min.x, box.max.x), z: Math.max(box.min.z, box.max.z) } };
+    }
+    const at = posOf(find.at) ?? posOf(find.place?.at) ?? posOf(find.position) ?? posOf(find);
+    return at ? { min: { x: at.x, z: at.z }, max: { x: at.x, z: at.z } } : null;
+}
+
+/**
+ * The distance in x and z between two finds, edge to edge: 0 when the footprints overlap or touch, else the shortest
+ * way between the two boxes (a point is a box of one cell). Infinity when one of them has no position.
+ * @param {object} a a find: { box } | { at } | { x, y, z } | a kept entry { place }
+ * @param {object} b
+ * @returns {number}
+ */
+export function xzDistance(a, b) {
+    const fa = footprintOf(a);
+    const fb = footprintOf(b);
+    if (!fa || !fb) {
+        return Infinity;
+    }
+    const dx = Math.max(0, fa.min.x - fb.max.x, fb.min.x - fa.max.x);
+    const dz = Math.max(0, fa.min.z - fb.max.z, fb.min.z - fa.max.z);
+    return Math.hypot(dx, dz);
+}
+
+/**
+ * The clusters of the finds (SPEC 0.1.4.16, F2): the finds grouped by connectivity, two finds connected when the x/z
+ * distance between their boxes (edge to edge, 0 inside) or points is at most `gap`. The order of the clusters is the
+ * order of their first find; a find without a position is a cluster of its own. Never throws.
+ * @param {object[]} finds places of findPlaces (boxes and points), kept entries, saved areas or points
+ * @param {number} [gap] the gap of the setting survey_cluster_gap; 48 without a finite number of 0 or more
+ * @returns {object[][]} the clusters, each the finds themselves
+ */
+export function clustersOf(finds, gap = CLUSTER_GAP) {
+    const list = listOf(finds).filter(f => f !== null && typeof f === 'object');
+    const reach = isFiniteNumber(gap) && gap >= 0 ? gap : CLUSTER_GAP;
+    try {
+        return groupsOf(list, (a, b) => xzDistance(a, b) <= reach);
+    } catch {
+        return list.map(f => [f]);
+    }
+}
+
+/**
+ * The cluster the bot's start belongs to (F2): the one with the find whose box holds `botAt`, else the one with the find
+ * nearest to it in x and z (ties: the first). -1 without clusters or a start.
+ * @param {object[][]} clusters of clustersOf
+ * @param {{x: number, y: number, z: number}|null} botAt
+ * @returns {number} the index in `clusters`
+ */
+export function startClusterOf(clusters, botAt) {
+    const list = listOf(clusters);
+    const at = posOf(botAt);
+    if (list.length === 0 || !at) {
+        return list.length === 0 ? -1 : 0;
+    }
+    const boxOfFind = (f) => (f?.box && isBox(f.box) ? f.box : isBox(f) ? f : f?.place?.box && isBox(f.place.box) ? f.place.box : null);
+    for (const [i, cluster] of list.entries()) {
+        if (listOf(cluster).some(f => {
+            const box = boxOfFind(f);
+            return box && containsPos(box, at);
+        })) {
+            return i;
+        }
+    }
+    let best = -1;
+    let bestDistance = Infinity;
+    for (const [i, cluster] of list.entries()) {
+        const d = Math.min(...listOf(cluster).map(f => xzDistance(at, f)));
+        if (d < bestDistance) {
+            best = i;
+            bestDistance = d;
+        }
+    }
+    return best;
+}
+
+/**
+ * The direction from one point to another as a word of DIRECTIONS (north is -z, south +z, east +x, west -x; eight sectors
+ * of 45 degrees). 'north' when the points are the same.
+ * @param {{x: number, z: number}} from
+ * @param {{x: number, z: number}} to
+ * @returns {string}
+ */
+export function directionOf(from, to) {
+    const dx = (to?.x ?? 0) - (from?.x ?? 0);
+    const dz = (to?.z ?? 0) - (from?.z ?? 0);
+    if (!isFiniteNumber(dx) || !isFiniteNumber(dz) || (dx === 0 && dz === 0)) {
+        return DIRECTIONS[0];
+    }
+    const bearing = (Math.atan2(dx, -dz) * 180 / Math.PI + 360) % 360;
+    return DIRECTIONS[Math.round(bearing / 45) % 8];
+}
+
+/**
+ * What the report says of a cluster the survey left out (F2): its count, the distance from the start to its nearest find
+ * rounded to 10, and the direction from the start to that find.
+ * @param {object[]} cluster a cluster of clustersOf
+ * @param {{x: number, y: number, z: number}|null} botAt the start
+ * @returns {{count: number, distance: number, dir: string, finds: object[]}}
+ */
+export function leftOutOf(cluster, botAt) {
+    const finds = listOf(cluster);
+    const at = posOf(botAt) ?? { x: 0, y: 0, z: 0 };
+    let nearest = null;
+    let best = Infinity;
+    for (const f of finds) {
+        const d = xzDistance(at, f);
+        if (d < best) {
+            best = d;
+            nearest = f;
+        }
+    }
+    const foot = footprintOf(nearest);
+    const centre = foot ? { x: (foot.min.x + foot.max.x) / 2, z: (foot.min.z + foot.max.z) / 2 } : at;
+    return { count: finds.length, distance: Number.isFinite(best) ? Math.round(best / 10) * 10 : 0, dir: directionOf(at, centre), finds };
+}

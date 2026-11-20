@@ -492,6 +492,44 @@ describe('scanFarm: fenced ground', () => {
     });
 });
 
+// v0.1.4.16 (F11, Q-9: "a walled yard with a roof, 1 bee" was a bee nest in the leaves): a bee nest or a beehive over the
+// ground is no cover of hasCoverBesideTrees, nor is a block that touches leaves on any side (it hangs in the crown).
+describe('F11: a bee nest under oak leaves is no roof over fenced ground', () => {
+    // fenced ground 5 x 5 (a wheat field, or a pen of grass), the crown of an oak over it at y 68, and hives or blocks
+    // hanging in the crown at y 67 over every cell of the ground (half or more: what made "a roof" over the ground before)
+    function fencedUnder(name, { leaves = true, crop = 'wheat' } = {}) {
+        const world = flat();
+        const field = world.field({ x: 0, y: 63, z: 0, width: 5, depth: 5, ...(crop === null ? { ground: 'grass_block', crop: null } : {}) });
+        if (leaves) world.fill(-1, 68, -1, 5, 68, 5, 'oak_leaves');
+        if (name) world.fill(0, 67, 0, 4, 67, 4, name);
+        return { world, field, origin: { x: field.inside.x + 0.5, y: 64, z: field.inside.z + 0.5 } };
+    }
+
+    test('bee nests under the leaves over a field: still a farm, not "roofed"; over a pen: no roof (no yard with a roof)', () => {
+        const { world, origin } = fencedUnder('bee_nest');
+        const r = A.scanFarm(world.getBlockName, origin);
+        assert.equal(r.found, true, r.reason);
+        const hives = fencedUnder('beehive');
+        assert.equal(A.scanFarm(hives.world.getBlockName, hives.origin).found, true, 'a beehive is no cover either');
+        const bare = fencedUnder('bee_nest', { leaves: false });
+        assert.equal(A.scanFarm(bare.world.getBlockName, bare.origin).found, true, 'a bee nest is no cover even without leaves');
+        const pen = fencedUnder('bee_nest', { crop: null });
+        const e = A.scanEnclosure(pen.world.getBlockName, pen.origin);
+        assert.equal(e.found, true, e.reason);
+        assert.equal(e.border, 'fence');
+        assert.equal(e.roof, false, 'leaves and bee nests are no roof');
+    });
+
+    test('planks hanging in the crown (touching leaves) are no cover; planks under the open sky are a roof', () => {
+        const inCrown = fencedUnder('oak_planks');
+        assert.equal(A.scanFarm(inCrown.world.getBlockName, inCrown.origin).found, true, 'planks against the leaves hang in the crown');
+        const open = fencedUnder('oak_planks', { leaves: false });
+        const r = A.scanFarm(open.world.getBlockName, open.origin);
+        assert.equal(r.found, false);
+        assert.equal(r.reason, 'roofed', 'a real roof of planks over the field');
+    });
+});
+
 describe('module rules (pure module)', () => {
     test('imports no mineflayer, no library, no model SDK', () => {
         assertImportRules(MODULE);

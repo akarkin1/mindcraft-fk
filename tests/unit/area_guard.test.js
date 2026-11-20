@@ -112,12 +112,13 @@ describe('installAreaGuard(bot, options)', () => {
             assert.equal(typeof guard[member], 'function', member);
         }
         assert.notEqual(bot.areaGuard, guard);
-        // v0.1.4.8, I3: the view gains areaAt, refusal, isBuilt and placedByBot, not setPlayerOrder
+        // v0.1.4.8, I3: the view gains areaAt, refusal, isBuilt and placedByBot, not setPlayerOrder;
+        // v0.1.4.16 (F10): listAreas, for the keep-out of the walks of skills.js (applyKeepOut); still no permit
         assert.deepEqual(Object.keys(bot.areaGuard).sort(), ['areaAt', 'canBreak', 'canPlace', 'canUse', 'explain', 'inBuilding',
-            'isBuilt', 'placedByBot', 'protectMovements', 'refusal']);
+            'isBuilt', 'listAreas', 'placedByBot', 'protectMovements', 'refusal']);
         assert.ok(Object.isFrozen(bot.areaGuard));
         for (const member of ['canBreak', 'canPlace', 'canUse', 'explain', 'protectMovements', 'inBuilding', 'areaAt', 'refusal',
-            'isBuilt', 'placedByBot']) {
+            'isBuilt', 'placedByBot', 'listAreas']) {
             assert.equal(bot.areaGuard[member], guard[member], member);
         }
         assert.throws(() => { bot.areaGuard.permit = () => 0; }, TypeError, 'ES modules are strict: a frozen object refuses new members');

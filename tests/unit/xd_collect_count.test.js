@@ -15,7 +15,7 @@ import { loadSrc } from '../helpers/load.js';
 import { makeTmpDir, removeTmpDir } from '../helpers/tmp.js';
 import { captureConsole } from '../helpers/console_capture.js';
 import { createBlockWorld } from '../helpers/block_world.js';
-import { makeBot, registry } from './stb_fake_bot.test.js';
+import { makeBot, registry, HOTBAR } from './stb_fake_bot.test.js';
 
 register('../helpers/mcdata_hooks.js', import.meta.url);
 
@@ -117,6 +117,38 @@ describe('P-20: the count is of the blocks that are gone', () => {
         await skills.collectBlock(bot, 'black_bed', 3);
         assert.match(bot.output, /I broke 2 black_bed and got nothing\./, bot.output);
         assert.equal(world.get(3, 64, 4), 'black_bed');
+    });
+
+    // v0.1.4.16, T4's W133 rerun: !collectBlocks of a granite in a closed cave answered `I broke 1 granite and got 11 dirt.`
+    // while every granite stood on the server. The path search timed out; a block update showed a granite near the bot gone (a
+    // block that only left the bot's view) and the larger of the bot's own count and the watched count was taken. The count is
+    // the bot's own now; the block updates only check it.
+    test('a collect that fails while a granite only leaves the bot\'s view: no "I broke 1 granite", the bag\'s gain is the answer', async () => {
+        const { world, bot } = bedScene({ block: 'granite' });
+        bot.inventory.put('stone_pickaxe', 1, HOTBAR); // granite needs a pickaxe
+        world.set(-3, 64, 0, 'granite'); // another granite near the bot, never dug
+        bot.collectBlock = {
+            collect: async () => {
+                bot.inventory.put('dirt', 11); // the shaft the path search dug on its way
+                const p = { x: -3, y: 64, z: 0 };
+                bot.emit('blockUpdate', { name: 'granite', position: p }, { name: 'air', position: p }); // gone from the view only
+                throw new Error('Timeout: Took to long to decide path to goal!');
+            },
+        };
+        await skills.collectBlock(bot, 'granite', 1);
+        assert.doesNotMatch(bot.output, /I broke \d+ granite/, bot.output);
+        // the path search's timeout is never echoed raw (v0.1.4.16, the lead's decision on the cave drop)
+        assert.equal(bot.output, 'I found no way to the granite at (3, 64, 0).\nCollected 11 dirt.\n');
+        assert.equal(world.get(3, 64, 0), 'granite');
+        assert.match(cap.allText(), /Collect: the block updates show 1 more granite gone near the bot than it broke itself; not counted\./);
+    });
+
+    test('a granite the bot breaks itself still counts', async () => {
+        const { world, bot } = bedScene({ block: 'granite' });
+        bot.inventory.put('stone_pickaxe', 1, HOTBAR);
+        await skills.collectBlock(bot, 'granite', 1);
+        assert.equal(world.get(3, 64, 0), 'air');
+        assert.match(bot.output, /I broke 1 granite and got nothing\./, bot.output); // the fake's dig drops nothing
     });
 
     test('the texts of way_logic.js, word for word', () => {

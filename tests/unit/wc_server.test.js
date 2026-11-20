@@ -159,7 +159,7 @@ describe('the server', () => {
         assert.equal(note.text, '');
         assert.deepEqual((await request(port, { body: { jsonrpc: '2.0', id: 2, method: 'ping' } })).json.result, {});
         const list = await request(port, { body: { jsonrpc: '2.0', id: 3, method: 'tools/list' } });
-        assert.equal(list.json.result.tools.length, 11); // v0.1.4.13 (S): six of v0.1.4.12 and digest, wait, run, look, server
+        assert.equal(list.json.result.tools.length, 12); // v0.1.4.13 (S): six of v0.1.4.12 and digest, wait, run, look, server; v0.1.4.16 (F9): runs
     });
 
     test('an unknown method: -32601', async () => {
@@ -174,7 +174,8 @@ describe('the server', () => {
 
     test('state and inventory from the agent', async () => {
         const state = await call(port, 'state');
-        assert.match(state.json.result.content[0].text, /^Luna at \(12, 67, 52\) in overworld, on grass_block\. Time 1000 \(day\)\. Health 20 of 20, food 20 of 20\.\nRunning: nothing\./);
+        // v0.1.4.16 (F8): the label of the one clock (Morning, Afternoon, Evening, Night, Dawn); before: day
+        assert.match(state.json.result.content[0].text, /^Luna at \(12, 67, 52\) in overworld, on grass_block\. Time 1000 \(Morning\)\. Health 20 of 20, food 20 of 20\.\nRunning: nothing\./);
         const inventory = await call(port, 'inventory');
         assert.equal(inventory.json.result.content[0].text, 'Inventory: 3 bread.\nHand: empty. Off-hand: empty.');
     });

@@ -86,18 +86,71 @@ export function sleepErrorKind(err) {
     return 'error';
 }
 
+/** The name of the saved place of the bot's own bed (v0.1.4.16, F6): the foot of the bed it slept in last. */
+export const MY_BED = 'my_bed';
+
+/** The numbers of F6: a bed within this many blocks of a villager's job site or of a villager is a villager's. */
+export const BED_RULES = Object.freeze({ jobRange: 8, villagerRange: 8 });
+
 /**
- * One entry per bed, nearest first. The foot part of a bed is left out when its head part is
- * in the list too (the head lies one block in the direction of `facing`).
- * @param {{x,y,z,name,part?,facing?,occupied?}[]} beds
+ * The job-site blocks of villagers (F6): a copy of SEED_NAMES.jobs of the survey pack (src/agent/packs/survey/
+ * survey_logic.js), because a module of the home pack imports no other pack; xu_bed_order.test.js keeps the copy equal.
+ */
+export const JOB_SITE_NAMES = Object.freeze(['lectern', 'composter', 'smithing_table', 'fletching_table', 'cartography_table', 'loom',
+    'stonecutter', 'grindstone', 'brewing_stand', 'barrel', 'cauldron', 'blast_furnace', 'smoker']);
+
+/**
+ * The foot of a bed (F6): for a head part the block one step against `facing` (the head lies one block in the
+ * direction of `facing` from the foot), for a foot part or an entry without a part the entry itself.
+ * @param {{x: number, y: number, z: number, part?: string, facing?: string}} bed
+ * @returns {{x: number, y: number, z: number}|null}
+ */
+export function bedFoot(bed) {
+    if (!isPoint(bed)) {
+        return null;
+    }
+    const off = bed.part === 'head' ? FACING_OFFSET[bed.facing] : null;
+    return off ? { x: bed.x - off.x, y: bed.y, z: bed.z - off.z } : { x: bed.x, y: bed.y, z: bed.z };
+}
+
+/**
+ * True when the bed stands at the saved place `my_bed` (F6): its foot is that block, in the same dimension when both
+ * name one.
+ * @param {object} bed an entry of findBeds
+ * @param {{x: number, y: number, z: number, dimension?: string|null}|null} myBed
+ * @param {string|null} [dimension] the dimension of the bot
+ * @returns {boolean}
+ */
+export function isMyBed(bed, myBed, dimension = null) {
+    const foot = bedFoot(bed);
+    if (!foot || !isPoint(myBed)) {
+        return false;
+    }
+    const plain = d => (typeof d === 'string' && d.length > 0 ? d.replace(/^minecraft:/, '') : null);
+    const mine = plain(myBed.dimension);
+    const here = plain(dimension);
+    if (mine && here && mine !== here) {
+        return false;
+    }
+    return Math.floor(myBed.x) === foot.x && Math.floor(myBed.y) === foot.y && Math.floor(myBed.z) === foot.z;
+}
+
+/**
+ * One entry per bed. The foot part of a bed is left out when its head part is in the list too (the head lies one
+ * block in the direction of `facing`). The order (v0.1.4.16, F6): first the bot's own bed (`options.myBed`, the saved
+ * place `my_bed`, when it stands), then the beds marked `home` (inside a home or a shelter the owner saved), then the
+ * rest, each group nearest first. A bed marked `excluded` (a villager's: a trading hall, a job site or a villager
+ * near it) is left out.
+ * @param {{x,y,z,name,part?,facing?,occupied?,home?: boolean,excluded?: string|null}[]} beds
  * @param {{x,y,z}} botPos
+ * @param {{myBed?: {x,y,z,dimension?}|null, dimension?: string|null}} [options]
  * @returns {object[]} copies
  */
-export function orderBeds(beds, botPos) {
+export function orderBeds(beds, botPos, options = {}) {
     if (!Array.isArray(beds)) {
         return [];
     }
-    const valid = beds.filter(isPoint);
+    const valid = beds.filter(isPoint).filter(b => !b.excluded);
     const heads = new Set(valid.filter(b => b.part === 'head').map(b => `${b.x},${b.y},${b.z}`));
     const kept = valid.filter(b => {
         if (b.part !== 'foot') {
@@ -106,9 +159,11 @@ export function orderBeds(beds, botPos) {
         const off = FACING_OFFSET[b.facing];
         return !(off && heads.has(`${b.x + off.x},${b.y},${b.z + off.z}`));
     }).map(b => ({ ...b }));
+    const myBed = options?.myBed ?? null;
+    const rank = b => (isMyBed(b, myBed, options?.dimension ?? null) ? 0 : b.home === true ? 1 : 2);
     if (!isPoint(botPos)) {
-        return kept;
+        return kept.sort((a, b) => rank(a) - rank(b));
     }
     const d = b => Math.hypot(b.x + 0.5 - botPos.x, b.y - botPos.y, b.z + 0.5 - botPos.z);
-    return kept.sort((a, b) => d(a) - d(b));
+    return kept.sort((a, b) => (rank(a) - rank(b)) || (d(a) - d(b)));
 }

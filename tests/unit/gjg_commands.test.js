@@ -288,7 +288,7 @@ describe('!rememberRule (R2): a rule about a saved area marks it no_enter', () =
         assert.equal(agent.area_store.get('chicken pen').flags, undefined);
         const noAreas = { ...agent, area_store: undefined };
         assert.equal(await command('!rememberRule').perform(noAreas, 'Keep out of the home.'), 'Rule 3 saved: "Keep out of the home."');
-        assert.equal(await command('!rememberRule').perform(agent, 'x'.repeat(201) + ' never enter the home'), 'A rule has at most 200 characters.');
+        assert.equal(await command('!rememberRule').perform(agent, 'x'.repeat(201) + ' never enter the home'), 'A rule has at most 200 characters; yours has 222.'); // v0.1.4.16 (F3): with the count
         assert.equal(agent.area_store.get('home').flags, undefined);
     });
 });

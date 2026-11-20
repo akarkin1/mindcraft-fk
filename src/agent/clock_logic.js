@@ -11,6 +11,47 @@ export const DAY_MARKS = Object.freeze({ sunrise: 0, noon: 6000, sunset: 12000, 
 /** A step of half a day or more forward is a jump (`time set`), not the clock running. */
 export const JUMP_TICKS = DAY_TICKS / 2;
 
+/**
+ * v0.1.4.16 (F8, the play of 2026-11-11: the model said night by day): the one clock of the prompt's line, the full
+ * state, the watch and isNight. The parts of the day and the first tick of each.
+ */
+export const DAY_PHASES = Object.freeze({ morning: 0, afternoon: 6000, evening: 12000, night: 13000, dawn: 23000 });
+
+/** F8: the labels of the parts of the day, as !stats, the full state and the watch say them. */
+export const PHASE_LABELS = Object.freeze({ morning: 'Morning', afternoon: 'Afternoon', evening: 'Evening', night: 'Night', dawn: 'Dawn' });
+
+/**
+ * F8: the part of the day: `morning` 0 to 5999, `afternoon` 6000 to 11999, `evening` 12000 to 12999, `night` 13000 to
+ * 22999, `dawn` 23000 to 23999; null without a finite time.
+ * @param {number} timeOfDay bot.time.timeOfDay
+ * @returns {'morning'|'afternoon'|'evening'|'night'|'dawn'|null}
+ */
+export function dayPhase(timeOfDay) {
+    const t = tickOfDay(timeOfDay);
+    if (t === null)
+        return null;
+    if (t < DAY_PHASES.afternoon)
+        return 'morning';
+    if (t < DAY_PHASES.evening)
+        return 'afternoon';
+    if (t < DAY_PHASES.night)
+        return 'evening';
+    if (t < DAY_PHASES.dawn)
+        return 'night';
+    return 'dawn';
+}
+
+/**
+ * F8: the label of the part of the day (PHASE_LABELS), `unknown` without a finite time.
+ * @param {number} timeOfDay
+ * @param {string} [unknown]
+ * @returns {string}
+ */
+export function dayPhaseLabel(timeOfDay, unknown = 'Unknown') {
+    const phase = dayPhase(timeOfDay);
+    return phase === null ? unknown : PHASE_LABELS[phase];
+}
+
 function tickOfDay(value) {
     if (typeof value !== 'number' || !Number.isFinite(value))
         return null;

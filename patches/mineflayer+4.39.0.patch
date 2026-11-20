@@ -96,10 +96,27 @@ index fb2766a..e202aaa 100644
      if (craftingTable) {
        if (!windowCraftingTable) {
 diff --git a/node_modules/mineflayer/lib/plugins/digging.js b/node_modules/mineflayer/lib/plugins/digging.js
-index 5ae5552..af28eef 100644
+index 5ae5552..6d4f6c5 100644
 --- a/node_modules/mineflayer/lib/plugins/digging.js
 +++ b/node_modules/mineflayer/lib/plugins/digging.js
-@@ -244,6 +244,9 @@ function inject (bot) {
+@@ -230,20 +230,24 @@ function inject (bot) {
+     let enchantments = []
+ 
+     // Retrieve currently held item ID and active enchantments from heldItem
++    // v0.1.4.16 (F7, Mindcraft fork): through enchantsOf, which reads the item component of 26.1 too
+     const currentlyHeldItem = bot.heldItem
+     if (currentlyHeldItem) {
+       type = currentlyHeldItem.type
+-      enchantments = currentlyHeldItem.enchants
++      enchantments = enchantsOf(currentlyHeldItem, bot.registry)
+     }
+ 
+     // Append helmet enchantments (because Aqua Affinity actually affects dig speed)
+     const headEquipmentSlot = bot.getEquipmentDestSlot('head')
+     const headEquippedItem = bot.inventory.slots[headEquipmentSlot]
+     if (headEquippedItem) {
+-      const helmetEnchantments = headEquippedItem.enchants
++      const helmetEnchantments = enchantsOf(headEquippedItem, bot.registry)
        enchantments = enchantments.concat(helmetEnchantments)
      }
  
@@ -109,6 +126,34 @@ index 5ae5552..af28eef 100644
      const creative = bot.game.gameMode === 'creative'
      return block.digTime(
        type,
+@@ -262,6 +266,27 @@ function inject (bot) {
+   bot.digTime = digTime
+ }
+ 
++// v0.1.4.16 (F7, Mindcraft fork): the enchantments of an item as the dig time reads them, [{ name, lvl }]. On 26.1
++// prismarine-item's `enchants` gives the item component as it is, the object { enchantments: [{ id, level }] } (probed on
++// the test server: a diamond_pickaxe[enchantments={efficiency:3}] gives {"enchantments":[{"id":8,"level":3}]}), and the
++// dig time failed with "enchantments is not iterable" (".concat is not a function" with a helmet on). An array is taken as
++// it is, the object is mapped through the registry's enchantments by id, anything else is no enchantment.
++function enchantsOf (item, registry) {
++  let raw
++  try {
++    raw = item ? item.enchants : null
++  } catch (_) {
++    return []
++  }
++  if (Array.isArray(raw)) return raw
++  if (raw && typeof raw === 'object' && Array.isArray(raw.enchantments)) {
++    const table = (registry && registry.enchantments) || {}
++    return raw.enchantments.map(e => ({ name: table[e.id] ? table[e.id].name : null, lvl: e.level }))
++  }
++  return []
++}
++inject.enchantsOf = enchantsOf
++
+ function noop (err) {
+   if (err) throw err
+ }
 diff --git a/node_modules/mineflayer/lib/plugins/entities.js b/node_modules/mineflayer/lib/plugins/entities.js
 index 9fcb6f9..203e0b7 100644
 --- a/node_modules/mineflayer/lib/plugins/entities.js

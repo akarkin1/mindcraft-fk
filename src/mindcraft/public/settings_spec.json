@@ -488,9 +488,29 @@
         "description": "With base_survey: how far sideways from the bot the survey reaches at most, in blocks (at most 128); it takes what the server has loaded within it",
         "default": 128
     },
+    "survey_cluster_gap": {
+        "type": "number",
+        "description": "With base_survey: two finds farther apart than this (the x/z distance between their boxes or points, in blocks) belong to different bases; the survey saves the cluster the bot stands in and reports the others as another base or a village",
+        "default": 48
+    },
     "routines": {
         "type": "boolean",
         "description": "Whether the bot keeps routines: standing work in the player's words (!rememberRoutine, !routines, !forgetRoutine, !doRoutine) that it does when it has no job, one round at a time, planned once with the model and checked by code; and the watch tool routines. Needs job_memory",
+        "default": false
+    },
+    "breeding": {
+        "type": "boolean",
+        "description": "Whether to offer the breeding pack: !breed feeds the animals of a saved pen from outside its fence, never opening a gate, until new animals are born; the feed comes from the bag, else from the chests the bot knows with the player's permit (!allowTaking). Needs protected_areas and world_memory",
+        "default": false
+    },
+    "enchanting": {
+        "type": "boolean",
+        "description": "Whether to offer the enchanting pack: !enchant reads the offers of an enchanting table for an item and says them, the player chooses (!enchantTake); the lapis comes from the bag, else from the chests the bot knows with the player's permit (!allowTaking)",
+        "default": false
+    },
+    "afk_kill": {
+        "type": "boolean",
+        "description": "Whether to offer the AFK creeper kill: !killFarm stands at the saved place kill_spot, kills the creepers that land on the hoppers, stores the drops, eats and sleeps, until the player says stop or until the level or the time given in the order",
         "default": false
     },
     "code_timeout_mins": {

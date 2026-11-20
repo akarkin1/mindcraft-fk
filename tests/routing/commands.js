@@ -43,6 +43,12 @@ export const SPEC_SETTINGS = {
     // v0.1.4.15, section 1 of its spec (part S)
     base_survey: 'boolean',
     survey_radius: 'number',
+    // v0.1.4.16, section 1 of its spec (F2)
+    survey_cluster_gap: 'number',
+    // v0.1.4.16, section 8.0 of its spec: the three packs of round two
+    breeding: 'boolean',
+    enchanting: 'boolean',
+    afk_kill: 'boolean',
 };
 
 // The switches of the parts whose commands are hidden while the switch is off.
@@ -59,7 +65,7 @@ export const PART_COMMANDS = {
     storage_pack: ['!storeItems', '!fetchItem', '!chests'],
     farming_pack: ['!farmCycle', '!harvest', '!plant', '!makeBoneMeal', '!fertilize'],
     wood_pack: ['!chopTrees', '!getTool', '!craftSupplies'],
-    mining_pack: ['!mineOre', '!goToMine', '!leaveMine', '!mines', '!forgetMine'], // v0.1.4.10 (R4): !mines, !forgetMine
+    mining_pack: ['!mineOre', '!goToMine', '!leaveMine', '!mines', '!forgetMine', '!sealOpening'], // v0.1.4.10 (R4): !mines, !forgetMine; v0.1.4.16 (F10): !sealOpening
     // v0.1.4.9: the commands of the routes pack and of the mine routes (I10 of its spec)
     routes_pack: ['!rememberRoute', '!routes', '!forgetRoute'],
     mine_routes: ['!rememberMine', '!rememberTunnel', '!collectPassedOre'],
@@ -69,7 +75,18 @@ export const PART_COMMANDS = {
     routines: ['!rememberRoutine', '!routines', '!forgetRoutine', '!doRoutine'],
     // v0.1.4.15 (part S, SPEC 2.5): the base survey; !forgetArea stays with protected_areas
     base_survey: ['!surveyBase', '!renameArea', '!goToBase'],
+    // v0.1.4.16 (SPEC 8.0): the three packs of round two, the keys in this order (the routing check prints the parts in it);
+    // each pack's commands are listed when they exist in actions.js (8.2 breeding by E6, 8.3 enchanting by E7, 8.4 afk_kill by E8).
+    // !allowTaking (8.1) is offered with any of the three: it is listed with breeding and shared (SHARED_PART_COMMANDS)
+    breeding: ['!breed', '!allowTaking'],
+    enchanting: ['!enchant', '!enchantTake'],
+    afk_kill: ['!killFarm'],
 };
+
+// v0.1.4.16 (SPEC 8.1): a command of a part that the agent also offers with other parts; hidden only while all of them are off.
+export const SHARED_PART_COMMANDS = Object.freeze({
+    '!allowTaking': Object.freeze(['breeding', 'enchanting', 'afk_kill']),
+});
 
 // Commands of this release, from the spec. `params` in order; `default` where the spec gives one.
 // `assumed` marks what the spec leaves open.
@@ -134,6 +151,10 @@ export const SPEC_COMMANDS = [
     { name: '!mines', section: 'R4', part: 'mining_pack', params: [], description: 'List your mines.' },
     { name: '!forgetMine', section: 'R4', part: 'mining_pack', assumed: 'type of the parameter (string)', params: [{ name: 'name', type: 'string' }],
         description: 'Forget a mine.' },
+    // v0.1.4.16 (F10 of its spec, E1): an opening into a cave closed with stone; the description is the one line of docs
+    { name: '!sealOpening', section: 'F10', part: 'mining_pack', assumed: 'types of the parameters (int)',
+        params: [{ name: 'x', type: 'int' }, { name: 'y', type: 'int' }, { name: 'z', type: 'int' }],
+        description: 'Close an opening into a cave at a block position with stone from the bag, up to 9 blocks.' },
     // v0.1.4.9 (I10 of its spec): names, parameters and defaults; the descriptions are the glue's
     { name: '!rememberRoute', section: 'I10', part: 'routes_pack', assumed: 'type of the parameter (string)', params: [{ name: 'name', type: 'string' }] },
     { name: '!routes', section: 'I10', part: 'routes_pack', params: [] },
@@ -154,6 +175,19 @@ export const SPEC_COMMANDS = [
     { name: '!renameArea', section: '2.5', part: 'base_survey', params: [{ name: 'old_name', type: 'string' }, { name: 'new_name', type: 'string' }],
         description: 'Rename a saved area or place. Use this when the player corrects a name ("that is the wheat farm, not carrots").' },
     { name: '!goToBase', section: '2.5', part: 'base_survey', params: [{ name: 'name', type: 'string' }], description: 'Walk to the door of a saved base.' },
+    // v0.1.4.16 (SPEC 8.1, 8.2, E6): the breeding pack and the stock permits; the descriptions are the one-line docs of actions.js
+    { name: '!breed', section: '8.2', part: 'breeding', params: [{ name: 'pen', type: 'string' }, { name: 'count', type: 'int', default: 2 }],
+        description: 'Breed the animals of a saved pen from outside its fence: feed pairs until count new animals, never opening a gate.' },
+    { name: '!allowTaking', section: '8.1', part: 'breeding', params: [{ name: 'item', type: 'ItemName' }, { name: 'allowed', type: 'boolean' }],
+        description: 'Allow (true) or forbid (false) the bot to take an item from the chests it knows for its work, for example wheat or lapis_lazuli.' },
+    // v0.1.4.16 (SPEC 8.3, E7): the enchanting pack; the descriptions are the one-line docs of actions.js
+    { name: '!enchant', section: '8.3', part: 'enchanting', params: [{ name: 'item', type: 'string' }, { name: 'choice', type: 'string', default: '' }],
+        description: 'Enchant an item at the enchanting table with the bot\'s lapis: choice "" asks you which offer, else a number 1 to 3 or an enchantment name takes that offer.' },
+    { name: '!enchantTake', section: '8.3', part: 'enchanting', params: [{ name: 'n', type: 'int' }],
+        description: 'Answer the bot\'s enchanting question: 1, 2 or 3 take that offer, 0 takes the item back.' },
+    // v0.1.4.16 (SPEC 8.4, E8): the AFK creeper kill; the description is the one-line docs of actions.js
+    { name: '!killFarm', section: '8.4', part: 'afk_kill', params: [{ name: 'until', type: 'string', default: '' }],
+        description: 'Farm creepers at the saved kill spot: climb there, kill what lands on the hoppers, store the drops, eat and sleep, until you say stop, or until "level 30" or "20 minutes".' },
 ];
 
 // The commands that exist in the code before this release (actions.js and queries.js of v0.1.4.5).
@@ -204,11 +238,12 @@ export function partIsOn(settings, part) {
 }
 
 // The commands hidden for the model while the given settings are in effect: the commands of every
-// part that is off.
+// part that is off (v0.1.4.16: a shared command only while every one of its parts is off).
 export function hiddenPartCommands(settings) {
     const hidden = [];
     for (const [part, names] of Object.entries(PART_COMMANDS)) {
-        if (!partIsOn(settings, part)) hidden.push(...names);
+        if (partIsOn(settings, part)) continue;
+        hidden.push(...names.filter((name) => !(SHARED_PART_COMMANDS[name] ?? []).some((other) => partIsOn(settings, other))));
     }
     return hidden;
 }

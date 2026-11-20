@@ -343,10 +343,10 @@
         ],
 
         [
-            {"role": "user", "content": "hal_4: find some iron"},
-            {"role": "assistant", "content": "I'll go mining for iron. !mineOre(\"iron\", 8)"},
-            {"role": "system", "content": "Action output:\nI mined 8 raw_iron. The mine is at (20, 64, -14), its tunnel is 37 blocks long at level 16. I also stored 96 cobblestone in the chest of the mine."},
-            {"role": "assistant", "content": "I'm back with 8 raw iron. The cobblestone is in the chest of the mine."}
+            {"role": "user", "content": "hal_4: mine 32 iron"},
+            {"role": "assistant", "content": "I'll mine 32 iron. !mineOre(\"iron\", 32, false)"},
+            {"role": "system", "content": "Action output:\nI mined 32 raw_iron. The mine is at (20, 64, -14), its tunnel is 37 blocks long at level 16. I also stored 96 cobblestone in the chest of the mine."},
+            {"role": "assistant", "content": "I'm back with 32 raw iron. The cobblestone is in the chest of the mine."}
         ],
 
         [
@@ -483,22 +483,70 @@
         [
             {"role": "user", "content": "tom_7: here is the base, scan it"},
             {"role": "assistant", "content": "I look at everything around me. !surveyBase(\"base\")"},
-            {"role": "system", "content": "I found 4 places: house (1 bed), basement (2 chests), potato farm 9 x 5, cow pen (5 cows). All saved. Say \"rename X to Y\" or \"forget X\" to correct."},
-            {"role": "assistant", "content": "I found the house, its basement, the potato farm and the cow pen, all saved."}
+            {"role": "system", "content": "Done; I said it in the chat."},
+            {"role": "assistant", "content": "That is the base as I see it; tell me if a name is wrong."}
         ],
 
         [
             {"role": "user", "content": "ida_2: this is the east base, look around"},
             {"role": "assistant", "content": "I scan the east base. !surveyBase(\"east\")"},
-            {"role": "system", "content": "I found 2 places: house (2 beds), wheat farm 12 x 9. All saved. Say \"rename X to Y\" or \"forget X\" to correct."},
-            {"role": "assistant", "content": "The east base has the house and the wheat farm, both saved."}
+            {"role": "system", "content": "Done; I said it in the chat."},
+            {"role": "assistant", "content": "The east base is saved."}
         ],
 
         [
             {"role": "user", "content": "ida_2: that is the wheat farm, not carrots"},
             {"role": "assistant", "content": "I rename it. !renameArea(\"carrot_farm\", \"wheat_farm\")"},
-            {"role": "system", "content": "I renamed \"carrot_farm\" to \"wheat_farm\"."},
+            {"role": "system", "content": "Done; I said it in the chat."},
             {"role": "assistant", "content": "Done, it is the wheat farm now."}
+        ],
+
+        [
+            {"role": "user", "content": "kim_8: rename pen to horse_house"},
+            {"role": "assistant", "content": "I rename it. !renameArea(\"pen\", \"horse_house\")"},
+            {"role": "system", "content": "Done; I said it in the chat."},
+            {"role": "assistant", "content": "Done, the pen is the horse house now."}
+        ],
+
+        [
+            {"role": "user", "content": "lea_4: breed the cows"},
+            {"role": "assistant", "content": "I feed them over the fence. !breed(\"cow_pen\", 2)"},
+            {"role": "system", "content": "I fed 4 cows in the cow pen; 2 calves."},
+            {"role": "assistant", "content": "Two calves in the cow pen."}
+        ],
+
+        [
+            {"role": "assistant", "content": "May I take 8 wheat from the chest at (11, 67, 53) for the feeding? Say yes or no."},
+            {"role": "user", "content": "rob_2: yes, take it"},
+            {"role": "assistant", "content": "Thank you. !allowTaking(\"wheat\", true)"},
+            {"role": "system", "content": "Done; I said it in the chat."}
+        ],
+
+        [
+            {"role": "user", "content": "max_9: you may take lapis from the chests"},
+            {"role": "assistant", "content": "Good, I will. !allowTaking(\"lapis_lazuli\", true)"},
+            {"role": "system", "content": "Done; I said it in the chat."}
+        ],
+
+        [
+            {"role": "user", "content": "nia_5: enchant my pickaxe"},
+            {"role": "assistant", "content": "I read the table's offers for you. !enchant(\"pickaxe\")"},
+            {"role": "system", "content": "I enchanted your diamond_pickaxe: Unbreaking II (13 levels, 2 lapis)."},
+            {"role": "assistant", "content": "Your pickaxe has Unbreaking II now."}
+        ],
+
+        [
+            {"role": "assistant", "content": "The table offers for your diamond_pickaxe: 1) Unbreaking I (8 levels, 1 lapis), 2) Unbreaking II (13 levels, 2 lapis), 3) Efficiency IV (30 levels, 3 lapis). Say \"take 1\", \"take 2\", \"take 3\" or \"none\"."},
+            {"role": "user", "content": "kai_8: take 2"},
+            {"role": "assistant", "content": "Offer 2 it is. !enchantTake(2)"},
+            {"role": "system", "content": "I take offer 2."}
+        ],
+
+        [
+            {"role": "user", "content": "ida_2: farm creepers until level 30"},
+            {"role": "assistant", "content": "I go to the kill spot. !killFarm(\"level 30\")"},
+            {"role": "system", "content": "I stop the farming: level 30 reached; 280 creepers, 1 hour 10 minutes; 268 gunpowder stored."},
+            {"role": "assistant", "content": "Level 30 with 280 creepers; the gunpowder is in the chests."}
         ],
 
         [
@@ -593,6 +641,13 @@
             {"role": "assistant", "content": "On it. !doRoutine(\"the farm\")"},
             {"role": "system", "content": "I start the routine \"the farm\", round 2."},
             {"role": "assistant", "content": "Round 2 of the farm, I start."}
+        ],
+
+        [
+            {"role": "user", "content": "ida_6: seal that hole at (12, 40, -7)"},
+            {"role": "assistant", "content": "I close it with stone. !sealOpening(12, 40, -7)"},
+            {"role": "system", "content": "I sealed the opening at (12, 40, -7) with 6 cobblestone."},
+            {"role": "assistant", "content": "The hole at 12 40 -7 is closed, 6 cobblestone."}
         ],
 
         [

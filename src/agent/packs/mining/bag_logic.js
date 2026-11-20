@@ -99,6 +99,53 @@ export const PICKAXE_STONE = Object.freeze(['cobblestone', 'cobbled_deepslate', 
 export const STONE_KEPT = 3;
 
 /**
+ * v0.1.4.16 (F11, the play of 2026-11-10: the mine chest filled with 33 kinds): the fillers of the mining, a copy of
+ * FILLERS of dig.js (this module imports nothing; xw_mine_chest_kinds.test.js holds the copies equal).
+ */
+export const MINE_CHEST_FILLERS = Object.freeze(['cobblestone', 'cobbled_deepslate', 'stone', 'deepslate', 'andesite', 'diorite', 'granite',
+    'tuff', 'dirt', 'netherrack', 'blackstone', 'sandstone']);
+/** F11: the raw metals of the ores. */
+export const RAW_METALS = Object.freeze(['raw_iron', 'raw_copper', 'raw_gold']);
+// F11: the ore drops, the stone kinds and the drops of digging besides the fillers and the ore blocks (`*_ore`)
+const MINE_CHEST_NAMES = Object.freeze(new Set([
+    ...MINE_CHEST_FILLERS, ...RAW_METALS, 'ancient_debris', 'coal', 'redstone', 'lapis_lazuli', 'diamond', 'emerald', 'amethyst_shard', 'quartz',
+    'calcite', 'basalt', 'smooth_basalt', 'mossy_cobblestone', 'dripstone_block', 'obsidian',
+    'gravel', 'flint', 'sand', 'red_sand', 'clay_ball', 'clay', 'coarse_dirt', 'rooted_dirt',
+]));
+
+/**
+ * F11: true for a kind of the mining, the only kinds depositAtBase puts into the chest of the mine: every ore block
+ * (`*_ore`, ancient_debris), the raw metals, coal, redstone, lapis_lazuli, diamond, emerald, amethyst_shard, quartz, the
+ * stone kinds and the fillers, gravel, flint, dirt, sand, clay. Saplings, seeds, a bed, a crafting table, wood, food and
+ * tools are none of them. The kept kinds (isKeptKind) are judged apart, as before.
+ * @param {string} name an item name
+ * @returns {boolean}
+ */
+export function isMineChestKind(name) {
+    const n = plainName(name);
+    if (n === '') {
+        return false;
+    }
+    return n.endsWith('_ore') || MINE_CHEST_NAMES.has(n);
+}
+
+/**
+ * F11: the kinds of the mining in a bag (isMineChestKind), each once, by name: the `only` of depositAtBase's store.
+ * @param {{name: string, count: number}[]} items the inventory
+ * @returns {string[]}
+ */
+export function mineChestKinds(items) {
+    const names = new Set();
+    for (const item of Array.isArray(items) ? items : []) {
+        const name = plainName(item?.name);
+        if (Number.isFinite(item?.count) && item.count > 0 && isMineChestKind(name)) {
+            names.add(name);
+        }
+    }
+    return [...names].sort();
+}
+
+/**
  * What the trip does when shouldReturn says the bag is full (Q4): `store` when a kind can be stored; `dig` when nothing
  * can be stored and a slot is still free (the trip digs on and stores when the dig fills the bag); `stop` when nothing
  * can be stored and no slot is free.
@@ -156,6 +203,21 @@ export function storedText(stored, chest) {
 export function bagFullText(mined, wanted, ore) {
     return `My bag is full and no chest within ${BAG_RULES.chestRange} blocks has room. `
         + `I stop the mining at ${Number.isFinite(mined) ? mined : 0} of ${Number.isFinite(wanted) ? wanted : 0} ${ore}.`;
+}
+
+/**
+ * v0.1.4.16 (F5, T4's W131 diagnosis): the store trip of a full bag could not get to a chest (the storage pack's reason
+ * `unreachable`: no way there, the walk blocked, or it did not open), word for word: `My bag is full and I could not get to
+ * the chest at (x, y, z): <the walk's text>`. The trip's stop line carries it as its detail (`I stopped because my inventory
+ * is full and I could not store my things: <this text>`). Without a text of the walk it ends after the position.
+ * @param {{x: number, y: number, z: number}} chest the chest it could not get to
+ * @param {string} [walkText] what the store said about the walk
+ * @returns {string}
+ */
+export function bagUnreachableText(chest, walkText) {
+    const head = `My bag is full and I could not get to the chest at ${cellText(chest)}`;
+    const text = typeof walkText === 'string' ? walkText.trim() : '';
+    return text.length > 0 ? `${head}: ${text}` : `${head}.`;
 }
 
 /**

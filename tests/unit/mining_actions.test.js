@@ -269,7 +269,8 @@ describe('digTunnel', () => {
         s.ctx.areas = [{ name: 'farm', type: 'farm', min: { x: -3, y: 50, z: -20 }, max: { x: 3, y: 60, z: -8 } }];
         const area = await M.digTunnel(s.bot, s.ctx, 10, { ...s.opts, mine: s.mine });
         assert.equal(area.reason, 'area');
-        assert.match(area.text, /I stopped because my way would lead into a protected area\.$/);
+        // v0.1.4.16 (F5): the stop sentence carries what failed and where
+        assert.match(area.text, /I stopped because my way would lead into a protected area: The tunnel would come too near a protected area at \(0, 56, -3\)\.$/);
         s.bot.inventory.list = s.bot.inventory.list.filter(i => !i.name.endsWith('_pickaxe'));
         s.bot.heldItem = null;
         const nopick = await M.digTunnel(s.bot, { ...s.ctx, areas: [] }, 2, { ...s.opts, mine: s.mine });
@@ -294,8 +295,10 @@ describe('depositAtBase', () => {
         };
         const r = await M.depositAtBase(s.bot, s.ctx, { ...s.opts, mine: s.mine, keep: { raw_iron: -1 } });
         assert.equal(r.ok, true, r.text);
-        // fix round F31: the supplies of a trip are kept whatever `keep` says
-        assert.deepEqual(calls[0], { chest: { x: -1, y: 56, z: 0 }, keep: { cobblestone: 32, chest: 1, raw_iron: -1, torch: -1, ladder: -1, iron_pickaxe: -1, bread: 8 } });
+        // fix round F31: the supplies of a trip are kept whatever `keep` says; v0.1.4.16 (F11): only the kinds of the mining in
+        // the bag are offered to the chest (`only`, mineChestKinds: here the cobblestone and the dirt of the way down)
+        assert.deepEqual(calls[0], { chest: { x: -1, y: 56, z: 0 }, keep: { cobblestone: 32, chest: 1, raw_iron: -1, torch: -1, ladder: -1, iron_pickaxe: -1, bread: 8 },
+            only: ['cobblestone', 'dirt'] });
         assert.deepEqual(calls[1].chest, { x: -1, y: 56, z: -1 });
         assert.equal(s.world.nameAt(-1, 56, -1), 'chest');
         assert.deepEqual(r.stored, { cobblestone: 20, dirt: 5 });

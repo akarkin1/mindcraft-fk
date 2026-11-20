@@ -142,24 +142,36 @@ describe('C2: the table of the hunger reflex', () => {
 describe('C3: which creepers count for the bot', () => {
     const counts = (dBot, dy, sight) => creeper.countsForBot({ dBot, dy, sight });
 
-    test('|dy| <= 4 and dBot <= 6: counts, in sight or not', () => {
-        assert.equal(counts(5, 0, false), true);
-        assert.equal(counts(6, 4, false), true);
-        assert.equal(counts(6, -4, false), true);
+    // v0.1.4.16 (F1, the play of 2026-11-11: the reflex ran from creepers in caves 12 blocks below, through rock): a creeper
+    // counts within 16 blocks, within 3 blocks of height and in sight; the 6-block bypass of the sight check is gone
+    test('F1: within 16 blocks, |dy| <= 3 and in sight: counts', () => {
+        assert.equal(counts(5, 0, true), true);
+        assert.equal(counts(6, 3, true), true);
+        assert.equal(counts(6, -3, true), true);
+        assert.equal(counts(16, 0, true), true);
+        assert.equal(counts(5, 0, undefined), true, 'without a sight reading the creeper counts as seen');
     });
 
-    test('|dy| <= 4 and in sight: counts farther than 6', () => {
+    test('F1: not in sight: does not count, however near (the 6-block bypass is gone)', () => {
+        assert.equal(counts(5, 0, false), false);
+        assert.equal(counts(6, 3, false), false);
+        assert.equal(counts(6, -3, false), false);
+    });
+
+    test('in sight: counts farther than 6, up to 16', () => {
         assert.equal(counts(8, 0, true), true);
         assert.equal(counts(12, 3, true), true);
+        assert.equal(counts(17, 0, true), false);
     });
 
     test('farther than 6 and not in sight: does not count', () => {
         assert.equal(counts(8, 0, false), false);
     });
 
-    test('|dy| > 4: does not count, near or in sight', () => {
+    test('|dy| > 3: does not count, near or in sight', () => {
+        assert.equal(counts(5, 4, true), false);
+        assert.equal(counts(5, -4, true), false);
         assert.equal(counts(5, 5, true), false);
-        assert.equal(counts(5, -5, true), false);
     });
 
     test('play test: a creeper at y 64 and the bot at y 25 with rock between them does not count', () => {

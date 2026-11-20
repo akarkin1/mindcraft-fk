@@ -209,7 +209,9 @@ describe('P2: replaceWornPickaxe and the trip', () => {
         const r = await M.mineOre(s.bot, s.ctx, 'coal', 3, { ...s.opts, newMine: true });
         assert.equal(r.ok, false);
         assert.equal(r.reason, 'pickaxe');
-        const stop = s.said.findIndex(t => t === 'My iron_pickaxe is nearly worn: 10 uses left. I have no iron for a new one. I stop the mining at 0 of 3 coal.');
+        // v0.1.4.16 (F5): the kit holds 64 cobblestone, so a stone pickaxe could be made and the craft failed: the line names
+        // ensureTool's reason (before: "I have no iron for a new one.", the finding of the play of 2026-11-11)
+        const stop = s.said.findIndex(t => t === 'My iron_pickaxe is nearly worn: 10 uses left. I could not make a new one: I need 3 iron_ingot for an iron_pickaxe and have 0. I stop the mining at 0 of 3 coal.');
         assert.ok(stop >= 0, s.said.join(' | '));
         assert.match(r.text, /^I mined 0 coal of 3\. I stopped because my pickaxe is nearly broken\./);
         assert.equal(count(s.bot, 'iron_pickaxe'), 1, 'not thrown');

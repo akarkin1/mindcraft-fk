@@ -4,7 +4,7 @@ import { VisionInterpreter } from './vision/vision_interpreter.js';
 import { Prompter } from '../models/prompter.js';
 import { initModes } from './modes.js';
 import { initBot } from '../utils/mcdata.js';
-import { containsCommand, commandExists, executeCommand, truncCommandMessage, isAction, blacklistCommands, commandCallText } from './commands/index.js';
+import { containsCommand, commandExists, executeCommand, truncCommandMessage, isAction, blacklistCommands, commandCallText, orderChainOf } from './commands/index.js';
 import { mineRoutesOn } from './commands/actions.js'; // v0.1.4.9: after index.js, which loads actions.js first
 import { ActionManager } from './action_manager.js';
 import { NPCContoller } from './npc/controller.js';
@@ -20,6 +20,7 @@ import { speak } from './speak.js';
 import { log, validateNameFormat, handleDisconnection, createDisconnectWatcher } from './connection_handler.js';
 import { initSandbox, makeCompartment } from './library/lockdown.js';
 import { WorldMemory } from './world/world_memory.js';
+import { StockPermits, PERMITS_FILE } from './world/stock_permits.js'; // v0.1.4.16 (SPEC 8.1, E6): a file store, no pack
 import { shouldResumeGoal, ResumeGuard } from './world/resume_policy.js';
 import { SkillManager, skillFlags } from './skills/skill_manager.js';
 import * as skills from './library/skills.js';
@@ -34,7 +35,7 @@ import { PlacedStore } from './areas/placed_store.js';
 import { autoHome } from './areas/auto_home.js';
 import { RuleStore } from './rules/rule_store.js';
 import { memoryPathsFor, ownFileOf, ownWorldDir, SHARED_TEXT } from './memory_paths.js';
-import { autoEatOptions, passThrough, enterBuilding, doorIsSafe, foodItems, moveOffhandBack, createDoorService } from './packs/home/index.js';
+import { autoEatOptions, passThrough, enterBuilding, leaveBuilding, doorIsSafe, foodItems, moveOffhandBack, createDoorService } from './packs/home/index.js';
 // v0.1.4.8 (X5): wakeUp of the home pack may not exist yet; always called with ?.
 import * as homePack from './packs/home/index.js';
 import { whereAmI as whereAmIOf } from './reflex/where_am_i.js';
@@ -154,6 +155,7 @@ export class Agent {
         initSandbox(settings);
         this.last_sender = null;
         this.last_order = null; // the command that a player ordered and that still runs (v0.1.4.6, G3)
+        this.order_chain = null; // v0.1.4.16 (review 16): { by, at }, the order behind the last message's chain (orderChainOf)
         this.running_commands = []; // v0.1.4.8: the commands that run now, see executeCommand
         this.last_pack_text = null; // v0.1.4.8: the text of the last pack command, for say_results
         this.count_id = count_id;
@@ -225,6 +227,8 @@ export class Agent {
                     executeCommand: (text, options) => this._runJobOrder(text, options),
                     askModel: (prompt) => this.prompter.promptPlan(prompt),
                     routines: () => this.routines, // v0.1.4.15 (part R): a routine that is due runs when no job runs
+                    // v0.1.4.16 (F3): no round of a routine while the supervisor's queue (the watch server) runs or holds commands
+                    isBusy: () => this.watch?.watch?.queue?.isActive?.() === true || (this.watch?.watch?.queue?.size?.() ?? 0) > 0,
                 });
             } catch (error) {
                 this.job = null;
@@ -339,7 +343,7 @@ export class Agent {
         // the parts of v0.1.4.7: a pack is imported only while a switch needs it; the commands of a part
         // that is off, or whose pack could not be loaded, are hidden (v0.1.4.9: also the routes pack)
         if (settings.storage_pack || settings.farming_pack || settings.wood_pack || settings.mining_pack || settings.routes_pack || settings.watch_and_learn
-            || settings.base_survey) { // v0.1.4.15 (part S): the survey pack too
+            || settings.base_survey || settings.breeding || settings.enchanting || settings.afk_kill) { // v0.1.4.15 (part S): the survey pack too; v0.1.4.16 (8.0): the three packs
             this.work_packs = await this._loadWorkPacks();
             if (!settings.world_memory && (this.work_packs.storage || this.work_packs.mining))
                 console.warn('Without world_memory the chest index and the mine store live in memory only and are lost when the bot stops.');
@@ -354,6 +358,8 @@ export class Agent {
             this.blocked_actions.push('!mineOre', '!goToMine', '!leaveMine');
         if (!settings.mining_pack || !this.work_packs?.mining)
             this.blocked_actions.push('!mines', '!forgetMine'); // v0.1.4.10 (R4): the mines the bot knows
+        if (!settings.mining_pack || !this.work_packs?.mining)
+            this.blocked_actions.push('!sealOpening'); // v0.1.4.16 (F10, E1): an opening into a cave closed with stone
         if (!settings.watch_and_learn || !this.work_packs?.watch)
             this.blocked_actions.push('!watchMe', '!continueLike', '!buildWatched'); // v0.1.4.12 (part B): learning by watching
         // the parts of v0.1.4.9: the ways of the player (routes_pack), the mine of the player (mine_routes as it
@@ -365,6 +371,18 @@ export class Agent {
         // v0.1.4.15 (part S, SPEC 1 and 2.5): the base survey, with base_survey and its pack loaded (!forgetArea stays with the areas)
         if (!settings.base_survey || !this.work_packs?.survey)
             this.blocked_actions.push('!surveyBase', '!renameArea', '!goToBase');
+        // v0.1.4.16 (SPEC 8.2, E6): the breeding pack, with breeding and its pack loaded
+        if (!settings.breeding || !this.work_packs?.breeding)
+            this.blocked_actions.push('!breed');
+        // v0.1.4.16 (SPEC 8.3, E7): the enchanting pack, with enchanting and its pack loaded
+        if (!settings.enchanting || !this.work_packs?.enchanting)
+            this.blocked_actions.push('!enchant', '!enchantTake');
+        // v0.1.4.16 (SPEC 8.4, E8): the AFK creeper kill, with afk_kill and its pack loaded
+        if (!settings.afk_kill || !this.work_packs?.afk_kill)
+            this.blocked_actions.push('!killFarm');
+        // v0.1.4.16 (SPEC 8.1, E6): the permits of the stock (a store of the world, no pack) while one of the three packs is on
+        if (!settings.breeding && !settings.enchanting && !settings.afk_kill)
+            this.blocked_actions.push('!allowTaking');
         // v0.1.4.15 (part R, SPEC 1): the routine commands only with the switch routines and the routines made
         if (!settings.routines || !this.routines)
             this.blocked_actions.push(...ROUTINE_COMMAND_NAMES);
@@ -967,7 +985,8 @@ export class Agent {
         // commands stay hidden. Never throws. loaders is for tests: a function per pack that replaces its import.
         const packs = {};
         const failed = (name, error) => console.warn(`Could not load the ${name} pack, its commands stay hidden:`, error?.message ?? error);
-        if (settings.storage_pack || settings.farming_pack || settings.wood_pack || settings.mining_pack) {
+        // v0.1.4.16 (SPEC 8.1, E6): the three packs of round two take from the chests (the chest index, fetchItem, storeItems)
+        if (settings.storage_pack || settings.farming_pack || settings.wood_pack || settings.mining_pack || settings.breeding || settings.enchanting || settings.afk_kill) {
             try {
                 packs.storage = await (loaders.storage ? loaders.storage() : import('./packs/storage/index.js'));
             } catch (error) {
@@ -981,7 +1000,8 @@ export class Agent {
                 failed('farming', error);
             }
         }
-        if (settings.wood_pack || settings.mining_pack) {
+        // v0.1.4.16 (SPEC 8.4, E8): the AFK kill makes a stone sword through ctx.tools.ensureTool when it has no weapon left
+        if (settings.wood_pack || settings.mining_pack || settings.afk_kill) {
             try {
                 packs.wood = await (loaders.wood ? loaders.wood() : import('./packs/wood/index.js'));
             } catch (error) {
@@ -1024,6 +1044,30 @@ export class Agent {
                 failed('survey', error);
             }
         }
+        // v0.1.4.16 (SPEC 8.2, E6): the breeding pack (!breed, and takeOrAsk for the other packs as ctx.stock), with breeding
+        if (settings.breeding) {
+            try {
+                packs.breeding = await (loaders.breeding ? loaders.breeding() : import('./packs/breeding/index.js'));
+            } catch (error) {
+                failed('breeding', error);
+            }
+        }
+        // v0.1.4.16 (SPEC 8.3, E7): the enchanting pack (!enchant, !enchantTake), with enchanting
+        if (settings.enchanting) {
+            try {
+                packs.enchanting = await (loaders.enchanting ? loaders.enchanting() : import('./packs/enchanting/index.js'));
+            } catch (error) {
+                failed('enchanting', error);
+            }
+        }
+        // v0.1.4.16 (SPEC 8.4, E8): the AFK creeper kill pack (!killFarm), with afk_kill
+        if (settings.afk_kill) {
+            try {
+                packs.afk_kill = await (loaders.afk_kill ? loaders.afk_kill() : import('./packs/afk_kill/index.js'));
+            } catch (error) {
+                failed('afk_kill', error);
+            }
+        }
         return packs;
     }
 
@@ -1064,6 +1108,9 @@ export class Agent {
         // v0.1.4.15 (part S, SPEC 2.4): the bases of the world (bases.json, ctx.bases), with the survey pack loaded
         if (packs.survey)
             stores.bases = this._workStore('bases', packs.survey.BaseStore, 'bases.json');
+        // v0.1.4.16 (SPEC 8.1, E6): the stock permits of the world (permits.json, ctx.permits) while one of the three packs is on
+        if (settings.breeding || settings.enchanting || settings.afk_kill)
+            stores.permits = this._workStore('permits', StockPermits, PERMITS_FILE);
         return stores;
     }
 
@@ -1139,7 +1186,8 @@ export class Agent {
             storage: null,
             tools: null,
             wood: null,
-            home: { passThrough, enterBuilding, doorIsSafe, foodItems }, // as they are, not bound (Amendment 1, part F; v0.1.4.8, I7)
+            // as they are, not bound (Amendment 1, part F; v0.1.4.8, I7); v0.1.4.16 (F4): leaveBuilding for the farm from inside a building
+            home: { passThrough, enterBuilding, leaveBuilding, doorIsSafe, foodItems },
             // v0.1.4.13 (P5): a skill of a job reports its own count; the job's counter follows it
             job: this.job ? { progress: (got) => this.job.progress?.(got) } : null,
         };
@@ -1152,6 +1200,10 @@ export class Agent {
             ctx.tools = packs.wood.TOOLS_API ?? null; // ensureTool and craftSupplies, not bound (Amendment 1, part T)
             ctx.wood = packs.wood.WOOD_API ?? null; // chopTrees, not bound
         }
+        // v0.1.4.16 (SPEC 8.1, 8.5, E6): the asking rule of the stock for the enchanting and kill packs, not bound
+        // (ctx.stock.takeOrAsk(bot, ctx, item, count, { low, purpose })), while the breeding pack is loaded
+        if (typeof packs.breeding?.takeOrAsk === 'function')
+            ctx.stock = { takeOrAsk: packs.breeding.takeOrAsk };
         return ctx;
     }
 
@@ -1480,7 +1532,14 @@ export class Agent {
         convoManager.endAllConversations();
     }
 
-    async handleMessage(source, message, max_responses=null) {
+    async handleMessage(source, message, options=null) {
+        // v0.1.4.16 (F9): the third argument is { quiet, max_responses }; a number is max_responses, as before (the init
+        // message, the self prompter). quiet: the message is a command of the watch queue (the supervisor's run): the echo
+        // `*<owner> used <command>*` and the model's command echo are skipped; the command's own lines are unchanged.
+        // The flag goes on to executeCommand as `quiet` in its options and into agent.last_order (F8 reads it there).
+        const opts = options !== null && typeof options === 'object' ? options : {};
+        let max_responses = typeof options === 'number' ? options : (typeof opts.max_responses === 'number' ? opts.max_responses : null);
+        const quiet = opts.quiet === true;
         await this.checkTaskDone();
         if (!source || !message) {
             console.warn('Received empty message from', source);
@@ -1500,6 +1559,16 @@ export class Agent {
         // v0.1.4.6, G3: a command that a player types or that answers a player is an order, from the time of the message
         const from_player = !self_prompt && !from_other_bot;
         const order_time = { at: Date.now(), atTimeOfDay: this.bot?.time?.timeOfDay ?? null };
+        // v0.1.4.16 (review 16, findings 1 and 5): the order behind this message's chain (a player's or the supervisor's, or the
+        // model's own for an AUTO MESSAGE, a self prompt and the other system lines); the model's commands of the loop below
+        // get it in their options. A pack's line (sayText) and a refusal added to the history change nothing of it.
+        let chain = orderChainOf(source, message, { quiet, self: this.name, at: order_time.at });
+        // a goal (!goal) is a standing order of whoever set it: its self prompts carry that order (V-1, the lead)
+        const goalBy = this.self_prompter?.started_by;
+        if (source === 'system' && typeof message === 'string' && message.startsWith('You are self-prompting with the goal:')
+            && typeof goalBy === 'string' && goalBy !== '' && goalBy !== 'model')
+            chain = { by: goalBy, at: order_time.at, goal: true }; // review 16b, finding 4: the goal's mark (orderRefusal)
+        this.order_chain = chain;
 
         if (!self_prompt && !from_other_bot) { // from user, check for forced commands
             const user_command_name = containsCommand(message);
@@ -1508,7 +1577,8 @@ export class Agent {
                     this.routeResponse(source, `Command '${user_command_name}' does not exist.`);
                     return false;
                 }
-                this.routeResponse(source, `*${source} used ${user_command_name.substring(1)}*`);
+                if (!quiet) // F9: no echo for a command of the watch queue
+                    this.routeResponse(source, `*${source} used ${user_command_name.substring(1)}*`);
                 if (user_command_name === '!newAction') {
                     // all user-initiated commands are ignored by the bot except for this one
                     // add the preceding message to the history to give context for newAction
@@ -1516,9 +1586,9 @@ export class Agent {
                 }
                 // v0.1.4.8: text is the whole command (for the restart context and the guard), typed marks an
                 // order that the player typed in the chat (the guard, !setMode, the repeat guard)
-                const order = { by: source, ...order_time, command: user_command_name, text: commandCallText(message), typed: true };
+                const order = { by: source, ...order_time, command: user_command_name, text: commandCallText(message), typed: true, quiet };
                 this.last_order = order;
-                let execute_res = await executeCommand(this, message, { typed: true, by: source });
+                let execute_res = await executeCommand(this, message, { typed: true, by: source, quiet });
                 if (this.last_order === order)
                     this.last_order = null; // the ordered command ended
                 if (execute_res) 
@@ -1563,7 +1633,8 @@ export class Agent {
             if (res.trim().length === 0) {
                 console.warn('no response')
                 // v0.1.4.8: the model said nothing (or a tab) after a work skill; with say_results its text goes to the chat
-                if (settings.say_results && pack_text !== null)
+                // v0.1.4.16 (B-13): never the short answer of a command that said its line itself (F2's SAID_TEXT)
+                if (settings.say_results && pack_text !== null && pack_text !== 'Done; I said it in the chat.')
                     this.routeResponse(source, pack_text);
                 break; // empty response ends loop
             }
@@ -1584,7 +1655,13 @@ export class Agent {
                 if (checkInterrupt()) break;
                 this.self_prompter.handleUserPromptedCmd(self_prompt, isAction(command_name));
 
-                if (settings.show_command_syntax === "full") {
+                if (quiet) {
+                    // v0.1.4.16 (F9): no echo of the model's command for a message of the watch queue; the words before it are said
+                    let pre_message = res.substring(0, res.indexOf(command_name)).trim();
+                    if (pre_message.length > 0)
+                        this.routeResponse(source, pre_message);
+                }
+                else if (settings.show_command_syntax === "full") {
                     this.routeResponse(source, res);
                 }
                 else if (settings.show_command_syntax === "shortened") {
@@ -1602,11 +1679,11 @@ export class Agent {
                         this.routeResponse(source, pre_message);
                 }
 
-                const order = from_player ? { by: source, ...order_time, command: command_name, text: commandCallText(res), typed: false } : null;
+                const order = from_player ? { by: source, ...order_time, command: command_name, text: commandCallText(res), typed: false, quiet } : null;
                 if (order)
                     this.last_order = order;
                 this.last_pack_text = null;
-                let execute_res = await executeCommand(this, res, { typed: false });
+                let execute_res = await executeCommand(this, res, { typed: false, quiet, chain });
                 if (order && this.last_order === order)
                     this.last_order = null; // the ordered command ended
                 if (typeof execute_res === 'string' && execute_res !== '' && execute_res === this.last_pack_text)

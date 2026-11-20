@@ -27,7 +27,37 @@ export const STOP_REASONS = Object.freeze({
     error: 'something went wrong',
     // v0.1.4.13 (P2): the pickaxe in hand reached 10 uses and no other could be taken or made
     worn: 'my pickaxe is nearly worn',
+    // v0.1.4.16 (F5): a dig that failed, timed out or met an unbreakable block on the way down; the slots are filled by
+    // stopReasonText from the block's name and position
+    dig_failed: 'I could not dig the <block> at (x, y, z)',
 });
+
+/**
+ * v0.1.4.16 (F5): the words of a stop reason with its slots filled: `<block>` with the block's name (`block` without
+ * one), ` at (x, y, z)` with the position (left out without one). An unknown reason gives STOP_REASONS.error.
+ * @param {string|null} reason
+ * @param {{block?: string|null, at?: {x,y,z}|null}} [slots]
+ * @returns {string}
+ */
+export function stopReasonText(reason, slots = {}) {
+    const words = STOP_REASONS[reason] ?? STOP_REASONS.error;
+    const at = slots?.at;
+    const hasAt = at && Number.isFinite(at.x) && Number.isFinite(at.y) && Number.isFinite(at.z);
+    return words
+        .replace('<block>', typeof slots?.block === 'string' && slots.block.length > 0 ? slots.block : 'block')
+        .replace(' at (x, y, z)', hasAt ? ` at ${posText(at)}` : '');
+}
+
+// F5: `I stopped because <reason>.`, or with the step's text `I stopped because <reason>: <text>`; a text that only repeats
+// the reason (the dig_failed line of the way down) is not added twice.
+function stoppedBecause(reason, detail, slots) {
+    const why = stopReasonText(reason, slots);
+    const text = typeof detail === 'string' ? detail.trim() : '';
+    if (text.length === 0 || text.replace(/\.$/, '') === why) {
+        return `I stopped because ${why}.`;
+    }
+    return `I stopped because ${why}: ${text}`;
+}
 
 /** Fixed texts. */
 export const TEXTS = Object.freeze({
@@ -46,7 +76,41 @@ export const TEXTS = Object.freeze({
     undergroundNoMine: 'I am underground, not in a mine I know. A new mine starts from the surface: say "leave the mine" or "go to the surface" first.',
     // v0.1.4.11, F14: a shaft from inside never starts on the parent's way out
     noShaftCell: 'I find no floor cell for a shaft here that leaves the way out free. Stand elsewhere in the room and tell me again.',
+    // v0.1.4.16 (F5): the first line of a trip ordered with new_mine true
+    newMineHere: 'I start a new mine here, as you said.',
 });
+
+/**
+ * v0.1.4.16 (F5): the way down meets lava, water or a cave the shaft cannot get around:
+ * `Lava, water or caves block the way down at (10, 40, -3): lava, and I found no way around them.`
+ * @param {{x,y,z}|null} at the cell that blocked
+ * @param {string|null} block its name (`a block` when unknown)
+ * @returns {string}
+ */
+export function wayDownBlockedText(at, block) {
+    const name = typeof block === 'string' && block.length > 0 ? block : 'a block';
+    return `Lava, water or caves block the way down at ${posText(at)}: ${name}, and I found no way around them.`;
+}
+
+/**
+ * v0.1.4.16 (F5): a dig that failed, timed out or met an unbreakable block: `I could not dig the bedrock at (10, 40, -3).`
+ * @param {string|null} block
+ * @param {{x,y,z}|null} at
+ * @returns {string}
+ */
+export function digFailedText(block, at) {
+    return `${stopReasonText('dig_failed', { block, at })}.`;
+}
+
+/**
+ * v0.1.4.16 (F5): a forgotten tunnel the bot stands in became a mine again: `This tunnel is a mine now: "mine_2" at (10, 30, -3).`
+ * @param {string} name the name as the store keeps it (mine_2)
+ * @param {{x,y,z}} at the bot's feet
+ * @returns {string}
+ */
+export function tunnelIsMineText(name, at) {
+    return `This tunnel is a mine now: "${name}" at ${posText(at)}.`;
+}
 
 function listWords(words) {
     if (words.length <= 1) {
@@ -104,7 +168,11 @@ export function mineText(mine) {
  * The text of mineOre (spec M4):
  * `I mined 8 raw_iron. The mine is at (20, 64, -14), its tunnel is 37 blocks long at level 16. I also stored 96 cobblestone in the chest of the mine.`
  * or with less than asked `I mined 5 raw_iron of 8. I stopped because my pickaxe is nearly broken. The mine is at ...`
- * @param {{item: string, mined: number, wanted: number, reason?: string|null, mine?: object, stored?: object, extra?: string}} r
+ * v0.1.4.16 (F5): with the text of the step that stopped the trip (`detail`) the stop sentence carries it:
+ * `I stopped because I got stuck: I could not get to the end of the tunnel at (10, 16, 20).`; `block` and `at` fill the
+ * slots of a reason (dig_failed).
+ * @param {{item: string, mined: number, wanted: number, reason?: string|null, mine?: object, stored?: object, extra?: string,
+ *   detail?: string|null, block?: string|null, at?: {x,y,z}|null}} r
  * @returns {string}
  */
 export function mineOreText(r) {
@@ -115,8 +183,7 @@ export function mineOreText(r) {
         parts.push(`I mined ${mined} ${r.item}.`);
     } else {
         parts.push(`I mined ${mined} ${r.item} of ${wanted}.`);
-        const why = STOP_REASONS[r?.reason] ?? STOP_REASONS.error;
-        parts.push(`I stopped because ${why}.`);
+        parts.push(stoppedBecause(r?.reason, r?.detail, { block: r?.block, at: r?.at }));
     }
     const where = mineText(r?.mine);
     if (where) {
@@ -274,6 +341,25 @@ export function wornStopText(name, uses, mined, wanted, ore, lacking = null) {
 }
 
 /**
+ * v0.1.4.16 (F5): the pickaxe in hand is nearly worn, the bag holds material for a new one and the craft failed:
+ * `My stone_pickaxe is nearly worn: 3 uses left. I could not make a new one: I need 2 stick for a stone_pickaxe and have 0. I stop the mining at 0 of 6 iron.`
+ * @param {string} name the pickaxe item
+ * @param {number} uses its uses left
+ * @param {string} reason ensureTool's reason (its text; a trailing period is dropped)
+ * @param {number} mined
+ * @param {number} wanted
+ * @param {string|object} ore
+ * @returns {string}
+ */
+export function wornCraftFailedText(name, uses, reason, mined, wanted, ore) {
+    const row = oreOf(ore);
+    const thing = row ? row.ore : String(ore ?? 'ore');
+    const why = String(reason ?? '').trim().replace(/\.$/, '') || 'the craft failed';
+    return `My ${name} is nearly worn: ${Number.isFinite(uses) ? uses : 0} uses left. I could not make a new one: ${why}. `
+        + `I stop the mining at ${Number.isFinite(mined) ? mined : 0} of ${Number.isFinite(wanted) ? wanted : 0} ${thing}.`;
+}
+
+/**
  * v0.1.4.13 fix 2: the trip stops because a fresh pickaxe did not help twice in a row: no pickaxe of the bag that is
  * not nearly worn breaks the next block. `I cannot go on: my iron_pickaxe is nearly worn and no other pickaxe breaks
  * the next block. I stop the mining at 2 of 4 iron.`
@@ -317,8 +403,10 @@ export function descendText(r) {
 }
 
 /**
- * The text of digTunnel.
- * @param {{steps: number, length: number, collected?: object, torches?: number, patches?: number, reason?: string|null}} r
+ * The text of digTunnel. v0.1.4.16 (F5): with `detail` (the text of the step that stopped it) the stop sentence carries
+ * it, as mineOreText does.
+ * @param {{steps: number, length: number, collected?: object, torches?: number, patches?: number, reason?: string|null,
+ *   detail?: string|null, block?: string|null, at?: {x,y,z}|null}} r
  * @returns {string}
  */
 export function tunnelText(r) {
@@ -326,7 +414,7 @@ export function tunnelText(r) {
     const got = countsText(r?.collected ?? {});
     parts.push(`I collected ${got || 'no ore'}, placed ${r?.torches ?? 0} torches and closed ${r?.patches ?? 0} holes.`);
     if (r?.reason && STOP_REASONS[r.reason]) {
-        parts.push(`I stopped because ${STOP_REASONS[r.reason]}.`);
+        parts.push(stoppedBecause(r.reason, r?.detail, { block: r?.block, at: r?.at }));
     }
     return parts.join(' ');
 }

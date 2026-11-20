@@ -174,6 +174,7 @@
     { "say": "forget the mine called old_mine", "expect": ["!forgetMine"], "part": "mining_pack" },
     { "say": "the mine by the river caved in, forget it", "expect": ["!forgetMine", "!mines"], "part": "mining_pack" },
     { "say": "that mine is gone, delete it from your list", "expect": ["!forgetMine", "!mines"], "part": "mining_pack" },
+    { "say": "seal that hole at (12, 40, -7)", "expect": ["!sealOpening"], "part": "mining_pack" },
 
     { "say": "watch me", "expect": ["!watchMe"], "part": "watch_and_learn" },
     { "say": "continue like this, 7 by 10", "expect": ["!continueLike"], "part": "watch_and_learn" },
@@ -191,6 +192,23 @@
     { "say": "look around and remember every place of our base", "expect": ["!surveyBase"], "part": "base_survey" },
     { "say": "that is the wheat farm, not carrots", "expect": ["!renameArea"], "part": "base_survey" },
     { "say": "rename the cow pen to the barn", "expect": ["!renameArea"], "part": "base_survey" },
+    { "say": "rename pen to horse_house", "expect": ["!renameArea"], "part": "base_survey" },
+    { "say": "rename the pen to horse house", "expect": ["!renameArea"], "part": "base_survey" },
+    { "say": "call the cow pen cows from now on", "expect": ["!renameArea"], "part": "base_survey" },
+    { "say": "the pen is the horse house, rename it", "expect": ["!renameArea"], "part": "base_survey" },
     { "say": "go to the east base", "expect": ["!goToBase"], "part": "base_survey" },
-    { "say": "walk back to the base", "expect": ["!goToBase", "!goToRememberedPlace"], "part": "base_survey" }
+    { "say": "walk back to the base", "expect": ["!goToBase", "!goToRememberedPlace"], "part": "base_survey" },
+
+    { "say": "breed the cows", "expect": ["!breed"], "part": "breeding" },
+    { "say": "breed 4 pigs in the pig pen", "expect": ["!breed"], "part": "breeding" },
+    { "say": "you may take wheat from the chests", "expect": ["!allowTaking"], "part": "breeding" },
+    { "say": "don't take the lapis from the chests any more", "expect": ["!allowTaking"], "part": "breeding" },
+
+    { "say": "enchant my pickaxe", "expect": ["!enchant"], "part": "enchanting" },
+    { "say": "enchant the sword, sharpness", "expect": ["!enchant"], "part": "enchanting" },
+    { "say": "take the second offer of the table", "expect": ["!enchantTake"], "part": "enchanting" },
+    { "say": "none of those offers, give the pickaxe back", "expect": ["!enchantTake"], "part": "enchanting" },
+
+    { "say": "farm creepers until level 30", "expect": ["!killFarm"], "part": "afk_kill" },
+    { "say": "go to the kill room and farm creepers for 20 minutes", "expect": ["!killFarm"], "part": "afk_kill" }
 ]

@@ -19,6 +19,7 @@ import { formatDollars } from '../cost/cost_meter.js';
 import { TEXTS } from './texts.js';
 import { distance, eventLine, eventsSince, plainDimension, pointsText, posText, sinceMs } from './events_logic.js';
 import { TOOLS } from './mcp_logic.js';
+import { dayPhaseLabel } from '../clock_logic.js'; // v0.1.4.16 (F8, E3): the one clock of phaseOf
 import {
     DIGEST_RULES, WAIT_RULES, bagItems, chatLine, createCursorStore, digestLines, isPlayerLine, parseCursor, runningOf, snapshotOf, waitTimeout,
     wakeReason,
@@ -59,18 +60,12 @@ function lines(list) {
     return list.filter((line) => typeof line === 'string' && line !== '').join('\n');
 }
 
-/** The part of the day: day, dusk, night or dawn. */
+/**
+ * The part of the day. v0.1.4.16 (F8): the labels of the one clock (dayPhase of clock_logic.js): Morning, Afternoon,
+ * Evening, Night or Dawn; `unknown` without a time.
+ */
 export function phaseOf(timeOfDay) {
-    if (typeof timeOfDay !== 'number' || !Number.isFinite(timeOfDay))
-        return 'unknown';
-    const t = ((timeOfDay % 24000) + 24000) % 24000;
-    if (t < 12000)
-        return 'day';
-    if (t < 13000)
-        return 'dusk';
-    if (t < 23000)
-        return 'night';
-    return 'dawn';
+    return dayPhaseLabel(timeOfDay, 'unknown');
 }
 
 /** `12 s ago`, `3 min ago`, `2 h ago`. */
@@ -730,3 +725,44 @@ registerSupervisorTools(registerTool, settingsOfAgent);
 // v0.1.4.15 (part R, SPEC 3.5): the tool routines (the routines the owner saved, as JSON), registered the same way and
 // only with the switch routines; never in the pinned table TOOL_NAMES
 registerRoutinesTool(registerTool, settingsOfAgent);
+
+/**
+ * v0.1.4.16 (F9): the tool runs: the commands the run tool handed to the bot in the last hour (the queue's items), with
+ * their ids and states, as JSON `{ runs: [{ id, command, state, text, startedAt, endedAt }] }`, so a supervisor script polls
+ * it for a run that answered `Still running: <command> (run <id>)` instead of taking that as finished. Registered through
+ * registerTool, never in the pinned table TOOL_NAMES.
+ */
+export const RUNS_TOOL = Object.freeze({
+    name: 'runs',
+    schema: Object.freeze({
+        description: 'The commands the run tool handed to the bot in the last hour, as JSON: id, command, state (running, done or failed), text, startedAt, endedAt. A run that answered "Still running: <command> (run <id>)" is not finished: poll this for that id (or wait for done) before you take the command as done.',
+        inputSchema: Object.freeze({ type: 'object', properties: {}, additionalProperties: false }),
+    }),
+    handler: async (agent, args, watch) => {
+        try {
+            const stateOf = ensureState(agent, watch);
+            const list = stateOf?.queue?.runs?.() ?? [];
+            return JSON.stringify({ runs: Array.isArray(list) ? list : [] });
+        } catch {
+            return JSON.stringify({ runs: [] });
+        }
+    },
+});
+
+/**
+ * Registers the tool runs with registerTool. Never throws.
+ * @param {(name: string, schema: object, handler: Function) => boolean} register
+ * @returns {boolean} true when it was added
+ */
+export function registerRunsTool(register) {
+    if (typeof register !== 'function')
+        return false;
+    try {
+        return register(RUNS_TOOL.name, RUNS_TOOL.schema, RUNS_TOOL.handler) === true;
+    } catch (error) {
+        console.warn('Could not register the tool runs:', error?.message ?? error);
+        return false;
+    }
+}
+
+registerRunsTool(registerTool);

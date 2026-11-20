@@ -16,6 +16,9 @@ const TOKEN = `wv-${process.pid}-${Date.now()}`;
 const SIX = ['state', 'inventory', 'chat', 'places', 'events', 'say'];
 // v0.1.4.13 (part S): the five tools of the supervisor join the six
 const ELEVEN = [...SIX, 'digest', 'wait', 'run', 'look', 'server'];
+// v0.1.4.16 (F9): the tool runs, registered through registerTool when tools.js loads, joins the list the server gives;
+// the pinned table TOOL_NAMES of mcp_logic stays the eleven
+const TWELVE = [...ELEVEN, 'runs'];
 
 // ------------------------------------------------------------------------------------------------ pure answers
 
@@ -228,9 +231,9 @@ describe('4.1 the server on 127.0.0.1: the same answers over HTTP', () => {
         assert.equal(r.json.result.protocolVersion, '2025-03-26');
     });
 
-    test('tools/list over HTTP: the eleven tools', async () => {
+    test('tools/list over HTTP: the twelve tools (the eleven and runs)', async () => {
         const r = await post(server.port, { body: { jsonrpc: '2.0', id: 2, method: 'tools/list' } });
-        assert.deepEqual(r.json.result.tools.map((t) => t.name).sort(), [...ELEVEN].sort());
+        assert.deepEqual(r.json.result.tools.map((t) => t.name).sort(), [...TWELVE].sort());
     });
 
     test('tools/call say "/kill": isError and "I do not run server commands."; nothing handed to the bot', async () => {

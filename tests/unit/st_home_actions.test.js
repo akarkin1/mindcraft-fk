@@ -250,13 +250,17 @@ describe('C3: creeperCheck on the surroundings of the bot', () => {
         assert.equal(home.creeperCheck(bot, ctxOf(true)).step, 'none');
     });
 
-    test('a creeper 5 blocks away behind rock, at the same height: it counts (6 or less)', () => {
+    // v0.1.4.16 (F1, SPEC 3 F1): the 6-block bypass of the sight check is gone; v0.1.4.8 said "it counts (6 or less)"
+    test('a creeper 5 blocks away behind rock, at the same height: no reaction (F1); the same creeper in sight counts', () => {
         const w = tunnelWorld();
         w.fill(3, 25, 0, 3, 26, 0, 'stone');
         const bot = makeFakeBot({ world: w, pos: [0.5, 25, 0.5] });
         const creeper = mobEntity('creeper', [5.5, 25, 0.5]);
         bot.entities[creeper.id] = creeper;
-        assert.notEqual(home.creeperCheck(bot, ctxOf(true)).step, 'none');
+        assert.equal(home.creeperCheck(bot, ctxOf(true)).step, 'none');
+        const open = makeFakeBot({ world: tunnelWorld(), pos: [0.5, 25, 0.5] });
+        open.entities[creeper.id] = creeper;
+        assert.notEqual(home.creeperCheck(open, ctxOf(true)).step, 'none');
     });
 });
 

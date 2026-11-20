@@ -1,8 +1,11 @@
 // Moving the bot for the home pack: Movements that do not dig or place near protected areas, and
 // a goto with an upper time limit that ends on an interrupt and never throws.
+// v0.1.4.16 (F10): every walk honours the no_enter areas it is given (applyKeepOut: the step cost of keep_out_logic.js),
+// so no walk of the home, farming, wood or mining pack crosses a cave mouth the survey saved.
 import pf from 'mineflayer-pathfinder';
 import { Vec3 } from 'vec3';
-import { containsPos, expandBox } from './box_math.js';
+import { KEEP_OUT_COST, insideArea } from '../../areas/keep_out_logic.js';
+import { containsPos, expandBox, isBox } from './box_math.js';
 import { botPos, clockOf } from './context.js';
 import { goalAvoiding, isNoStandBlock, isNoStandCell } from './stand_logic.js';
 import { maySprint } from './food_logic.js'; // v0.1.4.14 (P-29): no sprint below 7 food points
@@ -64,6 +67,57 @@ export function safeGoal(bot, goal) {
     return goalAvoiding(goal, node => isNoStandCell(get, node));
 }
 
+function plainDimension(value) {
+    return typeof value === 'string' && value.length > 0 ? value.replace(/^minecraft:/, '') : null;
+}
+
+/**
+ * The no_enter areas of `areas` (v0.1.4.16, F10) as a step cost of the path search: every cell inside one of them costs
+ * KEEP_OUT_COST (100, keep_out_logic.js) more, so a walk crosses a cave mouth the survey saved or an area a rule keeps
+ * the bot out of only when there is no other way. An area that holds the start of the walk (`options.from`, the bot's
+ * position) is free, so the bot can walk out of it; an area of another dimension (`options.dimension`) does not count.
+ * `areas` may also be a function `(pos) => area|null` (the area at a cell) for a caller without the list. Returns the
+ * movements. Never throws.
+ * @param {object} movements a pathfinder Movements object
+ * @param {object[]|((pos: {x,y,z}) => object|null)} areas the areas (every kind; only those with flags.no_enter count)
+ * @param {{from?: {x,y,z}|null, dimension?: string|null}} [options]
+ * @returns {object} movements
+ */
+export function applyKeepOut(movements, areas, options = {}) {
+    try {
+        if (!movements || typeof movements !== 'object') {
+            return movements;
+        }
+        if (!Array.isArray(movements.exclusionAreasStep)) {
+            movements.exclusionAreasStep = [];
+        }
+        const from = options?.from ?? null;
+        const keepOut = area => area?.flags?.no_enter === true && isBox(area) && !(from && insideArea(area, from));
+        let cost;
+        if (typeof areas === 'function') {
+            cost = block => {
+                try {
+                    return block?.position && keepOut(areas(block.position)) ? KEEP_OUT_COST : 0;
+                } catch {
+                    return 0;
+                }
+            };
+        } else {
+            const dim = plainDimension(options?.dimension);
+            const list = (Array.isArray(areas) ? areas : []).filter(keepOut)
+                .filter(area => dim === null || plainDimension(area.dimension) === null || plainDimension(area.dimension) === dim);
+            if (list.length === 0) {
+                return movements;
+            }
+            cost = block => (block?.position && list.some(area => insideArea(area, block.position)) ? KEEP_OUT_COST : 0);
+        }
+        movements.exclusionAreasStep.push(cost);
+    } catch (err) {
+        console.warn('Home pack: could not apply the keep-out areas to the walk:', err?.message ?? err);
+    }
+    return movements;
+}
+
 /**
  * Movements for the home pack. By default they never dig (`canDig = false`) and never place
  * (`allow1by1towers = false`, no scaffolding blocks). With `dig: true` digging is allowed except
@@ -71,6 +125,7 @@ export function safeGoal(bot, goal) {
  * Fix round (X1): a composter, cauldron, hopper, chest, fence or wall counts like a fence of the path
  * search: no ground to stand on and nothing to walk through (the pathfinder took a composter for
  * ground, and the bot fell into it).
+ * v0.1.4.16 (F10): the no_enter areas among `areas` get the step cost of applyKeepOut, digging or not.
  * @param {object} bot
  * @param {{dig?: boolean, doors?: boolean, sprint?: boolean, areas?: object[]}} [options]
  *   doors: the pathfinder may open doors and gates (default true); sprint: default true
@@ -94,6 +149,9 @@ export function makeMovements(bot, options = {}) {
         if (areas.length > 0) {
             m.exclusionAreasBreak.push(block => (block?.position && areas.some(a => containsPos(a, block.position)) ? 100 : 0));
         }
+    }
+    if (Array.isArray(options.areas) && options.areas.length > 0) {
+        applyKeepOut(m, options.areas, { from: botPos(bot), dimension: bot?.game?.dimension ?? null });
     }
     m.allow1by1towers = false;
     m.scafoldingBlocks = [];

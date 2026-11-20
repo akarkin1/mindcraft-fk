@@ -369,6 +369,35 @@ export function cycleText(name, parts) {
 }
 
 /**
+ * v0.1.4.16 (F3): the cane cut and picked up: `I cut 12 sugar cane at "cane" and picked them up.`
+ * @param {number} n the cane blocks cut (every block above the bottom one of each column)
+ * @param {string} name the cane area
+ * @returns {string}
+ */
+export function caneCutText(n, name) {
+    return `I cut ${count(n)} sugar cane at "${typeof name === 'string' ? name : ''}" and picked them up.`;
+}
+
+/**
+ * v0.1.4.16 (F3): a cane area with nothing above the bottom row: `The cane at "cane" has not grown yet.`
+ * @param {string} name
+ * @returns {string}
+ */
+export function caneNotGrownText(name) {
+    return `The cane at "${typeof name === 'string' ? name : ''}" has not grown yet.`;
+}
+
+/**
+ * v0.1.4.16 (F4): a farm command started inside a building that the bot could not leave: `I cannot get out of "home" to
+ * the farm.`
+ * @param {string} name the building area
+ * @returns {string}
+ */
+export function cannotLeaveText(name) {
+    return `I cannot get out of "${typeof name === 'string' ? name : ''}" to the farm.`;
+}
+
+/**
  * `I know no farm "wheat". I know the farms "farm_a", "farm_b".` (at most 6 names), or with no farm
  * at all the text TEXTS.noFarm behind it.
  * @param {string} name

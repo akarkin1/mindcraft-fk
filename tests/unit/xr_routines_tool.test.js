@@ -45,8 +45,8 @@ describe('SPEC 3.5: the tool routines', () => {
         const out = await W.runTool(agentWithRoutines(), {}, 'routines', {});
         assert.equal(out.isError, false);
         assert.deepEqual(JSON.parse(out.text), { routines: [{
-            name: 'the farm', text: 'keep the farm going every 5 minutes', every: 5, condition: null, state: 'active', rounds: 0, fails: 0, lastRound: null, steps: null,
-        }] });
+            name: 'the farm', text: 'keep the farm going every 5 minutes', every: 5, condition: null, state: 'active', rounds: 0, runs: 0, fails: 0, lastRound: null, steps: null,
+        }] }); // v0.1.4.16 (F3): runs, the rounds started
         const none = await W.runTool({ name: 'Luna' }, {}, 'routines', {});
         assert.deepEqual(JSON.parse(none.text), { routines: [] }, 'an agent without routines: an empty list');
         assert.equal(W.unregisterTool('routines'), true);

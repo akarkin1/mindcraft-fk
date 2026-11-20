@@ -449,7 +449,9 @@ export async function digClear(bot, p, options = {}) {
         const r = await digBlock(bot, p, { clock });
         dug += r.dug;
         if (!r.ok) {
-            return r.worn ? { ok: false, reason: r.reason, dug, worn: r.worn } : { ok: false, reason: r.reason, dug };
+            // v0.1.4.16 (F5): the block's name goes with the failure, for the stop line that names it
+            const name = typeof r.name === 'string' ? r.name : null;
+            return r.worn ? { ok: false, reason: r.reason, dug, name, worn: r.worn } : { ok: false, reason: r.reason, dug, name };
         }
         const above = logicName(blockAt(bot, { x: p.x, y: p.y + 1, z: p.z }));
         if (!isFalling(aboveBefore) && !isFalling(above) && !fallingNear(bot, p)) {

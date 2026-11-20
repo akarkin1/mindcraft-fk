@@ -13,7 +13,10 @@ const PURE = ['box_math', 'door_logic', 'night_logic', 'creeper_logic', 'shelter
 const EXECUTING = ['motion', 'doors', 'shelter', 'sleep', 'food', 'creeper', 'bed', 'index'];
 const PACKAGES = ['vec3', 'mineflayer-pathfinder'];
 // v0.1.4.8: area_kinds.js is the one module of the pack that reads the table of the area types (part D)
-const FOREIGN = { area_kinds: ['area_store.js'] };
+// v0.1.4.16 (F1, F10): creeper_logic.js and motion.js read the keep-out rule of src/agent/areas/keep_out_logic.js (pure, no
+// imports): isKeepOutArea for the flee points, insideArea and KEEP_OUT_COST for the step cost of every walk
+const FOREIGN = { area_kinds: ['area_store.js'], creeper_logic: ['keep_out_logic.js'] };
+const FOREIGN_EXECUTING = { motion: ['../../areas/keep_out_logic.js'] };
 
 describe('import rules', () => {
     for (const name of PURE) {
@@ -27,13 +30,19 @@ describe('import rules', () => {
         assert.deepEqual(specs.filter(s => !s.startsWith('./')), ['../../areas/area_store.js']);
     });
 
+    test('creeper_logic.js reads the keep-out rule of src/agent/areas/keep_out_logic.js and nothing else outside the pack (F1)', () => {
+        const { static: specs } = importsOf(`${DIR}creeper_logic.js`);
+        assert.deepEqual(specs.filter(s => !s.startsWith('./')), ['../../areas/keep_out_logic.js']);
+    });
+
     for (const name of EXECUTING) {
         test(`${name}.js imports no library, no models, no mineflayer itself`, () => {
             const { static: specs, require } = importsOf(`${DIR}${name}.js`);
             assert.equal(require, 0);
             for (const spec of specs) {
                 if (spec.startsWith('.')) {
-                    assert.ok(spec.startsWith('./') && !spec.includes('/library/') && !/models|mcdata/.test(spec), `${name}.js imports ${spec}`);
+                    const foreign = (FOREIGN_EXECUTING[name] ?? []).includes(spec);
+                    assert.ok((spec.startsWith('./') || foreign) && !spec.includes('/library/') && !/models|mcdata/.test(spec), `${name}.js imports ${spec}`);
                 } else {
                     assert.ok(PACKAGES.includes(spec), `${name}.js imports the package ${spec}`);
                 }

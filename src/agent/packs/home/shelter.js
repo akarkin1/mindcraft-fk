@@ -9,7 +9,7 @@ import { creeperCheck, creeperMemory, readCreepers, runCreeperProcedure } from '
 import { doorCenter, sideOf } from './door_logic.js';
 import { closeDoor, doorState, findOpenables, passThrough } from './doors.js';
 import { blockReader, goals, gotoGoal, isNear, makeMovements, walkNear } from './motion.js';
-import { isNight } from './night_logic.js';
+import { isShelterNight } from './night_logic.js'; // v0.1.4.16 (F8): the shelter reflex keeps its night from sunset (12000)
 import { chooseCoverBlock, chooseShelter, chooseStandingPlace, isBuildingArea, isFallingBlockName, isInsideArea, isRouteWithinArea, orderEntrances,
     roomCenter, shelterHere, withEdge } from './shelter_logic.js';
 import { isBedName } from './sleep_logic.js';
@@ -312,6 +312,65 @@ export async function enterBuilding(bot, rawArea, ctx = {}, options = {}) {
     return last.ladder ? { ...inside, text: `${last.ladder} ${inside.text}` } : inside;
 }
 
+/** v0.1.4.16 (F4): the entrances of a building tried on the way out, at most. */
+const LEAVE_ATTEMPTS = 3;
+
+/**
+ * v0.1.4.16 (F4): out of the building the bot stands in. When the bot stands inside a saved building area (a home or a
+ * building with walls, inside its interior as isInsideArea reads it), it walks to the nearest entrance (a door or a gate;
+ * no trapdoor) and passes through it outward (`passThrough` toward a point beyond the door), without digging; the next
+ * entrance is tried when one fails, up to three. The model is the building part of goToSurface (library/skills.js).
+ * Outside every building nothing moves. Never throws.
+ * @param {object} bot
+ * @param {object} [ctx] { areas, log, now, ... }
+ * @param {object} [options] as passThrough (now, wait for tests)
+ * @returns {Promise<{ok: boolean, area: object|null, reason: string|null, text: string}>} area: the building left (or not
+ *   left), null when the bot stood in none; reasons: outside (ok), left (ok), no_entrance, no_path, interrupted, error
+ */
+export async function leaveBuilding(bot, ctx = {}, options = {}) {
+    const clock = clockOf(ctx, options);
+    try {
+        const read = blockReader(bot);
+        const pos = botPos(bot);
+        const areas = listAreas(ctx, dimensionOf(bot)).map(a => withEdge(a, read));
+        const area = pos ? areas.find(a => isBuildingArea(a) && isInsideArea(a, pos)) ?? null : null;
+        if (!area) {
+            return { ok: true, area: null, reason: 'outside', text: '' };
+        }
+        const name = area.name ?? 'building';
+        const entrances = orderEntrances(area, pos).filter(e => !isHatch(bot, e));
+        if (entrances.length === 0) {
+            return { ok: false, area, reason: 'no_entrance', text: `I cannot get out of "${name}".` };
+        }
+        // the far side of the door is the side away from the building: a point two blocks beyond the door, outward from the
+        // middle of the box (passThrough's `inside` names the side to end on, so it is not given here: that would be the way in)
+        const centre = { x: (area.min.x + area.max.x) / 2, z: (area.min.z + area.max.z) / 2 };
+        const outward = (e) => {
+            const dx = e.x + 0.5 - centre.x;
+            const dz = e.z + 0.5 - centre.z;
+            return Math.abs(dx) >= Math.abs(dz) ? { x: e.x + Math.sign(dx || 1) * 2, y: e.y, z: e.z } : { x: e.x, y: e.y, z: e.z + Math.sign(dz || 1) * 2 };
+        };
+        let last = null;
+        for (const entrance of entrances.slice(0, LEAVE_ATTEMPTS)) {
+            if (bot.interrupt_code) {
+                return { ok: false, area, reason: 'interrupted', text: 'I stopped on my way out.' };
+            }
+            last = await passThrough(bot, entrance, ctx, { ...options, toward: outward(entrance), allowDig: false, areas, clock });
+            if (last?.ok && !isInsideArea(area, botPos(bot))) {
+                logTo(ctx, `I left "${name}" through the ${entrance.kind ?? 'door'} at ${coords(entrance)}.`);
+                return { ok: true, area, reason: 'left', text: last.text ?? '' };
+            }
+            if (last?.reason === 'interrupted' || last?.reason === 'error') {
+                return { ok: false, area, reason: last.reason, text: last.text ?? '' };
+            }
+        }
+        return { ok: false, area, reason: last?.reason ?? 'no_path', text: `I cannot get out of "${name}". ${last?.text ?? ''}`.trim() };
+    } catch (err) {
+        console.warn('Home pack: leaving the building failed:', err?.message ?? err);
+        return { ok: false, area: null, reason: 'error', text: `I could not leave the building: ${err?.message ?? err}` };
+    }
+}
+
 // ---- through a trapdoor (v0.1.4.10, T3-4) ----
 
 /** The walk into a shelter through a trapdoor: the ladder step when the room is this many blocks above or below. */
@@ -462,7 +521,7 @@ export async function goToShelter(bot, ctx = {}, options = {}) {
                 }
             }
             const entered = await enterBuilding(bot, choice.area, ctx, options);
-            if (entered.reason === 'creeper_standing' && isNight(bot.time?.timeOfDay) && !bot.interrupt_code) {
+            if (entered.reason === 'creeper_standing' && isShelterNight(bot.time?.timeOfDay) && !bot.interrupt_code) {
                 return await digInAwayFrom(bot, entered.creeper, ctx, options, clock); // F3
             }
             if (!entered.ok && entered.reason === 'no_path' && !bot.interrupt_code) {

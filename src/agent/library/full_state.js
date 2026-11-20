@@ -8,6 +8,7 @@ import {
 } from "./world.js";
 import convoManager from '../conversation.js';
 import { bagItems } from '../watch/digest_logic.js'; // v0.1.4.14 (P-30): the bag as an open window shows it
+import { dayPhaseLabel } from '../clock_logic.js'; // v0.1.4.16 (F8): the one clock
 
 // v0.1.4.14 (P-30, E1's finding): while a window is open (a craft, a chest, a furnace) mineflayer copies the inventory
 // section into bot.inventory only at close, so the bag the model saw in the prompt lagged by the window's lifetime (a bed
@@ -50,9 +51,7 @@ export function getFullState(agent) {
     if (bot.thunderState > 0) weather = 'Thunderstorm';
     else if (bot.rainState > 0) weather = 'Rain';
 
-    let timeLabel = 'Night';
-    if (bot.time.timeOfDay < 6000) timeLabel = 'Morning';
-    else if (bot.time.timeOfDay < 12000) timeLabel = 'Afternoon';
+    const timeLabel = dayPhaseLabel(bot.time.timeOfDay); // v0.1.4.16 (F8): Morning, Afternoon, Evening, Night or Dawn
 
     const below = getBlockAtPosition(bot, 0, -1, 0).name;
     const legs = getBlockAtPosition(bot, 0, 0, 0).name;

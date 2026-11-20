@@ -52,8 +52,9 @@ describe('the pure parts', () => {
             '2. !craftRecipe("stone_pickaxe", 1): Successfully crafted stone_pickaxe, you now have 2 stone_pickaxe.',
             '3. !mineOre("diamond", 28): started.',
         ].join('\n'));
-        const long = [items[0], items[1], { text: '!goToPlayer("a", 2)', status: 'running', result: '' }, { text: '!stats', status: 'waiting', result: '' }, { text: '!stats', status: 'waiting', result: '' }];
-        assert.equal(runAnswer({ items: long, stopped: null }).split('\n').at(-1), 'Still running: 3 of 5.');
+        // v0.1.4.16 (F9): the last line names the command that still runs and the id of its queue item
+        const long = [items[0], items[1], { id: 7, text: '!goToPlayer("a", 2)', status: 'running', result: '' }, { text: '!stats', status: 'waiting', result: '' }, { text: '!stats', status: 'waiting', result: '' }];
+        assert.equal(runAnswer({ items: long, stopped: null }).split('\n').at(-1), 'Still running: !goToPlayer("a", 2) (run 7).');
         assert.equal(runAnswer({ items: long, stopped: null }).split('\n')[0], 'Ran 2 of 5.');
         const failed = [items[0], { text: '!craftRecipe("x", 1)', status: 'failed', result: 'I cannot craft x.' }, { text: '!stats', status: 'skipped', result: '' }];
         assert.deepEqual(runAnswer({ items: failed, stopped: { by: null, at: 2 } }).split('\n'), ['Ran 2 of 3.', '1. !takeFromChest("bread", 10): Successfully took 5 bread from the chest.', '2. !craftRecipe("x", 1): I cannot craft x.', 'Stopped at 2 of 3.']);
@@ -187,7 +188,8 @@ describe('the queue', () => {
         const agent = fakeAgent({ goToPlayer: { text: 'Arrived.', ms: 400 }, stats: { text: 'STATS', ms: 5 } });
         const queue = createQueue(agent, { longSkillMs: 1000, answerMs: 60 });
         const answer = await queue.run(['!stats', '!goToPlayer("a", 2)', '!stats'], { by: 'MartyByrde2' });
-        assert.deepEqual(answer.split('\n'), ['Ran 1 of 3.', '1. !stats: STATS', 'Still running: 2 of 3.']);
+        // v0.1.4.16 (F9): the command that still runs and the id of its item (the ids count from 1 per queue)
+        assert.deepEqual(answer.split('\n'), ['Ran 1 of 3.', '1. !stats: STATS', 'Still running: !goToPlayer("a", 2) (run 2).']);
         await sleep(450);
         assert.equal(agent.handled.length, 3, 'the rest ran on');
         queue.close();

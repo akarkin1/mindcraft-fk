@@ -148,3 +148,68 @@ describe('Q4: storeFullBag over a fake bot and storage', () => {
         assert.deepEqual(b.said, ['My bag is full of things I keep for the mining. I stop the mining at 2 of 6 iron.']);
     });
 });
+
+// v0.1.4.16 (F5, T4's diagnosis of W131): a store trip that could not get to a chest says why in the stop line, not "no chest has room"
+describe('F5: storeFullBag and a chest it cannot get to', () => {
+    const CHEST = { x: 0, y: 41, z: 2 };
+    const WALK = 'I could not get to a chest nearby or open it. I still carry 4 cobblestone, 2 gravel.';
+    // chest: the answer of the store into the chest of the mine; near: the answer of the store within 32 blocks
+    function scene({ chest, near }) {
+        const said = [];
+        const calls = [];
+        const bag = [{ name: 'iron_pickaxe', count: 1 }, { name: 'torch', count: 64 }, { name: 'raw_iron', count: 2 }, { name: 'gravel', count: 2 }, { name: 'cobblestone', count: 4 }];
+        const bot = {
+            registry: { foodsByName: FOODS },
+            entity: { position: { x: 0.5, y: 41, z: 0.5 } },
+            inventory: { items: () => bag, emptySlotCount: () => 0 },
+            blockAt: (p) => (p.x === CHEST.x && p.y === CHEST.y && p.z === CHEST.z ? { name: 'chest' } : { name: 'stone' }),
+        };
+        const storage = {
+            storeItems: async (b, ctx, options) => {
+                calls.push(options);
+                return { stored: {}, left: { gravel: 2, cobblestone: 1 }, chests: [], ...(options.chest ? chest : near) };
+            },
+        };
+        return { bot, ctx: { storage, say: (t) => said.push(t) }, said, calls };
+    }
+    const mine = { room: { center: { x: 2, y: 41, z: 0 }, chest: CHEST } };
+    const row = { item: 'raw_iron', ore: 'iron' };
+    const UNREACHABLE = { ok: false, reason: 'unreachable', text: WALK };
+    const NO_CHEST = { ok: false, reason: 'no_chest', text: 'I know no chest nearby.' };
+
+    test('bagUnreachableText, word for word; without a text of the walk it ends after the position', () => {
+        assert.equal(L.bagUnreachableText(CHEST, WALK), `My bag is full and I could not get to the chest at (0, 41, 2): ${WALK}`);
+        assert.equal(L.bagUnreachableText({ x: 1.7, y: 41, z: -3.2 }, ''), 'My bag is full and I could not get to the chest at (1, 41, -4).');
+        assert.equal(L.bagUnreachableText(CHEST), 'My bag is full and I could not get to the chest at (0, 41, 2).');
+    });
+
+    test('the chest of the mine cannot be reached, none other within 32 blocks: the stop with that text, not said here (said false)', async () => {
+        const s = scene({ chest: UNREACHABLE, near: NO_CHEST });
+        const r = await B.storeFullBag(s.bot, s.ctx, mine, row, { mined: 2, wanted: 6 });
+        assert.deepEqual([r.ok, r.reason, r.action, r.said], [false, 'inventory_full', 'stop', false]);
+        // the head alone: the storage's answer (WALK) would repeat the bag and the chest (DECISIONS B-7)
+        assert.equal(r.text, 'My bag is full and I could not get to the chest at (0, 41, 2).');
+        assert.deepEqual(s.said, [], 'the stop line of the trip says it as its detail');
+    });
+
+    test('the chest within 32 blocks cannot be reached: the chest the storage pack names (failedAt)', async () => {
+        const s = scene({ chest: NO_CHEST, near: { ...UNREACHABLE, failedAt: { x: 9, y: 41, z: 9 } } });
+        const r = await B.storeFullBag(s.bot, s.ctx, { room: { center: { x: 2, y: 41, z: 0 }, chest: null } }, row, { mined: 2, wanted: 6 });
+        assert.deepEqual([r.reason, r.said], ['inventory_full', false]);
+        assert.equal(r.text, 'My bag is full and I could not get to the chest at (9, 41, 9).');
+    });
+
+    test('a chest out of reach but another stored it: the stored line, said, as before', async () => {
+        const s = scene({ chest: UNREACHABLE, near: { ok: true, reason: null, stored: { gravel: 2, cobblestone: 1 }, left: {}, chests: [{ x: 9, y: 41, z: 9 }] } });
+        const r = await B.storeFullBag(s.bot, s.ctx, mine, row, { mined: 2, wanted: 6 });
+        assert.deepEqual([r.ok, r.action, r.said], [true, 'store', true]);
+        assert.deepEqual(s.said, ['I stored 2 gravel and 1 cobblestone in the chest at (9, 41, 9) and go on.']);
+    });
+
+    test('no chest has room (full, not out of reach): the old stop text, said, as before', async () => {
+        const s = scene({ chest: { ok: false, reason: 'full', text: 'The chest is full.' }, near: NO_CHEST });
+        const r = await B.storeFullBag(s.bot, s.ctx, mine, row, { mined: 2, wanted: 6 });
+        assert.deepEqual([r.reason, r.said], ['inventory_full', true]);
+        assert.deepEqual(s.said, ['My bag is full and no chest within 32 blocks has room. I stop the mining at 2 of 6 iron.']);
+    });
+});

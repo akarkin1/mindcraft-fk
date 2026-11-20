@@ -416,6 +416,7 @@ describe('storeItems', () => {
         const res = await S.storeItems(bot, makeCtx(), fastClock());
         assert.equal(res.reason, 'unreachable');
         assert.equal(res.text, 'I could not get to a chest nearby or open it. I still carry 20 dirt, 12 wheat.');
+        assert.deepEqual(res.failedAt, { x: 8, y: 64, z: 0 }, 'v0.1.4.16 (F5): the chest it could not get to, for the mining\'s full bag');
     });
 
     test('a chest with a solid block above counts as blocked only after its open failed; glass does not block (v0.1.4.8, E1)', async () => {
@@ -456,6 +457,7 @@ describe('storeItems', () => {
         const res = await S.storeItems(bot, makeCtx(), fastClock());
         assert.equal(res.ok, true);
         assert.deepEqual(boxCounts(other), { dirt: 5 });
+        assert.equal('failedAt' in res, false, 'v0.1.4.16: failedAt only with the reason unreachable; the result is as before');
     });
 
     test('an error while depositing: the window is closed, the chest is left, the result says so', async () => {

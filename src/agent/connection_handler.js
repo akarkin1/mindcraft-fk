@@ -1,4 +1,4 @@
-import { sendOutputToServer } from './mindserver_proxy.js';
+// v0.1.4.16 (F13): no import of the MindServer proxy; the lines of the login guard go to the log only (see log below).
 
 // Definitions of error types, keywords, and full human-readable messages.
 const ERROR_DEFINITIONS = {
@@ -39,11 +39,12 @@ const ERROR_DEFINITIONS = {
     }
 };
 
-// Helper to log messages to console (once) and MindServer.
+// Writes a line of the login guard to the log, once. v0.1.4.16 (F13, K-1): the log only (console.error), never the
+// MindServer: its bot-output went to the web chat and the voice spoke it ("[LoginGuard] Connection Failed: ..." while the
+// owner restarted the server for a backup). agentName stays for the callers.
 export const log = (agentName, msg) => {
-    // Use console.error for visibility in terminal
+    void agentName;
     console.error(msg);
-    try { sendOutputToServer(agentName || 'system', msg); } catch (_) {}
 };
 
 // NBT tag types of prismarine-nbt. Minecraft 1.21 sends the kick reason as NBT, where every

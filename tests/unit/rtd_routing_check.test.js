@@ -201,7 +201,7 @@ describe('the dry run with an OpenAI model', () => {
             const run = runNodeScript(SCRIPT, ['--dry-run', '--model', 'gpt-6-luna', '--all-parts'], { env: envWithoutKeys({ NODE_OPTIONS: nodeOptions }) });
             assert.equal(run.status, 0, run.stdout + run.stderr);
             assert.match(run.stdout, /^Routing check with profiles\/claude\.json, chat model gpt-6-luna, dry run: nothing is sent\.$/m);
-            assert.match(run.stdout, /routes_pack, mine_routes, watch_and_learn, routines, base_survey\.$/m, 'every part is on'); // v0.1.4.12; v0.1.4.15: the routines and the base survey, in the order of PART_COMMANDS
+            assert.match(run.stdout, /routes_pack, mine_routes, watch_and_learn, routines, base_survey, breeding, enchanting, afk_kill\.$/m, 'every part is on'); // v0.1.4.12; v0.1.4.15: the routines and the base survey; v0.1.4.16 (8.0): the three packs, in the order of PART_COMMANDS
             assert.match(run.stdout, /^Prompts: \d+\. Average size: \d+ characters\./m);
             assert.match(run.stdout, /^Estimated cost of a real run at the prices of gpt-6-luna: \$\d+\.\d\d /m);
             assert.match(run.stdout, /^SOCKETS 0$/m);

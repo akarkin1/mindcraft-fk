@@ -1,15 +1,24 @@
 // The job of the bot (spec v0.1.4.10, I1), persisted as the record itself in bots/<name>/job.json. One
 // job at a time. Beyond I1 a record may hold: skillDone (the skill said the job is done), fails and
 // failText (the same failure in a row), blocker ({ kind, item } of the last plan), chainAt (ISO time when
-// the bot itself went on: a plan was made or a step was done). Never throws.
+// the bot itself went on: a plan was made or a step was done); v0.1.4.16 FX4 (review 16b, finding 3): a kill_farm job
+// bagAtStart (the bag of its start, { name: count }). Never throws.
 import fs from 'node:fs';
 import { readJsonSafe, writeJsonAtomic } from '../../utils/safe_json.js';
 import { JOB_KINDS, JOB_STATES, ROUTINE_KIND } from './job_logic.js';
 
 /** The name of the file in the folder of the bot. */
 export const JOB_FILE = 'job.json';
-/** The states of a step. */
-export const STEP_STATES = Object.freeze(['todo', 'done', 'failed']);
+/**
+ * v0.1.4.16 (SPEC 8.4a, E8): the kind of the AFK creeper kill's job, beside ROUTINE_KIND. It is no kind of JOB_COMMANDS:
+ * createJob starts it for the order !killFarm(<until>), whose text is its command and its one step; the job resume runs
+ * the order again when anything but the owner's stop ended the action (a reflex, the night, a restart).
+ */
+export const KILL_FARM_KIND = 'kill_farm';
+/** The command of the kill_farm job. */
+export const KILL_FARM_COMMAND = '!killFarm';
+/** The states of a step; v0.1.4.16 (F3): `skipped`, a step of a routine's round that failed after its runs and was passed. */
+export const STEP_STATES = Object.freeze(['todo', 'done', 'failed', 'skipped']);
 
 const FILE_VERSION = 1;
 
@@ -23,6 +32,25 @@ function isFiniteNumber(value) {
 
 function copy(value) {
     return JSON.parse(JSON.stringify(value));
+}
+
+/**
+ * v0.1.4.16 FX4 (review 16b, finding 3): the bag of a kill_farm job's start as the record keeps it: { name: count } of the
+ * names with a count above 0 ({} for an empty bag); null for anything that is no such object (a job saved without it).
+ * @param {*} bag
+ * @returns {Object<string, number>|null}
+ */
+export function cleanBag(bag) {
+    if (!isPlainObject(bag)) {
+        return null;
+    }
+    const out = {};
+    for (const [name, n] of Object.entries(bag)) {
+        if (name.length > 0 && isFiniteNumber(n) && n > 0) {
+            out[name] = Math.floor(n);
+        }
+    }
+    return out;
 }
 
 function cleanStep(step) {
@@ -48,7 +76,12 @@ function cleanStep(step) {
  * @returns {object|null}
  */
 function validateJob(job, now) {
-    if (!isPlainObject(job) || !(JOB_KINDS.includes(job.kind) || job.kind === ROUTINE_KIND) || typeof job.command !== 'string' || job.command.length === 0) {
+    if (!isPlainObject(job) || !(JOB_KINDS.includes(job.kind) || job.kind === ROUTINE_KIND || job.kind === KILL_FARM_KIND)
+        || typeof job.command !== 'string' || job.command.length === 0) {
+        return null;
+    }
+    // v0.1.4.16 (SPEC 8.4a): a kill_farm job is the order !killFarm(<until>)
+    if (job.kind === KILL_FARM_KIND && !job.command.startsWith(KILL_FARM_COMMAND)) {
         return null;
     }
     // v0.1.4.15 (part R, SPEC 3.3): a round of a routine names its routine (and its round, 1 without)
@@ -87,6 +120,14 @@ function validateJob(job, now) {
     if (job.kind === ROUTINE_KIND) {
         out.routine = job.routine;
         out.round = Number.isInteger(job.round) && job.round >= 1 ? job.round : 1;
+    }
+    // v0.1.4.16 FX4 (review 16b, finding 3): the bag of a kill_farm job's start, kept across its resumes and restarts (the farm
+    // stores only what it gained since); a job saved without it loads as before
+    if (job.kind === KILL_FARM_KIND) {
+        const bag = cleanBag(job.bagAtStart);
+        if (bag) {
+            out.bagAtStart = bag;
+        }
     }
     return out;
 }

@@ -109,8 +109,9 @@ describe('4.1 state', () => {
         clock.t = T0;
         const { text, isError } = await call(full.port, 'state');
         assert.equal(isError, false);
+        // v0.1.4.16 (F8): the label of the one clock (Night); before: night
         assert.deepEqual(text.split('\n'), [
-            'Luna at (12, 67, 52) in overworld, on oak_planks. Time 13500 (night). Health 20 of 20, food 18 of 20.',
+            'Luna at (12, 67, 52) in overworld, on oak_planks. Time 13500 (Night). Health 20 of 20, food 18 of 20.',
             'Running: !farmCycle("farm") for 42 s.',
             'Job: the mining, 4 of 8 iron.',
             'Last order: "go to the farm" by MartyByrde2, 3 min ago.',
@@ -122,7 +123,7 @@ describe('4.1 state', () => {
         const { text } = await call(empty.port, 'state');
         const lines = text.split('\n');
         assert.equal(lines.length, 5, text);
-        assert.match(lines[0], /^Luna at \(12, 67, 52\) in overworld, on oak_planks\. Time 13500 \(night\)\. Health 20 of 20, food 18 of 20\.$/);
+        assert.match(lines[0], /^Luna at \(12, 67, 52\) in overworld, on oak_planks\. Time 13500 \(Night\)\. Health 20 of 20, food 18 of 20\.$/);
         assert.deepEqual(lines.slice(1), ['Running: nothing.', 'Job: none.', 'Last order: none.', 'Home: unknown.']);
     });
 });

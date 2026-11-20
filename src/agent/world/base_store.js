@@ -1,7 +1,8 @@
-// The bases of one world (spec v0.1.4.15, S 2.4), persisted as
-// { version: 1, bases: { <name>: { name, centre: {x, y, z}, dimension, door: {x, y, z} | null, surveyed: ISO, places: [names] } } }
-// in <worldDir>/bases.json. A pure file store like PlaceStore: it reads and writes its file and nothing else. A name is
-// kept like the name of an area (trimmed, lower case, spaces to "_"), so "East Base" and "east_base" are one base.
+// The bases of one world (spec v0.1.4.15, S 2.4; v0.1.4.16, F2: `kept`), persisted as
+// { version: 1, bases: { <name>: { name, centre: {x, y, z}, dimension, door: {x, y, z} | null, surveyed: ISO, places: [names], kept: [names] } } }
+// in <worldDir>/bases.json. `places` are the names of the survey's places of the base, `kept` the names of the owner's areas
+// in the base (never forgotten with the base). A pure file store like PlaceStore: it reads and writes its file and nothing
+// else. A name is kept like the name of an area (trimmed, lower case, spaces to "_"), so "East Base" and "east_base" are one base.
 import { readJsonSafe, writeJsonAtomic } from '../../utils/safe_json.js';
 
 /** The name of the file in the world folder. */
@@ -69,10 +70,12 @@ function copyBase(base) {
         centre: { ...base.centre },
         door: base.door ? { ...base.door } : null,
         places: [...base.places],
+        kept: [...(base.kept ?? [])],
     };
 }
 
-// The clean entry to store, or null when the base is not valid: a name of 1 to 64 characters and a centre.
+// The clean entry to store, or null when the base is not valid: a name of 1 to 64 characters and a centre. `kept` (v0.1.4.16,
+// F2) is an optional list of names; it is stored as an empty list when the base gives none.
 function validateBase(base, nowIso) {
     if (!isPlainObject(base)) {
         return null;
@@ -92,6 +95,7 @@ function validateBase(base, nowIso) {
         door: point(base.door),
         surveyed: typeof base.surveyed === 'string' ? base.surveyed : nowIso,
         places: cleanPlaces(base.places),
+        kept: cleanPlaces(base.kept),
     };
 }
 
@@ -175,7 +179,7 @@ export class BaseStore {
      * Creates or replaces the base of its name and writes the file. `surveyed` is the time of the call unless the
      * base gives one. Never throws.
      * @param {{name: string, centre: {x: number, y: number, z: number}, dimension?: string, door?: {x: number, y: number, z: number}|null,
-     *   surveyed?: string, places?: string[]}} base
+     *   surveyed?: string, places?: string[], kept?: string[]}} base
      * @returns {object|null} a copy of the saved base, null when the base is not valid (no name of 1 to 64 characters, no centre)
      */
     set(base) {

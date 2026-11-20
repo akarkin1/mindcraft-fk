@@ -14,7 +14,9 @@
 // step is done (the round's done line), failed when a step failed after its runs (no plan: the routine counts the
 // failure). When no job runs, tick asks options.routines for a routine that is due and starts its round before the
 // standing list; the model is asked, once per routine, by the routines module, never here.
-import { isNight } from '../packs/home/night_logic.js';
+// v0.1.4.16 (B-4): the job's night is the shelter's (from sunset, 12000), so a job never resumes while the shelter
+// reflex wants the bot inside (F8 moved isNight to 13000 for the clock labels only)
+import { isShelterNight as isNight } from '../packs/home/night_logic.js';
 import { reflexOn } from '../packs/home/home_settings.js';
 import { commandText } from '../repeat_guard.js';
 import {
@@ -26,12 +28,70 @@ import {
     busyText, doneText, idleStartText, leaveText, noJobText, noPlanText, planText, restartText, resumeText, statusText, stepStartText, stepText,
     stopText,
 } from './job_texts.js';
-import { roundDoneText } from '../routines/routine_texts.js'; // v0.1.4.15 (part R): the done line of a round (pure texts, no pack)
+// v0.1.4.15 (part R): the done line of a round; v0.1.4.16 (F3): the quiet line of a skipped step (pure texts, no pack)
+import { roundDoneText, stepSkippedText } from '../routines/routine_texts.js';
+import { KILL_FARM_COMMAND, KILL_FARM_KIND, cleanBag } from './job_store.js';
 
 // v0.1.4.13 fix 2: a failure of these words with nothing gained pauses the job at once
 const STUCK_FAILURE = /\b(got stuck|find no way|found no way|no way from|could not get to|could not reach)\b/i;
 
-export { JobStore, JOB_FILE } from './job_store.js';
+export { JobStore, JOB_FILE, KILL_FARM_COMMAND, KILL_FARM_KIND } from './job_store.js';
+
+// v0.1.4.16 (SPEC 8.4a, E8): the AFK creeper kill as a job of the kind kill_farm. The order !killFarm(<until>) of the owner
+// or the model starts it (its command and its one step); the pack's result ends it (the level or the time reached: done;
+// a refusal or a stop of the pack, such as no slab, no weapon or low health: paused, the pack's line says why, no plan);
+// anything else that ends the action (a reflex the pack did not pause, a new order, the night's !goToBed, a restart)
+// leaves it running, and tick runs the order again after job_resume_seconds, at night too (the pack sleeps by itself).
+// The owner's !stop ends it as any job. v0.1.4.16 FX4 (review 16b, finding 3): the job keeps the bag of its start (bagAtStart,
+// taken when the job is new, or at the first resume of a job saved without it) and gives it to the pack (progress()).
+export const KILL_FARM_WORDS = 'the creeper farming';
+export const KILL_FARM_RESTART = 'I was farming creepers. I go on.';
+const KILL_MINUTES = /^(?:for\s+)?(\d{1,5})\s*(min|mins|minute|minutes|h|hour|hours)$/i; // the pack's "N minutes" (afk_logic.parseUntil)
+
+/**
+ * The job record of the order !killFarm(<until>): kind kill_farm, the order as its command and its one step; v0.1.4.16 FX4
+ * (review 16b, finding 3): with the bag of the start (bagAtStart, { name: count }) when it is given: the job keeps it across its
+ * resumes and restarts, and the pack reads it back (progress() without a count), so that a resumed farm stores only what it
+ * gained since the order.
+ * @param {Array} args the args of the order: [until]
+ * @param {string} by 'model' or the player
+ * @param {string} now ISO time
+ * @param {Object<string, number>|null} [bag] the counts of the bag when the order came
+ * @returns {object}
+ */
+export function killFarmJob(args, by, now, bag = null) {
+    const until = typeof args?.[0] === 'string' ? args[0].trim() : '';
+    const order = commandText(KILL_FARM_COMMAND, [until]);
+    const job = {
+        version: 1, kind: KILL_FARM_KIND, command: order, args: [until], wanted: null, got: null, words: KILL_FARM_WORDS,
+        state: 'running', by: by === 'model' ? 'model' : 'player', started: now, updated: now,
+        steps: [{ command: order, check: { item: null, count: null }, state: 'todo' }], plans: 0,
+    };
+    const start = cleanBag(bag);
+    if (start) {
+        job.bagAtStart = start;
+    }
+    return job;
+}
+
+/**
+ * The order that goes on with a kill_farm job: the same until (`""`, `level N`); a time (`N minutes`) counts from the
+ * order, so the resumed farm gets what is left of it, in whole minutes, at least 1. null when the time is over.
+ * @param {object} job
+ * @param {number} nowMs
+ * @returns {string|null}
+ */
+export function killFarmResume(job, nowMs) {
+    const until = typeof job?.args?.[0] === 'string' ? job.args[0].trim() : '';
+    const m = KILL_MINUTES.exec(until);
+    if (!m) {
+        return commandText(KILL_FARM_COMMAND, [until]);
+    }
+    const minutes = Number(m[1]) * (/^h/i.test(m[2]) ? 60 : 1);
+    const started = typeof job.started === 'string' ? Date.parse(job.started) : NaN;
+    const left = Number.isFinite(started) && Number.isFinite(nowMs) ? Math.ceil(minutes - (nowMs - started) / 60000) : minutes;
+    return left >= 1 ? commandText(KILL_FARM_COMMAND, [`${left} minutes`]) : null;
+}
 
 // The commands that run at the same time are few; older entries without a result are dropped.
 const MAX_ROLES = 32;
@@ -168,6 +228,8 @@ export function createJob(agent, store, options = {}) {
     const chests = pick('chests');
     const executeCommand = typeof options?.executeCommand === 'function' ? options.executeCommand : null;
     const askModel = typeof options?.askModel === 'function' ? options.askModel : null;
+    // v0.1.4.16 (F3): the supervisor's work (the watch queue runs or holds commands): no round of a routine starts meanwhile
+    const isBusy = typeof options?.isBusy === 'function' ? options.isBusy : () => false;
     // v0.1.4.15 (part R): the routines of the agent, read at every use (they are made after the job); null without
     const routinesOf = () => {
         try {
@@ -290,6 +352,46 @@ export function createJob(agent, store, options = {}) {
         }
     }
 
+    // v0.1.4.16 (SPEC 8.4a): the result of the creeper farm (the order or its resume). Stopped by anything: the job stays
+    // running and tick brings the bot back (the owner's !stop has ended the job before the result comes). The level or the
+    // time reached: done. Any other end (no spot, no slab, no weapon, no kill, low health, a bad until, the pack missing):
+    // paused, never a plan; the pack's line says why. The line of a resumed farm goes to the chat (a system order's result
+    // goes into the history only).
+    function killFarmResult(job, entry, r) {
+        if (r.reason === 'interrupted') {
+            setJob(job);
+            return result(true, 'interrupted', '');
+        }
+        const step = Array.isArray(job.steps) ? job.steps[0] : null;
+        const clean = typeof r.text === 'string' ? r.text.replace(/\s+/g, ' ').trim() : '';
+        const tell = () => {
+            if (entry.role === 'resume' && clean.length > 0) {
+                console.log('Job:', clean);
+                call(() => sayQuiet(clean), undefined);
+            }
+        };
+        if (r.ok === true) {
+            job.state = 'done';
+            job.skillDone = true;
+            if (step) {
+                step.state = 'done';
+            }
+            delete job.fails;
+            delete job.failText;
+            setJob(job);
+            tell();
+            return result(true, 'done', clean);
+        }
+        job.state = 'paused';
+        if (step) {
+            step.state = 'failed';
+        }
+        job.failText = clean;
+        setJob(job);
+        tell();
+        return result(false, 'paused', clean);
+    }
+
     // v0.1.4.15 (part R, SPEC 3.4): a routine that is due, when no job runs: its round through the routines module
     // (the plan first when it has none: that one model call is theirs), then its first step at once, as a plan's.
     async function runRound(routines, routine) {
@@ -325,8 +427,9 @@ export function createJob(agent, store, options = {}) {
             if (!job || job.state !== 'running') {
                 return result(false, 'no_job', noJobText());
             }
-            if (job.kind === ROUTINE_KIND) {
-                return result(false, 'no_plan', ''); // v0.1.4.15 (part R): a round plans nothing; its plan is the routine's
+            if (job.kind === ROUTINE_KIND || job.kind === KILL_FARM_KIND) {
+                // v0.1.4.15 (part R): a round plans nothing; its plan is the routine's. v0.1.4.16 (8.4a): nor the creeper farm
+                return result(false, 'no_plan', '');
             }
             if (state.planning) {
                 return result(false, 'busy', '');
@@ -510,10 +613,22 @@ export function createJob(agent, store, options = {}) {
             return result(false, 'step_again', '');
         }
         step.state = 'failed';
-        setJob(job);
         if (job.kind === ROUTINE_KIND) {
-            return failRound(job, r.text, step); // v0.1.4.15 (part R): no plan for a round; the round failed
+            // v0.1.4.16 (F3): a step of a round that failed after its runs is marked skipped, said with the quiet line, and the
+            // round goes on with the next step; the round is done when every step is done or skipped and at least one is
+            // done, failed only when every step was skipped (the pause after three as today)
+            step.state = 'skipped';
+            const clean = typeof r.text === 'string' ? r.text.replace(/\s+/g, ' ').trim() : '';
+            job.failText = clean;
+            job.chainAt = iso(); // the next step runs at the next tick, without the wait
+            setJob(job);
+            const said = speak(stepSkippedText(index + 1, job.routine, clean));
+            if (steps.some(s => s.state === 'todo')) {
+                return result(false, 'step_skipped', said);
+            }
+            return isDone(job) ? finishRound(job) : failRound(job, clean, step);
         }
+        setJob(job);
         return await startPlan(job.blocker ?? blockerOf(r) ?? { kind: 'no_item', item: step.check?.item ?? null }, r.text, detached);
     }
 
@@ -534,6 +649,9 @@ export function createJob(agent, store, options = {}) {
             return result(true, 'none', '');
         }
         const r = resultOf(value);
+        if (job.kind === KILL_FARM_KIND) {
+            return killFarmResult(job, entry, r); // v0.1.4.16 (8.4a)
+        }
         if (entry.role === 'step') {
             return await stepResult(job, entry.step, r, true);
         }
@@ -649,6 +767,20 @@ export function createJob(agent, store, options = {}) {
                     }
                     return result(true, 'ended', wasRunning ? speak(leaveText(job)) : '');
                 }
+                if (command === KILL_FARM_COMMAND) {
+                    // v0.1.4.16 (SPEC 8.4a): the creeper farm is a job of the kind kill_farm; a new !killFarm replaces the
+                    // farm without the leave text, another job is left with it; v0.1.4.16 FX4 (review 16b, finding 3): the
+                    // new job takes the bag of its start (before the pack runs), kept across its resumes
+                    const farm = killFarmJob(args, by, iso(), call(() => inventory(), null));
+                    let left = '';
+                    if (job?.state === 'running' && job.kind !== KILL_FARM_KIND) {
+                        left = speak(leaveText(job));
+                        roundLeft(job);
+                    }
+                    const kept = setJob(farm);
+                    pushRole({ name: command, role: 'job', started: kept?.started ?? farm.started, step: null, base: 0, reported: false });
+                    return result(true, 'job', left);
+                }
                 const next = jobOf(command, args, { by: by === 'model' ? 'model' : 'player', text, now: iso() });
                 const planRuns = job?.state === 'running' && (state.planning || (Array.isArray(job.steps) && job.steps.some(s => s.state === 'todo')));
                 if (next === null || (by === 'model' && planRuns && PLAN_COMMAND_NAMES.includes(command))) {
@@ -730,6 +862,34 @@ export function createJob(agent, store, options = {}) {
                     underground: call(() => underground(), false),
                 };
                 const job = getJob();
+                if (job?.state === 'running' && job.kind === KILL_FARM_KIND) {
+                    // v0.1.4.16 (SPEC 8.4a): the farm comes back after job_resume_seconds without an order and with no action
+                    // running, at night too (the pack sleeps in the bed by the room by itself); a time that is over ends it
+                    if (!shouldResume({ ...view, night: false, job, resumeSeconds: s.resumeSeconds })) {
+                        return result(true, 'wait', '');
+                    }
+                    const text = killFarmResume(job, t);
+                    if (text === null) {
+                        job.state = 'done';
+                        job.skillDone = true;
+                        if (Array.isArray(job.steps) && job.steps[0]) {
+                            job.steps[0].state = 'done';
+                        }
+                        setJob(job);
+                        return result(true, 'done', speak(doneText(job)));
+                    }
+                    // v0.1.4.16 FX4 (review 16b, finding 3): a job saved before it kept the bag of its start takes it at its
+                    // first resume and keeps it from then on
+                    if (cleanBag(job.bagAtStart) === null) {
+                        const bag = cleanBag(call(() => inventory(), null));
+                        if (bag) {
+                            job.bagAtStart = bag;
+                            setJob(job);
+                        }
+                    }
+                    speak(resumeText(job));
+                    return await runSystem(text, 'resume', job);
+                }
                 if (job?.state === 'running') {
                     const chainAt = typeof job.chainAt === 'string' ? Date.parse(job.chainAt) : NaN;
                     const chained = Number.isFinite(chainAt) && state.lastOrderAt <= chainAt;
@@ -748,7 +908,7 @@ export function createJob(agent, store, options = {}) {
                         if (isDone(job)) {
                             return finishRound(job);
                         }
-                        return failRound(job, job.failText ?? '', job.steps.find(step => step.state === 'failed') ?? null);
+                        return failRound(job, job.failText ?? '', job.steps.findLast(step => step.state === 'skipped' || step.state === 'failed') ?? null);
                     }
                     const text = resumeCommand(job);
                     if (!text) {
@@ -758,9 +918,10 @@ export function createJob(agent, store, options = {}) {
                     return await runSystem(text, 'resume', job);
                 }
                 const idle = { ...view, job: { state: 'running', kind: 'idle' }, resumeSeconds: s.resumeSeconds };
-                // v0.1.4.15 (part R, SPEC 3.4): a routine that is due runs first; the standing list only when none is due
+                // v0.1.4.15 (part R, SPEC 3.4): a routine that is due runs first; the standing list only when none is due;
+                // v0.1.4.16 (F3): no round while the supervisor's queue has work (isBusy); a running round is not interrupted
                 const routines = routinesOf();
-                if (routines !== null && shouldResume(idle)) {
+                if (routines !== null && shouldResume(idle) && call(() => isBusy() === true, false) !== true) {
                     const due = call(() => routines.due?.(t) ?? null, null);
                     if (due) {
                         return await runRound(routines, due);
@@ -851,7 +1012,8 @@ export function createJob(agent, store, options = {}) {
                 if (!job || job.state !== 'running') {
                     return result(true, 'no_job', '');
                 }
-                return result(true, 'running', speak(restartText(job)));
+                // v0.1.4.16 (8.4a): the creeper farm has no verb of JOB_COMMANDS ("I was working")
+                return result(true, 'running', speak(job.kind === KILL_FARM_KIND ? KILL_FARM_RESTART : restartText(job)));
             } catch (error) {
                 return errorResult('restart', error);
             }
@@ -862,11 +1024,28 @@ export function createJob(agent, store, options = {}) {
          * reports progress, with what it got in this run. got of the job becomes what the job had before the run
          * plus that count, and the gain of the inventory is not added on top. Only for the command of the job or
          * its resumed command, never for a step. Never throws.
-         * @param {number} got the count of the skill in this run
-         * @returns {{ok: boolean, reason: string|null, text: string}}
+         * v0.1.4.16 (F5, the play of 2026-11-11: "0 of 32" with 22 raw iron in the bag): without a count the call asks:
+         * `{ ok: true, reason: 'job', got, wanted, created }` of the running or left job, so that a trip that goes on with
+         * a job counts the ore of the earlier trips in its bag once; nothing changes.
+         * v0.1.4.16 FX4 (review 16b, finding 3): for a running kill_farm job the question answers
+         * `{ ok: true, reason: 'kill_farm', bagAtStart, started }`: the bag of the job's start (null for a job saved without it),
+         * which the AFK kill pack keeps as its start counts on a resume; nothing changes.
+         * @param {number} [got] the count of the skill in this run; left out, the question
+         * @returns {{ok: boolean, reason: string|null, text: string, got?: number, wanted?: number, created?: string,
+         *   bagAtStart?: Object<string, number>|null, started?: string|null}}
          */
         progress(got) {
             try {
+                if (got === undefined) {
+                    const asked = getJob();
+                    if (asked?.kind === KILL_FARM_KIND && asked.state === 'running') {
+                        return { ...result(true, 'kill_farm', ''), bagAtStart: cleanBag(asked.bagAtStart), started: asked.started ?? null };
+                    }
+                    if (!asked || !isFiniteNumber(asked.wanted) || (asked.state !== 'running' && asked.state !== 'left')) {
+                        return result(false, 'no_job', '');
+                    }
+                    return { ...result(true, 'job', ''), got: isFiniteNumber(asked.got) ? asked.got : 0, wanted: asked.wanted, created: asked.created ?? null };
+                }
                 const n = Number(got);
                 if (!Number.isFinite(n) || n < 0) {
                     return result(false, 'bad_count', '');

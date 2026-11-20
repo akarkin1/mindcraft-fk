@@ -170,10 +170,10 @@ describe('source text: the packs of v0.1.4.7 are reached only behind their switc
     });
 
     // v0.1.4.9: the routes pack is reached behind its own switch routes_pack
-    // v0.1.4.15 (part S): the survey pack behind base_survey
-    const USE_GUARD = /storage_pack|farming_pack|wood_pack|mining_pack|routes_pack|watch_and_learn|base_survey/; // v0.1.4.12: the watching pack
+    // v0.1.4.15 (part S): the survey pack behind base_survey; v0.1.4.16 (SPEC 8.0): the three packs behind breeding, enchanting, afk_kill
+    const USE_GUARD = /storage_pack|farming_pack|wood_pack|mining_pack|routes_pack|watch_and_learn|base_survey|breeding|enchanting|afk_kill/; // v0.1.4.12: the watching pack
     const CASES = [
-        ['src/agent/agent.js', { guard: /skill_manager|storage_pack|farming_pack|wood_pack|mining_pack|routes_pack|watch_and_learn|base_survey/ }],
+        ['src/agent/agent.js', { guard: /skill_manager|storage_pack|farming_pack|wood_pack|mining_pack|routes_pack|watch_and_learn|base_survey|breeding|enchanting|afk_kill/ }],
         ['src/agent/commands/actions.js', { guard: USE_GUARD, packContext: true }],
         ['src/agent/commands/queries.js', { guard: USE_GUARD, packContext: true }],
     ];

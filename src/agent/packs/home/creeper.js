@@ -14,6 +14,10 @@ import { TEXTS, luredText } from './texts.js';
 export const FIGHT_SWORDS = Object.freeze(['netherite_sword', 'diamond_sword', 'iron_sword', 'stone_sword']);
 /** Lure attempts are forgotten after this long without a creeper. */
 export const TRIES_RESET_MS = 120000;
+/** The help line goes to the chat at most once in this many ms (v0.1.4.16, F1); the log gets it on every run. */
+export const HELP_EVERY_MS = 120000;
+/** The walk of the procedure never drops more than this many blocks in one step (F1: never into a hole). */
+export const FLEE_MAX_DROP = 1;
 
 const memories = new WeakMap();
 
@@ -54,6 +58,40 @@ function solidReader(bot) {
         return block.boundingBox === 'block';
     };
 }
+
+/**
+ * The ground reader of the flee points (v0.1.4.16, F1): `groundYAt(x, z)` gives the y where the feet would stand in
+ * that column, the top of the highest solid block within 3 blocks down from the bot's y (CREEPER_RULES.groundLook),
+ * or null when there is none in that window (a hole, a cave, a drop), a block is not loaded, or water or lava lies
+ * over the ground (the bot never flees into a liquid). Never throws.
+ * @param {object} bot
+ * @returns {(x: number, z: number) => number|null}
+ */
+export function groundReader(bot) {
+    return (x, z) => {
+        try {
+            const me = botPos(bot);
+            if (!me) {
+                return null;
+            }
+            const top = Math.floor(me.y);
+            for (let y = top; y >= top - CREEPER_RULES.groundLook; y--) {
+                const block = bot.blockAt(new Vec3(x, y, z));
+                if (!block || LIQUIDS.has(block.name)) {
+                    return null;
+                }
+                if (block.boundingBox === 'block') {
+                    return y + 1;
+                }
+            }
+            return null;
+        } catch {
+            return null;
+        }
+    };
+}
+
+const LIQUIDS = new Set(['water', 'lava', 'bubble_column']);
 
 /**
  * True when no solid block lies between the eyes of the bot and the middle of the entity (v0.1.4.8,
@@ -154,6 +192,7 @@ function buildState(bot, ctx, now, memory) {
         attending: facts.attending,
         standing: facts.standing,
         underground: creepers.length > 0 && isUnderground(ctx), // C3: ctx.whereAmI of the glue; without it the surface
+        groundYAt: groundReader(bot), // F1: the flee points keep to ground within 1 block of the bot's y
     };
 }
 
@@ -234,16 +273,20 @@ async function hitAndRetreat(bot, entity, clock, sprint) {
  * none twice in a row, after 90 seconds, or when interrupted. Fighting: one hit with bot.attack,
  * then back beyond 6 blocks, again until the creeper is gone. The mode `unstuck` is paused, because
  * the bot stands still while it waits for the creeper.
+ * v0.1.4.16 (F1): the walk goes to the ground of the flee point (GoalNear with its y) and never drops more than
+ * one block in a step (maxDropDown 1); it keeps out of the no_enter areas (makeMovements with the areas). The help
+ * line is logged on every run that reaches 3 tries and said at most once in 120 s (HELP_EVERY_MS): the result of
+ * a run whose help line is not due carries `say: false`, and the mode does not say its text.
  * @param {object} bot
  * @param {object} ctx { areas, settings, log, now }
  * @param {{tickMs?: number, maxMs?: number, now?: Function, wait?: Function}} [options]
  * A creeper that does not follow ends it with leave_it (ok, Amendment 2 F3).
- * @returns {Promise<{ok: boolean, steps: string[], text: string, reason: string}>}
+ * @returns {Promise<{ok: boolean, steps: string[], text: string, reason: string, say: boolean}>}
  *   reason: none (the creeper is gone), leave_it (it stands), timeout, interrupted, error
  */
 export async function runCreeperProcedure(bot, ctx = {}, options = {}) {
     if (!bot || typeof bot !== 'object') {
-        return { ok: false, steps: [], text: 'I cannot move.', reason: 'error' };
+        return { ok: false, steps: [], text: 'I cannot move.', reason: 'error', say: true };
     }
     const clock = clockOf(ctx, options);
     const tickMs = isFiniteNumber(options.tickMs) ? options.tickMs : 400;
@@ -255,7 +298,8 @@ export async function runCreeperProcedure(bot, ctx = {}, options = {}) {
     }
     const steps = [];
     let lured = null;
-    let helped = false;
+    let helped = false; // the run reached the help step (its text is the help line)
+    let helpDue = true; // F1: the help line goes to the chat only once in 120 s
     let fought = false;
     let standingText = null;
     let noneCount = 0;
@@ -266,8 +310,11 @@ export async function runCreeperProcedure(bot, ctx = {}, options = {}) {
     memory.watch.startRun();
     pauseMode(bot, 'unstuck');
     try {
-        walk = makeMovements(bot, { dig: false, doors: false, sprint: false });
-        sprint = makeMovements(bot, { dig: false, doors: false, sprint: true });
+        const areas = listAreas(ctx, dimensionOf(bot)); // F1 and F10: the walk keeps out of the no_enter areas
+        walk = makeMovements(bot, { dig: false, doors: false, sprint: false, areas });
+        sprint = makeMovements(bot, { dig: false, doors: false, sprint: true, areas });
+        walk.maxDropDown = FLEE_MAX_DROP;
+        sprint.maxDropDown = FLEE_MAX_DROP;
         for (;;) {
             if (bot.interrupt_code) {
                 end = 'interrupted';
@@ -310,9 +357,13 @@ export async function runCreeperProcedure(bot, ctx = {}, options = {}) {
                 lured = d.area;
             }
             if (d.step === 'help' && !helped) {
+                // F1: the log line on every run that reaches 3 tries; the chat line once in 120 s (lastHelp is set when it is said)
                 helped = true;
-                memory.lastHelp = clock.now();
                 logTo(ctx, d.text);
+                helpDue = clock.now() - memory.lastHelp >= HELP_EVERY_MS;
+                if (helpDue) {
+                    memory.lastHelp = clock.now();
+                }
             }
             if (d.step === 'fight') {
                 const target = state.creepers.find(c => c.id === d.creeper)?.entity;
@@ -338,9 +389,10 @@ export async function runCreeperProcedure(bot, ctx = {}, options = {}) {
     }
     if (end === 'leave_it') {
         logTo(ctx, standingText);
-        return { ok: true, steps, text: standingText, reason: end };
+        return { ok: true, steps, text: standingText, reason: end, say: true };
     }
-    return { ok: end === 'none', steps, text: resultText(end, steps, { lured, helped, fought }), reason: end };
+    // F1: a run whose help line was said within the last 120 s keeps the text (the log has it) but the mode stays quiet
+    return { ok: end === 'none', steps, text: resultText(end, steps, { lured, helped, fought }), reason: end, say: !helped || helpDue };
 }
 
 function applyMove(bot, d, current, walk, sprint) {
@@ -360,7 +412,9 @@ function applyMove(bot, d, current, walk, sprint) {
     if (!current || typeof current !== 'object' || current.sprint !== d.sprint) {
         bot.pathfinder.setMovements(d.sprint ? sprint : walk);
     }
-    bot.pathfinder.setGoal(new goals.GoalNearXZ(target.x, target.z, 1));
+    // F1: the goal is the ground of the flee point (decide gives moveTo.y from groundYAt), never a free y
+    const y = isFiniteNumber(target.y) ? target.y : me.y;
+    bot.pathfinder.setGoal(new goals.GoalNear(target.x, y, target.z, 1));
     return { step: d.step, sprint: d.sprint, target };
 }
 

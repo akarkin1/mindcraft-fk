@@ -252,10 +252,21 @@ describe('BaseStore (S 2.4)', () => {
     test('set writes bases.json in the shape of the spec; surveyed is the time of the call', () => {
         const store = baseStore();
         const saved = store.set(east());
+        // v0.1.4.16 (F2): the shape gains `kept`, the names of the owner's areas in the base, an empty list when none is given
         assert.deepEqual(saved, { name: 'east', centre: { x: 10, y: 64, z: -4 }, dimension: 'overworld', door: { x: 4, y: 61, z: 0 },
-            surveyed: new Date(T0).toISOString(), places: ['house', 'basement', 'cow_pen'] });
+            surveyed: new Date(T0).toISOString(), places: ['house', 'basement', 'cow_pen'], kept: [] });
         assert.deepEqual(readJson(store.filePath), { version: 1, bases: { east: saved } });
         assert.equal(B.BASE_FILE, 'bases.json');
+    });
+
+    test('kept (v0.1.4.16, F2): an optional list of names, cleaned like places, read back from the file', () => {
+        const store = baseStore();
+        const saved = store.set(east({ kept: ['wheat_farm', ' home ', 'wheat_farm', 7] }));
+        assert.deepEqual(saved.kept, ['wheat_farm', 'home']);
+        assert.deepEqual(readJson(store.filePath).bases.east.kept, ['wheat_farm', 'home']);
+        assert.deepEqual(baseStore().get('east').kept, ['wheat_farm', 'home']);
+        assert.deepEqual(store.set(east({ name: 'north', kept: 'x' })).kept, []);
+        assert.deepEqual(store.rename('east', 'south').kept, ['wheat_farm', 'home']);
     });
 
     test('get, list, remove; names normalised; a base without a door', () => {

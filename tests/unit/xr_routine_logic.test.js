@@ -112,6 +112,9 @@ describe('SPEC 3.2: the commands a plan may use', () => {
         }
         const tail = lines.slice(9 + commands.length);
         assert.deepEqual(tail, [
+            // v0.1.4.16 (F3): the two lines about the places and the coordinates of the task, before the answer's format
+            'Every place the player names and every coordinate (x, y, z) in the task is a step of its own before the work there: !goToRememberedPlace("name") for a saved place, !goToCoordinates(x, y, z, 2) for a coordinate.',
+            'Keep the player\'s numbers.',
             'Answer with the steps of one round of the task, one command per line, in the order the bot runs them; the first command runs first; at most 8 lines.',
             'Write the commands with their arguments, strings in double quotes, for example !harvest("farm"). Use no other command and write nothing else.',
             'When the task cannot be done with these commands, answer NONE.',
@@ -281,10 +284,12 @@ describe('SPEC 3.3: what a round does to the routine', () => {
 
     test('routinesJson: the shape of the watch tool', () => {
         const json = JSON.parse(L.routinesJson([{ ...planned, rounds: 4, lastRound: ISO(T0) }, { ...r, name: 'torches', condition: { item: 'torch', fewerThan: 32 }, state: 'paused' }]));
+        // v0.1.4.16 (F3): `runs`, the rounds started, beside `rounds`, the rounds done
         assert.deepEqual(json, { routines: [
-            { name: 'the farm', text: 'x', every: 15, condition: null, state: 'active', rounds: 4, fails: 0, lastRound: ISO(T0), steps: ['!harvest("farm")'] },
-            { name: 'torches', text: 'x', every: 15, condition: { item: 'torch', fewerThan: 32 }, state: 'paused', rounds: 0, fails: 0, lastRound: null, steps: null },
+            { name: 'the farm', text: 'x', every: 15, condition: null, state: 'active', rounds: 4, runs: 0, fails: 0, lastRound: ISO(T0), steps: ['!harvest("farm")'] },
+            { name: 'torches', text: 'x', every: 15, condition: { item: 'torch', fewerThan: 32 }, state: 'paused', rounds: 0, runs: 0, fails: 0, lastRound: null, steps: null },
         ] });
+        assert.equal(JSON.parse(L.routinesJson([{ ...planned, runs: 7 }])).routines[0].runs, 7);
         assert.deepEqual(JSON.parse(L.routinesJson(null)), { routines: [] });
     });
 });

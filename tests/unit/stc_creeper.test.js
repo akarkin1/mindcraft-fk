@@ -1,6 +1,9 @@
 // Spec v0.1.4.8, part C (C3): which creepers count. For the bot: |dy| <= 4 and (dBot <= 6 or in sight).
 // For an area: a defended type (not mine), horizontally within 16 of the box, y between min.y - 3 and
 // max.y + 3. Underground (ctx.whereAmI) with no creeper that counts for the bot: nothing happens.
+// v0.1.4.16 (F1, SPEC 3 F1): the 6-block bypass of the sight check is gone and the height is 3: a creeper counts for
+// the bot only in sight, within 16 and within 3 blocks of its level; an area creeper needs sight too. The assertions
+// that relied on the bypass (a close creeper behind a wall, an area creeper behind a wall) changed with the rule.
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { loadSrc } from '../helpers/load.js';
@@ -21,15 +24,20 @@ function state(over = {}) {
 const creeper = (pos, extra = {}) => ({ id: extra.id ?? 7, pos, fuse: false, ...extra });
 
 describe('C3: countsForBot', () => {
-    test('|dy| <= 4 and (dBot <= 6 or sight)', () => {
-        assert.equal(C.countsForBot({ dBot: 3, dy: 4, sight: false }), true, 'close, 4 higher, not seen');
-        assert.equal(C.countsForBot({ dBot: 6, dy: -4, sight: false }), true, '6 away, 4 lower');
-        assert.equal(C.countsForBot({ dBot: 4.5, dy: 4.5, sight: true }), false, '4.5 higher');
+    // v0.1.4.16 (F1): |dy| <= 3 and in sight, whatever the distance (the bypass within 6 blocks is gone)
+    test('|dy| <= 3 and sight, within 16', () => {
+        assert.equal(C.countsForBot({ dBot: 3, dy: 4, sight: false }), false, 'close, 4 higher, not seen: no (F1; v0.1.4.8 said yes)');
+        assert.equal(C.countsForBot({ dBot: 6, dy: -4, sight: false }), false, '6 away, 4 lower, not seen: no (F1; v0.1.4.8 said yes)');
+        assert.equal(C.countsForBot({ dBot: 3, dy: 3, sight: true }), true, 'close, 3 higher, in sight');
+        assert.equal(C.countsForBot({ dBot: 3, dy: 3, sight: false }), false, 'close but behind a wall: the bypass is gone');
+        assert.equal(C.countsForBot({ dBot: 4.5, dy: 3.5, sight: true }), false, '3.5 higher');
         assert.equal(C.countsForBot({ dBot: 7, dy: 0, sight: false }), false, '7 away behind a wall');
         assert.equal(C.countsForBot({ dBot: 12, dy: 1, sight: true }), true, '12 away in sight');
         assert.equal(C.countsForBot({ dBot: 12, dy: 1 }), true, 'sight not measured: in sight (v0.1.4.7)');
         assert.equal(C.countsForBot({ dBot: 17, dy: 0, sight: true }), false, 'beyond the notice distance of 16');
         assert.equal(C.countsForBot(null), false);
+        assert.equal(C.CREEPER_RULES.botHeight, 3);
+        assert.equal(C.CREEPER_RULES.botClose, undefined, 'the bypass is gone from the rules');
     });
 });
 
@@ -72,8 +80,11 @@ describe('C3: decide', () => {
         const tunnel = creeper(p(38.5, 30.5, 25), { sight: true });
         const d = C.decide(state({ botPos: p(30.5, 30.5, 25), areas: [MINE], creepers: [tunnel], underground: true }));
         assert.equal(d.step, 'run');
-        const close = C.decide(state({ botPos: p(30.5, 30.5, 25), areas: [MINE], creepers: [creeper(p(34.5, 30.5, 25), { sight: false })], underground: true }));
-        assert.equal(close.step, 'back_off', 'within 5 blocks, sight or not');
+        // v0.1.4.16 (F1): within 5 blocks behind rock it does not count any more (v0.1.4.8: back_off, "sight or not")
+        const hidden = C.decide(state({ botPos: p(30.5, 30.5, 25), areas: [MINE], creepers: [creeper(p(34.5, 30.5, 25), { sight: false })], underground: true }));
+        assert.equal(hidden.step, 'none', 'within 5 blocks behind rock: no creeper the bot can see');
+        const close = C.decide(state({ botPos: p(30.5, 30.5, 25), areas: [MINE], creepers: [creeper(p(34.5, 30.5, 25), { sight: true })], underground: true }));
+        assert.equal(close.step, 'back_off', 'within 5 blocks in sight');
     });
 
     test('a creeper behind a wall 8 blocks away: none; in sight: it counts', () => {
@@ -89,8 +100,13 @@ describe('C3: decide', () => {
     test('the height of the house decides: a creeper in a cave 5 blocks under the floor of the house does not count', () => {
         const cave = creeper(p(4.5, 20, 58), { sight: false });
         assert.equal(C.decide(state({ botPos: p(4.5, 40), creepers: [cave] })).step, 'none');
-        const yard = creeper(p(4.5, 20, 64), { sight: false });
-        assert.equal(C.decide(state({ botPos: p(4.5, 40), creepers: [yard] })).step, 'lure', 'at the height of the house');
+        // v0.1.4.16 (F1): an area creeper counts in sight only (v0.1.4.8: the yard creeper lured with sight false)
+        const yard = creeper(p(4.5, 20, 64), { sight: true });
+        assert.equal(C.decide(state({ botPos: p(4.5, 40), creepers: [yard] })).step, 'lure', 'at the height of the house, in sight');
+        assert.equal(C.decide(state({ botPos: p(4.5, 40), creepers: [{ ...yard, sight: false }] })).step, 'none', 'behind a wall: no area creeper');
+        assert.equal(C.countsForArea(HOME, p(4.5, 20, 64), false), false, 'countsForArea with sight false');
+        assert.equal(C.countsForArea(HOME, p(4.5, 20, 64), true), true);
+        assert.equal(C.countsForArea(HOME, p(4.5, 20, 64)), true, 'sight not measured: in sight');
     });
 
     test('a creeper near a mine (not defended) is no reason to lure', () => {
@@ -162,9 +178,14 @@ describe('C3: the context (creeper.js)', () => {
     });
 
     test('creeperCheck with ctx.whereAmI: underground, a creeper near the house does not count; without whereAmI the surface', () => {
-        const s = scene({ botAt: [4.5, 64, 30.5], creeperAt: [4.5, 64, 14.5] });
-        s.world.fill(0, 64, 22, 9, 68, 22, 'stone'); // no sight, 16 away from the bot
+        // v0.1.4.16 (F1): the creeper is in sight, 18 blocks from the bot (beyond its notice distance) and 6 from the house
+        // (v0.1.4.8 put a wall of stone between a bot 16 blocks away and the creeper: an area creeper counted without
+        // sight; now a creeper behind a wall counts for nobody)
+        const s = scene({ botAt: [4.5, 64, 32.5], creeperAt: [4.5, 64, 14.5] });
         assert.equal(K.creeperCheck(s.bot, s.ctx).step, 'lure', 'on the surface the house is defended');
+        const walled = scene({ botAt: [4.5, 64, 32.5], creeperAt: [4.5, 64, 14.5] });
+        walled.world.fill(0, 64, 22, 9, 68, 22, 'stone'); // no sight
+        assert.equal(K.creeperCheck(walled.bot, walled.ctx).step, 'none', 'behind a wall of stone: no creeper to lure (F1)');
         const under = K.creeperCheck(s.bot, { ...s.ctx, whereAmI: () => ({ area: null, depth: 20, underground: true }) });
         assert.deepEqual({ step: under.step, reason: under.reason }, { step: 'none', reason: 'underground' });
         const broken = K.creeperCheck(s.bot, { ...s.ctx, whereAmI: () => { throw new Error('x'); } });

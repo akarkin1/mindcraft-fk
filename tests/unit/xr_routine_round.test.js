@@ -136,7 +136,14 @@ describe('SPEC 3.3: the tenth kind through the validator', () => {
         assert.equal(JL.isDone({ ...job, steps: job.steps.map(s => ({ ...s, state: 'done' })) }), true);
         assert.equal(JL.resumeCommand({ ...job, steps: job.steps.map(s => ({ ...s, state: 'done' })) }), null);
         assert.equal(JL.isDone({ ...job, steps: [] }), false);
-        assert.equal(JL.isDone({ ...job, steps: [step('!a', 'done'), step('!b', 'failed')] }), false);
+        // v0.1.4.16 (F3): a step that failed after its runs is skipped; the round is done when every step is done or
+        // skipped and at least one is done, failed when every step was skipped
+        assert.equal(JL.isDone({ ...job, steps: [step('!a', 'done'), step('!b', 'skipped')] }), true);
+        assert.equal(JL.isDone({ ...job, steps: [step('!a', 'skipped'), step('!b', 'skipped')] }), false);
+        assert.equal(JL.isDone({ ...job, steps: [step('!a', 'skipped'), step('!b', 'todo')] }), false);
+        assert.equal(JL.isDone({ ...job, steps: [step('!a', 'done'), step('!b', 'failed')] }), false, 'failed is no state of a round\'s step');
+        const store = new J.JobStore(null, { now: () => new Date(T0) });
+        assert.equal(store.set({ kind: 'routine', command: '!doRoutine("x")', routine: 'x', steps: [step('!a', 'skipped')] }).steps[0].state, 'skipped', 'the store keeps skipped');
     });
 
     test('the texts of the job for the kind: the status line, busy, leave, the restart', () => {
@@ -239,7 +246,9 @@ describe('SPEC 3.3 and 3.4: a round as a job, from the tick', () => {
 describe('SPEC 3.3 and 3.6: the failures, the pause, the stop, the forget', () => {
     const failing = { '!harvest': () => ({ result: { ok: false, reason: 'no_farm', text: 'I found no farm "farm".' } }) };
 
-    test('a failed step runs once more, then the round fails with the job\'s stop line and the routine counts a failure', async () => {
+    // v0.1.4.16 (F3): a step that failed after its runs is skipped with the quiet line and the round goes on; the round is
+    // done when every step is done or skipped and at least one is done (before: one failed step ended the round)
+    test('a failed step runs once more, then is skipped with the quiet line; the round goes on and is done', async () => {
         const w = makeWorld({ answers: [PLAN], handlers: failing });
         w.routines.remember('the farm', FARM_TEXT);
         w.t += 61000;
@@ -249,34 +258,54 @@ describe('SPEC 3.3 and 3.6: the failures, the pause, the stop, the forget', () =
             'I start the routine "the farm", round 1.',
             'Step 1 of 3: !harvest("farm").',
             'Step 1 of 3: !harvest("farm").',
-            'I stop the routine "the farm": I found no farm "farm".',
+            'Step 1 of "the farm" failed: I found no farm "farm"; I go on.',
+            'Step 2 of 3: !plant("wheat_seeds", "farm").',
+            'Step 2 of 3 done: done.',
+            'Step 3 of 3: !putInChest("wheat", 64).',
+            'Step 3 of 3 done: done.',
+            'Round 1 of "the farm" is done.',
         ]);
         assert.equal(w.ran.filter(r => r.text === '!harvest("farm")').length, 2, 'stepRuns 2');
+        assert.deepEqual(w.history, [PLAN_LINE], 'the quiet line stays out of the history');
         const job = w.job.get();
-        assert.equal(job.state, 'paused');
-        assert.equal(job.steps[0].state, 'failed');
+        assert.equal(job.state, 'done');
+        assert.equal(job.steps[0].state, 'skipped');
         const r = w.routines.get('the farm');
-        assert.equal(r.fails, 1);
-        assert.equal(r.rounds, 0);
+        assert.equal(r.fails, 0);
+        assert.equal(r.rounds, 1);
+        assert.equal(r.runs, 1);
         assert.equal(r.state, 'active');
         assert.ok(Array.isArray(r.steps), 'the plan is kept');
         assert.equal(w.prompts.length, 1, 'no plan call for the failed step');
     });
 
-    test('three failed rounds in a row pause the routine with the pause text; `!doRoutine` unpauses and replans', async () => {
-        const w = makeWorld({ answers: [PLAN, PLAN], handlers: { ...failing } });
+    // v0.1.4.16 (F3): a round fails only when every step was skipped; `runs` counts every round started, so the round after
+    // three failed ones is round 4
+    const allFailing = {
+        '!harvest': () => ({ result: { ok: false, reason: 'no_farm', text: 'I found no farm "farm".' } }),
+        '!plant': () => ({ result: { ok: false, reason: 'no_farm', text: 'I found no farm "farm".' } }),
+        '!putInChest': () => ({ result: { ok: false, reason: 'no_chest', text: 'I know no chest.' } }),
+    };
+
+    test('three rounds with every step skipped pause the routine with the pause text; `!doRoutine` unpauses and replans', async () => {
+        const w = makeWorld({ answers: [PLAN, PLAN], handlers: { ...allFailing } });
         w.routines.remember('the farm', FARM_TEXT);
         for (let round = 1; round <= 3; round++) {
             w.t += 61000;
             w.said.length = 0;
             await runRound(w);
-            assert.equal(w.said[w.said.length - 2], 'Step 1 of 3: !harvest("farm").', `round ${round}`);
+            assert.ok(w.said.includes(`I start the routine "the farm", round ${round}.`), `round ${round}: ${w.said.join(' | ')}`);
+            assert.equal(w.said[w.said.length - 2], 'Step 3 of "the farm" failed: I know no chest; I go on.', `round ${round}`);
+            if (round < 3) {
+                assert.equal(w.said[w.said.length - 1], 'I stop the routine "the farm": I know no chest.', `round ${round}: every step skipped is a failed round`);
+            }
         }
-        assert.equal(w.said[w.said.length - 1], 'I pause the routine "the farm": !harvest("farm") failed three times. Say "do the routine the farm" to try again.');
-        assert.ok(!w.said.includes('I stop the routine "the farm": I found no farm "farm".'), 'the third round says the pause line, not the stop line');
+        assert.equal(w.said[w.said.length - 1], 'I pause the routine "the farm": !putInChest("wheat", 64) failed three times. Say "do the routine the farm" to try again.');
+        assert.ok(!w.said.includes('I stop the routine "the farm": I know no chest.'), 'the third round says the pause line, not the stop line');
         const paused = w.routines.get('the farm');
         assert.equal(paused.state, 'paused');
         assert.equal(paused.fails, 3);
+        assert.equal(paused.runs, 3);
         assert.equal(paused.steps, null);
         assert.equal(w.routines.list().text, 'My routines: the farm (every minute, paused).'.replace('paused)', `last ${hhmm(w.t)}, paused)`));
         w.t += 3600000;
@@ -284,15 +313,16 @@ describe('SPEC 3.3 and 3.6: the failures, the pause, the stop, the forget', () =
         assert.deepEqual(await w.job.tick(), { ok: true, reason: 'wait', text: '' }, 'a paused routine never runs by itself');
         w.handlers['!harvest'] = () => ({ result: { ok: true, reason: null, text: 'I harvested 14 wheat and planted 14 again.' } });
         const out = await w.routines.doNow('the farm');
-        assert.deepEqual(out, { ok: true, reason: 'round', text: 'I start the routine "the farm", round 1.', job: w.job.get() });
+        assert.deepEqual(out, { ok: true, reason: 'round', text: 'I start the routine "the farm", round 4.', job: w.job.get() });
         assert.equal(w.prompts.length, 2, 'one replan');
         assert.deepEqual(w.said, [PLAN_LINE], 'the plan line is said; the start line is the answer of the command');
         const r = w.routines.get('the farm');
         assert.equal(r.state, 'active');
         assert.equal(r.fails, 0);
         await runRound(w);
-        assert.equal(w.said[w.said.length - 1], 'Round 1 of "the farm" is done.');
+        assert.equal(w.said[w.said.length - 1], 'Round 4 of "the farm" is done.', 'one step done, two skipped: the round is done');
         assert.equal(w.routines.get('the farm').rounds, 1);
+        assert.equal(w.routines.get('the farm').runs, 4);
     });
 
     test('a plan the check refuses, and NONE, pause the routine with the texts of 3.6', async () => {

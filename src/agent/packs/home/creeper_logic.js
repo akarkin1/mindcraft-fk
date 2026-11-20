@@ -3,6 +3,10 @@
 // at doors, so it never goes for the shelter with a creeper near. It first lures the creeper to a
 // safe distance from the buildings, then runs, and enters only when the creeper is gone.
 // v0.1.4.8 (C3): a creeper counts only at the height of the bot or of an area that the reflex defends.
+// v0.1.4.16 (F1, R-1 and Q-2): a creeper counts only in sight, within 16 blocks and within 3 blocks of the bot's level (the
+// 6-block bypass of the sight check is gone: the reflex fled from creepers 12 blocks below through rock); a flee point is
+// clear only when its ground lies within 1 block of the bot's y (never into a hole or a cave) and it lies in no keep-out area.
+import { isKeepOutArea } from '../../areas/keep_out_logic.js';
 import { hasWalls, isDefendedArea } from './area_kinds.js';
 import { boxCenter, containsPos, distanceToBox, expandBox, horizontalDistanceToBox, interiorBox, isBox, nearestPointOnBox,
     segmentCrossesBox } from './box_math.js';
@@ -31,10 +35,12 @@ export const CREEPER_RULES = Object.freeze({
     lureStep: 6,           // one lure step
     runDistance: 32,       // run this far
     helpTries: 3,          // lure attempts before asking for help
-    // v0.1.4.8, C3
-    botHeight: 4,          // a creeper counts for the bot only within this height difference ...
-    botClose: 6,           // ... and within this distance or in sight of the bot
-    areaHeight: 3,         // a creeper counts for an area only between min.y - 3 and max.y + 3
+    // v0.1.4.8, C3; v0.1.4.16 (F1): 3 blocks of height and sight, always (botClose, the 6-block bypass, is gone)
+    botHeight: 3,          // a creeper counts for the bot only within this height difference, in sight
+    areaHeight: 3,         // a creeper counts for an area only between min.y - 3 and max.y + 3, in sight
+    // v0.1.4.16 (F1): a flee point is clear only when its ground lies within this many blocks of the bot's y ...
+    groundStep: 1,
+    groundLook: 3,         // ... the ground being the highest solid block within this many blocks down from the bot's y
 });
 
 const HELP_TEXT = 'A creeper keeps following me near the base. I stay away from the buildings. Can you help?';
@@ -101,10 +107,10 @@ function botIsSheltered(area, pos) {
 // ---- which creepers count (v0.1.4.8, C3) ----
 
 /**
- * True when a creeper counts for the bot: at most 4 blocks higher or lower (`dy` = creeper y minus bot
- * y), and within 6 blocks or in sight (`sight`: no solid block on the line from the eyes of the bot to
- * the middle of the creeper). Also within the notice distance of 16. A creeper without `sight` (not
- * measured) counts as in sight.
+ * True when a creeper counts for the bot (v0.1.4.16, F1): within the notice distance of 16, at most 3 blocks
+ * higher or lower (`dy` = creeper y minus bot y), and in sight (`sight`: no solid block on the line from the
+ * eyes of the bot to the middle of the creeper). A creeper without `sight` (not measured) counts as in sight;
+ * one with `sight` false never counts, however close (the 6-block bypass of v0.1.4.8 is gone).
  * @param {{dBot: number, dy: number, sight?: boolean}} c
  * @returns {boolean}
  */
@@ -112,23 +118,60 @@ export function countsForBot(c) {
     if (!c || !isFiniteNumber(c.dBot) || !isFiniteNumber(c.dy)) {
         return false;
     }
-    return c.dBot <= CREEPER_RULES.noticeDistance && Math.abs(c.dy) <= CREEPER_RULES.botHeight
-        && (c.dBot <= CREEPER_RULES.botClose || c.sight !== false);
+    return c.dBot <= CREEPER_RULES.noticeDistance && Math.abs(c.dy) <= CREEPER_RULES.botHeight && c.sight !== false;
 }
 
 /**
  * True when a creeper at `pos` counts for the area: the type is defended (all but mine), the
- * horizontal distance to the box is 16 or less, and its y is between min.y - 3 and max.y + 3.
+ * horizontal distance to the box is 16 or less, its y is between min.y - 3 and max.y + 3, and it is in
+ * sight (v0.1.4.16, F1: `sight` false never counts, so a creeper under the base's floor through rock is no
+ * area creeper; without `sight` it counts as seen).
  * @param {object} area
  * @param {{x,y,z}} pos
+ * @param {boolean} [sight]
  * @returns {boolean}
  */
-export function countsForArea(area, pos) {
-    if (!isDefendedArea(area) || !isPoint(pos)) {
+export function countsForArea(area, pos, sight) {
+    if (!isDefendedArea(area) || !isPoint(pos) || sight === false) {
         return false;
     }
     return horizontalDistanceToBox(area, pos) <= CREEPER_RULES.areaDanger
         && pos.y >= area.min.y - CREEPER_RULES.areaHeight && pos.y <= area.max.y + CREEPER_RULES.areaHeight;
+}
+
+/**
+ * The y where the feet would stand at a flee candidate (v0.1.4.16, F1), from a reader `groundYAt(x, z)` of the glue
+ * (the standing y over the highest solid block within 3 blocks down from the bot's y, null for none), or null when
+ * the candidate is no place to flee to: its ground lies more than 1 block above or below the bot's y (a hole, a cave,
+ * a drop), or it lies in an area the bot keeps out of (isKeepOutArea: no_enter, a pen, a farm). Without a reader
+ * every candidate is clear at the bot's y. Never throws.
+ * @param {{x: number, y: number, z: number}} bot
+ * @param {{x: number, z: number}} p
+ * @param {((x: number, z: number) => number|null)|null} groundYAt
+ * @param {object[]} areas
+ * @returns {number|null}
+ */
+export function clearGroundY(bot, p, groundYAt, areas) {
+    if (!isPoint(bot) || !p || !isFiniteNumber(p.x) || !isFiniteNumber(p.z)) {
+        return null;
+    }
+    const at = { x: p.x, y: bot.y, z: p.z };
+    if ((Array.isArray(areas) ? areas : []).some(area => isKeepOutArea(area) && containsPos(area, at))) {
+        return null;
+    }
+    if (typeof groundYAt !== 'function') {
+        return bot.y;
+    }
+    let ground;
+    try {
+        ground = groundYAt(Math.floor(p.x), Math.floor(p.z));
+    } catch {
+        ground = null;
+    }
+    if (!isFiniteNumber(ground) || Math.abs(ground - bot.y) > CREEPER_RULES.groundStep + EPS) {
+        return null;
+    }
+    return ground;
 }
 
 /**
@@ -236,13 +279,20 @@ function pathClear(areas, bot, p) {
     return true;
 }
 
-// First point along base (turned by up to 90 degrees) and one of the step lengths that is valid.
-function search(bot, base, steps, valid) {
+// The flee candidate with the y of its ground (F1), or null when it is no place to flee to (clearGroundY).
+function fit(env, p) {
+    const y = clearGroundY(env.bot, p, env.groundYAt, env.areas);
+    return y === null ? null : { x: p.x, y, z: p.z };
+}
+
+// First point along base (turned by up to 90 degrees) and one of the step lengths that is valid and clear (F1).
+function search(env, base, steps, valid) {
+    const bot = env.bot;
     for (const step of steps) {
         for (const angle of ANGLES) {
             const dir = rotate2(base, angle);
-            const p = pointAt(bot, dir, step);
-            if (valid(p, dir)) {
+            const p = fit(env, pointAt(bot, dir, step));
+            if (p && valid(p, dir)) {
                 return p;
             }
         }
@@ -276,7 +326,9 @@ function result(step, extra = {}) {
 
 // ---- the steps ----
 
-function backOffPoint(bot, threats, named, areas) {
+// env (F1): { bot, areas, groundYAt }: the bot, the areas within range and the ground reader of the glue (or null).
+function backOffPoint(env, threats, named) {
+    const { bot, areas } = env;
     let x = 0;
     let z = 0;
     let total = 0;
@@ -298,12 +350,13 @@ function backOffPoint(bot, threats, named, areas) {
     const fartherFromAll = p => threats.every(t => dist3(p, t.pos) > t.dBot + EPS);
     const fartherFromNamed = p => dist3(p, named.pos) > named.dBot + EPS;
     const steps = [CREEPER_RULES.backOffRun, 8, 5, 3];
-    return search(bot, base, steps, p => fartherFromAll(p) && endpointClear(areas, p, true) && pathClear(areas, bot, p))
-        ?? search(bot, namedAway, steps, p => fartherFromNamed(p) && endpointClear(areas, p, false) && pathClear(areas, bot, p))
+    return search(env, base, steps, p => fartherFromAll(p) && endpointClear(areas, p, true) && pathClear(areas, bot, p))
+        ?? search(env, namedAway, steps, p => fartherFromNamed(p) && endpointClear(areas, p, false) && pathClear(areas, bot, p))
         ?? pointAt(bot, namedAway, CREEPER_RULES.backOffRun);
 }
 
-function lurePoint(bot, target, areas) {
+function lurePoint(env, target) {
+    const { bot, areas } = env;
     const uc = awayFrom(bot, target.pos) ?? awayFromAreas(bot, areas) ?? { x: 1, z: 0 };
     const ua = awayFromAreas(bot, areas) ?? { x: 0, z: 0 };
     let base = unit2(ua.x + uc.x, ua.z + uc.z);
@@ -313,33 +366,35 @@ function lurePoint(bot, target, areas) {
     const here = minAreaDistance(areas, bot);
     const notCloser = p => dist3(p, target.pos) >= target.dBot - EPS;
     const steps = [CREEPER_RULES.lureStep, 4, 2];
-    return search(bot, base, steps, p => notCloser(p) && endpointClear(areas, p, true) && pathClear(areas, bot, p)
+    return search(env, base, steps, p => notCloser(p) && endpointClear(areas, p, true) && pathClear(areas, bot, p)
         && minAreaDistance(areas, p) >= here - EPS)
-        ?? search(bot, base, steps, p => notCloser(p) && endpointClear(areas, p, true) && pathClear(areas, bot, p));
+        ?? search(env, base, steps, p => notCloser(p) && endpointClear(areas, p, true) && pathClear(areas, bot, p));
 }
 
-function runPoint(bot, target, areas) {
+function runPoint(env, target) {
+    const { bot, areas } = env;
     const uc = awayFrom(bot, target.pos) ?? awayFromAreas(bot, areas) ?? { x: 1, z: 0 };
     const farther = p => dist3(p, target.pos) > target.dBot + EPS;
     const notTowardsAreas = p => areas.every(area => distanceToBox(area, p) >= distanceToBox(area, bot) - EPS);
     const run = CREEPER_RULES.runDistance;
-    return search(bot, uc, [run, run / 2], p => farther(p) && endpointClear(areas, p, true) && pathClear(areas, bot, p) && notTowardsAreas(p))
-        ?? search(bot, uc, [run, run / 2, run / 4], p => farther(p) && endpointClear(areas, p, true) && pathClear(areas, bot, p))
-        ?? search(bot, uc, [run, 16, 8, 4, 2, 0.9], p => farther(p) && endpointClear(areas, p, false) && pathClear(areas, bot, p))
+    return search(env, uc, [run, run / 2], p => farther(p) && endpointClear(areas, p, true) && pathClear(areas, bot, p) && notTowardsAreas(p))
+        ?? search(env, uc, [run, run / 2, run / 4], p => farther(p) && endpointClear(areas, p, true) && pathClear(areas, bot, p))
+        ?? search(env, uc, [run, 16, 8, 4, 2, 0.9], p => farther(p) && endpointClear(areas, p, false) && pathClear(areas, bot, p))
         ?? pointAt(bot, uc, run);
 }
 
 // F3: where the bot walks to be seen by a creeper that does not follow: 9 blocks from it (10 at most,
 // never closer than 8), on the side of the bot if that is free, otherwise around the creeper, never
-// in an area or next to one. null when there is no such place. The path finder walks around walls.
-function attentionPoint(bot, target, areas) {
+// in an area or next to one, and clear (F1). null when there is no such place. The path finder walks around walls.
+function attentionPoint(env, target) {
+    const { bot, areas } = env;
     const toBot = unit2(bot.x - target.pos.x, bot.z - target.pos.z) ?? { x: 1, z: 0 };
     const radius = (CREEPER_RULES.lureMax + CREEPER_RULES.attentionMin) / 2;
     for (let angle = 0; angle <= 180; angle += 20) {
         for (const sign of angle === 0 || angle === 180 ? [1] : [1, -1]) {
             const dir = rotate2(toBot, angle * sign);
-            const p = { x: target.pos.x + dir.x * radius, y: bot.y, z: target.pos.z + dir.z * radius };
-            if (endpointClear(areas, p, true)) {
+            const p = fit(env, { x: target.pos.x + dir.x * radius, z: target.pos.z + dir.z * radius });
+            if (p && endpointClear(areas, p, true)) {
                 return p;
             }
         }
@@ -481,11 +536,12 @@ export class CreeperWatch {
 }
 
 /**
- * Decides the next step of the creeper procedure. A creeper counts (v0.1.4.8, C3) when it counts for
- * the bot (countsForBot: within 16, at most 4 blocks higher or lower, within 6 or in sight) or for a
- * defended area within 32 blocks of the bot (countsForArea: horizontally within 16 of the box, between
- * min.y - 3 and max.y + 3). With `underground` only the creepers that count for the bot count. Steps,
- * first match wins:
+ * Decides the next step of the creeper procedure. A creeper counts (v0.1.4.8, C3; v0.1.4.16, F1) when it counts
+ * for the bot (countsForBot: within 16, at most 3 blocks higher or lower, in sight) or for a defended area within
+ * 32 blocks of the bot (countsForArea: horizontally within 16 of the box, between min.y - 3 and max.y + 3, in
+ * sight). With `underground` only the creepers that count for the bot count. Every flee point (back_off, lure,
+ * run, help, the attention walk) is clear (F1, clearGroundY): with `groundYAt` in the state its ground lies within
+ * 1 block of the bot's y and `moveTo.y` is that ground; it lies in no keep-out area. Steps, first match wins:
  * - none: no creeper counts (reason 'no_creeper', underground 'underground'). Also none when the bot
  *   is inside a building (within its walls) and no such creeper is inside it: the walls protect the
  *   bot, and going out would mean opening the door with a creeper near (reason 'in_shelter').
@@ -502,10 +558,12 @@ export class CreeperWatch {
  * A creeper in `standing` counts only within 10 blocks of the bot.
  * @param {{botPos: {x,y,z}, creepers: {id, pos: {x,y,z}, fuse, sight?: boolean}[], areas: object[], fighting: boolean,
  *   canFight: boolean, tries: number, fuseBurning: boolean, now: number, following?: *[],
- *   attention?: number, attending?: boolean, standing?: *[], underground?: boolean}} state
+ *   attention?: number, attending?: boolean, standing?: *[], underground?: boolean,
+ *   groundYAt?: (x: number, z: number) => number|null}} state
  *   areas are the boxes of the areas within 48 blocks ({min, max}, optional name and type);
  *   following, attention and standing come from CreeperWatch.facts (F3); sight and underground from
- *   the context (C3), a creeper without sight counts as in sight
+ *   the context (C3), a creeper without sight counts as in sight; groundYAt (F1) is the ground reader of the
+ *   glue (creeper.js), without it every flee point lies at the bot's y
  * @returns {{step: string, moveTo: {x,y,z}|null, sprint: boolean, creeper: *, text: string|null,
  *   area: string|null, reason: string|null}}
  */
@@ -519,16 +577,18 @@ export function decide(state) {
     const areas = (Array.isArray(s.areas) ? s.areas : []).filter(isBox)
         .filter(area => distanceToBox(area, bot) <= CREEPER_RULES.areaRange);
     const nearAreas = areas.filter(area => distanceToBox(area, bot) <= CREEPER_RULES.areaRelevance);
+    // F1: the flee points are searched with the ground reader of the glue and the areas (clearGroundY)
+    const env = { bot, areas, groundYAt: typeof s.groundYAt === 'function' ? s.groundYAt : null };
     const creepers = (Array.isArray(s.creepers) ? s.creepers : [])
         .filter(c => c && typeof c === 'object' && isPoint(c.pos))
         .map(c => {
             const dBot = dist3(bot, c.pos);
             const forBot = countsForBot({ dBot, dy: c.pos.y - bot.y, sight: c.sight });
-            // C3: only an area that the creeper counts for; underground no area counts
+            // C3: only an area that the creeper counts for; underground no area counts; F1: in sight only
             let nearest = null;
             let dArea = Infinity;
             for (const area of underground ? [] : areas) {
-                if (countsForArea(area, c.pos)) {
+                if (countsForArea(area, c.pos, c.sight)) {
                     const d = horizontalDistanceToBox(area, c.pos);
                     if (d < dArea) {
                         dArea = d;
@@ -536,7 +596,7 @@ export function decide(state) {
                     }
                 }
             }
-            const forArea = !underground && nearAreas.some(area => countsForArea(area, c.pos));
+            const forArea = !underground && nearAreas.some(area => countsForArea(area, c.pos, c.sight));
             return { id: c.id ?? null, pos: c.pos, burning: fuseIsBurning(c), dBot, dArea, nearest, forBot, forArea };
         });
     // F3: a creeper that stands counts only when it is within 10 blocks of the bot
@@ -567,13 +627,13 @@ export function decide(state) {
     }
     if (threats.length > 0) {
         const named = threats[0];
-        return result('back_off', { moveTo: backOffPoint(bot, threats, named, areas), sprint: true, creeper: named.id, reason });
+        return result('back_off', { moveTo: backOffPoint(env, threats, named), sprint: true, creeper: named.id, reason });
     }
 
     const nearest = [...relevant].sort(byBot)[0];
     const tries = isFiniteNumber(s.tries) ? s.tries : 0;
     if (tries >= CREEPER_RULES.helpTries) {
-        return result('help', { moveTo: runPoint(bot, nearest, areas), sprint: true, creeper: nearest.id, text: HELP_TEXT, reason: 'tries' });
+        return result('help', { moveTo: runPoint(env, nearest), sprint: true, creeper: nearest.id, text: HELP_TEXT, reason: 'tries' });
     }
 
     const nearArea = relevant.filter(c => c.dArea <= CREEPER_RULES.areaDanger)
@@ -588,13 +648,13 @@ export function decide(state) {
                 return result('lure', { moveTo: { ...bot }, creeper: target.id, area: areaName, reason: 'wait' });
             }
             // a walk that is going on (attending) is finished first, so the second try is a whole walk too
-            const p = attention < CREEPER_RULES.attentionTries || s.attending === true ? attentionPoint(bot, target, areas) : null;
+            const p = attention < CREEPER_RULES.attentionTries || s.attending === true ? attentionPoint(env, target) : null;
             if (!p) {
                 return result('leave_it', { creeper: target.id, area: areaName, text: standingCreeperText(areaName ?? 'the base'), reason: 'standing' });
             }
             return result('lure', { moveTo: p, creeper: target.id, area: areaName, reason: 'attention' });
         }
-        const p = lurePoint(bot, target, areas);
+        const p = lurePoint(env, target);
         if (!p) {
             return result('lure', { moveTo: { ...bot }, creeper: target.id, area: areaName, reason: 'no_way' });
         }
@@ -604,5 +664,5 @@ export function decide(state) {
     if (s.fighting === true && s.canFight === true) {
         return result('fight', { moveTo: { ...nearest.pos }, creeper: nearest.id, reason: 'fight' });
     }
-    return result('run', { moveTo: runPoint(bot, nearest, areas), sprint: true, creeper: nearest.id, reason: 'run' });
+    return result('run', { moveTo: runPoint(env, nearest), sprint: true, creeper: nearest.id, reason: 'run' });
 }

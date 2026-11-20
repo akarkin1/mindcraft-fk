@@ -19,6 +19,7 @@ a shell of the repository with `MC_WATCH_URL` and `MC_WATCH_TOKEN` set: `node sc
 | `wait` | Holds the answer until something happens: `event`, `idle`, `done`, `any`; at most 55 s. Answers with the digest, headed `Woke: ...`. Your loop. | `wait any 55 <cursor>` |
 | `digest` | What changed since a cursor, about 10 lines. The first line is the next cursor. | `digest <cursor>` |
 | `run` | 1 to 10 commands, one after the other, as the owner; stops at a failure. | `run '!takeFromChest("bread", 10)' '!mineOre("diamond", 36)'` |
+| `runs` | The commands `run` handed to the bot in the last hour: id, command, state (`running`, `done`, `failed`), text, start and end, as JSON. A `run` that answered `Still running: <command> (run <id>)` is not finished: poll `runs` for that id (or `wait` for `done`) before you take the command as done. | `runs` |
 | `reply` | Your line into the game chat, said by the bot as `[Opus] <text>`. Kind `answer` (default) or `update`. | `reply 'It is in the tunnel.'`, `reply update 'The mining is at 12 of 36 diamond.'` |
 | `note` | One line in the bot's prompt for N minutes, as `Supervisor: <text>`. A fact, not an order. | `note 'the chest at (15, -59, -99) has bread' 30` |
 | `look` | What is around the bot and open to view (ores, lava and water with an open side, never behind a wall), chests with free slots, furnaces, ladders, doors, drops, players. | `look 16` |
@@ -66,6 +67,7 @@ or profiles, never commit anything under `bots/`.
 3. Decide (below). When the digest is not enough to decide, read what you need first: `look`, `inventory`, `chat`,
    `places`. Then act in one call: `run`, `reply`, `note`, or nothing.
 4. Wait again.
+5. A `run` answer whose last line is `Still running: <command> (run <id>)` means the command still runs: `wait` for `done`, then read its `state` in `runs` by that id; never take `Still running` as finished.
 
 Most wakes need nothing from you: the bot is working. Never poll with `digest` or `state` in a loop: `wait` is the
 poll.

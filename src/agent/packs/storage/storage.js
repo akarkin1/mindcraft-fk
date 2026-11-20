@@ -341,6 +341,7 @@ async function lookInto(state, targets, limit = LOOK_LIMIT) {
             chests.push(res.chest);
         } else if (res.reason !== 'gone') {
             state.failed++;
+            state.failedAt = state.failedAt ?? { x: target.x, y: target.y, z: target.z }; // v0.1.4.16 (F5): as in storeLoop
         }
     }
     return chests;
@@ -624,6 +625,8 @@ async function storeLoop(state, job, opts) {
             excluded.add(chestKey(target));
             if (res.reason !== 'gone') {
                 state.failed++;
+                // v0.1.4.16 (F5, the mining's full bag): the first chest it could not get to, as fetchItem's failedAt
+                state.failedAt = state.failedAt ?? { x: target.x, y: target.y, z: target.z };
             }
         } else if (names.some(n => job.remaining.has(n))) {
             excluded.add(chestKey(target));
@@ -656,9 +659,11 @@ async function storeLoop(state, job, opts) {
  * @param {object} bot
  * @param {object} ctx { chests, settings, log, now }
  * @param {{only?: string|string[], keep?: object|string[], chest?: {x,y,z}, range?: number, timeoutMs?: number, now?: Function, wait?: Function}} [options]
- * @returns {Promise<{ok: boolean, reason: string|null, stored: Object<string, number>, left: Object<string, number>, chests: object[], text: string}>}
+ * @returns {Promise<{ok: boolean, reason: string|null, stored: Object<string, number>, left: Object<string, number>, chests: object[], text: string,
+ *   failedAt?: {x: number, y: number, z: number}}>}
  *   reason: null, no_chest, full, unreachable, interrupted, timeout or error; `left` is what the plan
- *   wanted to store and the bot still carries; `chests` are the chests it stored into
+ *   wanted to store and the bot still carries; `chests` are the chests it stored into; `failedAt` (v0.1.4.16, only with
+ *   `unreachable`) the first chest it could not get to
  */
 export async function storeItems(bot, ctx = {}, options = {}) {
     const opts = isPlainObject(options) ? options : {};
@@ -680,7 +685,9 @@ export async function storeItems(bot, ctx = {}, options = {}) {
         const reason = stopReason(state) ?? await storeLoop(state, job, opts);
         const left = Object.fromEntries(job.remaining);
         const text = storeText({ stored: job.stored, left, chests: job.used, reason, tried: state.tried ?? null });
-        return finish(ctx, { ok: reason === null, reason, stored: job.stored, left, chests: job.used, text });
+        // v0.1.4.16 (F5): with `unreachable` the first chest it could not get to (`failedAt`); the result is as before otherwise
+        const failed = reason === 'unreachable' && state.failedAt ? { failedAt: state.failedAt } : {};
+        return finish(ctx, { ok: reason === null, reason, stored: job.stored, left, chests: job.used, text, ...failed });
     } catch (err) {
         console.warn('Storage pack: storing failed:', err?.message ?? err);
         const text = storeText({ stored: job.stored, left: {}, chests: job.used, reason: 'error', error: err });

@@ -73,10 +73,27 @@ function sum(counts) {
     return Object.values(counts).reduce((s, n) => s + n, 0);
 }
 
-// Breaks a block of the tree (a log by default), holding the best axe or an empty hand, never a
-// pickaxe (v0.1.4.8, E3). A dig is progress for the reflex unstuck (I1).
-async function digAt(bot, pos, run, accept = isTrunkLog) {
-    const ok = await digBlock(bot, pos, run.clock, accept, 'axe', { handIfNone: true });
+/**
+ * The tool for a block of the tree (v0.1.4.16, F11, Q-9: an iron axe lasted 150 logs): the axe for a trunk log, the bare
+ * hand for everything else (leaves, the dirt of a pillar), so the axe is swung at logs only.
+ * @param {string|null} name the block name
+ * @returns {'axe'|'hand'}
+ */
+export function toolForBlock(name) {
+    return isTrunkLog(name) ? 'axe' : 'hand';
+}
+
+/**
+ * Breaks a block of the tree (a log by default), holding the best axe for a log and an empty hand for leaves and every
+ * other block (toolForBlock), never a pickaxe (v0.1.4.8, E3; v0.1.4.16, F11). A dig is progress for the reflex unstuck (I1).
+ * @param {object} bot
+ * @param {{x: number, y: number, z: number}} pos
+ * @param {{clock: object}} run
+ * @param {(name: string) => boolean} [accept]
+ * @returns {Promise<boolean>} true when the block is gone
+ */
+export async function digAt(bot, pos, run, accept = isTrunkLog) {
+    const ok = await digBlock(bot, pos, run.clock, accept, toolForBlock(nameAt(bot, pos)), { handIfNone: true });
     if (ok) {
         try {
             bot.modes?.noteProgress?.('wood');
